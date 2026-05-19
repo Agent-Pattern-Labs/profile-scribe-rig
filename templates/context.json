@@ -1,0 +1,77 @@
+{
+  "defaults": {
+    "tokenBudget": 12000,
+    "charsPerToken": 4
+  },
+  "bundles": [
+    {
+      "name": "base",
+      "description": "Shared Profile Scribe harness contract.",
+      "tokenBudget": 5000,
+      "files": [
+        {
+          "path": "Agents.harness.md",
+          "maxTokens": 3500,
+          "required": false
+        },
+        {
+          "path": "modes/_shared.md",
+          "maxTokens": 2000
+        }
+      ]
+    },
+    {
+      "name": "compose",
+      "extends": "base",
+      "description": "End-to-end post composition context.",
+      "tokenBudget": 12000,
+      "files": [
+        { "path": "modes/compose.md", "maxTokens": 2500 },
+        { "path": "modes/crawl.md", "maxTokens": 1800 },
+        { "path": "modes/history.md", "maxTokens": 1800 },
+        { "path": "modes/voice.md", "maxTokens": 1800 }
+      ]
+    },
+    {
+      "name": "crawl",
+      "extends": "base",
+      "description": "URL crawling and source extraction.",
+      "tokenBudget": 8000,
+      "files": [
+        { "path": "modes/crawl.md", "maxTokens": 2200 }
+      ]
+    },
+    {
+      "name": "history",
+      "extends": "base",
+      "description": "Prior-post retrieval and duplicate checks.",
+      "tokenBudget": 8000,
+      "files": [
+        { "path": "modes/history.md", "maxTokens": 2200 }
+      ]
+    },
+    {
+      "name": "voice",
+      "extends": "base",
+      "description": "Voice-profile construction.",
+      "tokenBudget": 8000,
+      "files": [
+        { "path": "modes/voice.md", "maxTokens": 2200 }
+      ]
+    },
+    {
+      "name": "submit",
+      "extends": "base",
+      "description": "Profile Scribe draft or publish submission.",
+      "tokenBudget": 9000,
+      "files": [
+        { "path": "modes/submit.md", "maxTokens": 2200 },
+        {
+          "path": "modes/reference-profile-scribe.md",
+          "maxTokens": 2500,
+          "required": false
+        }
+      ]
+    }
+  ]
+}

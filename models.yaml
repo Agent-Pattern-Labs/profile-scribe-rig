@@ -1,0 +1,14 @@
+# Profile Scribe Agent Harness model policy.
+#
+# Extends @razroo/iso-route's bundled standard preset. Subagents bind to
+# these role names through iso/agents/*.md.
+
+extends: standard
+
+roles:
+  fast:
+    description: Procedural crawling, extraction, local search, and submission checks.
+  quality:
+    description: Voice modeling, editorial judgment, and final post drafting.
+  minimal:
+    description: Narrow one-shot extraction or classification.

@@ -1,0 +1,57 @@
+{
+  "contracts": [
+    {
+      "name": "profile-scribe.source-record",
+      "version": "1.0.0",
+      "description": "Normalized crawl result for a user-supplied URL.",
+      "fields": [
+        { "name": "url", "type": "url", "required": true },
+        { "name": "status", "type": "enum", "required": true, "values": ["crawled", "failed"] },
+        { "name": "title", "type": "string" },
+        { "name": "canonicalUrl", "type": "url" },
+        { "name": "author", "type": "string" },
+        { "name": "publishedAt", "type": "date" },
+        { "name": "summary", "type": "string" },
+        { "name": "facts", "type": "array" },
+        { "name": "failure", "type": "string" }
+      ]
+    },
+    {
+      "name": "profile-scribe.voice-profile",
+      "version": "1.0.0",
+      "description": "Compact style profile derived from previous posts.",
+      "fields": [
+        { "name": "version", "type": "string", "required": true },
+        { "name": "confidence", "type": "enum", "required": true, "values": ["low", "medium", "high"] },
+        { "name": "signals", "type": "array", "required": true },
+        { "name": "avoid", "type": "array" },
+        { "name": "samplePostIds", "type": "array" }
+      ]
+    },
+    {
+      "name": "profile-scribe.post-draft",
+      "version": "1.0.0",
+      "description": "Fresh draft ready for Profile Scribe review or submission.",
+      "fields": [
+        { "name": "title", "type": "string" },
+        { "name": "body", "type": "string", "required": true },
+        { "name": "sourceUrls", "type": "array" },
+        { "name": "priorPostIds", "type": "array" },
+        { "name": "duplicateRisk", "type": "enum", "values": ["low", "medium", "high"] },
+        { "name": "status", "type": "enum", "required": true, "values": ["drafted", "reviewed", "submitted"] }
+      ]
+    },
+    {
+      "name": "profile-scribe.submission-receipt",
+      "version": "1.0.0",
+      "description": "Receipt returned by Profile Scribe after staging or publishing.",
+      "fields": [
+        { "name": "status", "type": "enum", "required": true, "values": ["draft", "review", "published", "failed"] },
+        { "name": "postId", "type": "string" },
+        { "name": "url", "type": "url" },
+        { "name": "submittedAt", "type": "datetime" },
+        { "name": "failure", "type": "string" }
+      ]
+    }
+  ]
+}

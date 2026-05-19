@@ -1,0 +1,25 @@
+{
+  "roles": {
+    "general-free": {
+      "filesystem": ["read", "write-consumer-data"],
+      "network": ["crawl-user-urls"],
+      "mcp": ["geometra"],
+      "canSubmit": true,
+      "canPublish": false
+    },
+    "general-paid": {
+      "filesystem": ["read", "write-consumer-drafts"],
+      "network": ["crawl-user-urls"],
+      "mcp": ["geometra"],
+      "canSubmit": false,
+      "canPublish": false
+    },
+    "glm-minimal": {
+      "filesystem": ["read"],
+      "network": [],
+      "mcp": [],
+      "canSubmit": false,
+      "canPublish": false
+    }
+  }
+}

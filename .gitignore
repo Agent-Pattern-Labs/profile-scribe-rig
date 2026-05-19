@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Local Profile Scribe/user data
+config/profile-scribe.json
+data/*
+!data/.gitkeep
+reports/*
+!reports/.gitkeep
+batch/input.*
+batch/output.*
+batch/logs/
+batch/tracker-additions/*.json
+batch/tracker-additions/*.jsonl
+batch/tracker-additions/*.md
+batch/tracker-additions/*.tsv
+!batch/tracker-additions/.gitkeep
+
+# Harness runtime state
+.profile-scribe-runs/
+.profile-scribe-cache/
+.profile-scribe-ledger/
+.profile-scribe-index.json
+.profile-scribe-facts.json
+.profile-scribe-lineage.json
+.profile-scribe-redacted/
+.state-trace/
+
+# Generated agent-runtime config
+.claude/
+.codex/
+.cursor/
+.opencode/
+.mcp.json
+opencode.json
+CLAUDE.md
+
+# OS/editor
+.DS_Store
+*.log

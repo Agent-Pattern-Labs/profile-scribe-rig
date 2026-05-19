@@ -1,0 +1,74 @@
+{
+  "name": "profile-scribe-agent-harness",
+  "version": "0.1.0",
+  "description": "Agentic harness for crawling sources, matching user voice, and drafting Profile Scribe posts.",
+  "type": "module",
+  "bin": {
+    "profile-scribe-harness": "bin/profile-scribe-harness.mjs",
+    "create-profile-scribe-harness": "bin/create-profile-scribe-harness.mjs"
+  },
+  "scripts": {
+    "sync": "node bin/sync.mjs",
+    "verify": "npm run smoke:config",
+    "smoke:config": "node scripts/smoke-config.mjs",
+    "plan": "iso plan .",
+    "build:config": "iso build .",
+    "lint:agentmd": "agentmd lint iso/instructions.md",
+    "postinstall": "node bin/sync.mjs",
+    "prepack": "npm run smoke:config"
+  },
+  "files": [
+    "Agents.md",
+    "README.md",
+    "bin/",
+    "iso/",
+    "modes/",
+    "templates/",
+    "config/",
+    "scripts/",
+    "docs/",
+    "batch/",
+    "models.yaml"
+  ],
+  "keywords": [
+    "agentic-harness",
+    "profile-scribe",
+    "content",
+    "voice-matching",
+    "automation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/Agent-Pattern-Labs/profile-scribe-agent-harness.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "overrides": {
+    "fast-uri": "3.1.2"
+  },
+  "dependencies": {
+    "@razroo/iso-cache": "^0.1.0",
+    "@razroo/iso-canon": "^0.1.0",
+    "@razroo/iso-context": "^0.1.0",
+    "@razroo/iso-contract": "^0.1.0",
+    "@razroo/iso-facts": "^0.1.0",
+    "@razroo/iso-index": "^0.1.0",
+    "@razroo/iso-ledger": "^0.1.0",
+    "@razroo/iso-lineage": "^0.1.0",
+    "@razroo/iso-migrate": "^0.1.0",
+    "@razroo/iso-postflight": "^0.1.0",
+    "@razroo/iso-preflight": "^0.1.0",
+    "@razroo/iso-redact": "^0.1.0",
+    "@razroo/iso-trace": "^0.5.0",
+    "playwright": "^1.58.1"
+  },
+  "devDependencies": {
+    "@razroo/agentmd": "^0.3.0",
+    "@razroo/iso": "^0.3.1",
+    "@razroo/iso-eval": "^0.4.0",
+    "@razroo/iso-harness": "^0.8.0",
+    "@razroo/iso-route": "^0.5.3"
+  }
+}

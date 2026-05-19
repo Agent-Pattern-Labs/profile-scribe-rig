@@ -2,6 +2,17 @@
 
 This repository is an open-source agentic harness that runs as a layer on top of Profile Scribe. In the original local development environment, Profile Scribe lives at `/Users/charlie/Razroo/profile-scribe`; for public use, treat that path as a configurable integration target rather than a hard-coded dependency.
 
+## Construction Pattern
+
+Use `/Users/charlie/AgentPatternLabs/Agent-Skills` as the local reference for how this harness is constructed. In particular, follow the `create-agentic-harness` skill:
+
+- `iso/` owns the shared cross-runtime instructions, MCP config, subagent definitions, and command router.
+- `modes/` owns workflow-specific operating procedures.
+- `templates/` owns executable policy, contracts, states, context bundles, migrations, and redaction rules.
+- `bin/` owns user-facing CLI entry points, scaffolding, and sync behavior.
+- consumer projects own private data, local config, drafts, crawl results, prior posts, and generated outputs.
+- the harness package must stay portable and must not contain user-private Profile Scribe data.
+
 ## Product Mission
 
 The harness helps a user create a fresh Profile Scribe post by doing the research and voice-matching work around the user's draft or prompt. A complete run should:

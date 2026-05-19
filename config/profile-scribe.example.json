@@ -1,0 +1,21 @@
+{
+  "profileScribe": {
+    "root": "",
+    "apiUrl": "",
+    "apiTokenEnv": "PROFILE_SCRIBE_API_TOKEN",
+    "submitMode": "draft"
+  },
+  "crawler": {
+    "timeoutMs": 20000,
+    "maxBytes": 2000000,
+    "userAgent": "profile-scribe-agent-harness"
+  },
+  "retrieval": {
+    "priorPostLimit": 100,
+    "relatedPostLimit": 12
+  },
+  "posting": {
+    "defaultVisibility": "draft",
+    "requireReview": true
+  }
+}

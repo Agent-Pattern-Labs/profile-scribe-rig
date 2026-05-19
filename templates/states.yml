@@ -1,0 +1,17 @@
+states:
+  requested:
+    description: User supplied topic, draft, prompt, or URLs.
+  crawled:
+    description: URLs have source records or explicit crawl failures.
+  history_checked:
+    description: Prior posts have been searched for voice and duplicate risk.
+  voice_profiled:
+    description: Voice profile exists or low-confidence voice matching is recorded.
+  drafted:
+    description: Fresh post draft exists with provenance.
+  reviewed:
+    description: Duplicate, provenance, privacy, and style checks passed.
+  submitted:
+    description: Draft was staged or published in Profile Scribe.
+  failed:
+    description: Workflow stopped with a clear blocker.

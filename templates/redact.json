@@ -1,0 +1,19 @@
+{
+  "patterns": [
+    {
+      "name": "profile-scribe-api-token",
+      "pattern": "PROFILE_SCRIBE_API_TOKEN=[^\\s]+",
+      "replacement": "PROFILE_SCRIBE_API_TOKEN=[REDACTED]"
+    },
+    {
+      "name": "bearer-token",
+      "pattern": "Bearer\\s+[A-Za-z0-9._~+/-]+=*",
+      "replacement": "Bearer [REDACTED]"
+    },
+    {
+      "name": "cookie-header",
+      "pattern": "Cookie:\\s*[^\\n]+",
+      "replacement": "Cookie: [REDACTED]"
+    }
+  ]
+}
