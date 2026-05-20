@@ -44,6 +44,13 @@ The harness helps a user create a fresh Profile Scribe post by doing the researc
 - Crawl and summarize source URLs before drafting. Do not fabricate source details when a crawl fails; surface the crawl failure and proceed only with clearly available context.
 - Search prior posts before drafting so the generated post avoids repetition and matches the user's established voice.
 - Preserve the user's voice without copying old posts wholesale. Reuse style signals, not private or stale content.
+- Draft for a normal professional reader. The public post should read like a
+  concise LinkedIn-style update written by the profile owner, not like an agent
+  explaining its source checks, constraints, or reasoning.
+- Keep provenance, duplicate checks, and uncertainty in private notes or
+  submission metadata. Do not leak phrases like "approved sources", "source
+  backed", "crawl summary", "public claim", "this post should", or "recent
+  timeline context" into publishable copy.
 - Create a genuinely new post for each request. Do not simply rewrite an older post unless the user explicitly asks for a revision.
 - Keep provenance available internally: track which URLs and prior posts influenced the draft so future UI or audit features can expose that context.
 - When posting back to Profile Scribe, prefer a draft or review state unless the user or integration explicitly requests immediate publishing.

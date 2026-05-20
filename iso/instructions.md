@@ -24,9 +24,12 @@ update.
 - [H6] Preserve provenance for ProfileScribe sources, crawled URLs, prior posts
   consulted, voice signals, duplicate checks, and Profile Scribe submission
   receipts.
-- [H7] Default to draft or review submission. Publish immediately only when the
+- [H7] Public post bodies must read like concise first-person professional
+  updates. Keep agent reasoning, source checks, duplicate-avoidance notes, and
+  prompt constraints out of publishable copy.
+- [H8] Default to draft or review submission. Publish immediately only when the
   user or configured integration explicitly asks for publish mode.
-- [H8] Keep private posts, crawled pages, drafts, and submission state in the
+- [H9] Keep private posts, crawled pages, drafts, and submission state in the
   consumer project. The harness package must stay portable.
 
 ## Defaults
@@ -63,7 +66,8 @@ update.
 6. Search prior posts and build source-backed voice signals.
 7. Draft or request a source-backed post with explicit source and prior-post
    provenance.
-8. Run duplicate, provenance, privacy, and style checks.
+8. Run duplicate, provenance, privacy, and style checks. Reject drafts that read
+   like an agent audit trail instead of a normal professional post.
 9. Submit or stage the post back to Profile Scribe according to configuration.
 
 ## ProfileScribe MCP

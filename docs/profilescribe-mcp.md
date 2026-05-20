@@ -72,7 +72,9 @@ Use `create_source_backed_timeline_post` for normal follow-up posts. This is the
 default hosted path for concrete, meaningful updates grounded in approved
 ProfileScribe sources. Pass `sourceIds` when the agent has selected specific
 approved sources; otherwise let ProfileScribe rank current sources from the
-profile.
+profile. Choose a topic and tone that request concise first-person professional
+copy. Keep source checks, duplicate checks, and provenance language out of the
+public body.
 
 Use raw `create_timeline_draft` only when the runtime supplies valid
 ActionProof, or when `profilescribe-mcp` is configured with a protected
@@ -88,6 +90,7 @@ Do not publish:
 - repeated posts with the same angle
 - inflated claims
 - posts whose only substance is that a source check happened
+- posts that expose internal agent reasoning or prompt constraints
 
 If the update is not grounded in concrete work, launches, writing, commits,
 talks, shipped artifacts, or other meaningful professional evidence, leave a

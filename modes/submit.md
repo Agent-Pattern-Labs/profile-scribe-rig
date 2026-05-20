@@ -17,6 +17,7 @@ Use this mode to stage or publish a reviewed draft in Profile Scribe.
    When the user says "create a post" without URLs, call
    `create_source_backed_timeline_post` with a concrete topic/tone and optional
    source IDs selected from `read_sources`; do not require user-supplied URLs.
+   The topic and tone should ask for concise, first-person professional copy.
 5. Fall back to a configured REST API or local integration contract only when
    MCP is unavailable and the adapter exposes the required posting controls.
 6. Store a submission receipt in consumer-local state.
@@ -26,6 +27,8 @@ Use this mode to stage or publish a reviewed draft in Profile Scribe.
 - Default to `draft`.
 - Do not publish on ambiguous wording.
 - Do not include raw API tokens in logs, prompts, or reports.
+- Do not submit public body text that reads like source-check reasoning,
+  duplicate-avoidance notes, or prompt instructions.
 - A bearer token alone is not enough for raw `create_timeline_draft` in
   production; use hosted source-backed tools unless valid ActionProof is
   available.

@@ -18,6 +18,8 @@ Use this mode to build or refresh the user's Profile Scribe voice profile.
    - generic assistant cadence
    - over-polished marketing tone
    - repeated old anecdotes
+   - agent meta-language, audit labels, crawl narration, and instructions
+     accidentally written as public copy
 4. Save or update `data/voice-profile.json` when the consumer project is
    writable.
 
@@ -26,6 +28,8 @@ Use this mode to build or refresh the user's Profile Scribe voice profile.
 - Voice is a pattern, not a permission to copy old posts.
 - Prefer compact signals over long excerpts.
 - If prior posts are unavailable, state that voice matching is low-confidence.
+- Even with low confidence, the default public style is a normal first-person
+  professional update, not an explanation of the agent workflow.
 
 ## Output
 

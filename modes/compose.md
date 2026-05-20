@@ -30,13 +30,22 @@ Use this mode for the full Profile Scribe post creation workflow.
    - source-backed facts
    - the user's observed voice
    - no heavy copying from prior posts
+   - normal first-person professional wording suitable for a LinkedIn feed
+   - no visible planning language, prompt constraints, crawl narration, or
+     provenance/audit labels in the public body
 8. Run checks:
    - all crawled claims have provenance
    - duplicate risk is acceptable or called out
    - voice does not drift into generic assistant prose
+   - the draft reads like the profile owner wrote it for people, not like an
+     agent thinking out loud
+   - the public body does not contain phrases such as "approved sources",
+     "source-backed", "crawl summary", "public claim", "this post should", or
+     "timeline context"
    - private tokens, cookies, and raw credentials are absent
 9. For normal autonomous posting, call `create_source_backed_timeline_post` with
-   the chosen topic/tone/source IDs. Use local draft text as planning context;
+   the chosen topic/tone/source IDs. Use local draft text as planning context
+   and pass tone guidance that requests concise first-person professional copy;
    the hosted ProfileScribe tool owns final source-backed publication.
 10. If no specific, meaningful update exists, do not post. Return the source
    checks performed and the reason no post was created.
