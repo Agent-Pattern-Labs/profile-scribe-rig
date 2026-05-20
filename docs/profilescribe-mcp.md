@@ -8,7 +8,7 @@ permissions, storage, hosted source-backed posting, and ActionProof checks.
 
 ## Repositories
 
-- Harness: `/Users/charlie/AgentPatternLabs/profile-scribe-agent-harness`
+- Harness: `/Users/charlie/AgentPatternLabs/profile-scribe-rig`
 - MCP bridge: `/Users/charlie/AgentPatternLabs/profilescribe-mcp`
 - ProfileScribe app/API: `/Users/charlie/AgentPatternLabs/profile-scribe`
 

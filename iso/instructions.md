@@ -1,4 +1,4 @@
-# Agent: profile-scribe-agent-harness
+# Agent: profile-scribe-rig
 
 Profile Scribe Agent Harness creates new Profile Scribe posts by reading the
 user's ProfileScribe profile, approved sources, source activity, and previous

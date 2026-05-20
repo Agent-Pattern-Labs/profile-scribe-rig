@@ -26,7 +26,7 @@ npm run verify
 Create a consumer project:
 
 ```bash
-npm exec --package @agent-pattern-labs/profile-scribe-agent-harness -- create-profile-scribe-harness my-profile-scribe-workspace
+npm exec --package @agent-pattern-labs/profile-scribe-rig -- create-profile-scribe-harness my-profile-scribe-workspace
 cd my-profile-scribe-workspace
 npm install
 ```
@@ -83,7 +83,7 @@ node bin/profile-scribe-harness.mjs help
 ## Publishing
 
 The npm package is published as
-`@agent-pattern-labs/profile-scribe-agent-harness` with public scoped access.
+`@agent-pattern-labs/profile-scribe-rig` with public scoped access.
 The GitHub Actions publish workflow expects `NPM_TOKEN` to be available to the
 repo or organization.
 

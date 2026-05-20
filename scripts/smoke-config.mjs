@@ -98,4 +98,4 @@ if (failures > 0) {
   process.exit(1);
 }
 
-console.log(`profile-scribe-agent-harness smoke checks passed (${requiredFiles.length} files checked).`);
+console.log(`profile-scribe-rig smoke checks passed (${requiredFiles.length} files checked).`);

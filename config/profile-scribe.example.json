@@ -11,7 +11,7 @@
   "crawler": {
     "timeoutMs": 20000,
     "maxBytes": 2000000,
-    "userAgent": "profile-scribe-agent-harness"
+    "userAgent": "profile-scribe-rig"
   },
   "retrieval": {
     "priorPostLimit": 100,

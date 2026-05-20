@@ -80,7 +80,7 @@ function isHarnessRoot(dir) {
   if (!existsSync(pkgPath)) return false;
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-    return pkg.name === '@agent-pattern-labs/profile-scribe-agent-harness' && resolve(dir) === PKG_ROOT;
+    return pkg.name === '@agent-pattern-labs/profile-scribe-rig' && resolve(dir) === PKG_ROOT;
   } catch {
     return false;
   }

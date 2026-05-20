@@ -1,5 +1,5 @@
 {
-  "name": "@agent-pattern-labs/profile-scribe-agent-harness",
+  "name": "@agent-pattern-labs/profile-scribe-rig",
   "version": "0.1.3",
   "description": "Agentic harness for crawling sources, matching user voice, and drafting Profile Scribe posts.",
   "type": "module",
@@ -39,7 +39,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/Agent-Pattern-Labs/profile-scribe-agent-harness.git"
+    "url": "git+ssh://git@github.com/Agent-Pattern-Labs/profile-scribe-rig.git"
   },
   "publishConfig": {
     "access": "public"
