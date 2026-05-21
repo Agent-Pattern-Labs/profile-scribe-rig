@@ -26,8 +26,15 @@ Use this mode for the full Profile Scribe post creation workflow.
    possible duplicate topics.
 6. Build or refresh the voice profile using `voice` mode behavior.
 7. Draft a new post with:
+   - a default source-backed professional progress note when the user does not
+     request a specific format
    - one clear point of view
    - source-backed facts
+   - a concrete work signal: what changed, shipped, was written, released,
+     updated, learned, or became clearer
+   - why the signal matters for the profile owner's current professional
+     direction
+   - a brief first-person reflection, decision, tradeoff, or pattern noticed
    - the user's observed voice
    - no heavy copying from prior posts
    - normal first-person professional wording suitable for a LinkedIn feed
@@ -48,7 +55,18 @@ Use this mode for the full Profile Scribe post creation workflow.
    and pass tone guidance that requests concise first-person professional copy;
    the hosted ProfileScribe tool owns final source-backed publication.
 10. If no specific, meaningful update exists, do not post. Return the source
-   checks performed and the reason no post was created.
+    checks performed and the reason no post was created.
+
+## Default Post Type
+
+When the user does not request a specific format, draft a concise first-person
+professional progress note grounded in visible evidence. The post should help a
+normal professional reader understand what the profile owner is currently
+building, shipping, learning, writing, or thinking about.
+
+Do not default to promotional launch copy, generic thought leadership,
+engagement bait, or summaries of crawler/source activity. Use launch framing
+only when the source context actually supports a launch.
 
 ## Output
 
