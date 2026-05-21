@@ -12,12 +12,14 @@ Use this mode to stage or publish a reviewed draft in Profile Scribe.
    - `publish`: publish only when explicitly configured or requested
 4. Prefer ProfileScribe MCP submission through `profilescribe-mcp`:
    - first source-backed post: `create_first_post_from_sources`
-   - normal follow-up post: `create_source_backed_timeline_post`
+   - normal follow-up post: `create_source_backed_timeline_post` with the final
+     harness-drafted `body`, `abstracts`, topic, tone, and selected source IDs
    - raw draft: `create_timeline_draft` only with valid ActionProof
    When the user says "create a post" without URLs, call
-   `create_source_backed_timeline_post` with a concrete topic/tone and optional
-   source IDs selected from `read_sources`; do not require user-supplied URLs.
-   The topic and tone should ask for concise, first-person professional copy.
+   `create_source_backed_timeline_post` after composing final public copy from
+   ProfileScribe profile/source/history context; do not require user-supplied
+   URLs. Do not use hosted copy generation as a fallback unless the user
+   explicitly asks ProfileScribe to draft the copy.
 5. Fall back to a configured REST API or local integration contract only when
    MCP is unavailable and the adapter exposes the required posting controls.
 6. Store a submission receipt in consumer-local state.
@@ -32,6 +34,9 @@ Use this mode to stage or publish a reviewed draft in Profile Scribe.
 - A bearer token alone is not enough for raw `create_timeline_draft` in
   production; use hosted source-backed tools unless valid ActionProof is
   available.
+- If `create_source_backed_timeline_post` does not accept `body` and
+  `abstracts`, report that the ProfileScribe integration is too old for
+  harness-authored posting.
 - If Profile Scribe integration is unavailable, return the exact draft payload
   and the missing configuration fields.
 

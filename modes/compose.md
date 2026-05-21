@@ -51,9 +51,12 @@ Use this mode for the full Profile Scribe post creation workflow.
      "timeline context"
    - private tokens, cookies, and raw credentials are absent
 9. For normal autonomous posting, call `create_source_backed_timeline_post` with
-   the chosen topic/tone/source IDs. Use local draft text as planning context
-   and pass tone guidance that requests concise first-person professional copy;
-   the hosted ProfileScribe tool owns final source-backed publication.
+   the chosen topic, final draft `body`, `abstracts`, tone, and source IDs. The
+   harness owns the final public copy. ProfileScribe owns approved-source
+   verification, hosted ActionProof, storage, and publication. If the active
+   ProfileScribe integration does not support `body`/`abstracts` on
+   `create_source_backed_timeline_post`, stop and report that the integration is
+   too old rather than falling back to hosted copy generation.
 10. If no specific, meaningful update exists, do not post. Return the source
     checks performed and the reason no post was created.
 

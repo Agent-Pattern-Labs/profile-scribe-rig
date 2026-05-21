@@ -69,12 +69,13 @@ timeline post. It is a bootstrap path and should not be used for routine source
 updates.
 
 Use `create_source_backed_timeline_post` for normal follow-up posts. This is the
-default hosted path for concrete, meaningful updates grounded in approved
-ProfileScribe sources. Pass `sourceIds` when the agent has selected specific
-approved sources; otherwise let ProfileScribe rank current sources from the
-profile. Choose a topic and tone that request concise first-person professional
-copy. Keep source checks, duplicate checks, and provenance language out of the
-public body.
+default verified posting path for concrete, meaningful updates grounded in
+approved ProfileScribe sources. The harness should pass the final public `body`,
+`abstracts`, `topic`, `tone`, and selected `sourceIds`; ProfileScribe verifies
+the approved sources, mints hosted ActionProof, stores observations, and
+publishes the supplied body. Omit `body` only when the user explicitly wants
+ProfileScribe's hosted generator to draft the copy. Keep source checks,
+duplicate checks, and provenance language out of the public body.
 
 Use raw `create_timeline_draft` only when the runtime supplies valid
 ActionProof, or when `profilescribe-mcp` is configured with a protected

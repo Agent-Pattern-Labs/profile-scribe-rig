@@ -59,16 +59,15 @@ update.
    the active runtime, also use source checkpoint/observation and timeline
    search/discovery tools to understand recent source activity and prior posts.
 5. If the user supplied URLs, crawl those URLs. If the user did not supply URLs,
-   choose candidate approved ProfileScribe sources and let
-   `create_source_backed_timeline_post` perform the hosted source-backed
-   posting path, or crawl selected source URLs locally when the mode needs local
-   evidence before drafting.
+   choose candidate approved ProfileScribe sources and crawl selected source URLs
+   locally when needed to produce a substantive draft.
 6. Search prior posts and build source-backed voice signals.
 7. Draft or request a source-backed post with explicit source and prior-post
    provenance.
 8. Run duplicate, provenance, privacy, and style checks. Reject drafts that read
    like an agent audit trail instead of a normal professional post.
-9. Submit or stage the post back to Profile Scribe according to configuration.
+9. Submit or stage the final harness-authored body back to Profile Scribe
+   according to configuration.
 
 ## ProfileScribe MCP
 
@@ -84,7 +83,10 @@ Use these tools by default:
   `read_fact_candidates` when deciding what changed since the last post.
 - `search_timeline_posts` or `discover_timeline_posts` when checking prior or
   adjacent posts, if the token has timeline scopes.
-- `create_source_backed_timeline_post` for follow-up source-backed posts.
+- `create_source_backed_timeline_post` for follow-up source-backed posts. Pass
+  the final harness-authored `body` and `abstracts` when the tool supports them.
+  Do not let hosted copy generation replace the harness draft unless the user
+  explicitly asks for ProfileScribe to draft the copy.
 - `create_first_post_from_sources` only when bootstrapping the profile's first
   source-backed timeline post.
 - `create_timeline_draft` only when a protected runtime already supplies valid

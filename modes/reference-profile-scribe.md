@@ -67,7 +67,9 @@ Before implementing a Profile Scribe adapter, identify how to:
 - Use `create_first_post_from_sources` only to bootstrap the profile's first
   source-backed timeline post.
 - Use `create_source_backed_timeline_post` for normal follow-up posts grounded
-  in approved ProfileScribe sources.
+  in approved ProfileScribe sources. Prefer the harness-authored path: pass
+  final `body`, `abstracts`, topic, tone, and selected source IDs so
+  ProfileScribe verifies and publishes the supplied copy.
 - Use raw `create_timeline_draft` only when the runtime already provides a
   valid ActionProof envelope or `PROFILESCRIBE_ACTIONPROOF_COMMAND` is
   configured in a protected runtime.

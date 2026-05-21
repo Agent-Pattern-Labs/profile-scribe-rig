@@ -61,14 +61,15 @@ export PROFILESCRIBE_AGENT_TOKEN=psagt_...
 export PROFILESCRIBE_MCP_URL=https://profilescribe.com/api/mcp
 ```
 
-The normal posting path is `create_source_backed_timeline_post`, which uses
-ProfileScribe's hosted source-backed posting flow. A user can ask "create a
-post" without supplying URLs; the harness should read ProfileScribe profile
-data, approved sources, source activity, and prior timeline context, then decide
-whether there is a meaningful source-backed update to publish. Use
-`create_first_post_from_sources` only to bootstrap the first timeline post. Use
-raw `create_timeline_draft` only from a protected runtime that can provide valid
-ActionProof.
+The normal posting path is `create_source_backed_timeline_post` with the
+harness-authored final `body`, `abstracts`, topic, tone, and selected source
+IDs. A user can ask "create a post" without supplying URLs; the harness should
+read ProfileScribe profile data, approved sources, source activity, and prior
+timeline context, then decide whether there is a meaningful source-backed update
+to publish. ProfileScribe verifies sources, mints hosted ActionProof, stores
+observations, and publishes the supplied body. Use `create_first_post_from_sources`
+only to bootstrap the first timeline post. Use raw `create_timeline_draft` only
+from a protected runtime that can provide valid ActionProof.
 
 ## Local Development
 

@@ -1,6 +1,6 @@
 {
   "name": "@agent-pattern-labs/profile-scribe-rig",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Agentic harness for crawling sources, matching user voice, and drafting Profile Scribe posts.",
   "type": "module",
   "bin": {

@@ -53,7 +53,10 @@ The harness helps a user create a fresh Profile Scribe post by doing the researc
   timeline context" into publishable copy.
 - Create a genuinely new post for each request. Do not simply rewrite an older post unless the user explicitly asks for a revision.
 - Keep provenance available internally: track which URLs and prior posts influenced the draft so future UI or audit features can expose that context.
-- When posting back to Profile Scribe, prefer a draft or review state unless the user or integration explicitly requests immediate publishing.
+- When posting back to Profile Scribe, submit the harness-authored final body
+  through the verified source-backed posting tool when supported. Prefer a draft
+  or review state unless the user or integration explicitly requests immediate
+  publishing.
 
 ## Open-Source Requirements
 
