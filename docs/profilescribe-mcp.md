@@ -77,6 +77,12 @@ publishes the supplied body. Omit `body` only when the user explicitly wants
 ProfileScribe's hosted generator to draft the copy. Keep source checks,
 duplicate checks, and provenance language out of the public body.
 
+Select `sourceIds` by claim alignment. Each submitted source should support a
+specific sentence or claim in the final public body. Prefer the smallest source
+set that makes the post credible. Do not include broader product, project,
+company, or identity sources solely because they are adjacent context; if a post
+needs that source, the body should make the supported connection clear.
+
 Use raw `create_timeline_draft` only when the runtime supplies valid
 ActionProof, or when `profilescribe-mcp` is configured with a protected
 `PROFILESCRIBE_ACTIONPROOF_COMMAND`. A bearer token alone is not sufficient for

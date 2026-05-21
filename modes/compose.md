@@ -30,6 +30,8 @@ Use this mode for the full Profile Scribe post creation workflow.
      request a specific format
    - one clear point of view
    - source-backed facts
+   - source selection that matches the actual public claim, not the broader
+     research context
    - a concrete work signal: what changed, shipped, was written, released,
      updated, learned, or became clearer
    - why the signal matters for the profile owner's current professional
@@ -43,6 +45,10 @@ Use this mode for the full Profile Scribe post creation workflow.
 8. Run checks:
    - all crawled claims have provenance
    - duplicate risk is acceptable or called out
+   - each selected source ID directly supports at least one sentence or claim in
+     the final public body
+   - no source is included only as adjacent background, inspiration, or a loose
+     bridge to a broader body of work
    - voice does not drift into generic assistant prose
    - the draft reads like the profile owner wrote it for people, not like an
      agent thinking out loud
@@ -51,7 +57,8 @@ Use this mode for the full Profile Scribe post creation workflow.
      "timeline context"
    - private tokens, cookies, and raw credentials are absent
 9. For normal autonomous posting, call `create_source_backed_timeline_post` with
-   the chosen topic, final draft `body`, `abstracts`, tone, and source IDs. The
+   the chosen topic, final draft `body`, `abstracts`, tone, and minimal source
+   IDs that directly substantiate the final body. The
    harness owns the final public copy. ProfileScribe owns approved-source
    verification, hosted ActionProof, storage, and publication. If the active
    ProfileScribe integration does not support `body`/`abstracts` on

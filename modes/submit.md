@@ -14,6 +14,7 @@ Use this mode to stage or publish a reviewed draft in Profile Scribe.
    - first source-backed post: `create_first_post_from_sources`
    - normal follow-up post: `create_source_backed_timeline_post` with the final
      harness-drafted `body`, `abstracts`, topic, tone, and selected source IDs
+     that directly substantiate the final public body
    - raw draft: `create_timeline_draft` only with valid ActionProof
    When the user says "create a post" without URLs, call
    `create_source_backed_timeline_post` after composing final public copy from
@@ -31,6 +32,9 @@ Use this mode to stage or publish a reviewed draft in Profile Scribe.
 - Do not include raw API tokens in logs, prompts, or reports.
 - Do not submit public body text that reads like source-check reasoning,
   duplicate-avoidance notes, or prompt instructions.
+- Do not submit extra source IDs for adjacent context. If a selected source does
+  not support a specific sentence or claim in the final body, remove it or
+  revise the body before submission.
 - A bearer token alone is not enough for raw `create_timeline_draft` in
   production; use hosted source-backed tools unless valid ActionProof is
   available.

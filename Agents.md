@@ -51,6 +51,11 @@ The harness helps a user create a fresh Profile Scribe post by doing the researc
   submission metadata. Do not leak phrases like "approved sources", "source
   backed", "crawl summary", "public claim", "this post should", or "recent
   timeline context" into publishable copy.
+- Select the smallest source set that directly supports the public post. Do not
+  attach a source merely because it is adjacent context, inspired the angle, or
+  represents a broader body of work. If the post bridges two sources, the final
+  body must make concrete, source-backed claims about both; otherwise narrow
+  the source list or rewrite the post around the broader claim.
 - Create a genuinely new post for each request. Do not simply rewrite an older post unless the user explicitly asks for a revision.
 - Keep provenance available internally: track which URLs and prior posts influenced the draft so future UI or audit features can expose that context.
 - When posting back to Profile Scribe, submit the harness-authored final body

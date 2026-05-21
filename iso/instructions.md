@@ -11,26 +11,42 @@ update.
 - [H1] Do not hard-code local Profile Scribe paths, credentials, cookies, user
   IDs, or API tokens. Resolve Profile Scribe through consumer config or
   environment variables.
+  why: Keeps the harness portable and prevents accidental credential exposure.
 - [H2] Crawl every URL supplied by the user before drafting. If a URL cannot be
   crawled, record the failure and do not invent source details.
+  why: Public claims need evidence, and failed crawls must not become fabricated
+  context.
 - [H3] When no URLs are supplied, use ProfileScribe MCP to read the user's
   profile, approved sources, source checkpoints/observations when available,
   and timeline/search context before deciding what to post.
+  why: A bare posting request still needs current source and history context.
 - [H4] Search prior posts before drafting unless the user explicitly requests a
   context-free draft. Use prior posts for voice and duplication checks, not for
   copying.
+  why: The post should sound consistent without repeating old substance.
 - [H5] Produce a fresh post. Do not recycle or lightly rewrite an older post
   unless the user asked for a revision.
+  why: Timeline updates should add a new professional signal.
 - [H6] Preserve provenance for ProfileScribe sources, crawled URLs, prior posts
   consulted, voice signals, duplicate checks, and Profile Scribe submission
   receipts.
+  why: Reviewers need to inspect why a post was drafted and submitted.
 - [H7] Public post bodies must read like concise first-person professional
   updates. Keep agent reasoning, source checks, duplicate-avoidance notes, and
   prompt constraints out of publishable copy.
+  why: Readers should see the profile owner's update, not the agent workflow.
 - [H8] Default to draft or review submission. Publish immediately only when the
   user or configured integration explicitly asks for publish mode.
+  why: Publishing is the highest-impact action in the workflow.
 - [H9] Keep private posts, crawled pages, drafts, and submission state in the
   consumer project. The harness package must stay portable.
+  why: The open-source package must not contain user-private data.
+- [H10] Source IDs submitted with a post must directly support claims in the
+  final public body. Use the smallest credible source set; do not include
+  adjacent, contextual, or aspirational sources unless the post explicitly and
+  accurately says something about them.
+  why: Source attribution should explain the post's actual claims, not the
+  agent's broader research path.
 
 ## Defaults
 
@@ -49,25 +65,29 @@ update.
 
 ## Procedure
 
-1. Resolve consumer config from `config/profile-scribe.json`, then environment
+1. [H1] Resolve consumer config from `config/profile-scribe.json`, then environment
    variables. Required integration values depend on whether the consumer uses a
    local Profile Scribe checkout, REST API, or `profilescribe-mcp`.
 2. Pick and state the active mode from the router.
 3. Load only `modes/_shared.md` plus the active mode file. Load reference files
    only when the active task is blocked by setup or integration details.
-4. Call ProfileScribe MCP `read_profile` and `read_sources`. If available for
+4. [H3] Call ProfileScribe MCP `read_profile` and `read_sources`. If available for
    the active runtime, also use source checkpoint/observation and timeline
    search/discovery tools to understand recent source activity and prior posts.
-5. If the user supplied URLs, crawl those URLs. If the user did not supply URLs,
-   choose candidate approved ProfileScribe sources and crawl selected source URLs
-   locally when needed to produce a substantive draft.
-6. Search prior posts and build source-backed voice signals.
-7. Draft or request a source-backed post with explicit source and prior-post
-   provenance.
-8. Run duplicate, provenance, privacy, and style checks. Reject drafts that read
-   like an agent audit trail instead of a normal professional post.
-9. Submit or stage the final harness-authored body back to Profile Scribe
-   according to configuration.
+5. [H2] [H3] Crawl supplied URLs; otherwise select approved sources.
+   Crawl selected ProfileScribe source URLs locally when needed to produce a
+   substantive draft.
+6. Search prior posts and build source-backed voice signals. [H4]
+7. [H5] [H6] [H10] Draft or request a source-backed post with explicit source and prior-post
+   provenance. Keep the selected sources aligned to the final body: every
+   submitted `sourceId` should answer "which sentence or claim needs this
+   source?"
+8. [H7] [H10] Run duplicate, provenance, privacy, and style checks. Reject drafts that read
+   like an agent audit trail instead of a normal professional post. Remove any
+   selected source that only provides background context, or rewrite the draft
+   so the source-backed claim is clear and warranted.
+9. [H6] [H8] [H9] Submit or stage the final harness-authored body back to
+   Profile Scribe according to configuration.
 
 ## ProfileScribe MCP
 
