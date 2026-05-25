@@ -16,12 +16,14 @@ Usage:
   profile-scribe-harness workflow
   profile-scribe-harness paths
   profile-scribe-harness config:check
+  profile-scribe-harness run-job --job-file <path>
   profile-scribe-harness sync
 
 Commands:
   workflow      Show the expected crawl -> history -> voice -> draft -> submit loop
   paths         Print harness and active project paths
   config:check  Validate this harness scaffold and parse JSON policy files
+  run-job       Execute one managed ProfileScribe job payload
   sync          Link shared harness files into the active consumer project
 `;
 
@@ -65,6 +67,10 @@ switch (cmd) {
 
   case 'config:check':
     runNode('scripts/smoke-config.mjs', args);
+    break;
+
+  case 'run-job':
+    runNode('bin/run-job.mjs', args);
     break;
 
   case 'sync':

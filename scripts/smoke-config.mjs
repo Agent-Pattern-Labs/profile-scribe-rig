@@ -12,6 +12,7 @@ const requiredFiles = [
   'models.yaml',
   'bin/profile-scribe-harness.mjs',
   'bin/create-profile-scribe-harness.mjs',
+  'bin/run-job.mjs',
   'bin/sync.mjs',
   'config/profile-scribe.example.json',
   'iso/instructions.md',
@@ -54,6 +55,7 @@ const jsonFiles = [
 const executableFiles = [
   'bin/profile-scribe-harness.mjs',
   'bin/create-profile-scribe-harness.mjs',
+  'bin/run-job.mjs',
   'bin/sync.mjs',
   'scripts/smoke-config.mjs'
 ];

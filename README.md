@@ -79,7 +79,28 @@ Useful commands:
 npm run smoke:config
 npm run sync
 node bin/profile-scribe-harness.mjs help
+profile-scribe-harness run-job --job-file ./job.json --dry-run
 ```
+
+## Managed Worker Entry Point
+
+`profile-scribe-harness run-job` is the deterministic command that hosted
+workers call for one ProfileScribe managed-agent job. It reads a job JSON file,
+uses ProfileScribe MCP for profile/source/timeline context, optionally calls a
+configured drafter command, and returns a JSON receipt for the worker to store.
+
+Useful environment:
+
+```bash
+export PROFILESCRIBE_AGENT_TOKEN=psagt_...
+export PROFILESCRIBE_MCP_URL=https://profilescribe.com/api/mcp
+export PROFILESCRIBE_RIG_DRAFTER_COMMAND='your-drafter-command'
+export PROFILESCRIBE_RIG_INTERVIEW_COMMAND='your-interview-command'
+```
+
+Without a drafter command or a `payload.body`, scheduled post jobs skip instead
+of publishing generic copy. This keeps the managed worker safe until Hermes or
+another model-backed drafter is attached.
 
 ## Publishing
 
