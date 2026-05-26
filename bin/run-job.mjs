@@ -96,7 +96,11 @@ async function runPostJob(job, options) {
   }
 
   const context = await loadProfileScribeContext(payload);
-  const draft = await resolveDraft(job, context);
+  const draft = normalizeDraftSourceIds(
+    await resolveDraft(job, context),
+    context,
+    numberOr(payload.maxSources, 3)
+  );
   if (!draft.body && !boolEnv('PROFILESCRIBE_RIG_ALLOW_HOSTED_DRAFT_FALLBACK')) {
     return {
       status: 'skipped',
@@ -114,7 +118,7 @@ async function runPostJob(job, options) {
     return skipped(job, `A recent timeline post already covers this update: ${duplicate.topic || 'untitled post'}`, {
       duplicatePost: duplicate,
       topic: draft.topic || payload.topic || '',
-      sourceIds: array(draft.sourceIds || payload.sourceIds),
+      sourceIds: array(draft.sourceIds),
       checkedSources: context.sources.length
     });
   }
@@ -127,13 +131,13 @@ async function runPostJob(job, options) {
       abstracts: array(draft.abstracts),
       tone: draft.tone || payload.tone || 'professional',
       maxSources: numberOr(payload.maxSources, 3),
-      sourceIds: array(draft.sourceIds || payload.sourceIds)
+      sourceIds: array(draft.sourceIds)
     }));
   } catch (error) {
     if (isDuplicateTimelinePostError(error)) {
       return skipped(job, 'A recent timeline post already covers this source-backed update.', {
         topic: draft.topic || payload.topic || '',
-        sourceIds: array(draft.sourceIds || payload.sourceIds),
+        sourceIds: array(draft.sourceIds),
         checkedSources: context.sources.length
       });
     }
@@ -149,7 +153,7 @@ async function runPostJob(job, options) {
     artifactId: response?.draft?.id || response?.id || '',
     metadata: {
       topic: draft.topic || payload.topic || '',
-      sourceIds: array(draft.sourceIds || payload.sourceIds),
+      sourceIds: array(draft.sourceIds),
       checkedSources: context.sources.length,
       drafter: object(draft.metadata)
     }
@@ -249,6 +253,67 @@ async function resolveDraft(job, context) {
   };
 }
 
+function normalizeDraftSourceIds(draft, context, maxSources) {
+  draft = object(draft);
+  const rawSourceIds = array(draft.sourceIds);
+  const normalized = normalizeSourceIds(rawSourceIds, context.sources, maxSources);
+  const metadata = object(draft.metadata);
+  if (normalized.changed) {
+    metadata.sourceIdNormalization = compact({
+      requested: rawSourceIds,
+      submitted: normalized.ids,
+      dropped: normalized.dropped
+    });
+  }
+  return {
+    ...draft,
+    sourceIds: normalized.ids,
+    metadata
+  };
+}
+
+function normalizeSourceIds(sourceIds, sources, maxSources) {
+  const sourceList = arrayOfObjects(sources);
+  const approvedIDs = sourceList
+    .map((source) => text(source.id))
+    .filter(Boolean);
+  const limit = numberOr(maxSources, 3);
+  const ids = [];
+  const seen = new Set();
+  const dropped = [];
+
+  for (const rawID of array(sourceIds)) {
+    const sourceID = resolveApprovedSourceId(rawID, approvedIDs);
+    if (!sourceID) {
+      dropped.push(rawID);
+      continue;
+    }
+    if (seen.has(sourceID)) continue;
+    ids.push(sourceID);
+    seen.add(sourceID);
+    if (limit > 0 && ids.length >= limit) break;
+  }
+
+  return {
+    ids,
+    dropped,
+    changed: dropped.length > 0 || ids.join('\n') !== array(sourceIds).join('\n')
+  };
+}
+
+function resolveApprovedSourceId(rawID, approvedIDs) {
+  const sourceID = text(rawID);
+  if (!sourceID) return '';
+  if (approvedIDs.includes(sourceID)) return sourceID;
+
+  const sourceIDLower = sourceID.toLowerCase();
+  const prefixMatches = approvedIDs.filter((approvedID) =>
+    approvedID.toLowerCase().startsWith(sourceIDLower)
+  );
+  if (prefixMatches.length === 1) return prefixMatches[0];
+  return '';
+}
+
 async function findRecentDuplicateDraft(draft, context) {
   const seen = new Set();
   const searches = [object(context.timelineSearch)];
@@ -312,7 +377,7 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
           body: 'plain text, specific, professional, maximum 900 characters',
           abstracts: '1-3 short evidence summary lines',
           tone: 'short tone label',
-          sourceIds: 'IDs of the approved sources used; use at most maxSources',
+          sourceIds: 'Exact full source.id values from the approved sources used; never shorten or truncate IDs; use at most maxSources',
           maxSources: numberOr(payload.maxSources, 3),
           skipWhenWeak: 'Return empty body if evidence is generic, stale, missing, or not professionally meaningful.'
         },

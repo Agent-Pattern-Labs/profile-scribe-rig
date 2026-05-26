@@ -1,6 +1,6 @@
 {
   "name": "@agent-pattern-labs/profile-scribe-rig",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Agentic harness for crawling sources, matching user voice, and drafting Profile Scribe posts.",
   "type": "module",
   "bin": {
@@ -9,8 +9,9 @@
   },
   "scripts": {
     "sync": "node bin/sync.mjs",
-    "verify": "npm run smoke:config",
+    "verify": "npm run smoke:config && npm run smoke:source-ids",
     "smoke:config": "node scripts/smoke-config.mjs",
+    "smoke:source-ids": "node scripts/smoke-run-job-source-ids.mjs",
     "plan": "iso plan .",
     "build:config": "iso build .",
     "lint:agentmd": "agentmd lint iso/instructions.md",
