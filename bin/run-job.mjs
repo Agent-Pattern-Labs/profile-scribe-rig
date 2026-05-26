@@ -109,15 +109,36 @@ async function runPostJob(job, options) {
       }
     };
   }
+  const duplicate = await findRecentDuplicateDraft(draft, context);
+  if (duplicate) {
+    return skipped(job, `A recent timeline post already covers this update: ${duplicate.topic || 'untitled post'}`, {
+      duplicatePost: duplicate,
+      topic: draft.topic || payload.topic || '',
+      sourceIds: array(draft.sourceIds || payload.sourceIds),
+      checkedSources: context.sources.length
+    });
+  }
 
-  const response = await callMCPTool('create_source_backed_timeline_post', compact({
-    topic: draft.topic || payload.topic || '',
-    body: draft.body || '',
-    abstracts: array(draft.abstracts),
-    tone: draft.tone || payload.tone || 'professional',
-    maxSources: numberOr(payload.maxSources, 3),
-    sourceIds: array(draft.sourceIds || payload.sourceIds)
-  }));
+  let response;
+  try {
+    response = await callMCPTool('create_source_backed_timeline_post', compact({
+      topic: draft.topic || payload.topic || '',
+      body: draft.body || '',
+      abstracts: array(draft.abstracts),
+      tone: draft.tone || payload.tone || 'professional',
+      maxSources: numberOr(payload.maxSources, 3),
+      sourceIds: array(draft.sourceIds || payload.sourceIds)
+    }));
+  } catch (error) {
+    if (isDuplicateTimelinePostError(error)) {
+      return skipped(job, 'A recent timeline post already covers this source-backed update.', {
+        topic: draft.topic || payload.topic || '',
+        sourceIds: array(draft.sourceIds || payload.sourceIds),
+        checkedSources: context.sources.length
+      });
+    }
+    throw error;
+  }
 
   return {
     status: 'completed',
@@ -226,6 +247,52 @@ async function resolveDraft(job, context) {
     sourceIds: array(draft.sourceIds),
     metadata: object(draft.metadata)
   };
+}
+
+async function findRecentDuplicateDraft(draft, context) {
+  const seen = new Set();
+  const searches = [object(context.timelineSearch)];
+  const topic = text(draft.topic);
+  const body = text(draft.body);
+  if (topic) searches.push(await searchTimelinePosts(topic, 8));
+  if (body) searches.push(await searchTimelinePosts(truncate(body, 180), 8));
+
+  const candidates = [];
+  for (const search of searches) {
+    for (const post of arrayOfObjects(search?.results)) {
+      const key = text(post.postId || post.id || `${post.authorSlug}:${post.topic}:${post.publishedAt}`);
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      candidates.push(post);
+    }
+  }
+
+  const draftBody = comparablePostText(body);
+  const draftTopic = comparablePostText(topic);
+  const draftSourceURLs = sourceURLsForDraft(draft, context);
+  for (const post of candidates) {
+    if (draftBody && draftBody === comparablePostText(post.body)) {
+      return duplicatePostSummary(post);
+    }
+    if (
+      draftTopic &&
+      draftTopic === comparablePostText(post.topic) &&
+      sourceURLSetsOverlap(draftSourceURLs, sourceURLsForPost(post))
+    ) {
+      return duplicatePostSummary(post);
+    }
+  }
+  return null;
+}
+
+async function searchTimelinePosts(query, limit) {
+  query = text(query);
+  if (!query) return null;
+  try {
+    return await callMCPTool('search_timeline_posts', { query, limit });
+  } catch {
+    return null;
+  }
 }
 
 async function resolveDraftWithOpenRouter(job, context) {
@@ -496,6 +563,71 @@ function compactTimelineSearch(timelineSearch) {
   });
 }
 
+function comparablePostText(value) {
+  return text(value)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter(Boolean)
+    .join(' ');
+}
+
+function sourceURLsForDraft(draft, context) {
+  const wanted = new Set(array(draft.sourceIds).map((item) => text(item)).filter(Boolean));
+  if (wanted.size === 0) return new Set();
+  const urls = new Set();
+  for (const source of arrayOfObjects(context.sources)) {
+    if (wanted.has(text(source.id))) {
+      const url = comparableURL(source.url);
+      if (url) urls.add(url);
+    }
+  }
+  return urls;
+}
+
+function sourceURLsForPost(post) {
+  const urls = new Set();
+  for (const source of arrayOfObjects(post.sources)) {
+    const url = comparableURL(source.url);
+    if (url) urls.add(url);
+  }
+  return urls;
+}
+
+function sourceURLSetsOverlap(left, right) {
+  if (!left || !right || left.size === 0 || right.size === 0) return false;
+  for (const value of left) {
+    if (right.has(value)) return true;
+  }
+  return false;
+}
+
+function comparableURL(value) {
+  value = text(value);
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    url.search = '';
+    return url.toString().replace(/\/+$/, '').toLowerCase();
+  } catch {
+    return value.replace(/\/+$/, '').toLowerCase();
+  }
+}
+
+function duplicatePostSummary(post) {
+  return compact({
+    topic: text(post.topic),
+    publishedAt: text(post.publishedAt),
+    authorSlug: text(post.authorSlug)
+  });
+}
+
+function isDuplicateTimelinePostError(error) {
+  return text(error?.message || error)
+    .toLowerCase()
+    .includes('duplicates a recent published post');
+}
+
 async function callMCPTool(name, argumentsPayload) {
   const token = process.env.PROFILESCRIBE_AGENT_TOKEN || '';
   const url = process.env.PROFILESCRIBE_MCP_URL || 'https://profilescribe.com/api/mcp';
@@ -541,12 +673,13 @@ function runJSONCommand(command, input) {
   return parseJSON(result.stdout, `command output from ${command}`);
 }
 
-function skipped(job, summary) {
+function skipped(job, summary, metadata = {}) {
   return {
     status: 'skipped',
     jobId: text(job.id),
     jobKind: text(job.kind),
-    summary
+    summary,
+    metadata: object(metadata)
   };
 }
 
