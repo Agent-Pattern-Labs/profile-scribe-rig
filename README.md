@@ -54,6 +54,9 @@ this harness, grant at least:
 - `observe:sources`
 - `write:drafts`
 
+Grant `write:sources` as well when the harness should add, update, or remove
+approved sources on explicit user request.
+
 Export the token before starting your agent runtime:
 
 ```bash
@@ -70,6 +73,10 @@ to publish. ProfileScribe verifies sources, mints hosted ActionProof, stores
 observations, and publishes the supplied body. Use `create_first_post_from_sources`
 only to bootstrap the first timeline post. Use raw `create_timeline_draft` only
 from a protected runtime that can provide valid ActionProof.
+
+For source-management requests, call `read_sources` first and use `add_source`,
+`update_source`, or `remove_source` only when the user explicitly asks for that
+change. Source removal should use the exact source ID whenever possible.
 
 ## Local Development
 

@@ -27,6 +27,9 @@ procedural work that benefits from bounded tool use and structured outputs.
 - Call ProfileScribe MCP tools such as `read_profile`, `read_sources`, and
   `create_source_backed_timeline_post` when the orchestrator gives explicit
   instructions.
+- Use `add_source`, `update_source`, or `remove_source` only for explicit
+  source-management instructions, after reading sources and identifying the
+  exact source to change.
 
 ## Do Not
 

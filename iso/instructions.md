@@ -74,19 +74,24 @@ update.
 4. [H3] Call ProfileScribe MCP `read_profile` and `read_sources`. If available for
    the active runtime, also use source checkpoint/observation and timeline
    search/discovery tools to understand recent source activity and prior posts.
-5. [H2] [H3] Crawl supplied URLs; otherwise select approved sources.
+5. For explicit source-management requests, use `read_sources` first, then call
+   `add_source`, `update_source`, or `remove_source` with the exact source ID or
+   URL match. Do not remove a source merely because it is weak, stale, or unused
+   for a post; source removal requires a direct user instruction. Report the
+   result and stop unless the user also asked for a post.
+6. [H2] [H3] Crawl supplied URLs; otherwise select approved sources.
    Crawl selected ProfileScribe source URLs locally when needed to produce a
    substantive draft.
-6. Search prior posts and build source-backed voice signals. [H4]
-7. [H5] [H6] [H10] Draft or request a source-backed post with explicit source and prior-post
+7. Search prior posts and build source-backed voice signals. [H4]
+8. [H5] [H6] [H10] Draft or request a source-backed post with explicit source and prior-post
    provenance. Keep the selected sources aligned to the final body: every
    submitted `sourceId` should answer "which sentence or claim needs this
    source?"
-8. [H7] [H10] Run duplicate, provenance, privacy, and style checks. Reject drafts that read
+9. [H7] [H10] Run duplicate, provenance, privacy, and style checks. Reject drafts that read
    like an agent audit trail instead of a normal professional post. Remove any
    selected source that only provides background context, or rewrite the draft
    so the source-backed claim is clear and warranted.
-9. [H6] [H8] [H9] Submit or stage the final harness-authored body back to
+10. [H6] [H8] [H9] Submit or stage the final harness-authored body back to
    Profile Scribe according to configuration.
 
 ## ProfileScribe MCP
@@ -103,6 +108,9 @@ Use these tools by default:
   `read_fact_candidates` when deciding what changed since the last post.
 - `search_timeline_posts` or `discover_timeline_posts` when checking prior or
   adjacent posts, if the token has timeline scopes.
+- `add_source`, `update_source`, or `remove_source` only for explicit
+  source-management requests. Use `read_sources` first and pass the exact source
+  ID whenever possible.
 - `create_source_backed_timeline_post` for follow-up source-backed posts. Pass
   the final harness-authored `body` and `abstracts` when the tool supports them.
   Do not let hosted copy generation replace the harness draft unless the user

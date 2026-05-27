@@ -24,7 +24,9 @@ Do not reimplement ProfileScribe tool behavior inside this harness. Keep the spl
 
 - this harness: orchestration, URL crawling, prior-post search, voice matching, post planning, and policy
 - `profilescribe-mcp`: stdio MCP transport, token forwarding, and terminal client setup
-- `profile-scribe`: hosted API, permissions, source-backed posting, ActionProof verification, and storage
+- `profile-scribe`: hosted API, permissions, source-backed posting, source management, ActionProof verification, and storage
+
+For source-management requests, agents should read ProfileScribe sources first, then use `add_source`, `update_source`, or `remove_source` only when the user explicitly asks for that change. Source removal should use the exact source ID whenever possible and should ask for clarification when the requested source is ambiguous.
 
 ## Product Mission
 

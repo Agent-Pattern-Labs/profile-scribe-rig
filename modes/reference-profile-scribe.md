@@ -51,6 +51,9 @@ Minimum useful scopes for this harness:
 Add `read:timeline` and `interact:timeline` only when the workflow will search,
 like, or comment on adjacent timeline posts.
 
+Add `write:sources` only when the workflow will add, update, or remove approved
+sources at the user's explicit request.
+
 ## Required Capabilities
 
 Before implementing a Profile Scribe adapter, identify how to:
@@ -75,6 +78,14 @@ Before implementing a Profile Scribe adapter, identify how to:
   configured in a protected runtime.
 - Do not use any posting tool for generic crawl summaries, source-change spam,
   repeated angles, or inflated claims.
+
+## Source Tool Choice
+
+- Use `read_sources` before any source-management action.
+- Use `add_source`, `update_source`, or `remove_source` only for explicit
+  source-management requests.
+- For `remove_source`, prefer the exact source ID from `read_sources`; ask for
+  clarification when multiple sources match the user's request.
 
 ## Missing Integration Behavior
 

@@ -53,8 +53,21 @@ Optional scopes:
 
 - `read:timeline` for timeline discovery/search
 - `interact:timeline` for likes and comments
-- `write:sources` for adding or updating approved sources
+- `write:sources` for adding, updating, or removing approved sources
 - `propose:profile` for review-only profile edit proposals
+
+## Source Management Tools
+
+Use `read_sources` before any source-management action so the agent can match
+the user's request to the actual approved source record.
+
+Use `add_source` or `update_source` only when the user explicitly asks to add or
+change a source.
+
+Use `remove_source` only when the user explicitly asks to remove, delete,
+detach, or disconnect a source. Prefer the exact source ID from `read_sources`;
+fall back to an exact URL or clear label/host match. If multiple sources match,
+ask for clarification instead of guessing.
 
 ## Posting Tools
 
