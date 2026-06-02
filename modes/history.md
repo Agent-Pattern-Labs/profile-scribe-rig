@@ -19,15 +19,20 @@ Use this mode to search previous Profile Scribe posts and detect repetition.
    - repeated titles, openings, claims, and story shapes
    - recurring terms that describe the current direction of the timeline
    - angles the next post should avoid unless it has new evidence
-6. Flag duplicate risk:
+6. Rank source opportunities before drafting:
+   - prefer approved sources not represented in recent posts
+   - prefer recently checked or high-trust sources with concrete public content
+   - demote sources that already appear repeatedly unless a new angle is clear
+   - keep explicit user topic/source matches high in the queue
+7. Flag duplicate risk:
    - same thesis already posted
    - same source already used
    - same anecdote or story shape repeated recently
    - same call to action repeated recently
-7. Pass style-relevant examples to `voice` mode without copying full private
+8. Pass style-relevant examples to `voice` mode without copying full private
    post bodies into prompts when a compact style profile is enough.
 
 ## Output
 
-Return related posts, timeline direction, duplicate risk, and recommended
-differentiation.
+Return related posts, timeline direction, ranked source opportunities, duplicate
+risk, and recommended differentiation.

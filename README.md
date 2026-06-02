@@ -112,9 +112,10 @@ export PROFILESCRIBE_RIG_INTERVIEW_COMMAND='your-interview-command'
 
 When OpenRouter is configured and no custom command is present, the rig fetches
 short approved-source extracts, builds a pre-draft timeline brief from recent
-posts and timeline search, and asks `PROFILESCRIBE_RIG_DRAFT_MODEL` for
-conservative source-backed post copy that avoids repeated sources, claims,
-topics, and openings. `PROFILESCRIBE_RIG_OPENROUTER_MODEL`
+posts and timeline search, ranks source opportunities across the approved
+source graph, and asks `PROFILESCRIBE_RIG_DRAFT_MODEL` for conservative
+source-backed post copy that discovers an under-covered angle while avoiding
+repeated sources, claims, topics, and openings. `PROFILESCRIBE_RIG_OPENROUTER_MODEL`
 continues to cover non-draft native OpenRouter tasks such as interview turns.
 Without OpenRouter, a drafter command, or a
 `payload.body`, scheduled post jobs skip unless the worker explicitly enables

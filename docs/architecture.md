@@ -29,11 +29,13 @@ Consumer projects own private runtime data:
 3. The harness retrieves and searches prior Profile Scribe posts.
 4. The harness builds a compact timeline brief: recent post direction, covered
    sources, repeated openings, duplicate-prone topics, and angles to avoid.
-5. The harness builds a compact voice profile.
-6. The harness drafts a fresh post in the user's voice.
-7. The harness checks duplicate risk, provenance, and privacy before
+5. The harness ranks source opportunities across the approved source graph so a
+   generic post request can discover an under-covered professional angle.
+6. The harness builds a compact voice profile.
+7. The harness drafts a fresh post in the user's voice.
+8. The harness checks duplicate risk, provenance, and privacy before
    submission.
-8. The harness stages the draft back to Profile Scribe.
+9. The harness stages the draft back to Profile Scribe.
 
 ## Integration Boundary
 

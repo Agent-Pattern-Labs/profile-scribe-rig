@@ -23,7 +23,10 @@ update.
 - [H4] Search prior posts before drafting unless the user explicitly requests a
   context-free draft. Build a compact timeline brief that captures recent
   direction, covered sources, repeated topics, repeated openings, and angles to
-  avoid. Use prior posts for voice and duplication checks, not for copying.
+  avoid. Rank source opportunities across the approved source graph so a bare
+  "create a post" request can discover an under-covered professional angle
+  without the user naming a source. Use prior posts for voice and duplication
+  checks, not for copying.
   why: The post should sound consistent without repeating old substance.
 - [H5] Produce a fresh post. Do not recycle or lightly rewrite an older post
   unless the user asked for a revision.
@@ -85,11 +88,12 @@ update.
    substantive draft.
 7. Search prior posts and build source-backed voice signals. [H4]
 8. [H4] [H5] [H6] [H10] Draft or request a source-backed post with explicit
-   source and prior-post provenance. Use the timeline brief to avoid repeated
-   sources, claims, titles, and story shapes unless the final body contains a
-   materially new angle. Keep the selected sources aligned to the final body:
-   every submitted `sourceId` should answer "which sentence or claim needs this
-   source?"
+   source and prior-post provenance. Use the timeline brief and ranked source
+   opportunities to find the strongest under-covered source-backed angle before
+   giving up. Avoid repeated sources, claims, titles, and story shapes unless
+   the final body contains a materially new angle. Keep the selected sources
+   aligned to the final body: every submitted `sourceId` should answer "which
+   sentence or claim needs this source?"
 9. [H7] [H10] Run duplicate, provenance, privacy, and style checks. Reject drafts that read
    like an agent audit trail instead of a normal professional post. Remove any
    selected source that only provides background context, or rewrite the draft

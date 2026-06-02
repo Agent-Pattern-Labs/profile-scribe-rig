@@ -22,10 +22,13 @@ Use this mode for the full Profile Scribe post creation workflow.
    - use source checkpoint/observation/fact-candidate tools when available
    - build a pre-draft timeline brief from timeline search/discovery when
      available
+   - rank source opportunities across the approved source graph, preferring
+     under-covered sources, recently checked sources, explicit topic matches,
+     and source pairs that create a concrete new professional angle
    - choose a specific source-backed update or stop with "no post-worthy update"
 5. Search prior posts using `history` mode behavior. Record related posts,
    timeline direction, covered sources, repeated openings, repeated topics, and
-   angles to avoid.
+   angles to avoid. Record the ranked source opportunities that were inspected.
 6. Build or refresh the voice profile using `voice` mode behavior.
 7. Draft a new post with:
    - a default source-backed professional progress note when the user does not
@@ -45,6 +48,9 @@ Use this mode for the full Profile Scribe post creation workflow.
    - no visible planning language, prompt constraints, crawl narration, or
      provenance/audit labels in the public body
    - a materially new angle when using a source that appeared recently
+   - autonomous professional discovery: the agent should choose the strongest
+     under-covered source-backed opportunity itself when the user gives only a
+     generic "create a post" request
 8. Run checks:
    - all crawled claims have provenance
    - duplicate risk is acceptable or called out before submission
@@ -70,7 +76,8 @@ Use this mode for the full Profile Scribe post creation workflow.
    `create_source_backed_timeline_post`, stop and report that the integration is
    too old rather than falling back to hosted copy generation.
 10. If no specific, meaningful update exists, do not post. Return the source
-    checks performed and the reason no post was created.
+    checks performed, ranked opportunities inspected, and the reason no post was
+    created.
 
 ## Default Post Type
 
@@ -89,6 +96,7 @@ Return:
 
 - draft text
 - source summary
+- source opportunity summary
 - prior-post/timeline-direction/voice summary
 - duplicate risk
 - submission status or next action

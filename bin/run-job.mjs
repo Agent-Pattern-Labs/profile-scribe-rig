@@ -116,7 +116,8 @@ async function runPostJob(job, options) {
       metadata: {
         checkedSources: context.sources.length,
         profileName: context.profile?.identity?.fullName || '',
-        timelineBrief: compactTimelineBrief(context.timelineBrief)
+        timelineBrief: compactTimelineBrief(context.timelineBrief),
+        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities)
       }
     };
   }
@@ -127,7 +128,8 @@ async function runPostJob(job, options) {
       topic: submissionDraft.topic,
       sourceIds: array(submissionDraft.sourceIds),
       checkedSources: context.sources.length,
-      timelineBrief: compactTimelineBrief(context.timelineBrief)
+      timelineBrief: compactTimelineBrief(context.timelineBrief),
+      sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities)
     });
   }
 
@@ -147,7 +149,8 @@ async function runPostJob(job, options) {
         topic: submissionDraft.topic,
         sourceIds: array(submissionDraft.sourceIds),
         checkedSources: context.sources.length,
-        timelineBrief: compactTimelineBrief(context.timelineBrief)
+        timelineBrief: compactTimelineBrief(context.timelineBrief),
+        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities)
       });
     }
     throw error;
@@ -165,6 +168,7 @@ async function runPostJob(job, options) {
       sourceIds: array(submissionDraft.sourceIds),
       checkedSources: context.sources.length,
       timelineBrief: compactTimelineBrief(context.timelineBrief),
+      sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
       drafter: object(draft.metadata)
     }
   };
@@ -218,6 +222,7 @@ async function runInterviewJob(job, options) {
 async function loadProfileScribeContext(payload) {
   const profile = await callMCPTool('read_profile', {});
   const sources = await callMCPTool('read_sources', {});
+  const sourceList = Array.isArray(sources) ? sources : [];
   let timelineSearch = null;
   const query = text(payload.topic || profile?.identity?.headline || profile?.identity?.fullName);
   if (query) {
@@ -230,16 +235,25 @@ async function loadProfileScribeContext(payload) {
   const timelineBrief = await buildTimelineBrief({
     payload,
     profile,
-    sources: Array.isArray(sources) ? sources : [],
+    sources: sourceList,
     primarySearch: timelineSearch
+  });
+  const sourceOpportunities = buildSourceOpportunities({
+    payload,
+    sources: sourceList,
+    timelineBrief
   });
   return {
     profile,
-    sources: Array.isArray(sources) ? sources : [],
+    sources: sourceList,
     timelineSearch,
     timelineBrief,
-    sourceExtracts: openRouterApiKey()
-      ? await loadSourceExtracts(Array.isArray(sources) ? sources : [], numberOr(payload.maxSources, 3))
+    sourceOpportunities,
+    sourceExtracts: shouldLoadSourceExtracts()
+      ? await loadSourceExtracts(
+        selectSourcesForDiscovery(sourceList, sourceOpportunities, payload),
+        numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_DISCOVERY_LIMIT, 8)
+      )
       : []
   };
 }
@@ -661,6 +675,142 @@ function compactPostRefs(posts) {
   }));
 }
 
+function buildSourceOpportunities({ payload, sources, timelineBrief }) {
+  payload = object(payload);
+  const sourceList = arrayOfObjects(sources).filter((source) => text(source.url));
+  const selectedSourceIDs = new Set(array(payload.sourceIds));
+  const payloadTopic = comparablePostText(payload.topic);
+  const coveredSources = arrayOfObjects(timelineBrief?.coveredSources);
+
+  return sourceList
+    .map((source, index) => {
+      const coverage = coverageForSource(source, coveredSources);
+      const coverageCount = Number(coverage.count || 0);
+      const selected = selectedSourceIDs.has(text(source.id));
+      const topicMatched = sourceMatchesTopic(source, payloadTopic);
+      const reasons = [];
+      let score = Math.max(0, 100 - index);
+
+      if (selected) {
+        score += 120;
+        reasons.push('explicitly requested');
+      }
+      if (topicMatched) {
+        score += 60;
+        reasons.push('matches requested topic');
+      }
+      if (coverageCount === 0) {
+        score += 45;
+        reasons.push('not covered in recent timeline brief');
+      } else if (coverageCount === 1) {
+        score += 12;
+        reasons.push('lightly covered recently');
+      } else {
+        score -= coverageCount * 16;
+        reasons.push(`covered ${coverageCount} times recently`);
+      }
+
+      const recency = sourceRecencyScore(source);
+      if (recency.score > 0) {
+        score += recency.score;
+        reasons.push(recency.reason);
+      }
+      if (comparablePostText(source.trustLevel).includes('high')) {
+        score += 6;
+        reasons.push('high-trust source');
+      }
+      if (/monitor|active|approved/i.test(text(source.status))) {
+        score += 4;
+        reasons.push('active approved source');
+      }
+      if (isBroadProfileSource(source)) {
+        score -= 10;
+        reasons.push('broad profile source');
+      }
+
+      return compact({
+        sourceId: text(source.id),
+        label: text(source.label || source.url),
+        url: text(source.url),
+        kind: text(source.kind),
+        score,
+        coverageCount,
+        latestPost: coverage.latestPost,
+        reasons: reasons.slice(0, 5)
+      });
+    })
+    .sort((left, right) => Number(right.score) - Number(left.score))
+    .slice(0, numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_OPPORTUNITY_LIMIT, 12));
+}
+
+function coverageForSource(source, coveredSources) {
+  const refs = new Set([
+    sourceComparableRef(source.id),
+    sourceComparableRef(source.label),
+    sourceComparableRef(source.url)
+  ].filter(Boolean));
+  for (const covered of arrayOfObjects(coveredSources)) {
+    for (const value of [covered.id, covered.label, covered.url]) {
+      const ref = sourceComparableRef(value);
+      if (ref && refs.has(ref)) return covered;
+    }
+  }
+  return {};
+}
+
+function sourceMatchesTopic(source, payloadTopic) {
+  if (!payloadTopic) return false;
+  return [source.label, source.url, source.kind]
+    .map(comparablePostText)
+    .some((value) => value && (payloadTopic.includes(value) || value.includes(payloadTopic)));
+}
+
+function sourceRecencyScore(source) {
+  const candidates = [
+    source.lastCheckedAt,
+    source.lastObservedAt,
+    source.updatedAt,
+    source.createdAt
+  ].map(timestamp).filter((value) => value > 0);
+  if (candidates.length === 0) return { score: 0, reason: '' };
+  const latest = Math.max(...candidates);
+  const ageHours = (Date.now() - latest) / (1000 * 60 * 60);
+  if (ageHours <= 48) return { score: 14, reason: 'checked in the last 48 hours' };
+  if (ageHours <= 24 * 7) return { score: 8, reason: 'checked in the last week' };
+  if (ageHours <= 24 * 30) return { score: 3, reason: 'checked in the last month' };
+  return { score: 0, reason: '' };
+}
+
+function isBroadProfileSource(source) {
+  const url = text(source.url).toLowerCase();
+  const label = comparablePostText(source.label);
+  return url.includes('linkedin.com/in/') ||
+    url.includes('github.com/abrahamgreenman') ||
+    url.includes('github.com/charliegreenman') ||
+    label === 'github repositories';
+}
+
+function selectSourcesForDiscovery(sources, opportunities, payload) {
+  const sourceList = arrayOfObjects(sources);
+  const byID = new Map(sourceList.map((source) => [text(source.id), source]));
+  const selectedSourceIDs = new Set(array(object(payload).sourceIds));
+  const selected = sourceList.filter((source) => selectedSourceIDs.has(text(source.id)));
+  const ranked = arrayOfObjects(opportunities)
+    .map((opportunity) => byID.get(text(opportunity.sourceId)))
+    .filter(Boolean);
+
+  const out = [];
+  const seen = new Set();
+  for (const source of [...selected, ...ranked, ...sourceList]) {
+    const id = text(source.id || source.url);
+    if (!id || seen.has(id) || !text(source.url)) continue;
+    seen.add(id);
+    out.push(source);
+    if (out.length >= numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_DISCOVERY_LIMIT, 8)) break;
+  }
+  return out;
+}
+
 async function resolveDraftWithOpenRouter(job, context) {
   if (!openRouterApiKey()) return {};
   try {
@@ -671,12 +821,14 @@ async function resolveDraftWithOpenRouter(job, context) {
       system: `You are a ProfileScribe source-backed posting agent.
 Draft concise professional timeline posts only from the provided profile, approved source metadata, source extracts, and timeline history.
 Before drafting, inspect timelineBrief to understand the recent timeline direction, sources already covered, repeated openings, repeated topics, and angles to avoid.
+Then inspect sourceOpportunities and sourceExtracts to discover the strongest under-covered source-backed posting angle on your own.
 Do not invent accomplishments, credentials, numbers, affiliations, launches, or claims.
 Do not create a post that repeats the same source plus the same claim, fact pattern, story shape, or title from timelineBrief.
-If the provided sources do not support a meaningful professional update, return an empty body.
+Prefer under-covered approved sources when they support a concrete professional point.
+Return an empty body only after evaluating the ranked sourceOpportunities and finding no supported, non-repetitive angle.
 Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
       user: JSON.stringify({
-        task: 'Draft one source-backed ProfileScribe timeline post.',
+        task: 'Discover and draft one fresh source-backed ProfileScribe timeline post.',
         constraints: {
           topic: 'specific public post headline, maximum 96 characters; describe the update itself, never the user request or posting action',
           badTopics: [
@@ -689,11 +841,13 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
           tone: 'short tone label',
           sourceIds: 'Exact full source.id values from the approved sources used; never shorten or truncate IDs; use at most maxSources',
           maxSources: numberOr(payload.maxSources, 3),
-          skipWhenWeak: 'Return empty body if evidence is generic, stale, missing, not professionally meaningful, or already covered by the recent timeline.',
+          discovery: 'Use sourceOpportunities as the ranked discovery queue. Prefer high-scoring sources with low recent coverage. Source extracts contain the evidence you can use.',
+          skipWhenWeak: 'Return empty body only if every discovered opportunity is generic, stale, missing, not professionally meaningful, or already covered by the recent timeline.',
           differentiation: 'If reusing a recently covered source, draft only when the post has a materially new angle that is visible in the final body.'
         },
         profile: compactProfile(context.profile),
         sources: compactSources(context.sources),
+        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
         sourceExtracts: compactSourceExtracts(context.sourceExtracts),
         timelineSearch: compactTimelineSearch(context.timelineSearch),
         timelineBrief: compactTimelineBrief(context.timelineBrief),
@@ -737,6 +891,7 @@ Return only JSON with keys: kind, body, status, summary, complete.`,
         task: 'Generate the next interview turn.',
         profile: compactProfile(context.profile),
         sources: compactSources(context.sources),
+        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
         sourceExtracts: compactSourceExtracts(context.sourceExtracts),
         timelineSearch: compactTimelineSearch(context.timelineSearch),
         timelineBrief: compactTimelineBrief(context.timelineBrief),
@@ -826,7 +981,7 @@ async function callOpenRouterJSON({ model, system, user, maxTokens }) {
 async function loadSourceExtracts(sources, limit) {
   const selected = sources
     .filter((source) => text(source?.url))
-    .slice(0, Math.min(numberOr(limit, 3), 5));
+    .slice(0, Math.min(numberOr(limit, 3), 10));
   const extracts = [];
   for (const source of selected) {
     extracts.push(await fetchSourceExtract(source));
@@ -882,6 +1037,10 @@ function openRouterApiKey() {
   return text(process.env.OPENROUTER_API_KEY);
 }
 
+function shouldLoadSourceExtracts() {
+  return Boolean(openRouterApiKey() || text(process.env.PROFILESCRIBE_RIG_DRAFTER_COMMAND));
+}
+
 function openRouterModel() {
   return text(process.env.PROFILESCRIBE_RIG_OPENROUTER_MODEL) ||
     text(process.env.PROFILESCRIBE_AGENT_CHAT_MODEL) ||
@@ -931,6 +1090,19 @@ function compactSourceExtracts(extracts) {
     description: extract.description,
     excerpt: truncate(extract.excerpt, 2800),
     status: extract.status
+  }));
+}
+
+function compactSourceOpportunities(opportunities) {
+  return arrayOfObjects(opportunities).slice(0, 12).map((opportunity) => compact({
+    sourceId: opportunity.sourceId,
+    label: opportunity.label,
+    url: opportunity.url,
+    kind: opportunity.kind,
+    score: opportunity.score,
+    coverageCount: opportunity.coverageCount,
+    latestPost: opportunity.latestPost,
+    reasons: array(opportunity.reasons).slice(0, 5)
   }));
 }
 
@@ -1206,7 +1378,7 @@ function meaningfulTokens(value) {
     'same', 'show', 'still', 'that', 'their', 'there', 'these', 'thing',
     'this', 'through', 'timeline', 'under', 'update', 'useful', 'what',
     'when', 'where', 'which', 'while', 'with', 'work', 'working', 'would',
-    'your'
+    'your', 'the', 'and', 'for', 'can', 'not', 'one', 'two', 'three'
   ]);
   return comparablePostText(value)
     .split(' ')
