@@ -21,8 +21,9 @@ update.
   and timeline/search context before deciding what to post.
   why: A bare posting request still needs current source and history context.
 - [H4] Search prior posts before drafting unless the user explicitly requests a
-  context-free draft. Use prior posts for voice and duplication checks, not for
-  copying.
+  context-free draft. Build a compact timeline brief that captures recent
+  direction, covered sources, repeated topics, repeated openings, and angles to
+  avoid. Use prior posts for voice and duplication checks, not for copying.
   why: The post should sound consistent without repeating old substance.
 - [H5] Produce a fresh post. Do not recycle or lightly rewrite an older post
   unless the user asked for a revision.
@@ -83,9 +84,11 @@ update.
    Crawl selected ProfileScribe source URLs locally when needed to produce a
    substantive draft.
 7. Search prior posts and build source-backed voice signals. [H4]
-8. [H5] [H6] [H10] Draft or request a source-backed post with explicit source and prior-post
-   provenance. Keep the selected sources aligned to the final body: every
-   submitted `sourceId` should answer "which sentence or claim needs this
+8. [H4] [H5] [H6] [H10] Draft or request a source-backed post with explicit
+   source and prior-post provenance. Use the timeline brief to avoid repeated
+   sources, claims, titles, and story shapes unless the final body contains a
+   materially new angle. Keep the selected sources aligned to the final body:
+   every submitted `sourceId` should answer "which sentence or claim needs this
    source?"
 9. [H7] [H10] Run duplicate, provenance, privacy, and style checks. Reject drafts that read
    like an agent audit trail instead of a normal professional post. Remove any

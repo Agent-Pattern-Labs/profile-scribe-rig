@@ -13,14 +13,21 @@ Use this mode to search previous Profile Scribe posts and detect repetition.
    current topic, URLs, entities, source IDs, or tags.
 4. Build a compact related-post list with title, date, URL or local ID, topic,
    and relevance reason.
-5. Flag duplicate risk:
+5. Build a compact timeline brief before drafting:
+   - recent posts and their topics
+   - sources already covered recently
+   - repeated titles, openings, claims, and story shapes
+   - recurring terms that describe the current direction of the timeline
+   - angles the next post should avoid unless it has new evidence
+6. Flag duplicate risk:
    - same thesis already posted
    - same source already used
    - same anecdote or story shape repeated recently
    - same call to action repeated recently
-6. Pass style-relevant examples to `voice` mode without copying full private
+7. Pass style-relevant examples to `voice` mode without copying full private
    post bodies into prompts when a compact style profile is enough.
 
 ## Output
 
-Return related posts, duplicate risk, and recommended differentiation.
+Return related posts, timeline direction, duplicate risk, and recommended
+differentiation.

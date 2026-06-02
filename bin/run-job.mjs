@@ -115,7 +115,8 @@ async function runPostJob(job, options) {
       summary: 'No harness-composed body was available; leaving job as a no-op instead of publishing generic copy.',
       metadata: {
         checkedSources: context.sources.length,
-        profileName: context.profile?.identity?.fullName || ''
+        profileName: context.profile?.identity?.fullName || '',
+        timelineBrief: compactTimelineBrief(context.timelineBrief)
       }
     };
   }
@@ -125,7 +126,8 @@ async function runPostJob(job, options) {
       duplicatePost: duplicate,
       topic: submissionDraft.topic,
       sourceIds: array(submissionDraft.sourceIds),
-      checkedSources: context.sources.length
+      checkedSources: context.sources.length,
+      timelineBrief: compactTimelineBrief(context.timelineBrief)
     });
   }
 
@@ -144,7 +146,8 @@ async function runPostJob(job, options) {
       return skipped(job, 'A recent timeline post already covers this source-backed update.', {
         topic: submissionDraft.topic,
         sourceIds: array(submissionDraft.sourceIds),
-        checkedSources: context.sources.length
+        checkedSources: context.sources.length,
+        timelineBrief: compactTimelineBrief(context.timelineBrief)
       });
     }
     throw error;
@@ -161,6 +164,7 @@ async function runPostJob(job, options) {
       topic: submissionDraft.topic,
       sourceIds: array(submissionDraft.sourceIds),
       checkedSources: context.sources.length,
+      timelineBrief: compactTimelineBrief(context.timelineBrief),
       drafter: object(draft.metadata)
     }
   };
@@ -223,10 +227,17 @@ async function loadProfileScribeContext(payload) {
       timelineSearch = null;
     }
   }
+  const timelineBrief = await buildTimelineBrief({
+    payload,
+    profile,
+    sources: Array.isArray(sources) ? sources : [],
+    primarySearch: timelineSearch
+  });
   return {
     profile,
     sources: Array.isArray(sources) ? sources : [],
     timelineSearch,
+    timelineBrief,
     sourceExtracts: openRouterApiKey()
       ? await loadSourceExtracts(Array.isArray(sources) ? sources : [], numberOr(payload.maxSources, 3))
       : []
@@ -381,23 +392,28 @@ async function findRecentDuplicateDraft(draft, context) {
       const key = text(post.postId || post.id || `${post.authorSlug}:${post.topic}:${post.publishedAt}`);
       if (key && seen.has(key)) continue;
       if (key) seen.add(key);
-      candidates.push(post);
+      candidates.push(normalizeTimelinePost(post));
     }
   }
+  for (const post of arrayOfObjects(context.timelineBrief?.recentPosts)) {
+    const normalized = normalizeTimelinePost(post);
+    const key = text(normalized.id || `${normalized.authorSlug}:${normalized.topic}:${normalized.publishedAt}`);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    candidates.push(normalized);
+  }
+  for (const post of arrayOfObjects(context.timelineBrief?.relatedPosts)) {
+    const normalized = normalizeTimelinePost(post);
+    const key = text(normalized.id || `${normalized.authorSlug}:${normalized.topic}:${normalized.publishedAt}`);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    candidates.push(normalized);
+  }
 
-  const draftBody = comparablePostText(body);
-  const draftTopic = comparablePostText(topic);
-  const draftSourceURLs = sourceURLsForDraft(draft, context);
   for (const post of candidates) {
-    if (draftBody && draftBody === comparablePostText(post.body)) {
-      return duplicatePostSummary(post);
-    }
-    if (
-      draftTopic &&
-      draftTopic === comparablePostText(post.topic) &&
-      sourceURLSetsOverlap(draftSourceURLs, sourceURLsForPost(post))
-    ) {
-      return duplicatePostSummary(post);
+    const reason = duplicateReasonForDraft(draft, post, context);
+    if (reason) {
+      return duplicatePostSummary(post, reason);
     }
   }
   return null;
@@ -413,6 +429,238 @@ async function searchTimelinePosts(query, limit) {
   }
 }
 
+async function buildTimelineBrief({ payload, profile, sources, primarySearch }) {
+  const searches = [];
+  if (object(primarySearch).results) searches.push(object(primarySearch));
+
+  const searchLimit = numberOr(process.env.PROFILESCRIBE_RIG_TIMELINE_SEARCH_LIMIT, 12);
+  const seenQueries = new Set();
+  for (const query of timelineBriefQueries(payload, profile, sources)) {
+    const comparable = comparablePostText(query);
+    if (!comparable || seenQueries.has(comparable)) continue;
+    seenQueries.add(comparable);
+    const result = await searchTimelinePosts(query, searchLimit);
+    if (result) searches.push(result);
+    if (seenQueries.size >= numberOr(process.env.PROFILESCRIBE_RIG_TIMELINE_QUERY_LIMIT, 8)) break;
+  }
+
+  const discovered = await discoverTimelinePosts(numberOr(process.env.PROFILESCRIBE_RIG_TIMELINE_DISCOVER_LIMIT, 24));
+  if (discovered) searches.push(discovered);
+
+  const posts = dedupeTimelinePosts(searches.flatMap(timelinePostsFromResult))
+    .sort((left, right) => timestamp(right.publishedAt) - timestamp(left.publishedAt));
+  return summarizeTimelineBrief(posts, sources);
+}
+
+function timelineBriefQueries(payload, profile, sources) {
+  payload = object(payload);
+  const identity = object(profile?.identity);
+  const sourceList = arrayOfObjects(sources);
+  const selectedSourceIDs = new Set(array(payload.sourceIds));
+  const selectedSources = sourceList.filter((source) => selectedSourceIDs.has(text(source.id)));
+  const sourceCandidates = selectedSources.length > 0 ? selectedSources : sourceList;
+  return [
+    text(payload.topic),
+    text(identity.fullName),
+    text(identity.headline),
+    text(identity.company || identity.currentCompany),
+    ...sourceCandidates.slice(0, 6).map((source) => text(source.label || source.url))
+  ].filter((value) => value && !isPostInstructionTopic(value));
+}
+
+async function discoverTimelinePosts(limit) {
+  try {
+    return await callMCPTool('discover_timeline_posts', { limit });
+  } catch {
+    return null;
+  }
+}
+
+function timelinePostsFromResult(result) {
+  result = object(result);
+  return [
+    ...arrayOfObjects(result.results),
+    ...arrayOfObjects(result.posts),
+    ...arrayOfObjects(result.timelinePosts)
+  ].map(normalizeTimelinePost).filter((post) => post.topic || post.body);
+}
+
+function dedupeTimelinePosts(posts) {
+  const seen = new Set();
+  const out = [];
+  for (const post of posts) {
+    const key = text(post.id || post.postId) ||
+      comparablePostText(`${post.authorSlug}:${post.topic}:${post.publishedAt}:${truncate(post.body, 120)}`);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(post);
+  }
+  return out;
+}
+
+function normalizeTimelinePost(post) {
+  post = object(post);
+  return compact({
+    id: text(post.id || post.postId || post.draftId),
+    postId: text(post.postId || post.id || post.draftId),
+    topic: text(post.topic || post.title || post.headline),
+    body: text(post.body || post.text || post.content),
+    publishedAt: text(post.publishedAt || post.createdAt || post.updatedAt),
+    authorSlug: text(post.authorSlug || post.slug),
+    url: text(post.url || post.href),
+    matchReasons: array(post.matchReasons).slice(0, 4),
+    sources: normalizeTimelinePostSources(post)
+  });
+}
+
+function normalizeTimelinePostSources(post) {
+  const sources = arrayOfObjects(post.sources).map((source) => compact({
+    id: text(source.id || source.sourceId),
+    label: text(source.label || source.name || source.title),
+    url: text(source.url || source.href)
+  }));
+  const sourceLabels = array(post.sourceLabels).map((label) => compact({ label }));
+  const sourceUrls = array(post.sourceUrls).map((url) => compact({ url }));
+  return [...sources, ...sourceLabels, ...sourceUrls];
+}
+
+function summarizeTimelineBrief(posts, sources) {
+  const recentPosts = posts.slice(0, numberOr(process.env.PROFILESCRIBE_RIG_TIMELINE_BRIEF_POST_LIMIT, 16));
+  const repeatedTopics = repeatedTimelineTopics(recentPosts);
+  const repeatedOpenings = repeatedTimelineOpenings(recentPosts);
+  const coveredSources = timelineCoveredSources(recentPosts, sources);
+  const avoidAngles = timelineAvoidAngles(repeatedTopics, repeatedOpenings, coveredSources);
+  const directionTerms = timelineDirectionTerms(recentPosts);
+
+  return compact({
+    status: recentPosts.length > 0 ? 'available' : 'empty',
+    checkedPostCount: recentPosts.length,
+    directionTerms,
+    coveredSources,
+    repeatedTopics,
+    repeatedOpenings,
+    avoidAngles,
+    recentPosts: recentPosts.map((post) => compact({
+      id: post.id || post.postId,
+      topic: post.topic,
+      body: truncate(post.body, 700),
+      publishedAt: post.publishedAt,
+      authorSlug: post.authorSlug,
+      url: post.url,
+      sources: post.sources,
+      matchReasons: post.matchReasons
+    }))
+  });
+}
+
+function repeatedTimelineTopics(posts) {
+  const groups = groupTimelinePosts(posts, (post) => comparablePostText(post.topic));
+  return [...groups.values()]
+    .filter((group) => group.key && group.posts.length > 1)
+    .map((group) => compact({
+      topic: group.posts[0].topic,
+      count: group.posts.length,
+      posts: compactPostRefs(group.posts)
+    }));
+}
+
+function repeatedTimelineOpenings(posts) {
+  const groups = groupTimelinePosts(posts, (post) => openingSignature(post.body, 10));
+  return [...groups.values()]
+    .filter((group) => group.key && group.posts.length > 1)
+    .map((group) => compact({
+      opening: truncate(firstSentence(group.posts[0].body), 140),
+      count: group.posts.length,
+      posts: compactPostRefs(group.posts)
+    }));
+}
+
+function timelineCoveredSources(posts, sources) {
+  const sourceList = arrayOfObjects(sources);
+  const sourceStats = new Map();
+  for (const source of sourceList) {
+    const sourceKey = sourceComparableRef(source.label || source.url || source.id);
+    if (!sourceKey) continue;
+    sourceStats.set(sourceKey, {
+      id: text(source.id),
+      label: text(source.label || source.url || source.id),
+      url: text(source.url),
+      count: 0,
+      posts: []
+    });
+  }
+
+  for (const post of posts) {
+    const refs = sourceRefsForPost(post, { sources: sourceList });
+    for (const [key, stat] of sourceStats) {
+      if (!refs.has(key)) continue;
+      stat.count += 1;
+      stat.posts.push(post);
+    }
+  }
+
+  return [...sourceStats.values()]
+    .filter((stat) => stat.count > 0)
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 10)
+    .map((stat) => compact({
+      id: stat.id,
+      label: stat.label,
+      url: stat.url,
+      count: stat.count,
+      latestPost: compactPostRefs(stat.posts.slice(0, 1))[0]
+    }));
+}
+
+function timelineAvoidAngles(repeatedTopics, repeatedOpenings, coveredSources) {
+  return [
+    ...arrayOfObjects(repeatedTopics).slice(0, 4).map((item) =>
+      `Do not reuse the recent topic "${item.topic}".`
+    ),
+    ...arrayOfObjects(repeatedOpenings).slice(0, 4).map((item) =>
+      `Do not reuse the opening/story shape "${item.opening}".`
+    ),
+    ...arrayOfObjects(coveredSources)
+      .filter((item) => Number(item.count) > 1)
+      .slice(0, 6)
+      .map((item) => `${item.label} has already appeared in ${item.count} recent posts; require a materially new angle.`)
+  ];
+}
+
+function timelineDirectionTerms(posts) {
+  const counts = new Map();
+  for (const post of posts) {
+    for (const token of meaningfulTokens(`${post.topic} ${post.body}`)) {
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 16)
+    .map(([term, count]) => ({ term, count }));
+}
+
+function groupTimelinePosts(posts, keyFn) {
+  const groups = new Map();
+  for (const post of posts) {
+    const key = text(keyFn(post));
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, { key, posts: [] });
+    groups.get(key).posts.push(post);
+  }
+  return groups;
+}
+
+function compactPostRefs(posts) {
+  return arrayOfObjects(posts).map((post) => compact({
+    id: post.id || post.postId,
+    topic: post.topic,
+    publishedAt: post.publishedAt,
+    url: post.url
+  }));
+}
+
 async function resolveDraftWithOpenRouter(job, context) {
   if (!openRouterApiKey()) return {};
   try {
@@ -422,7 +670,9 @@ async function resolveDraftWithOpenRouter(job, context) {
       model,
       system: `You are a ProfileScribe source-backed posting agent.
 Draft concise professional timeline posts only from the provided profile, approved source metadata, source extracts, and timeline history.
+Before drafting, inspect timelineBrief to understand the recent timeline direction, sources already covered, repeated openings, repeated topics, and angles to avoid.
 Do not invent accomplishments, credentials, numbers, affiliations, launches, or claims.
+Do not create a post that repeats the same source plus the same claim, fact pattern, story shape, or title from timelineBrief.
 If the provided sources do not support a meaningful professional update, return an empty body.
 Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
       user: JSON.stringify({
@@ -439,12 +689,14 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
           tone: 'short tone label',
           sourceIds: 'Exact full source.id values from the approved sources used; never shorten or truncate IDs; use at most maxSources',
           maxSources: numberOr(payload.maxSources, 3),
-          skipWhenWeak: 'Return empty body if evidence is generic, stale, missing, or not professionally meaningful.'
+          skipWhenWeak: 'Return empty body if evidence is generic, stale, missing, not professionally meaningful, or already covered by the recent timeline.',
+          differentiation: 'If reusing a recently covered source, draft only when the post has a materially new angle that is visible in the final body.'
         },
         profile: compactProfile(context.profile),
         sources: compactSources(context.sources),
         sourceExtracts: compactSourceExtracts(context.sourceExtracts),
         timelineSearch: compactTimelineSearch(context.timelineSearch),
+        timelineBrief: compactTimelineBrief(context.timelineBrief),
         jobPayload: payload
       }),
       maxTokens: 900
@@ -487,6 +739,7 @@ Return only JSON with keys: kind, body, status, summary, complete.`,
         sources: compactSources(context.sources),
         sourceExtracts: compactSourceExtracts(context.sourceExtracts),
         timelineSearch: compactTimelineSearch(context.timelineSearch),
+        timelineBrief: compactTimelineBrief(context.timelineBrief),
         jobPayload: payload
       }),
       maxTokens: 350
@@ -694,12 +947,100 @@ function compactTimelineSearch(timelineSearch) {
   });
 }
 
+function compactTimelineBrief(timelineBrief) {
+  const value = object(timelineBrief);
+  return compact({
+    status: value.status,
+    checkedPostCount: value.checkedPostCount,
+    directionTerms: arrayOfObjects(value.directionTerms).slice(0, 12),
+    coveredSources: arrayOfObjects(value.coveredSources).slice(0, 8),
+    repeatedTopics: arrayOfObjects(value.repeatedTopics).slice(0, 6),
+    repeatedOpenings: arrayOfObjects(value.repeatedOpenings).slice(0, 6),
+    avoidAngles: array(value.avoidAngles).slice(0, 12),
+    recentPosts: arrayOfObjects(value.recentPosts).slice(0, 10).map((post) => compact({
+      id: post.id || post.postId,
+      topic: post.topic,
+      body: truncate(post.body, 500),
+      publishedAt: post.publishedAt,
+      authorSlug: post.authorSlug,
+      url: post.url,
+      sources: arrayOfObjects(post.sources).slice(0, 4)
+    }))
+  });
+}
+
 function comparablePostText(value) {
   return text(value)
     .toLowerCase()
     .split(/[^a-z0-9]+/g)
     .filter(Boolean)
     .join(' ');
+}
+
+function duplicateReasonForDraft(draft, post, context) {
+  const draftBody = comparablePostText(draft.body);
+  const postBody = comparablePostText(post.body);
+  const draftTopic = comparablePostText(draft.topic);
+  const postTopic = comparablePostText(post.topic);
+  const sameSource = sourceRefSetsOverlap(
+    sourceRefsForDraft(draft, context),
+    sourceRefsForPost(post, context)
+  );
+
+  if (draftBody && postBody && draftBody === postBody) {
+    return { kind: 'exact_body', confidence: 'high' };
+  }
+  if (draftTopic && postTopic && draftTopic === postTopic && sameSource) {
+    return { kind: 'same_topic_and_source', confidence: 'high' };
+  }
+
+  const keywordOverlap = meaningfulTokenOverlap(draft.body, post.body);
+  const shingleSimilarity = textShingleSimilarity(draft.body, post.body, 4);
+  const sameOpening = openingSignature(draft.body, 10) &&
+    openingSignature(draft.body, 10) === openingSignature(post.body, 10);
+  const topicOverlap = meaningfulTokenOverlap(draft.topic, post.topic);
+
+  if (sameSource && keywordOverlap >= 0.48) {
+    return {
+      kind: 'same_source_same_claims',
+      confidence: keywordOverlap >= 0.62 ? 'high' : 'medium',
+      keywordOverlap: round(keywordOverlap),
+      shingleSimilarity: round(shingleSimilarity)
+    };
+  }
+  if (sameSource && shingleSimilarity >= 0.34) {
+    return {
+      kind: 'same_source_near_duplicate_body',
+      confidence: 'medium',
+      keywordOverlap: round(keywordOverlap),
+      shingleSimilarity: round(shingleSimilarity)
+    };
+  }
+  if (shingleSimilarity >= 0.52) {
+    return {
+      kind: 'near_duplicate_body',
+      confidence: 'medium',
+      keywordOverlap: round(keywordOverlap),
+      shingleSimilarity: round(shingleSimilarity)
+    };
+  }
+  if (sameOpening && keywordOverlap >= 0.35) {
+    return {
+      kind: 'repeated_opening_and_story_shape',
+      confidence: 'medium',
+      keywordOverlap: round(keywordOverlap),
+      shingleSimilarity: round(shingleSimilarity)
+    };
+  }
+  if (sameSource && topicOverlap >= 0.68 && keywordOverlap >= 0.28) {
+    return {
+      kind: 'same_source_same_angle',
+      confidence: 'medium',
+      topicOverlap: round(topicOverlap),
+      keywordOverlap: round(keywordOverlap)
+    };
+  }
+  return null;
 }
 
 function sourceURLsForDraft(draft, context) {
@@ -732,6 +1073,59 @@ function sourceURLSetsOverlap(left, right) {
   return false;
 }
 
+function sourceRefsForDraft(draft, context) {
+  const wanted = new Set(array(draft.sourceIds).map((item) => text(item)).filter(Boolean));
+  const refs = new Set();
+  if (wanted.size === 0) return refs;
+  for (const source of arrayOfObjects(context.sources)) {
+    const id = text(source.id);
+    if (!wanted.has(id)) continue;
+    for (const value of [id, source.label, source.url]) {
+      const ref = sourceComparableRef(value);
+      if (ref) refs.add(ref);
+    }
+  }
+  return refs;
+}
+
+function sourceRefsForPost(post, context) {
+  const refs = new Set();
+  const values = [];
+  for (const source of arrayOfObjects(post.sources)) {
+    values.push(source.id, source.sourceId, source.label, source.name, source.title, source.url, source.href);
+  }
+  for (const value of values) {
+    const ref = sourceComparableRef(value);
+    if (ref) refs.add(ref);
+  }
+
+  const haystack = comparablePostText(`${post.topic} ${post.body}`);
+  for (const source of arrayOfObjects(context.sources)) {
+    const label = comparablePostText(source.label);
+    if (label && haystack.includes(label)) {
+      refs.add(sourceComparableRef(source.label));
+      refs.add(sourceComparableRef(source.url));
+      refs.add(sourceComparableRef(source.id));
+    }
+  }
+  return refs;
+}
+
+function sourceRefSetsOverlap(left, right) {
+  if (!left || !right || left.size === 0 || right.size === 0) return false;
+  for (const value of left) {
+    if (right.has(value)) return true;
+  }
+  return false;
+}
+
+function sourceComparableRef(value) {
+  value = text(value);
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) return comparableURL(value);
+  return comparablePostText(value);
+}
+
 function comparableURL(value) {
   value = text(value);
   if (!value) return '';
@@ -745,12 +1139,82 @@ function comparableURL(value) {
   }
 }
 
-function duplicatePostSummary(post) {
+function duplicatePostSummary(post, reason = {}) {
   return compact({
     topic: text(post.topic),
     publishedAt: text(post.publishedAt),
-    authorSlug: text(post.authorSlug)
+    authorSlug: text(post.authorSlug),
+    postId: text(post.postId || post.id),
+    duplicateReason: object(reason)
   });
+}
+
+function timestamp(value) {
+  const time = Date.parse(text(value));
+  return Number.isFinite(time) ? time : 0;
+}
+
+function firstSentence(value) {
+  const body = text(value).replace(/\s+/g, ' ');
+  if (!body) return '';
+  return body.split(/[.!?]\s+/)[0] || body;
+}
+
+function openingSignature(value, limit) {
+  return meaningfulTokens(firstSentence(value)).slice(0, numberOr(limit, 10)).join(' ');
+}
+
+function meaningfulTokenOverlap(left, right) {
+  const leftTokens = new Set(meaningfulTokens(left));
+  const rightTokens = new Set(meaningfulTokens(right));
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+  let intersection = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) intersection += 1;
+  }
+  return intersection / Math.min(leftTokens.size, rightTokens.size);
+}
+
+function textShingleSimilarity(left, right, size) {
+  const leftShingles = shingles(left, size);
+  const rightShingles = shingles(right, size);
+  if (leftShingles.size === 0 || rightShingles.size === 0) return 0;
+  let intersection = 0;
+  for (const shingle of leftShingles) {
+    if (rightShingles.has(shingle)) intersection += 1;
+  }
+  return intersection / (leftShingles.size + rightShingles.size - intersection);
+}
+
+function shingles(value, size) {
+  const tokens = comparablePostText(value).split(' ').filter(Boolean);
+  const width = numberOr(size, 4);
+  const out = new Set();
+  for (let index = 0; index <= tokens.length - width; index += 1) {
+    out.add(tokens.slice(index, index + width).join(' '));
+  }
+  if (out.size === 0 && tokens.length > 0) out.add(tokens.join(' '));
+  return out;
+}
+
+function meaningfulTokens(value) {
+  const stopWords = new Set([
+    'about', 'above', 'after', 'again', 'also', 'another', 'around', 'because',
+    'been', 'before', 'being', 'between', 'both', 'could', 'does', 'doing',
+    'done', 'each', 'from', 'have', 'into', 'just', 'more', 'most', 'need',
+    'needs', 'only', 'over', 'post', 'posts', 'profile', 'public', 'right',
+    'same', 'show', 'still', 'that', 'their', 'there', 'these', 'thing',
+    'this', 'through', 'timeline', 'under', 'update', 'useful', 'what',
+    'when', 'where', 'which', 'while', 'with', 'work', 'working', 'would',
+    'your'
+  ]);
+  return comparablePostText(value)
+    .split(' ')
+    .filter((token) => token.length > 2 && !stopWords.has(token));
+}
+
+function round(value) {
+  return Math.round(Number(value || 0) * 1000) / 1000;
 }
 
 function isDuplicateTimelinePostError(error) {

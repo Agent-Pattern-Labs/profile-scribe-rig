@@ -20,10 +20,12 @@ Use this mode for the full Profile Scribe post creation workflow.
 4. If the request does not include URLs, inspect approved sources and recent
    source state:
    - use source checkpoint/observation/fact-candidate tools when available
-   - use timeline search/discovery when available to avoid repeating posts
+   - build a pre-draft timeline brief from timeline search/discovery when
+     available
    - choose a specific source-backed update or stop with "no post-worthy update"
-5. Search prior posts using `history` mode behavior. Record related posts and
-   possible duplicate topics.
+5. Search prior posts using `history` mode behavior. Record related posts,
+   timeline direction, covered sources, repeated openings, repeated topics, and
+   angles to avoid.
 6. Build or refresh the voice profile using `voice` mode behavior.
 7. Draft a new post with:
    - a default source-backed professional progress note when the user does not
@@ -42,9 +44,12 @@ Use this mode for the full Profile Scribe post creation workflow.
    - normal first-person professional wording suitable for a LinkedIn feed
    - no visible planning language, prompt constraints, crawl narration, or
      provenance/audit labels in the public body
+   - a materially new angle when using a source that appeared recently
 8. Run checks:
    - all crawled claims have provenance
-   - duplicate risk is acceptable or called out
+   - duplicate risk is acceptable or called out before submission
+   - same-source posts do not repeat the same claims, story shape, title, or
+     opening
    - each selected source ID directly supports at least one sentence or claim in
      the final public body
    - no source is included only as adjacent background, inspiration, or a loose
@@ -84,6 +89,6 @@ Return:
 
 - draft text
 - source summary
-- prior-post/voice summary
+- prior-post/timeline-direction/voice summary
 - duplicate risk
 - submission status or next action
