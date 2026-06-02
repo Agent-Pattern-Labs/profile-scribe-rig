@@ -14,12 +14,14 @@ Environment:
   PROFILESCRIBE_AGENT_TOKEN            Scoped ProfileScribe agent token
   PROFILESCRIBE_MCP_URL                Hosted MCP endpoint
   OPENROUTER_API_KEY                   Optional OpenRouter key for native rig drafting/interviews
-  PROFILESCRIBE_RIG_OPENROUTER_MODEL   Optional OpenRouter model override
+  PROFILESCRIBE_RIG_OPENROUTER_MODEL   Optional OpenRouter model override for non-draft native tasks
+  PROFILESCRIBE_RIG_DRAFT_MODEL        Optional OpenRouter model override for final post drafting
   PROFILESCRIBE_RIG_DRAFTER_COMMAND    Optional command that receives context JSON and returns draft JSON
   PROFILESCRIBE_RIG_INTERVIEW_COMMAND  Optional command that receives interview context JSON and returns message JSON
 `;
 
 const DEFAULT_OPENROUTER_MODEL = 'deepseek/deepseek-v4-flash';
+const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-4.8';
 const DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 function argValue(name) {
@@ -415,7 +417,9 @@ async function resolveDraftWithOpenRouter(job, context) {
   if (!openRouterApiKey()) return {};
   try {
     const payload = object(job.payload);
+    const model = openRouterDraftModel();
     const response = await callOpenRouterJSON({
+      model,
       system: `You are a ProfileScribe source-backed posting agent.
 Draft concise professional timeline posts only from the provided profile, approved source metadata, source extracts, and timeline history.
 Do not invent accomplishments, credentials, numbers, affiliations, launches, or claims.
@@ -453,14 +457,14 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
       sourceIds: array(response.sourceIds),
       metadata: {
         provider: 'openrouter',
-        model: openRouterModel()
+        model
       }
     };
   } catch (error) {
     return {
       metadata: {
         provider: 'openrouter',
-        model: openRouterModel(),
+        model: openRouterDraftModel(),
         status: 'fallback',
         error: error.message || 'OpenRouter drafting failed'
       }
@@ -530,9 +534,10 @@ function defaultInterviewMessage(context) {
   };
 }
 
-async function callOpenRouterJSON({ system, user, maxTokens }) {
+async function callOpenRouterJSON({ model, system, user, maxTokens }) {
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
+  model = text(model) || openRouterModel();
 
   const response = await fetch(openRouterChatCompletionsURL(), {
     method: 'POST',
@@ -543,7 +548,7 @@ async function callOpenRouterJSON({ system, user, maxTokens }) {
       'X-Title': 'ProfileScribe Rig'
     },
     body: JSON.stringify({
-      model: openRouterModel(),
+      model,
       temperature: 0.25,
       max_tokens: numberOr(maxTokens, 700),
       messages: [
@@ -628,6 +633,11 @@ function openRouterModel() {
   return text(process.env.PROFILESCRIBE_RIG_OPENROUTER_MODEL) ||
     text(process.env.PROFILESCRIBE_AGENT_CHAT_MODEL) ||
     DEFAULT_OPENROUTER_MODEL;
+}
+
+function openRouterDraftModel() {
+  return text(process.env.PROFILESCRIBE_RIG_DRAFT_MODEL) ||
+    DEFAULT_OPENROUTER_DRAFT_MODEL;
 }
 
 function openRouterChatCompletionsURL() {

@@ -105,13 +105,16 @@ export PROFILESCRIBE_AGENT_TOKEN=psagt_...
 export PROFILESCRIBE_MCP_URL=https://profilescribe.com/api/mcp
 export OPENROUTER_API_KEY=sk-or-...
 export PROFILESCRIBE_RIG_OPENROUTER_MODEL=deepseek/deepseek-v4-flash
+export PROFILESCRIBE_RIG_DRAFT_MODEL=anthropic/claude-opus-4.8
 export PROFILESCRIBE_RIG_DRAFTER_COMMAND='your-drafter-command'
 export PROFILESCRIBE_RIG_INTERVIEW_COMMAND='your-interview-command'
 ```
 
 When OpenRouter is configured and no custom command is present, the rig fetches
-short approved-source extracts and asks the configured model for conservative
-source-backed post copy. Without OpenRouter, a drafter command, or a
+short approved-source extracts and asks `PROFILESCRIBE_RIG_DRAFT_MODEL` for
+conservative source-backed post copy. `PROFILESCRIBE_RIG_OPENROUTER_MODEL`
+continues to cover non-draft native OpenRouter tasks such as interview turns.
+Without OpenRouter, a drafter command, or a
 `payload.body`, scheduled post jobs skip unless the worker explicitly enables
 the hosted fallback generator.
 
