@@ -22,9 +22,10 @@ Use this mode for the full Profile Scribe post creation workflow.
    - use source checkpoint/observation/fact-candidate tools when available
    - build a pre-draft timeline brief from timeline search/discovery when
      available
-   - rank source opportunities across the approved source graph, preferring
-     under-covered sources, recently checked sources, explicit topic matches,
-     and source pairs that create a concrete new professional angle
+   - rank source and child-evidence opportunities across the approved source
+     graph, preferring professionally relevant articles, repositories, recently
+     changed evidence, under-covered sources, explicit topic matches, and source
+     pairs that create a concrete new professional angle
    - choose a specific source-backed update or stop with "no post-worthy update"
 5. Search prior posts using `history` mode behavior. Record related posts,
    timeline direction, covered sources, repeated openings, repeated topics, and

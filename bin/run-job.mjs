@@ -117,7 +117,8 @@ async function runPostJob(job, options) {
         checkedSources: context.sources.length,
         profileName: context.profile?.identity?.fullName || '',
         timelineBrief: compactTimelineBrief(context.timelineBrief),
-        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities)
+        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities)
       }
     };
   }
@@ -129,7 +130,8 @@ async function runPostJob(job, options) {
       sourceIds: array(submissionDraft.sourceIds),
       checkedSources: context.sources.length,
       timelineBrief: compactTimelineBrief(context.timelineBrief),
-      sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities)
+      sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+      evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities)
     });
   }
 
@@ -150,7 +152,8 @@ async function runPostJob(job, options) {
         sourceIds: array(submissionDraft.sourceIds),
         checkedSources: context.sources.length,
         timelineBrief: compactTimelineBrief(context.timelineBrief),
-        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities)
+        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities)
       });
     }
     throw error;
@@ -169,6 +172,7 @@ async function runPostJob(job, options) {
       checkedSources: context.sources.length,
       timelineBrief: compactTimelineBrief(context.timelineBrief),
       sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+      evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
       drafter: object(draft.metadata)
     }
   };
@@ -223,6 +227,7 @@ async function loadProfileScribeContext(payload) {
   const profile = await callMCPTool('read_profile', {});
   const sources = await callMCPTool('read_sources', {});
   const sourceList = Array.isArray(sources) ? sources : [];
+  const sourceEvidence = await readSourceEvidence(numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_EVIDENCE_LIMIT, 160));
   let timelineSearch = null;
   const query = text(payload.topic || profile?.identity?.headline || profile?.identity?.fullName);
   if (query) {
@@ -243,19 +248,38 @@ async function loadProfileScribeContext(payload) {
     sources: sourceList,
     timelineBrief
   });
+  const evidenceOpportunities = buildEvidenceOpportunities({
+    payload,
+    profile,
+    sources: sourceList,
+    sourceEvidence,
+    sourceOpportunities,
+    timelineBrief
+  });
   return {
     profile,
     sources: sourceList,
+    sourceEvidence,
     timelineSearch,
     timelineBrief,
     sourceOpportunities,
+    evidenceOpportunities,
     sourceExtracts: shouldLoadSourceExtracts()
       ? await loadSourceExtracts(
-        selectSourcesForDiscovery(sourceList, sourceOpportunities, payload),
+        selectTargetsForDiscovery(sourceList, sourceOpportunities, evidenceOpportunities, payload),
         numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_DISCOVERY_LIMIT, 8)
       )
       : []
   };
+}
+
+async function readSourceEvidence(limit) {
+  try {
+    const evidence = await callMCPTool('read_source_evidence', { limit });
+    return arrayOfObjects(evidence);
+  } catch {
+    return [];
+  }
 }
 
 async function resolveDraft(job, context) {
@@ -743,6 +767,197 @@ function buildSourceOpportunities({ payload, sources, timelineBrief }) {
     .slice(0, numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_OPPORTUNITY_LIMIT, 12));
 }
 
+function buildEvidenceOpportunities({ payload, profile, sources, sourceEvidence, sourceOpportunities, timelineBrief }) {
+  payload = object(payload);
+  const evidenceList = arrayOfObjects(sourceEvidence).filter((item) => text(item.url));
+  const sourceByID = new Map(arrayOfObjects(sources).map((source) => [text(source.id), source]));
+  const sourceOpportunityByID = new Map(arrayOfObjects(sourceOpportunities).map((item) => [text(item.sourceId), item]));
+  const selectedSourceIDs = new Set(array(payload.sourceIds));
+  const payloadTopic = comparablePostText(payload.topic);
+  const profileTerms = profileDirectionTerms(profile, timelineBrief);
+  const profileText = comparablePostText(JSON.stringify(compactProfile(profile)));
+  const out = [];
+
+  for (let index = 0; index < evidenceList.length; index += 1) {
+    const evidence = evidenceList[index];
+    const sourceID = text(evidence.sourceId);
+    const source = sourceByID.get(sourceID) || {};
+    const sourceOpportunity = sourceOpportunityByID.get(sourceID) || {};
+    const selected = selectedSourceIDs.has(sourceID);
+    const topicMatched = evidenceMatchesTopic(evidence, payloadTopic);
+    const coverage = evidenceCoverage(evidence, timelineBrief);
+    const fit = professionalFitForEvidence(evidence, profileTerms, profileText, topicMatched);
+    const reasons = [];
+    let score = Math.max(0, 120 - index);
+
+    if (selected) {
+      score += 100;
+      reasons.push('parent source explicitly requested');
+    }
+    if (topicMatched) {
+      score += 70;
+      reasons.push('matches requested topic');
+    }
+    if (sourceOpportunity.score) {
+      score += Math.round(Number(sourceOpportunity.score) / 5);
+    }
+
+    const change = comparablePostText(evidence.changeType);
+    if (change === 'new') {
+      score += 45;
+      reasons.push('new evidence');
+    } else if (change === 'changed') {
+      score += 38;
+      reasons.push('changed evidence');
+    } else if (change === 'unchanged') {
+      score -= 18;
+      reasons.push('unchanged evidence');
+    }
+
+    const kind = comparablePostText(evidence.kind);
+    if (kind === 'article') {
+      score += 28;
+      reasons.push('specific article');
+    } else if (kind === 'repository') {
+      score += 26;
+      reasons.push('specific repository');
+    } else if (kind === 'collection' || kind === 'index') {
+      score -= 8;
+      reasons.push('collection page');
+    }
+
+    if (coverage.covered) {
+      score -= 42;
+      reasons.push('already appears in recent timeline context');
+    }
+    if (fit.score !== 0) {
+      score += fit.score;
+      reasons.push(fit.reason);
+    }
+    if (isBroadProfileSource(source)) {
+      score -= 8;
+    }
+
+    if (fit.weak && !selected && !topicMatched) {
+      continue;
+    }
+
+    out.push(compact({
+      sourceId: sourceID,
+      sourceLabel: text(evidence.sourceLabel || source.label || evidence.sourceUrl),
+      sourceUrl: text(evidence.sourceUrl || source.url),
+      sourceKind: text(evidence.sourceKind || source.kind),
+      observationId: text(evidence.observationId),
+      url: text(evidence.url),
+      kind: text(evidence.kind),
+      title: text(evidence.title),
+      summary: truncate(evidence.summary, 500),
+      changeType: text(evidence.changeType),
+      observedAt: text(evidence.observedAt),
+      updatedAt: text(evidence.updatedAt),
+      score,
+      coverageCount: Number(sourceOpportunity.coverageCount || 0),
+      reasons: reasons.slice(0, 6)
+    }));
+  }
+
+  return out
+    .sort((left, right) => Number(right.score) - Number(left.score))
+    .slice(0, numberOr(process.env.PROFILESCRIBE_RIG_EVIDENCE_OPPORTUNITY_LIMIT, 24));
+}
+
+function profileDirectionTerms(profile, timelineBrief) {
+  const terms = new Set();
+  for (const token of meaningfulTokens(JSON.stringify(compactProfile(profile)))) {
+    terms.add(token);
+  }
+  for (const item of arrayOfObjects(timelineBrief?.directionTerms)) {
+    for (const token of meaningfulTokens(item.term)) {
+      terms.add(token);
+    }
+  }
+  return terms;
+}
+
+function evidenceMatchesTopic(evidence, payloadTopic) {
+  if (!payloadTopic) return false;
+  return [
+    evidence.title,
+    evidence.summary,
+    evidence.url,
+    evidence.kind,
+    evidence.sourceLabel
+  ].map(comparablePostText).some((value) => value && (payloadTopic.includes(value) || value.includes(payloadTopic)));
+}
+
+function evidenceCoverage(evidence, timelineBrief) {
+  const url = comparableURL(evidence.url);
+  const title = comparablePostText(evidence.title);
+  if (!url && !title) return { covered: false };
+  for (const post of arrayOfObjects(timelineBrief?.recentPosts)) {
+    const postText = comparablePostText(`${post.topic} ${post.body}`);
+    if (title && postText.includes(title)) return { covered: true };
+    for (const source of arrayOfObjects(post.sources)) {
+      if (url && comparableURL(source.url || source.href) === url) return { covered: true };
+    }
+  }
+  return { covered: false };
+}
+
+function professionalFitForEvidence(evidence, profileTerms, profileText, topicMatched) {
+  const haystack = comparablePostText([
+    evidence.title,
+    evidence.summary,
+    evidence.url,
+    evidence.kind,
+    evidence.sourceLabel
+  ].join(' '));
+  const tokens = new Set(meaningfulTokens(haystack));
+  const positiveTerms = new Set([
+    'agent', 'agents', 'automation', 'autonomous', 'aws', 'code', 'coding',
+    'developer', 'engineering', 'github', 'infrastructure', 'launch', 'mcp',
+    'openai', 'product', 'profile', 'repository', 'review', 'rig', 'rigs',
+    'software', 'source', 'system', 'systems', 'tooling', 'typescript',
+    'workflow', 'workflows'
+  ]);
+  const lifestyleTerms = new Set([
+    'album', 'albums', 'dolphin', 'food', 'health', 'inflation', 'migraine',
+    'migraines', 'music', 'nutrition', 'sleep', 'weekend'
+  ]);
+  let positive = 0;
+  let profileOverlap = 0;
+  let lifestyle = 0;
+
+  for (const token of tokens) {
+    if (positiveTerms.has(token)) positive += 1;
+    if (profileTerms.has(token)) profileOverlap += 1;
+    if (lifestyleTerms.has(token) && !profileText.includes(token)) lifestyle += 1;
+  }
+
+  if (profileOverlap > 0) {
+    return {
+      score: Math.min(36, profileOverlap * 8) + Math.min(24, positive * 4),
+      reason: 'matches profile direction',
+      weak: false
+    };
+  }
+  if (positive > 0) {
+    return {
+      score: Math.min(34, positive * 6),
+      reason: 'professionally specific evidence',
+      weak: false
+    };
+  }
+  if (lifestyle > 0 && !topicMatched) {
+    return {
+      score: -42,
+      reason: 'low professional fit for current profile direction',
+      weak: true
+    };
+  }
+  return { score: 0, reason: '', weak: false };
+}
+
 function coverageForSource(source, coveredSources) {
   const refs = new Set([
     sourceComparableRef(source.id),
@@ -790,22 +1005,57 @@ function isBroadProfileSource(source) {
     label === 'github repositories';
 }
 
-function selectSourcesForDiscovery(sources, opportunities, payload) {
+function selectTargetsForDiscovery(sources, sourceOpportunities, evidenceOpportunities, payload) {
   const sourceList = arrayOfObjects(sources);
   const byID = new Map(sourceList.map((source) => [text(source.id), source]));
   const selectedSourceIDs = new Set(array(object(payload).sourceIds));
   const selected = sourceList.filter((source) => selectedSourceIDs.has(text(source.id)));
-  const ranked = arrayOfObjects(opportunities)
+  const rankedEvidence = arrayOfObjects(evidenceOpportunities).map((opportunity) => compact({
+    sourceId: opportunity.sourceId,
+    label: firstNonEmpty(opportunity.title, opportunity.sourceLabel),
+    kind: opportunity.kind,
+    url: opportunity.url,
+    sourceUrl: opportunity.sourceUrl,
+    evidenceTitle: opportunity.title,
+    evidenceSummary: opportunity.summary,
+    opportunityReasons: opportunity.reasons
+  }));
+  const rankedSources = arrayOfObjects(sourceOpportunities)
     .map((opportunity) => byID.get(text(opportunity.sourceId)))
     .filter(Boolean);
 
   const out = [];
   const seen = new Set();
-  for (const source of [...selected, ...ranked, ...sourceList]) {
-    const id = text(source.id || source.url);
-    if (!id || seen.has(id) || !text(source.url)) continue;
-    seen.add(id);
-    out.push(source);
+  const appendTarget = (target) => {
+    const url = text(target.url);
+    const sourceId = text(target.sourceId || target.id);
+    const key = comparableURL(url) || sourceId;
+    if (!key || seen.has(key) || !url) return;
+    seen.add(key);
+    out.push(compact({
+      sourceId,
+      label: target.label,
+      kind: target.kind,
+      url,
+      sourceUrl: target.sourceUrl || target.url,
+      evidenceTitle: target.evidenceTitle,
+      evidenceSummary: target.evidenceSummary,
+      opportunityReasons: target.opportunityReasons
+    }));
+  };
+
+  for (const target of rankedEvidence) {
+    appendTarget(target);
+    if (out.length >= numberOr(process.env.PROFILESCRIBE_RIG_EVIDENCE_DISCOVERY_LIMIT, 6)) break;
+  }
+  for (const source of [...selected, ...rankedSources, ...sourceList]) {
+    appendTarget({
+      sourceId: source.id,
+      label: source.label,
+      kind: source.kind,
+      url: source.url,
+      sourceUrl: source.url
+    });
     if (out.length >= numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_DISCOVERY_LIMIT, 8)) break;
   }
   return out;
@@ -821,11 +1071,11 @@ async function resolveDraftWithOpenRouter(job, context) {
       system: `You are a ProfileScribe source-backed posting agent.
 Draft concise professional timeline posts only from the provided profile, approved source metadata, source extracts, and timeline history.
 Before drafting, inspect timelineBrief to understand the recent timeline direction, sources already covered, repeated openings, repeated topics, and angles to avoid.
-Then inspect sourceOpportunities and sourceExtracts to discover the strongest under-covered source-backed posting angle on your own.
+Then inspect evidenceOpportunities, sourceOpportunities, and sourceExtracts to discover the strongest under-covered source-backed posting angle on your own.
 Do not invent accomplishments, credentials, numbers, affiliations, launches, or claims.
 Do not create a post that repeats the same source plus the same claim, fact pattern, story shape, or title from timelineBrief.
-Prefer under-covered approved sources when they support a concrete professional point.
-Return an empty body only after evaluating the ranked sourceOpportunities and finding no supported, non-repetitive angle.
+Prefer ranked evidence items such as specific articles or repositories over broad parent profile links when they support a concrete professional point.
+Return an empty body only after evaluating the ranked evidenceOpportunities and sourceOpportunities and finding no supported, non-repetitive angle.
 Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
       user: JSON.stringify({
         task: 'Discover and draft one fresh source-backed ProfileScribe timeline post.',
@@ -839,15 +1089,17 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
           body: 'plain text, specific, professional, maximum 900 characters',
           abstracts: '1-3 short evidence summary lines',
           tone: 'short tone label',
-          sourceIds: 'Exact full source.id values from the approved sources used; never shorten or truncate IDs; use at most maxSources',
+          sourceIds: 'Exact full parent source.id values from the approved sources used; never shorten or truncate IDs; never submit child URLs as sourceIds; use at most maxSources',
           maxSources: numberOr(payload.maxSources, 3),
-          discovery: 'Use sourceOpportunities as the ranked discovery queue. Prefer high-scoring sources with low recent coverage. Source extracts contain the evidence you can use.',
+          discovery: 'Use evidenceOpportunities as the primary ranked discovery queue, then sourceOpportunities. Prefer high-scoring evidence with low recent coverage. Source extracts contain the refreshed pages you can use.',
           skipWhenWeak: 'Return empty body only if every discovered opportunity is generic, stale, missing, not professionally meaningful, or already covered by the recent timeline.',
           differentiation: 'If reusing a recently covered source, draft only when the post has a materially new angle that is visible in the final body.'
         },
         profile: compactProfile(context.profile),
         sources: compactSources(context.sources),
+        sourceEvidence: compactSourceEvidence(context.sourceEvidence),
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
         sourceExtracts: compactSourceExtracts(context.sourceExtracts),
         timelineSearch: compactTimelineSearch(context.timelineSearch),
         timelineBrief: compactTimelineBrief(context.timelineBrief),
@@ -891,7 +1143,9 @@ Return only JSON with keys: kind, body, status, summary, complete.`,
         task: 'Generate the next interview turn.',
         profile: compactProfile(context.profile),
         sources: compactSources(context.sources),
+        sourceEvidence: compactSourceEvidence(context.sourceEvidence),
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
         sourceExtracts: compactSourceExtracts(context.sourceExtracts),
         timelineSearch: compactTimelineSearch(context.timelineSearch),
         timelineBrief: compactTimelineBrief(context.timelineBrief),
@@ -1002,9 +1256,13 @@ async function fetchSourceExtract(source) {
     const contentType = response.headers.get('content-type') || '';
     if (!response.ok) {
       return compact({
-        sourceId: source.id,
+        sourceId: source.sourceId || source.id,
         label: source.label,
         url: source.url,
+        sourceUrl: source.sourceUrl,
+        evidenceTitle: source.evidenceTitle,
+        evidenceSummary: source.evidenceSummary,
+        opportunityReasons: array(source.opportunityReasons),
         status: `fetch failed: HTTP ${response.status}`
       });
     }
@@ -1013,19 +1271,27 @@ async function fetchSourceExtract(source) {
     const description = htmlMetaDescription(raw);
     const textContent = contentType.includes('html') ? htmlToText(raw) : raw;
     return compact({
-      sourceId: source.id,
+      sourceId: source.sourceId || source.id,
       label: source.label,
       kind: source.kind,
       url: source.url,
+      sourceUrl: source.sourceUrl,
+      evidenceTitle: source.evidenceTitle,
+      evidenceSummary: source.evidenceSummary,
+      opportunityReasons: array(source.opportunityReasons),
       title,
       description,
       excerpt: truncate(textContent, numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_EXTRACT_CHARS, 2800))
     });
   } catch (error) {
     return compact({
-      sourceId: source.id,
+      sourceId: source.sourceId || source.id,
       label: source.label,
       url: source.url,
+      sourceUrl: source.sourceUrl,
+      evidenceTitle: source.evidenceTitle,
+      evidenceSummary: source.evidenceSummary,
+      opportunityReasons: array(source.opportunityReasons),
       status: `fetch failed: ${error.message || 'unknown error'}`
     });
   } finally {
@@ -1080,12 +1346,33 @@ function compactSources(sources) {
   }));
 }
 
+function compactSourceEvidence(evidence) {
+  return arrayOfObjects(evidence).slice(0, 40).map((item) => compact({
+    sourceId: item.sourceId,
+    sourceLabel: item.sourceLabel,
+    sourceUrl: item.sourceUrl,
+    sourceKind: item.sourceKind,
+    observationId: item.observationId,
+    url: item.url,
+    kind: item.kind,
+    title: item.title,
+    summary: truncate(item.summary, 500),
+    changeType: item.changeType,
+    observedAt: item.observedAt,
+    updatedAt: item.updatedAt
+  }));
+}
+
 function compactSourceExtracts(extracts) {
   return arrayOfObjects(extracts).map((extract) => compact({
     sourceId: extract.sourceId,
     label: extract.label,
     kind: extract.kind,
     url: extract.url,
+    sourceUrl: extract.sourceUrl,
+    evidenceTitle: extract.evidenceTitle,
+    evidenceSummary: truncate(extract.evidenceSummary, 500),
+    opportunityReasons: array(extract.opportunityReasons).slice(0, 6),
     title: extract.title,
     description: extract.description,
     excerpt: truncate(extract.excerpt, 2800),
@@ -1103,6 +1390,26 @@ function compactSourceOpportunities(opportunities) {
     coverageCount: opportunity.coverageCount,
     latestPost: opportunity.latestPost,
     reasons: array(opportunity.reasons).slice(0, 5)
+  }));
+}
+
+function compactEvidenceOpportunities(opportunities) {
+  return arrayOfObjects(opportunities).slice(0, 16).map((opportunity) => compact({
+    sourceId: opportunity.sourceId,
+    sourceLabel: opportunity.sourceLabel,
+    sourceUrl: opportunity.sourceUrl,
+    sourceKind: opportunity.sourceKind,
+    observationId: opportunity.observationId,
+    url: opportunity.url,
+    kind: opportunity.kind,
+    title: opportunity.title,
+    summary: truncate(opportunity.summary, 500),
+    changeType: opportunity.changeType,
+    observedAt: opportunity.observedAt,
+    updatedAt: opportunity.updatedAt,
+    score: opportunity.score,
+    coverageCount: opportunity.coverageCount,
+    reasons: array(opportunity.reasons).slice(0, 6)
   }));
 }
 
@@ -1482,6 +1789,14 @@ function arrayOfObjects(value) {
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const candidate = text(value);
+    if (candidate) return candidate;
+  }
+  return '';
 }
 
 function extractJSONObject(raw) {
