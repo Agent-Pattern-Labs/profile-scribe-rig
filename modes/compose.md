@@ -52,6 +52,9 @@ Use this mode for the full Profile Scribe post creation workflow.
    - autonomous professional discovery: the agent should choose the strongest
      under-covered source-backed opportunity itself when the user gives only a
      generic "create a post" request
+   - a canonical body that can stand on its own in ProfileScribe; external
+     destinations should be adapted later by ProfileScribe's distribution
+     adapter, not by chopping this body down in the harness
 8. Run checks:
    - all crawled claims have provenance
    - duplicate risk is acceptable or called out before submission
@@ -68,6 +71,9 @@ Use this mode for the full Profile Scribe post creation workflow.
      "source-backed", "crawl summary", "public claim", "this post should", or
      "timeline context"
    - private tokens, cookies, and raw credentials are absent
+   - any requested external distribution uses ProfileScribe distribution tools
+     so each destination receives platform-aware fitting; never submit a
+     half-sentence or ellipsis-truncated social variant
 9. For normal autonomous posting, call `create_source_backed_timeline_post` with
    the chosen topic, final draft `body`, `abstracts`, tone, and minimal source
    IDs that directly substantiate the final body. The

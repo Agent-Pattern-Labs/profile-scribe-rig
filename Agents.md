@@ -64,6 +64,18 @@ The harness helps a user create a fresh Profile Scribe post by doing the researc
   through the verified source-backed posting tool when supported. Prefer a draft
   or review state unless the user or integration explicitly requests immediate
   publishing.
+- Treat the ProfileScribe timeline post as the canonical source-backed body for
+  external distribution. Do not manually truncate one canonical body for every
+  social platform. When a user asks to cross-post, route the final body through
+  ProfileScribe's distribution tooling so the hosted app applies provider
+  limits, URL counting, media requirements, delivery receipts, and per-platform
+  copy fitting.
+- If asked to prepare platform-specific guidance, keep it private unless the
+  user asks to review it: LinkedIn should get the fullest professional point of
+  view with concrete context; X, Bluesky, Threads, and Mastodon should get one
+  tight complete thought that never ends mid-sentence; media-first destinations
+  should be queued only when compatible public media exists. Do not add generic
+  hashtags, engagement bait, or unsupported claims just to suit a platform.
 
 ## Open-Source Requirements
 

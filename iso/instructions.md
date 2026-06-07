@@ -51,6 +51,12 @@ update.
   accurately says something about them.
   why: Source attribution should explain the post's actual claims, not the
   agent's broader research path.
+- [H11] External cross-posting must go through ProfileScribe distribution
+  tooling. The harness may draft a strong canonical timeline body and private
+  platform notes, but it must not manually truncate one body for LinkedIn, X,
+  Mastodon, Threads, Bluesky, Buffer, or media destinations.
+  why: The hosted app owns provider limits, URL counting, media requirements,
+  queueing, receipts, and platform-specific copy fitting.
 
 ## Defaults
 
@@ -98,7 +104,13 @@ update.
    like an agent audit trail instead of a normal professional post. Remove any
    selected source that only provides background context, or rewrite the draft
    so the source-backed claim is clear and warranted.
-10. [H6] [H8] [H9] Submit or stage the final harness-authored body back to
+10. [H11] For external distribution requests, pass the canonical final body to
+   ProfileScribe distribution tools and let the hosted adapter produce
+   destination-specific text. LinkedIn should preserve the fullest professional
+   point of view; X, Bluesky, Threads, and Mastodon should receive short,
+   complete thoughts that do not end mid-sentence; media-first destinations
+   should only queue when compatible public media is present.
+11. [H6] [H8] [H9] Submit or stage the final harness-authored body back to
    Profile Scribe according to configuration.
 
 ## ProfileScribe MCP
