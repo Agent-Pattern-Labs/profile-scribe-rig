@@ -98,6 +98,11 @@ async function runPostJob(job, options) {
   }
 
   const context = await loadProfileScribeContext(payload);
+  const userUrlCrawls = await crawlUserPromptUrls(payload.ownerPrompt);
+  if (userUrlCrawls.length > 0) {
+    context.userUrlCrawls = userUrlCrawls;
+    context.sourceExtracts = [...(context.sourceExtracts || []), ...userUrlCrawls];
+  }
   const draft = normalizeDraftSourceIds(
     await resolveDraft(job, context),
     context,
@@ -1069,13 +1074,14 @@ async function resolveDraftWithOpenRouter(job, context) {
     const response = await callOpenRouterJSON({
       model,
       system: `You are a ProfileScribe source-backed posting agent.
-Draft concise professional timeline posts only from the provided profile, approved source metadata, source extracts, and timeline history.
+Draft concise professional timeline posts only from the provided profile, approved source metadata, source extracts, timeline history, and any user-supplied URL content.
 Before drafting, inspect timelineBrief to understand the recent timeline direction, sources already covered, repeated openings, repeated topics, and angles to avoid.
-Then inspect evidenceOpportunities, sourceOpportunities, and sourceExtracts to discover the strongest under-covered source-backed posting angle on your own.
+Then inspect evidenceOpportunities, sourceOpportunities, sourceExtracts, and userSuppliedUrlCrawls to discover the strongest source-backed posting angle on your own.
+If the user gave you a URL, that URL's crawled content is in userSuppliedUrlCrawls — use it as the primary source evidence for the post.
 Do not invent accomplishments, credentials, numbers, affiliations, launches, or claims.
 Do not create a post that repeats the same source plus the same claim, fact pattern, story shape, or title from timelineBrief.
 Prefer ranked evidence items such as specific articles or repositories over broad parent profile links when they support a concrete professional point.
-Return an empty body only after evaluating the ranked evidenceOpportunities and sourceOpportunities and finding no supported, non-repetitive angle.
+Return an empty body only after evaluating all evidence and finding no supported, non-repetitive angle.
 Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
       user: JSON.stringify({
         task: 'Discover and draft one fresh source-backed ProfileScribe timeline post.',
@@ -1101,6 +1107,7 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
         evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
         sourceExtracts: compactSourceExtracts(context.sourceExtracts),
+        userSuppliedUrlCrawls: compactUserUrlCrawls(context.userUrlCrawls),
         timelineSearch: compactTimelineSearch(context.timelineSearch),
         timelineBrief: compactTimelineBrief(context.timelineBrief),
         jobPayload: payload
@@ -1147,6 +1154,7 @@ Return only JSON with keys: kind, body, status, summary, complete.`,
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
         evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
         sourceExtracts: compactSourceExtracts(context.sourceExtracts),
+        userSuppliedUrlCrawls: compactUserUrlCrawls(context.userUrlCrawls),
         timelineSearch: compactTimelineSearch(context.timelineSearch),
         timelineBrief: compactTimelineBrief(context.timelineBrief),
         jobPayload: payload
@@ -1230,6 +1238,75 @@ async function callOpenRouterJSON({ model, system, user, maxTokens }) {
     throw new Error('OpenRouter returned an empty message');
   }
   return parseJSON(extractJSONObject(content), 'OpenRouter JSON message');
+}
+
+async function crawlUserPromptUrls(prompt) {
+  const urls = extractURLs(text(prompt));
+  if (urls.length === 0) return [];
+  const extracts = [];
+  for (const url of urls) {
+    extracts.push(await fetchSingleUrlCrawl(url));
+  }
+  return extracts;
+}
+
+function extractURLs(value) {
+  const pattern = /https?:\/\/[^\s,;)'"\]}>]+/g;
+  const matches = String(value || '').match(pattern) || [];
+  return matches
+    .map((match) => match.replace(/[.,;)]+$/, '').trim())
+    .filter((url) => {
+      try { return Boolean(new URL(url)); }
+      catch { return false; }
+    });
+}
+
+async function fetchSingleUrlCrawl(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_FETCH_TIMEOUT_MS, 12000));
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'ProfileScribeRig/1.0 (+https://profilescribe.com)' }
+    });
+    if (!response.ok) {
+      return compact({
+        url,
+        label: url,
+        title: '',
+        description: '',
+        excerpt: '',
+        kind: 'user_url',
+        status: `fetch failed: HTTP ${response.status}`
+      });
+    }
+    const contentType = response.headers.get('content-type') || '';
+    const raw = await response.text();
+    const title = htmlTitle(raw);
+    const description = htmlMetaDescription(raw);
+    const excerpt = contentType.includes('html') ? htmlToText(raw) : raw;
+    return compact({
+      url,
+      label: title || url,
+      title,
+      description,
+      excerpt: truncate(excerpt, numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_EXTRACT_CHARS, 2800)),
+      kind: 'user_url',
+      status: 'crawled'
+    });
+  } catch (error) {
+    return compact({
+      url,
+      label: url,
+      title: '',
+      description: '',
+      excerpt: '',
+      kind: 'user_url',
+      status: `fetch failed: ${error.message || 'unknown error'}`
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function loadSourceExtracts(sources, limit) {
@@ -1360,6 +1437,18 @@ function compactSourceEvidence(evidence) {
     changeType: item.changeType,
     observedAt: item.observedAt,
     updatedAt: item.updatedAt
+  }));
+}
+
+function compactUserUrlCrawls(crawls) {
+  return arrayOfObjects(crawls).map((crawl) => compact({
+    url: crawl.url,
+    label: crawl.label || crawl.url,
+    title: crawl.title,
+    description: crawl.description,
+    excerpt: truncate(crawl.excerpt, 2800),
+    kind: crawl.kind || 'user_url',
+    status: crawl.status
   }));
 }
 

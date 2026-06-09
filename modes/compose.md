@@ -15,8 +15,9 @@ Use this mode for the full Profile Scribe post creation workflow.
 1. Resolve ProfileScribe MCP configuration. If `profilescribe-mcp` or
    `PROFILESCRIBE_AGENT_TOKEN` is missing, stop with exact setup instructions.
 2. Call `read_profile` and `read_sources` before deciding what to post.
-3. If the request includes URLs, route URL collection through `crawl` mode
-   behavior and preserve failures.
+3. Extract every URL from the request. Crawl each URL through `crawl` mode
+   behavior before drafting. Preserve failures — do not silently drop a URL or
+   invent source details for failed crawls.
 4. If the request does not include URLs, inspect approved sources and recent
    source state:
    - use source checkpoint/observation/fact-candidate tools when available

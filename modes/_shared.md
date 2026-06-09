@@ -21,7 +21,8 @@ Do not commit private consumer data to this harness package.
 - The user's voice should come from style signals: sentence length, cadence,
   favorite structures, level of directness, vocabulary, and formatting habits.
 - Prior posts are not a source to copy. They are a calibration set.
-- Claims tied to crawled URLs must be source-backed.
+- Every URL supplied by the user must be crawled before drafting. Claims tied
+  to crawled URLs must be source-backed.
 - Selected sources should be the smallest direct set needed to substantiate the
   public body. Do not attach a broader product, project, or identity source just
   because it is nearby context; either make a concrete supported claim about it
