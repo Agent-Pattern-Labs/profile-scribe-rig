@@ -33,17 +33,20 @@ Use this mode for the full Profile Scribe post creation workflow.
    angles to avoid. Record the ranked source opportunities that were inspected.
 6. Build or refresh the voice profile using `voice` mode behavior.
 7. Draft a new post with:
-   - a default source-backed professional progress note when the user does not
-     request a specific format
+   - a default source-backed professional update when the user does not request
+     a specific format
    - one clear point of view
-   - source-backed facts
+   - source-backed facts that name specific projects, repositories, articles,
+     launches, talks, or shipped work — avoid vague references to "current
+     direction", "recent updates", or "the work"
    - source selection that matches the actual public claim, not the broader
      research context
    - a concrete work signal: what changed, shipped, was written, released,
      updated, learned, or became clearer
    - why the signal matters for the profile owner's current professional
      direction
-   - a brief first-person reflection, decision, tradeoff, or pattern noticed
+   - a substantive first-person reflection, decision, tradeoff, or pattern
+     noticed — not a generic observation anyone could write
    - the user's observed voice
    - no heavy copying from prior posts
    - normal first-person professional wording suitable for a LinkedIn feed
@@ -56,7 +59,22 @@ Use this mode for the full Profile Scribe post creation workflow.
    - a canonical body that can stand on its own in ProfileScribe; external
      destinations should be adapted later by ProfileScribe's distribution
      adapter, not by chopping this body down in the harness
-8. Run checks:
+8. Make the post descriptive and specific enough that a reader understands
+   exactly what the post is about without clicking any links:
+   - Name the specific project, repository, article, tool, or launch by name
+   - Say what was built, changed, shipped, or learned — not just that "work is
+     progressing"
+   - Include concrete technical or professional detail that shows real effort
+     and genuine expertise
+   - Explain why this specific thing matters for your audience or your own work
+   - Use specific numbers, versions, features, or outcomes when the source
+     supports them
+   - 2-4 substantive paragraphs minimum; a single short sentence is almost
+     never enough
+   - Avoid hand-wavy framing like "current direction", "in-progress markers",
+     "the pattern is easier to see", "concrete change", or "making work
+     inspectable" — these meta-commentaries say nothing about the actual work
+9. Run checks:
    - all crawled claims have provenance
    - duplicate risk is acceptable or called out before submission
    - same-source posts do not repeat the same claims, story shape, title, or
@@ -72,27 +90,50 @@ Use this mode for the full Profile Scribe post creation workflow.
      "source-backed", "crawl summary", "public claim", "this post should", or
      "timeline context"
    - private tokens, cookies, and raw credentials are absent
-   - any requested external distribution uses ProfileScribe distribution tools
-     so each destination receives platform-aware fitting; never submit a
-     half-sentence or ellipsis-truncated social variant
-9. For normal autonomous posting, call `create_source_backed_timeline_post` with
-   the chosen topic, final draft `body`, `abstracts`, tone, and minimal source
-   IDs that directly substantiate the final body. The
-   harness owns the final public copy. ProfileScribe owns approved-source
-   verification, hosted ActionProof, storage, and publication. If the active
-   ProfileScribe integration does not support `body`/`abstracts` on
-   `create_source_backed_timeline_post`, stop and report that the integration is
-   too old rather than falling back to hosted copy generation.
-10. If no specific, meaningful update exists, do not post. Return the source
+   - private agent commentary about what the post is doing, how it was derived,
+     or why it was written must not appear in the public body
+10. Prepare platform-specific guidance for cross-posting. Keep this private
+    unless the user asks to review it:
+    - **LinkedIn:** use the full canonical body as-is. LinkedIn supports long-
+      form professional updates and the full detail works best here.
+    - **X, Bluesky, Threads, Mastodon:** produce one tight complete thought
+      (280-500 chars depending on platform) that captures the single most
+      interesting claim from the post. The short variant must not end mid-
+      sentence or trail off with an ellipsis. Omit the reflection paragraph
+      and keep only the concrete work signal. Do not add generic hashtags,
+      engagement bait, or unsupported claims.
+    - **WordPress, Ghost, Medium:** use the full canonical body with optional
+      title/headline.
+    - **Google Business Profile, Facebook, Instagram:** only queue when
+      compatible public media exists. Use a tight 1-2 sentence summary that
+      points to the full post.
+    - Route all platform variants through ProfileScribe's distribution queue
+      so the hosted app applies provider limits, URL counting, delivery
+      receipts, and per-platform fitting. Never submit a half-sentence or
+      ellipsis-truncated social variant from the harness.
+11. For normal autonomous posting, call `create_source_backed_timeline_post`
+    with the chosen topic, final draft `body`, `abstracts`, tone, and minimal
+    source IDs that directly substantiate the final body. The harness owns the
+    final public copy. ProfileScribe owns approved-source verification, hosted
+    ActionProof, storage, and publication. If the active ProfileScribe
+    integration does not support `body`/`abstracts` on
+    `create_source_backed_timeline_post`, stop and report that the integration
+    is too old rather than falling back to hosted copy generation.
+12. If no specific, meaningful update exists, do not post. Return the source
     checks performed, ranked opportunities inspected, and the reason no post was
     created.
 
 ## Default Post Type
 
-When the user does not request a specific format, draft a concise first-person
-professional progress note grounded in visible evidence. The post should help a
-normal professional reader understand what the profile owner is currently
-building, shipping, learning, writing, or thinking about.
+When the user does not request a specific format, draft a substantive
+first-person professional update grounded in visible evidence. The post should
+help a normal professional reader understand exactly what the profile owner
+built, shipped, learned, wrote, or changed — naming specific projects,
+repositories, articles, or outcomes rather than speaking in generalities about
+"current direction" or "making work visible".
+
+Aim for 2-4 paragraphs with concrete detail. A single vague sentence is a sign
+the evidence is too thin for a post.
 
 Do not default to promotional launch copy, generic thought leadership,
 engagement bait, or summaries of crawler/source activity. Use launch framing
