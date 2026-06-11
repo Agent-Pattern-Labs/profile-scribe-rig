@@ -33,32 +33,34 @@ Use this mode for the full Profile Scribe post creation workflow.
    angles to avoid. Record the ranked source opportunities that were inspected.
 6. Build or refresh the voice profile using `voice` mode behavior.
 7. Draft a new post with:
-   - a default source-backed professional update when the user does not request
-     a specific format
-   - one clear point of view
-   - source-backed facts that name specific projects, repositories, articles,
-     launches, talks, or shipped work — avoid vague references to "current
-     direction", "recent updates", or "the work"
-   - source selection that matches the actual public claim, not the broader
-     research context
-   - a concrete work signal: what changed, shipped, was written, released,
-     updated, learned, or became clearer
-   - why the signal matters for the profile owner's current professional
-     direction
-   - a substantive first-person reflection, decision, tradeoff, or pattern
-     noticed — not a generic observation anyone could write
-   - the user's observed voice
-   - no heavy copying from prior posts
-   - normal first-person professional wording suitable for a LinkedIn feed
-   - no visible planning language, prompt constraints, crawl narration, or
-     provenance/audit labels in the public body
-   - a materially new angle when using a source that appeared recently
-   - autonomous professional discovery: the agent should choose the strongest
-     under-covered source-backed opportunity itself when the user gives only a
-     generic "create a post" request
-   - a canonical body that can stand on its own in ProfileScribe; external
-     destinations should be adapted later by ProfileScribe's distribution
-     adapter, not by chopping this body down in the harness
+    - a default source-backed professional update when the user does not request
+      a specific format
+    - one clear point of view
+    - source-backed facts that name specific projects, repositories, articles,
+      launches, talks, or shipped work — avoid vague references to "current
+      direction", "recent updates", or "the work"
+    - source selection that matches the actual public claim, not the broader
+      research context
+    - a concrete work signal: what changed, shipped, was written, released,
+      updated, learned, or became clearer
+    - why the signal matters for the profile owner's current professional
+      direction
+    - a substantive first-person reflection, decision, tradeoff, or pattern
+      noticed — not a generic observation anyone could write. The reflection
+      must tie directly to the specific work signal, not be a standalone
+      aphorism or platitude about "the importance of X".
+    - the user's observed voice
+    - no heavy copying from prior posts
+    - normal first-person professional wording suitable for a LinkedIn feed
+    - no visible planning language, prompt constraints, crawl narration, or
+      provenance/audit labels in the public body
+    - a materially new angle when using a source that appeared recently
+    - autonomous professional discovery: the agent should choose the strongest
+      under-covered source-backed opportunity itself when the user gives only a
+      generic "create a post" request
+    - a canonical body that can stand on its own in ProfileScribe; external
+      destinations should be adapted later by ProfileScribe's distribution
+      adapter, not by chopping this body down in the harness
 8. Make the post descriptive and specific enough that a reader understands
    exactly what the post is about without clicking any links:
    - Name the specific project, repository, article, tool, or launch by name
@@ -95,18 +97,24 @@ Use this mode for the full Profile Scribe post creation workflow.
 10. Prepare platform-specific guidance for cross-posting. Keep this private
     unless the user asks to review it:
     - **LinkedIn:** use the full canonical body as-is. LinkedIn supports long-
-      form professional updates and the full detail works best here.
+      form professional updates and the full detail works best here. Lead with
+      the concrete work signal, not a generic greeting or framing statement.
     - **X, Bluesky, Threads, Mastodon:** produce one tight complete thought
       (280-500 chars depending on platform) that captures the single most
-      interesting claim from the post. The short variant must not end mid-
-      sentence or trail off with an ellipsis. Omit the reflection paragraph
-      and keep only the concrete work signal. Do not add generic hashtags,
-      engagement bait, or unsupported claims.
+      interesting claim from the post. Structure: concrete claim → one
+      supporting detail → implication or takeaway. The short variant must
+      stand alone as a complete, self-contained update — not end mid-sentence
+      or trail off with an ellipsis. Omit the reflection paragraph and keep
+      only the concrete work signal. Do not add generic hashtags, engagement
+      bait, or unsupported claims. Prefer platform-native short-form wording
+      over truncating the canonical body.
     - **WordPress, Ghost, Medium:** use the full canonical body with optional
-      title/headline.
+      title/headline. Add a brief introductory sentence if the body assumes
+      LinkedIn-native context that does not carry over to a blog post.
     - **Google Business Profile, Facebook, Instagram:** only queue when
       compatible public media exists. Use a tight 1-2 sentence summary that
-      points to the full post.
+      names the specific project and outcome, then points to the full post at
+      ProfileScribe.
     - Route all platform variants through ProfileScribe's distribution queue
       so the hosted app applies provider limits, URL counting, delivery
       receipts, and per-platform fitting. Never submit a half-sentence or
@@ -132,12 +140,23 @@ built, shipped, learned, wrote, or changed — naming specific projects,
 repositories, articles, or outcomes rather than speaking in generalities about
 "current direction" or "making work visible".
 
-Aim for 2-4 paragraphs with concrete detail. A single vague sentence is a sign
-the evidence is too thin for a post.
+A substantive post connects three things:
+1. A specific work signal (shipped X, learned Y, decided Z)
+2. The context or problem that made that signal meaningful
+3. What the profile owner now knows, can do, or believes differently
+
+Missing any of these three, the post reads as either vague promotion or
+unmotivated detail. Aim for 2-4 paragraphs that cover all three. A single
+vague sentence is a sign the evidence is too thin for a post.
 
 Do not default to promotional launch copy, generic thought leadership,
 engagement bait, or summaries of crawler/source activity. Use launch framing
 only when the source context actually supports a launch.
+
+Avoid posts that are only about the profile owner's tools, frameworks, or
+tech stack without connecting them to a specific professional outcome. "We
+switched to X" is not a post unless the switch solved a concrete problem that
+the reader would recognize.
 
 ## Output
 
