@@ -1092,7 +1092,7 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
             'create another post for my profile scribe',
             'write a timeline post'
           ],
-          body: 'plain text, specific, professional, maximum 900 characters',
+          body: 'plain text, specific, professional, maximum 900 characters, always finish the last sentence, never truncate with ... or …',
           abstracts: '1-3 short evidence summary lines',
           tone: 'short tone label',
           sourceIds: 'Exact full parent source.id values from the approved sources used; never shorten or truncate IDs; never submit child URLs as sourceIds; use at most maxSources',
@@ -1116,7 +1116,7 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
     });
     return {
       topic: text(response.topic),
-      body: text(response.body),
+      body: sanitizeTrailingEllipsis(text(response.body)),
       abstracts: array(response.abstracts),
       tone: text(response.tone),
       sourceIds: array(response.sourceIds),
@@ -1878,6 +1878,10 @@ function arrayOfObjects(value) {
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function sanitizeTrailingEllipsis(value) {
+  return value.replace(/\s*\.{3,}\s*$/, '').replace(/\s*…\s*$/, '').trim();
 }
 
 function firstNonEmpty(...values) {
