@@ -115,18 +115,27 @@ Use this mode for the full Profile Scribe post creation workflow.
       compatible public media exists. Use a tight 1-2 sentence summary that
       names the specific project and outcome, then points to the full post at
       ProfileScribe.
-    - Route all platform variants through ProfileScribe's distribution queue
-      so the hosted app applies provider limits, URL counting, delivery
-      receipts, and per-platform fitting. Never submit a half-sentence or
-      ellipsis-truncated social variant from the harness.
+    - Build a `platformVariants` map (provider key → variant body) from these
+      adaptations. For example: `{"linkedin": "...", "x": "...", "wordpress": "..."}`.
+      Include the canonical body as the default for any provider without a
+      specific variant. ProfileScribe will pick the right variant per connection
+      and fall back to truncating the canonical body when no variant exists.
+    - Route all platform variants through `create_source_backed_timeline_post`
+      as the `platformVariants` field alongside `body` and `abstracts`.
+      ProfileScribe's distribution queue applies provider limits, URL counting,
+      delivery receipts, and per-platform fitting against the variant text.
+      Never submit a half-sentence or ellipsis-truncated social variant from
+      the harness without also supplying the full variant in the map.
 11. For normal autonomous posting, call `create_source_backed_timeline_post`
-    with the chosen topic, final draft `body`, `abstracts`, tone, and minimal
-    source IDs that directly substantiate the final body. The harness owns the
+    with the chosen topic, final draft `body`, `abstracts`, tone, minimal
+    source IDs that directly substantiate the final body, and `platformVariants`
+    when platform-specific adaptations were prepared. The harness owns the
     final public copy. ProfileScribe owns approved-source verification, hosted
-    ActionProof, storage, and publication. If the active ProfileScribe
-    integration does not support `body`/`abstracts` on
-    `create_source_backed_timeline_post`, stop and report that the integration
-    is too old rather than falling back to hosted copy generation.
+    ActionProof, storage, publication, and per-provider variant selection.
+    If the active ProfileScribe integration does not support `body`/`abstracts`
+    or `platformVariants` on `create_source_backed_timeline_post`, stop and
+    report that the integration is too old rather than falling back to hosted
+    copy generation.
 12. If no specific, meaningful update exists, do not post. Return the source
     checks performed, ranked opportunities inspected, and the reason no post was
     created.
