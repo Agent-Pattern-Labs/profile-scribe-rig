@@ -12,20 +12,30 @@ targets:
 
 ## Mode Routing
 
-Determine the mode from `{{mode}}`:
+Determine the mode from the underlying intent in `{{mode}}`, not from exact
+phrases alone. The literal mode names below are fast paths, but any clear
+paraphrase should route to the same workflow.
 
 | Input | Mode |
 | --- | --- |
 | empty | `discovery` |
-| topic, draft, prompt, or URLs with no sub-command | `compose` |
+| request to create, write, draft, prepare, share, or publish a professional update; topic, draft, prompt, or URLs with no sub-command | `compose` |
 | `compose` | `compose` |
+| request to inspect, fetch, scan, check, crawl, or summarize supplied URLs or approved sources without drafting | `crawl` |
+| request to inspect previous posts, avoid repetition, compare history, or find prior coverage | `history` |
+| request about voice, tone, style, phrasing, or how the user usually writes | `voice` |
+| request to stage, submit, publish to ProfileScribe, or cross-post through ProfileScribe distribution | `submit` |
 | `crawl` | `crawl` |
 | `history` | `history` |
 | `voice` | `voice` |
 | `submit` | `submit` |
 
 If input is not a known sub-command and includes `http://` or `https://`, route
-to `compose`. If it asks only to inspect sources, route to `crawl`.
+to `compose` when the user wants a post and to `crawl` when they only want
+inspection or extraction. If multiple intents are present, choose the workflow
+that completes the requested end state; for example, a request to write a post
+and cross-post it should use `compose` through submission/distribution rather
+than stopping at `submit`.
 
 ## Discovery
 

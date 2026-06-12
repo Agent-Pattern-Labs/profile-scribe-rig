@@ -16,6 +16,33 @@ Use `/Users/charlie/AgentPatternLabs/Agent-Skills` as the local reference for ho
   approved sources, source activity, and prior timeline context before deciding
   what to publish; user-supplied URLs are optional, not required.
 
+## Routing Standard
+
+Route by the user's underlying intent, not by deterministic phrases or exact
+sub-command strings. The named modes (`compose`, `crawl`, `history`, `voice`,
+and `submit`) are fast paths for users who know them, but natural-language
+requests must reach the same workflows when the intent is clear.
+
+Examples:
+
+- A request to write, prepare, share, draft, or create a professional update
+  should route to `compose`, even when the user does not say "compose" or
+  "post".
+- A request to inspect, fetch, scan, summarize, or check supplied URLs or
+  approved sources without drafting should route to `crawl`.
+- A request to compare against prior posts, avoid repetition, find old coverage,
+  or inspect publishing history should route to `history`.
+- A request about tone, writing style, voice, wording patterns, or how the post
+  should sound should route to `voice`.
+- A request to stage, submit, publish to ProfileScribe, or cross-post through
+  ProfileScribe distribution should route through `submit` or the compose flow's
+  submission step as appropriate.
+
+If an exact command and natural-language intent conflict, follow the clearer
+semantic intent and ask one concise clarification only when the requested action
+would mutate sources, submit content, or distribute externally and the target is
+ambiguous.
+
 ## First-Class ProfileScribe Bridge
 
 Use `/Users/charlie/AgentPatternLabs/profilescribe-mcp` as the local reference for the public ProfileScribe MCP bridge. The harness should treat `profilescribe-mcp` as the default way for terminal agents to read ProfileScribe profile/sources and submit source-backed timeline posts. Use `/Users/charlie/AgentPatternLabs/profile-scribe` as the local reference for hosted API behavior, tool semantics, ActionProof requirements, and product rules.
