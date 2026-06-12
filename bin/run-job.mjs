@@ -1081,6 +1081,7 @@ If the user gave you a URL, that URL's crawled content is in userSuppliedUrlCraw
 Do not invent accomplishments, credentials, numbers, affiliations, launches, or claims.
 Do not create a post that repeats the same source plus the same claim, fact pattern, story shape, or title from timelineBrief.
 Prefer ranked evidence items such as specific articles or repositories over broad parent profile links when they support a concrete professional point.
+In profile.experience, check each entry's endDate before writing about it. An entry with endDate set to a past month (e.g. "2017-12") is a past role — do not describe it as current. Only entries where endDate is empty, "Present", "Current", or a future month represent current work.
 Return an empty body only after evaluating all evidence and finding no supported, non-repetitive angle.
 Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
       user: JSON.stringify({
