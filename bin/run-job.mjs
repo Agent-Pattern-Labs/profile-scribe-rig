@@ -1237,7 +1237,7 @@ async function resolveDraftWithOpenRouter(job, context) {
   try {
     const payload = object(job.payload);
     const model = openRouterDraftModel();
-    const response = await callOpenRouterJSON({
+    const completion = await callOpenRouterJSON({
       model,
       system: `You are a ProfileScribe source-backed posting agent.
 Draft concise professional timeline posts only from the provided profile, approved source metadata, source extracts, timeline history, and any user-supplied URL content.
@@ -1287,6 +1287,7 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
       }),
       maxTokens: 900
     });
+    const response = completion.data;
     return {
       topic: text(response.topic),
       body: sanitizeTrailingEllipsis(text(response.body)),
@@ -1295,7 +1296,8 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
       sourceIds: array(response.sourceIds),
       metadata: {
         provider: 'openrouter',
-        model
+        model,
+        openRouterUsage: completion.usage
       }
     };
   } catch (error) {
@@ -1314,7 +1316,9 @@ async function resolveInterviewMessage(job, context) {
   if (!openRouterApiKey()) return defaultInterviewMessage(context);
   try {
     const payload = object(job.payload);
-    const response = await callOpenRouterJSON({
+    const model = openRouterModel();
+    const completion = await callOpenRouterJSON({
+      model,
       system: `You are a ProfileScribe managed-agent interview agent.
 Ask one concise question that helps the user provide source-backed professional evidence.
 Do not claim work was done unless context proves it.
@@ -1334,6 +1338,7 @@ Return only JSON with keys: kind, body, status, summary, complete.`,
       }),
       maxTokens: 350
     });
+    const response = completion.data;
     return {
       kind: text(response.kind) || 'question',
       body: text(response.body) || defaultInterviewMessage(context).body,
@@ -1342,7 +1347,8 @@ Return only JSON with keys: kind, body, status, summary, complete.`,
       complete: Boolean(response.complete),
       metadata: {
         provider: 'openrouter',
-        model: openRouterModel()
+        model,
+        openRouterUsage: completion.usage
       }
     };
   } catch (error) {
@@ -1410,7 +1416,25 @@ async function callOpenRouterJSON({ model, system, user, maxTokens }) {
   if (!content) {
     throw new Error('OpenRouter returned an empty message');
   }
-  return parseJSON(extractJSONObject(content), 'OpenRouter JSON message');
+  return {
+    data: parseJSON(extractJSONObject(content), 'OpenRouter JSON message'),
+    usage: normalizeOpenRouterUsage(envelope?.usage)
+  };
+}
+
+function normalizeOpenRouterUsage(usage) {
+  usage = object(usage);
+  if (Object.keys(usage).length === 0) return {};
+  return compact({
+    prompt_tokens: positiveInteger(usage.prompt_tokens),
+    completion_tokens: positiveInteger(usage.completion_tokens),
+    total_tokens: positiveInteger(usage.total_tokens),
+    promptTokens: positiveInteger(usage.promptTokens),
+    completionTokens: positiveInteger(usage.completionTokens),
+    totalTokens: positiveInteger(usage.totalTokens),
+    cost: finiteNumber(usage.cost),
+    raw: usage
+  });
 }
 
 async function crawlUserPromptUrls(prompt) {
@@ -2119,6 +2143,16 @@ function truncate(value, limit) {
 function numberOr(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function positiveInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : undefined;
+}
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
 }
 
 function boolEnv(name) {
