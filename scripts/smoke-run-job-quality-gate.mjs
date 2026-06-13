@@ -7,23 +7,25 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
-const tmp = mkdtempSync(join(tmpdir(), 'profilescribe-rig-source-ids-'));
-const fullSourceID = 'src-365b099c-60f4-43fc-8298-282a50eaad27';
-const truncatedSourceID = 'src-365b099c';
+const tmp = mkdtempSync(join(tmpdir(), 'profilescribe-rig-quality-gate-'));
 const createPostCalls = [];
 
-const sources = [
-  {
-    id: fullSourceID,
-    kind: 'website',
-    label: 'Razroo Projects',
-    url: 'https://razroo.com/projects',
-    status: 'monitoring',
-    trustLevel: 'high'
-  }
-];
+const source = {
+  id: 'src-makebind-quality',
+  kind: 'website',
+  label: 'MakeBind',
+  url: '',
+  status: 'monitoring',
+  trustLevel: 'high'
+};
 
 const server = createServer(async (request, response) => {
+  if (request.method === 'GET' && request.url === '/makebind') {
+    response.writeHead(200, { 'Content-Type': 'text/html' });
+    response.end('<title>MakeBind</title><meta name="description" content="MakeBind helps builders turn source material into working software context."><main>MakeBind release notes describe source-to-context workflows for software builders.</main>');
+    return;
+  }
+
   let raw = '';
   for await (const chunk of request) raw += chunk;
   const envelope = JSON.parse(raw || '{}');
@@ -32,14 +34,35 @@ const server = createServer(async (request, response) => {
   let result;
 
   if (name === 'read_profile') {
-    result = { identity: { fullName: 'Abraham Greenman', headline: 'Builder' } };
+    result = {
+      identity: {
+        fullName: 'Abraham Greenman',
+        headline: 'Builder of practical AI systems'
+      }
+    };
   } else if (name === 'read_sources') {
-    result = sources;
+    result = [source];
+  } else if (name === 'read_source_evidence') {
+    result = [{
+      sourceId: source.id,
+      sourceLabel: source.label,
+      sourceUrl: source.url,
+      sourceKind: source.kind,
+      observationId: 'obs-makebind',
+      url: source.url,
+      kind: 'page',
+      title: 'MakeBind',
+      summary: 'MakeBind helps builders turn source material into working software context.',
+      changeType: 'changed',
+      observedAt: '2026-06-13T12:00:00Z'
+    }];
   } else if (name === 'search_timeline_posts') {
     result = { query: args.query || '', results: [] };
+  } else if (name === 'discover_timeline_posts') {
+    result = { posts: [] };
   } else if (name === 'create_source_backed_timeline_post') {
     createPostCalls.push(args);
-    result = { draft: { id: 'draft-source-id-smoke' } };
+    result = { draft: { id: 'draft-should-not-publish' } };
   } else {
     response.writeHead(400, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({ error: { message: `unexpected tool ${name}` } }));
@@ -59,14 +82,17 @@ const server = createServer(async (request, response) => {
 try {
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
   const port = server.address().port;
+  source.url = `http://127.0.0.1:${port}/makebind`;
+
   const jobFile = join(tmp, 'job.json');
   const drafterFile = join(tmp, 'drafter.mjs');
 
   writeFileSync(jobFile, `${JSON.stringify({
-    id: 'job-source-id-smoke',
+    id: 'job-quality-gate-smoke',
     kind: 'draft_post',
     payload: {
-      maxSources: 3
+      topic: 'create one more timeline post about MakeBind',
+      maxSources: 1
     }
   })}\n`, 'utf8');
   writeFileSync(drafterFile, `
@@ -76,11 +102,11 @@ process.stdin.on('data', (chunk) => { raw += chunk; });
 process.stdin.on('end', () => {
   JSON.parse(raw || '{}');
   process.stdout.write(JSON.stringify({
-    topic: 'Source ID smoke test',
-    body: 'Razroo Projects describes agent-assisted project planning in a concrete enough way to make the current work inspectable. The useful part is the planning pattern: connect source material, project context, and implementation choices before turning the work into a public update.',
-    abstracts: ['Razroo Projects describes agent-assisted project planning with source material and implementation context.'],
+    topic: 'Source spotlight: MakeBind',
+    body: 'Planning a source-backed update from MakeBind. This public web source is part of my approved professional evidence graph, so the post can point back to verifiable work instead of becoming a generic status update.',
+    abstracts: ['Source spotlight public web source is part of my approved professional evidence'],
     tone: 'professional',
-    sourceIds: [${JSON.stringify(truncatedSourceID)}]
+    sourceIds: ['${source.id}']
   }));
 });
 `, 'utf8');
@@ -102,14 +128,21 @@ process.stdin.on('end', () => {
     throw new Error(`run-job exited with status ${run.code}`);
   }
 
-  const createPostCall = createPostCalls[0];
-  if (!createPostCall) throw new Error('create_source_backed_timeline_post was not called');
-  const submittedSourceIDs = Array.isArray(createPostCall.sourceIds) ? createPostCall.sourceIds : [];
-  if (submittedSourceIDs.length !== 1 || submittedSourceIDs[0] !== fullSourceID) {
-    throw new Error(`expected full source id ${fullSourceID}, got ${JSON.stringify(submittedSourceIDs)}`);
+  const receipt = JSON.parse(run.stdout || '{}');
+  if (receipt.status !== 'skipped') {
+    throw new Error(`expected skipped receipt, got ${JSON.stringify(receipt)}`);
+  }
+  if (!/quality gate/i.test(receipt.summary || '')) {
+    throw new Error(`expected quality gate summary, got ${JSON.stringify(receipt)}`);
+  }
+  if (!/placeholder language/i.test(receipt.metadata?.qualityCheck?.reason || '')) {
+    throw new Error(`expected placeholder-language quality reason, got ${JSON.stringify(receipt.metadata?.qualityCheck)}`);
+  }
+  if (createPostCalls.length !== 0) {
+    throw new Error(`weak draft should not call create_source_backed_timeline_post: ${JSON.stringify(createPostCalls)}`);
   }
 
-  console.log('profile-scribe-rig source ID smoke check passed.');
+  console.log('profile-scribe-rig quality gate smoke check passed.');
 } finally {
   server.close();
   rmSync(tmp, { recursive: true, force: true });

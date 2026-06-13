@@ -127,6 +127,19 @@ async function runPostJob(job, options) {
       }
     };
   }
+  const quality = draftQualityCheck(submissionDraft, context);
+  if (!quality.ok) {
+    return skipped(job, `Draft copy did not pass the ProfileScribe quality gate: ${quality.reason}`, {
+      qualityCheck: quality,
+      topic: submissionDraft.topic,
+      sourceIds: array(submissionDraft.sourceIds),
+      checkedSources: context.sources.length,
+      timelineBrief: compactTimelineBrief(context.timelineBrief),
+      sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+      evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      drafter: object(draft.metadata)
+    });
+  }
   const duplicate = await findRecentDuplicateDraft(submissionDraft, context);
   if (duplicate) {
     return skipped(job, `A recent timeline post already covers this update: ${duplicate.topic || 'untitled post'}`, {
@@ -377,6 +390,159 @@ function isPostInstructionTopic(value) {
     return true;
   }
   return false;
+}
+
+function draftQualityCheck(draft, context) {
+  draft = object(draft);
+  const body = text(draft.body);
+  const topic = text(draft.topic);
+  const sourceIds = array(draft.sourceIds);
+  const reasons = [];
+  const forbidden = forbiddenDraftCopyMatches(`${topic}\n${body}`);
+  const support = draftEvidenceSupport(draft, context);
+  const generic = genericDraftBodySignals(body);
+
+  if (!body) {
+    reasons.push('missing draft body');
+  }
+  if (body && body.length < 80) {
+    reasons.push('draft body is too thin for a public professional update');
+  }
+  if (body && /(?:\.{3,}|…)\s*$/.test(body)) {
+    reasons.push('draft body ends with an ellipsis instead of a complete sentence');
+  }
+  if (body && !/[.!?]"?\s*$/.test(body)) {
+    reasons.push('draft body does not finish with sentence punctuation');
+  }
+  if (isPostInstructionTopic(topic)) {
+    reasons.push('draft topic repeats the posting instruction instead of the update angle');
+  }
+  if (sourceIds.length === 0) {
+    reasons.push('draft did not select an approved source id');
+  }
+  if (forbidden.length > 0) {
+    reasons.push(`draft uses internal or placeholder language: ${forbidden[0]}`);
+  }
+  if (sourceIds.length > 0 && support.matches.length === 0) {
+    reasons.push('draft body does not mention selected source or evidence details');
+  }
+  if (generic.count >= 2 && support.matches.length < 2) {
+    reasons.push('draft leans on generic ProfileScribe phrasing without enough concrete evidence');
+  }
+
+  return {
+    ok: reasons.length === 0,
+    reason: reasons[0] || 'draft passed quality gate',
+    reasons,
+    evidenceSupport: support,
+    genericSignals: generic.matches
+  };
+}
+
+function forbiddenDraftCopyMatches(value) {
+  const normalized = comparablePostText(value);
+  const matches = [];
+  const phrases = [
+    'planning a source backed update',
+    'approved professional evidence graph',
+    'the post can point back',
+    'generic status update',
+    'this post should',
+    'public claim',
+    'crawl summary',
+    'recent timeline context',
+    'timeline brief',
+    'source backed timeline post',
+    'source backed post draft',
+    'approved source graph',
+    'approved sources',
+    'source graph',
+    'posting workflow',
+    'profile scribe posting workflow',
+    'profile scribe mcp'
+  ];
+  for (const phrase of phrases) {
+    if (normalized.includes(phrase)) matches.push(phrase);
+  }
+  if (/\bi work on [a-z0-9 ]{2,40}\./i.test(value)) {
+    matches.push('i work on');
+  }
+  return matches;
+}
+
+function genericDraftBodySignals(value) {
+  const normalized = comparablePostText(value);
+  const phrases = [
+    'current direction of the work',
+    'public surfaces',
+    'static bio',
+    'easier to inspect',
+    'concrete change someone can inspect',
+    'less hand maintained context',
+    'small update',
+    'work while it is still moving',
+    'professional presence stays current',
+    'make the work concrete'
+  ];
+  const matches = phrases.filter((phrase) => normalized.includes(phrase));
+  return { count: matches.length, matches };
+}
+
+function draftEvidenceSupport(draft, context) {
+  const bodyText = comparablePostText(draft.body);
+  const wanted = new Set(array(draft.sourceIds));
+  const terms = new Set();
+  const appendTerms = (...values) => {
+    for (const value of values) {
+      for (const token of meaningfulTokens(value)) {
+        if (token.length >= 4) terms.add(token);
+      }
+    }
+  };
+  const appendURLTerms = (value) => {
+    const url = text(value);
+    if (!url) return;
+    try {
+      const parsed = new URL(url);
+      appendTerms(parsed.hostname.replace(/^www\./i, ''), parsed.pathname);
+    } catch {
+      appendTerms(url);
+    }
+  };
+
+  for (const source of arrayOfObjects(context.sources)) {
+    if (!wanted.has(text(source.id))) continue;
+    appendTerms(source.label, source.kind);
+    appendURLTerms(source.url);
+  }
+  for (const item of arrayOfObjects(context.sourceEvidence)) {
+    if (!wanted.has(text(item.sourceId))) continue;
+    appendTerms(item.sourceLabel, item.sourceKind, item.kind, item.title, item.summary);
+    appendURLTerms(item.url || item.sourceUrl);
+  }
+  for (const item of arrayOfObjects(context.evidenceOpportunities)) {
+    if (!wanted.has(text(item.sourceId))) continue;
+    appendTerms(item.sourceLabel, item.sourceKind, item.kind, item.title, item.summary);
+    appendURLTerms(item.url || item.sourceUrl);
+  }
+  for (const item of arrayOfObjects(context.sourceExtracts)) {
+    if (!wanted.has(text(item.sourceId))) continue;
+    appendTerms(item.label, item.kind, item.evidenceTitle, item.evidenceSummary, item.title, item.description, item.excerpt);
+    appendURLTerms(item.url || item.sourceUrl);
+  }
+
+  const matches = [];
+  for (const term of terms) {
+    if (bodyText.includes(term)) {
+      matches.push(term);
+    }
+  }
+  matches.sort((left, right) => right.length - left.length || left.localeCompare(right));
+  return {
+    selectedSourceCount: wanted.size,
+    termCount: terms.size,
+    matches: matches.slice(0, 12)
+  };
 }
 
 function normalizeSourceIds(sourceIds, sources, maxSources) {
@@ -1078,6 +1244,11 @@ Draft concise professional timeline posts only from the provided profile, approv
 Before drafting, inspect timelineBrief to understand the recent timeline direction, sources already covered, repeated openings, repeated topics, and angles to avoid.
 Then inspect evidenceOpportunities, sourceOpportunities, sourceExtracts, and userSuppliedUrlCrawls to discover the strongest source-backed posting angle on your own.
 If the user gave you a URL, that URL's crawled content is in userSuppliedUrlCrawls — use it as the primary source evidence for the post.
+Write for a normal professional reader, not for ProfileScribe internals. The public body should sound like the profile owner chose a concrete artifact, decision, launch, repository, article, or product detail worth sharing.
+Open with the specific thing that changed or the named artifact being made visible. Avoid generic openings such as "I've been updating", "I work on", "Planning a source-backed update", "Small update", or "The useful signal".
+Do not leak internal system terms into public copy: timeline brief, crawl summary, source graph, approved sources, evidence graph, posting workflow, source-backed timeline post, this post should, or generic status update.
+Every body must include at least one concrete detail from selected evidence, such as a product name, repository name, article title, capability, constraint, design choice, customer/user problem, or implementation detail.
+Prefer one sharp angle in 2-3 short paragraphs over a broad recap of the profile.
 Do not invent accomplishments, credentials, numbers, affiliations, launches, or claims.
 Do not create a post that repeats the same source plus the same claim, fact pattern, story shape, or title from timelineBrief.
 Prefer ranked evidence items such as specific articles or repositories over broad parent profile links when they support a concrete professional point.
@@ -1100,7 +1271,8 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
           maxSources: numberOr(payload.maxSources, 3),
           discovery: 'Use evidenceOpportunities as the primary ranked discovery queue, then sourceOpportunities. Prefer high-scoring evidence with low recent coverage. Source extracts contain the refreshed pages you can use.',
           skipWhenWeak: 'Return empty body only if every discovered opportunity is generic, stale, missing, not professionally meaningful, or already covered by the recent timeline.',
-          differentiation: 'If reusing a recently covered source, draft only when the post has a materially new angle that is visible in the final body.'
+          differentiation: 'If reusing a recently covered source, draft only when the post has a materially new angle that is visible in the final body.',
+          qualityGate: 'The final body will be rejected if it reads like an agent audit trail, uses internal ProfileScribe phrases, omits selected evidence details, has no approved sourceIds, repeats the user posting request as the topic, or sounds like generic professional-brand filler.'
         },
         profile: compactProfile(context.profile),
         sources: compactSources(context.sources),
