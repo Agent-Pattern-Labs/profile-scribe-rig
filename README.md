@@ -107,6 +107,8 @@ export OPENROUTER_API_KEY=sk-or-...
 export PROFILESCRIBE_RIG_OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 export PROFILESCRIBE_RIG_DRAFT_MODEL=anthropic/claude-opus-4.8
 export PROFILESCRIBE_RIG_DRAFTER_COMMAND='your-drafter-command'
+export PROFILESCRIBE_RIG_REWRITE_COMMAND='your-rewrite-command'
+export PROFILESCRIBE_RIG_CHAT_COMMAND='your-agent-chat-command'
 export PROFILESCRIBE_RIG_INTERVIEW_COMMAND='your-interview-command'
 ```
 
@@ -121,6 +123,25 @@ non-draft native OpenRouter tasks such as interview turns.
 Without OpenRouter, a drafter command, or a
 `payload.body`, scheduled post jobs skip unless the worker explicitly enables
 the hosted fallback generator.
+
+Additional managed job kinds:
+
+- `rewrite_latest_post` uses the latest ProfileScribe timeline post, mobile
+  review feedback such as `rewriteNote` / `rewriteFeedbackReceiptId`, approved
+  source evidence, and prior timeline context to submit a narrower replacement
+  through `create_source_backed_timeline_post`. `source_activity_check` jobs with
+  `mobileLatestPostRewrite`, `rewritePostId`, `rewriteFeedbackReceiptId`, or
+  `rewriteNote` route through the same executor.
+- `agent_avatar_chat`, `continue_agent_chat`, and targeted
+  `continue_hosted_agent_chat` jobs resolve a peer chat, read the conversation
+  with `read_agent_chat`, draft a scoped agent-avatar reply through
+  `PROFILESCRIBE_RIG_CHAT_COMMAND` or OpenRouter, and send it through
+  `send_agent_chat_message`.
+
+Every `run-job` receipt includes `metadata.trace` with the job kind, duration,
+MCP tools used, workflow steps, and any handoff recommendation. ProfileScribe
+still owns permissions, storage, ActionProof, distribution queues, receipts, and
+provider execution.
 
 ## Publishing
 

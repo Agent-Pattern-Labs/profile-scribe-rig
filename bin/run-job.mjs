@@ -17,6 +17,8 @@ Environment:
   PROFILESCRIBE_RIG_OPENROUTER_MODEL   Optional OpenRouter model override for non-draft native tasks
   PROFILESCRIBE_RIG_DRAFT_MODEL        Optional OpenRouter model override for final post drafting
   PROFILESCRIBE_RIG_DRAFTER_COMMAND    Optional command that receives context JSON and returns draft JSON
+  PROFILESCRIBE_RIG_REWRITE_COMMAND    Optional command that receives rewrite context JSON and returns draft JSON
+  PROFILESCRIBE_RIG_CHAT_COMMAND       Optional command that receives chat context JSON and returns reply JSON
   PROFILESCRIBE_RIG_INTERVIEW_COMMAND  Optional command that receives interview context JSON and returns message JSON
 `;
 
@@ -49,7 +51,8 @@ if (!existsSync(jobFile)) fail(`job file not found: ${jobFile}`);
 const job = parseJSON(readFileSync(jobFile, 'utf8'), `job file ${jobFile}`);
 
 try {
-  const result = await runJob(job, { dryRun });
+  const startedAt = new Date();
+  const result = withRunTraceMetadata(job, await runJob(job, { dryRun }), startedAt);
   const payload = `${JSON.stringify(result, null, 2)}\n`;
   if (outputFile) {
     writeFileSync(outputFile, payload, 'utf8');
@@ -80,10 +83,19 @@ async function runJob(job, options) {
     case 'scheduled_post_check':
     case 'draft_post':
       return await runPostJob(job, options);
+    case 'rewrite_latest_post':
+      return await runRewriteLatestPostJob(job, options);
     case 'continue_interview':
       return await runInterviewJob(job, options);
-    case 'crawl_sources':
+    case 'agent_avatar_chat':
+    case 'continue_agent_chat':
+    case 'continue_hosted_agent_chat':
+      return await runAgentAvatarChatJob(job, options);
     case 'source_activity_check':
+      return sourceActivityRewriteRequested(job.payload)
+        ? await runRewriteLatestPostJob(job, options)
+        : await runPostJob(job, options);
+    case 'crawl_sources':
     case 'propose_profile_update':
       return skipped(job, `${kind} is queued but no rig executor is implemented yet`);
     default:
@@ -196,6 +208,153 @@ async function runPostJob(job, options) {
   };
 }
 
+async function runRewriteLatestPostJob(job, options) {
+  const payload = object(job.payload);
+  if (options.dryRun) {
+    return skipped(job, 'dry run: rewrite job would read latest post feedback and submit a replacement draft');
+  }
+
+  const context = await loadProfileScribeContext({
+    ...payload,
+    topic: firstNonEmpty(payload.topic, payload.rewriteNote, 'rewrite latest ProfileScribe timeline post')
+  });
+  const latestPost = await resolveRewriteLatestPost(payload, context);
+  if (!latestPost) {
+    return skipped(job, 'No latest ProfileScribe timeline post was available to rewrite.', {
+      trace: {
+        tools: ['read_profile', 'read_sources', 'read_source_evidence', 'search_timeline_posts', 'discover_timeline_posts'],
+        steps: [{ name: 'resolve_latest_post', status: 'skipped', reason: 'not_found' }]
+      }
+    });
+  }
+
+  const rewriteContext = rewriteLatestPostContext(payload, latestPost, context);
+  const draft = normalizeDraftSourceIds(
+    await resolveRewriteDraft(job, context, rewriteContext),
+    context,
+    numberOr(payload.maxSources, 3)
+  );
+  if (draft.sourceIds.length === 0 && rewriteContext.sourceIds.length > 0) {
+    draft.sourceIds = rewriteContext.sourceIds;
+  }
+  const submissionDraft = {
+    ...draft,
+    topic: resolveTimelinePostTopic(draft, {
+      ...payload,
+      topic: firstNonEmpty(draft.topic, payload.topic, rewriteContext.latestPost.topic)
+    })
+  };
+
+  if (!draft.body) {
+    return skipped(job, 'No feedback-aware replacement body was available; leaving rewrite as a no-op.', {
+      rewriteLatestPost: rewriteContext,
+      timelineBrief: compactTimelineBrief(context.timelineBrief),
+      sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+      evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      drafter: object(draft.metadata),
+      trace: {
+        tools: rewriteTraceTools(),
+        steps: [{ name: 'draft_rewrite', status: 'skipped', reason: 'empty_body' }]
+      }
+    });
+  }
+
+  const quality = draftQualityCheck(submissionDraft, context);
+  if (!quality.ok) {
+    return skipped(job, `Replacement draft did not pass the ProfileScribe quality gate: ${quality.reason}`, {
+      rewriteLatestPost: rewriteContext,
+      qualityCheck: quality,
+      topic: submissionDraft.topic,
+      sourceIds: array(submissionDraft.sourceIds),
+      timelineBrief: compactTimelineBrief(context.timelineBrief),
+      sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+      evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      drafter: object(draft.metadata),
+      trace: {
+        tools: rewriteTraceTools(),
+        steps: [{ name: 'quality_gate', status: 'skipped', reason: quality.reason }]
+      }
+    });
+  }
+
+  const duplicate = await findRecentDuplicateDraft(submissionDraft, context, {
+    excludePostIds: rewritePostIDs(latestPost)
+  });
+  if (duplicate) {
+    return skipped(job, `A different recent timeline post already covers this rewrite: ${duplicate.topic || 'untitled post'}`, {
+      rewriteLatestPost: rewriteContext,
+      duplicatePost: duplicate,
+      topic: submissionDraft.topic,
+      sourceIds: array(submissionDraft.sourceIds),
+      timelineBrief: compactTimelineBrief(context.timelineBrief),
+      sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+      evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      drafter: object(draft.metadata),
+      trace: {
+        tools: rewriteTraceTools(),
+        steps: [{ name: 'duplicate_check', status: 'skipped', reason: 'different_recent_duplicate' }]
+      }
+    });
+  }
+
+  let response;
+  try {
+    response = await callMCPTool('create_source_backed_timeline_post', compact({
+      topic: submissionDraft.topic,
+      body: submissionDraft.body || '',
+      abstracts: array(submissionDraft.abstracts),
+      tone: submissionDraft.tone || payload.tone || 'professional',
+      maxSources: numberOr(payload.maxSources, 3),
+      sourceIds: array(submissionDraft.sourceIds),
+      platformVariants: object(submissionDraft.platformVariants)
+    }));
+  } catch (error) {
+    if (isDuplicateTimelinePostError(error)) {
+      return skipped(job, 'A recent timeline post already covers this feedback-aware replacement.', {
+        rewriteLatestPost: rewriteContext,
+        topic: submissionDraft.topic,
+        sourceIds: array(submissionDraft.sourceIds),
+        timelineBrief: compactTimelineBrief(context.timelineBrief),
+        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+        trace: {
+          tools: rewriteTraceTools(),
+          steps: [{ name: 'submit_rewrite', status: 'skipped', reason: 'duplicate_recent_timeline_post' }]
+        }
+      });
+    }
+    throw error;
+  }
+
+  return {
+    status: 'completed',
+    jobId: text(job.id),
+    jobKind: text(job.kind),
+    summary: 'Submitted a feedback-aware replacement source-backed timeline post through ProfileScribe MCP.',
+    artifactType: 'timeline_post',
+    artifactId: response?.draft?.id || response?.id || '',
+    metadata: {
+      rewriteLatestPost: rewriteContext,
+      topic: submissionDraft.topic,
+      sourceIds: array(submissionDraft.sourceIds),
+      checkedSources: context.sources.length,
+      timelineBrief: compactTimelineBrief(context.timelineBrief),
+      sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+      evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      drafter: object(draft.metadata),
+      trace: {
+        tools: rewriteTraceTools(),
+        steps: [
+          { name: 'resolve_latest_post', status: 'completed' },
+          { name: 'draft_rewrite', status: 'completed' },
+          { name: 'quality_gate', status: 'completed' },
+          { name: 'submit_rewrite', status: 'completed' }
+        ]
+      }
+    }
+  };
+}
+
 async function runInterviewJob(job, options) {
   const payload = object(job.payload);
   const sessionId = text(payload.interviewSessionId);
@@ -237,6 +396,84 @@ async function runInterviewJob(job, options) {
       summary: text(message.summary),
       complete: Boolean(message.complete),
       metadata: object(message.metadata)
+    }
+  };
+}
+
+async function runAgentAvatarChatJob(job, options) {
+  const payload = object(job.payload);
+  if (options.dryRun) {
+    return skipped(job, 'dry run: agent-avatar chat job would read the peer conversation and send a scoped reply');
+  }
+
+  const target = await resolveAgentChatTarget(payload);
+  if (!target.targetTenantId || !target.targetUserId) {
+    return skipped(job, 'Agent-avatar chat target is required. Provide targetTenantId and targetUserId, or a targetSlug that matches list_agent_chats.', {
+      chat: target,
+      trace: {
+        tools: ['list_agent_chats'],
+        steps: [{ name: 'resolve_chat_target', status: 'skipped', reason: 'missing_target' }]
+      }
+    });
+  }
+
+  const conversation = await callMCPTool('read_agent_chat', {
+    targetTenantId: target.targetTenantId,
+    targetUserId: target.targetUserId
+  });
+  const context = await loadProfileScribeContext({
+    ...payload,
+    topic: firstNonEmpty(payload.topic, payload.ownerPrompt, latestChatBody(conversation), object(conversation.peer).headline)
+  });
+  const chatContext = agentAvatarChatContext(payload, target, conversation, context);
+  const reply = await resolveAgentAvatarChatReply(job, chatContext);
+  const body = text(reply.body);
+  if (!body) {
+    return skipped(job, 'No agent-avatar chat reply was produced.', {
+      chat: compactChatContext(chatContext),
+      responder: object(reply.metadata),
+      trace: {
+        tools: agentChatTraceTools(target.resolvedFromList),
+        steps: [{ name: 'draft_chat_reply', status: 'skipped', reason: 'empty_body' }]
+      }
+    });
+  }
+
+  const message = await callMCPTool('send_agent_chat_message', compact({
+    targetTenantId: target.targetTenantId,
+    targetUserId: target.targetUserId,
+    body,
+    agentName: firstNonEmpty(payload.agentName, reply.agentName)
+  }));
+
+  return {
+    status: 'completed',
+    jobId: text(job.id),
+    jobKind: text(job.kind),
+    summary: 'Sent an agent-avatar chat reply through ProfileScribe MCP.',
+    artifactType: 'agent_chat_message',
+    artifactId: text(message.id),
+    metadata: {
+      chat: {
+        ...compactChatContext(chatContext),
+        replyPreview: truncate(body, 240),
+        handoffRecommended: Boolean(reply.handoffRecommended),
+        handoffReason: text(reply.handoffReason)
+      },
+      responder: object(reply.metadata),
+      trace: {
+        tools: agentChatTraceTools(target.resolvedFromList),
+        steps: [
+          { name: 'resolve_chat_target', status: 'completed' },
+          { name: 'read_agent_chat', status: 'completed' },
+          { name: 'draft_chat_reply', status: 'completed' },
+          { name: 'send_agent_chat_message', status: 'completed' }
+        ],
+        handoffs: reply.handoffRecommended ? [{
+          kind: 'human_follow_up_recommendation',
+          reason: text(reply.handoffReason)
+        }] : []
+      }
     }
   };
 }
@@ -322,6 +559,22 @@ async function resolveDraft(job, context) {
     abstracts: array(draft.abstracts),
     tone: text(draft.tone),
     sourceIds: array(draft.sourceIds),
+    metadata: object(draft.metadata)
+  };
+}
+
+async function resolveRewriteDraft(job, context, rewriteContext) {
+  const command = process.env.PROFILESCRIBE_RIG_REWRITE_COMMAND || process.env.PROFILESCRIBE_RIG_DRAFTER_COMMAND || '';
+  const draft = command
+    ? runJSONCommand(command, { job, context, rewrite: rewriteContext })
+    : await resolveRewriteDraftWithOpenRouter(job, context, rewriteContext);
+  return {
+    topic: text(draft.topic),
+    body: text(draft.body),
+    abstracts: array(draft.abstracts),
+    tone: text(draft.tone),
+    sourceIds: array(draft.sourceIds),
+    platformVariants: object(draft.platformVariants),
     metadata: object(draft.metadata)
   };
 }
@@ -587,7 +840,97 @@ function resolveApprovedSourceId(rawID, approvedIDs) {
   return '';
 }
 
-async function findRecentDuplicateDraft(draft, context) {
+function sourceActivityRewriteRequested(payload) {
+  payload = object(payload);
+  return Boolean(payload.mobileLatestPostRewrite) ||
+    Boolean(payload.rewriteLatestPost) ||
+    Boolean(payload.rewritePostId) ||
+    Boolean(payload.rewriteFeedbackReceiptId) ||
+    text(payload.rewriteNote) !== '';
+}
+
+async function resolveRewriteLatestPost(payload, context) {
+  payload = object(payload);
+  const wanted = text(payload.rewritePostId || payload.postId || payload.latestPostId);
+  const candidates = [];
+  const append = (post) => {
+    const normalized = normalizeTimelinePost(post);
+    if (normalized.topic || normalized.body || normalized.id) candidates.push(normalized);
+  };
+  for (const post of arrayOfObjects(context.timelineBrief?.recentPosts)) append(post);
+  for (const post of arrayOfObjects(context.timelineSearch?.results)) append(post);
+
+  if (wanted) {
+    const found = candidates.find((post) => rewritePostIDs(post).includes(wanted));
+    if (found) return found;
+    const searched = await searchTimelinePosts(wanted, 8);
+    for (const post of timelinePostsFromResult(searched)) {
+      if (rewritePostIDs(post).includes(wanted)) return post;
+    }
+  }
+  return candidates
+    .sort((left, right) => timestamp(right.publishedAt) - timestamp(left.publishedAt))[0] || null;
+}
+
+function rewriteLatestPostContext(payload, latestPost, context) {
+  payload = object(payload);
+  latestPost = normalizeTimelinePost(latestPost);
+  const sourceIds = rewriteSourceIds(payload, latestPost, context);
+  return compact({
+    latestPost: compact({
+      id: text(latestPost.id || latestPost.postId),
+      topic: text(latestPost.topic),
+      body: truncate(latestPost.body, 1200),
+      publishedAt: text(latestPost.publishedAt),
+      url: text(latestPost.url),
+      sources: normalizeTimelinePostSources(latestPost)
+    }),
+    feedback: compact({
+      receiptId: text(payload.rewriteFeedbackReceiptId || payload.feedbackReceiptId),
+      value: firstNonEmpty(payload.feedback, payload.reviewFeedback, payload.mobileLatestPostFeedback, 'needs_edit'),
+      note: text(payload.rewriteNote || payload.feedbackNote || payload.note),
+      requestedAt: text(payload.mobileStartedAt || payload.requestedAt),
+      trigger: text(payload.trigger)
+    }),
+    sourceIds,
+    instruction: 'Create a narrower replacement from approved evidence. Do not lightly paraphrase the weak post.'
+  });
+}
+
+function rewriteSourceIds(payload, latestPost, context) {
+  const selected = array(payload.sourceIds);
+  if (selected.length > 0) return normalizeSourceIds(selected, context.sources, numberOr(payload.maxSources, 3)).ids;
+  const approved = new Map(arrayOfObjects(context.sources).map((source) => [text(source.id), source]));
+  const ids = [];
+  for (const source of arrayOfObjects(latestPost.sources)) {
+    const sourceID = text(source.id || source.sourceId);
+    if (approved.has(sourceID) && !ids.includes(sourceID)) ids.push(sourceID);
+  }
+  return ids.slice(0, numberOr(payload.maxSources, 3));
+}
+
+function rewritePostIDs(post) {
+  post = object(post);
+  return [
+    text(post.id),
+    text(post.postId),
+    text(post.draftId)
+  ].filter(Boolean);
+}
+
+function rewriteTraceTools() {
+  return [
+    'read_profile',
+    'read_sources',
+    'read_source_evidence',
+    'search_timeline_posts',
+    'discover_timeline_posts',
+    'create_source_backed_timeline_post'
+  ];
+}
+
+async function findRecentDuplicateDraft(draft, context, options = {}) {
+  const excluded = new Set(array(object(options).excludePostIds));
   const seen = new Set();
   const searches = [object(context.timelineSearch)];
   const topic = text(draft.topic);
@@ -599,6 +942,7 @@ async function findRecentDuplicateDraft(draft, context) {
   for (const search of searches) {
     for (const post of arrayOfObjects(search?.results)) {
       const key = text(post.postId || post.id || `${post.authorSlug}:${post.topic}:${post.publishedAt}`);
+      if (excluded.has(text(post.postId)) || excluded.has(text(post.id)) || excluded.has(text(post.draftId))) continue;
       if (key && seen.has(key)) continue;
       if (key) seen.add(key);
       candidates.push(normalizeTimelinePost(post));
@@ -606,6 +950,7 @@ async function findRecentDuplicateDraft(draft, context) {
   }
   for (const post of arrayOfObjects(context.timelineBrief?.recentPosts)) {
     const normalized = normalizeTimelinePost(post);
+    if (excluded.has(text(normalized.postId)) || excluded.has(text(normalized.id))) continue;
     const key = text(normalized.id || `${normalized.authorSlug}:${normalized.topic}:${normalized.publishedAt}`);
     if (key && seen.has(key)) continue;
     if (key) seen.add(key);
@@ -613,6 +958,7 @@ async function findRecentDuplicateDraft(draft, context) {
   }
   for (const post of arrayOfObjects(context.timelineBrief?.relatedPosts)) {
     const normalized = normalizeTimelinePost(post);
+    if (excluded.has(text(normalized.postId)) || excluded.has(text(normalized.id))) continue;
     const key = text(normalized.id || `${normalized.authorSlug}:${normalized.topic}:${normalized.publishedAt}`);
     if (key && seen.has(key)) continue;
     if (key) seen.add(key);
@@ -1313,6 +1659,74 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
   }
 }
 
+async function resolveRewriteDraftWithOpenRouter(job, context, rewriteContext) {
+  if (!openRouterApiKey()) return {};
+  try {
+    const payload = object(job.payload);
+    const model = openRouterDraftModel();
+    const completion = await callOpenRouterJSON({
+      model,
+      system: `You are a ProfileScribe feedback-aware rewrite agent.
+Rewrite weak ProfileScribe timeline posts only from approved profile/source context, source evidence, source extracts, and the latest post feedback.
+Your job is to create a replacement post with a narrower, more specific angle. Do not defend, summarize, or explain the old post.
+Use the feedback note as the primary editing instruction, but keep claims grounded in approved sources.
+Do not invent accomplishments, credentials, numbers, affiliations, launches, or claims.
+Do not leak internal system terms into public copy: timeline brief, crawl summary, source graph, approved sources, evidence graph, posting workflow, source-backed timeline post, this post should, or generic status update.
+The replacement must name a concrete artifact, project, repository, article, capability, launch, constraint, or implementation detail from the evidence.
+Avoid the original post's generic framing, opening, and unsupported broad claims.
+Return an empty body if no approved evidence supports a materially better replacement.
+Return only JSON with keys: topic, body, abstracts, tone, sourceIds, platformVariants.`,
+      user: JSON.stringify({
+        task: 'Rewrite the latest ProfileScribe timeline post using mobile review feedback and approved evidence.',
+        constraints: {
+          body: 'plain text, specific, professional, maximum 900 characters, complete final sentence, no ellipsis',
+          topic: 'specific public post headline, maximum 96 characters; name the replacement angle, not the rewrite action',
+          sourceIds: 'Exact full parent source.id values from approved sources used; prefer rewrite.sourceIds when still supported',
+          platformVariants: 'Optional provider-name map. Omit or return empty object if not needed.',
+          qualityGate: 'The final body will be rejected if it sounds like generic professional-brand filler, repeats the weak post, or does not mention selected evidence details.'
+        },
+        rewrite: rewriteContext,
+        profile: compactProfile(context.profile),
+        sources: compactSources(context.sources),
+        sourceEvidence: compactSourceEvidence(context.sourceEvidence),
+        sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
+        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+        sourceExtracts: compactSourceExtracts(context.sourceExtracts),
+        userSuppliedUrlCrawls: compactUserUrlCrawls(context.userUrlCrawls),
+        timelineSearch: compactTimelineSearch(context.timelineSearch),
+        timelineBrief: compactTimelineBrief(context.timelineBrief),
+        jobPayload: payload
+      }),
+      maxTokens: 900
+    });
+    const response = completion.data;
+    return {
+      topic: text(response.topic),
+      body: sanitizeTrailingEllipsis(text(response.body)),
+      abstracts: array(response.abstracts),
+      tone: text(response.tone),
+      sourceIds: array(response.sourceIds),
+      platformVariants: object(response.platformVariants),
+      metadata: {
+        provider: 'openrouter',
+        model,
+        openRouterUsage: completion.usage,
+        rewrite: true
+      }
+    };
+  } catch (error) {
+    return {
+      metadata: {
+        provider: 'openrouter',
+        model: openRouterDraftModel(),
+        status: 'fallback',
+        rewrite: true,
+        error: error.message || 'OpenRouter rewrite failed'
+      }
+    };
+  }
+}
+
 async function resolveInterviewMessage(job, context) {
   if (!openRouterApiKey()) return defaultInterviewMessage(context);
   try {
@@ -1382,6 +1796,199 @@ function defaultInterviewMessage(context) {
     body: 'What recent project, launch, source, or shipped work should your profile reflect next?',
     status: 'waiting_for_user'
   };
+}
+
+async function resolveAgentChatTarget(payload) {
+  payload = object(payload);
+  const direct = {
+    targetTenantId: text(payload.targetTenantId || payload.targetTenantID),
+    targetUserId: text(payload.targetUserId || payload.targetUserID),
+    targetSlug: text(payload.targetSlug || payload.peerSlug),
+    resolvedFromList: false
+  };
+  if (direct.targetTenantId && direct.targetUserId) return direct;
+
+  let list = null;
+  try {
+    list = await callMCPTool('list_agent_chats', {});
+  } catch {
+    list = null;
+  }
+  const chats = arrayOfObjects(list?.chats);
+  const wantedSlug = comparablePostText(direct.targetSlug);
+  const wantedConversation = text(payload.conversationId);
+  const wantedMessage = text(payload.messageId);
+  let selected = null;
+  if (wantedSlug) {
+    selected = chats.find((chat) => comparablePostText(object(chat.peer).slug) === wantedSlug);
+  }
+  if (!selected && wantedConversation) {
+    selected = chats.find((chat) => text(chat.conversationId) === wantedConversation);
+  }
+  if (!selected && wantedMessage) {
+    selected = chats.find((chat) => text(object(chat.lastMessage).id) === wantedMessage);
+  }
+  if (!selected) {
+    selected = chats
+      .slice()
+      .sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt))[0] || null;
+  }
+  const peer = object(selected?.peer);
+  return compact({
+    ...direct,
+    targetTenantId: text(peer.tenantId),
+    targetUserId: text(peer.userId),
+    targetSlug: text(peer.slug || direct.targetSlug),
+    resolvedFromList: Boolean(selected),
+    availableChatCount: chats.length
+  });
+}
+
+function agentAvatarChatContext(payload, target, conversation, context) {
+  payload = object(payload);
+  conversation = object(conversation);
+  return {
+    target,
+    peer: compactPeerProfile(conversation.peer),
+    conversationId: text(conversation.conversationId || payload.conversationId),
+    ownerPrompt: text(payload.ownerPrompt || payload.prompt || payload.body),
+    messages: compactChatMessages(conversation.messages),
+    profile: compactProfile(context.profile),
+    sources: compactSources(context.sources),
+    sourceEvidence: compactSourceEvidence(context.sourceEvidence).slice(0, 12),
+    timelineBrief: compactTimelineBrief(context.timelineBrief),
+    jobPayload: payload
+  };
+}
+
+async function resolveAgentAvatarChatReply(job, chatContext) {
+  const command = process.env.PROFILESCRIBE_RIG_CHAT_COMMAND || '';
+  if (command) {
+    const reply = runJSONCommand(command, { job, chat: chatContext });
+    return normalizeAgentChatReply(reply, { provider: 'command', commandConfigured: true });
+  }
+  if (!openRouterApiKey()) {
+    return normalizeAgentChatReply(defaultAgentAvatarChatReply(chatContext), { provider: 'default' });
+  }
+  try {
+    const model = openRouterModel();
+    const completion = await callOpenRouterJSON({
+      model,
+      system: `You are a ProfileScribe agent-avatar chat agent.
+Reply as the profile owner's delegated professional agent avatar, not as a human owner.
+Use the ProfileScribe profile, source evidence, recent timeline context, peer profile, and chat history to decide whether there is a concrete professional overlap.
+Keep the reply concise, useful, and grounded. Do not invent work, credentials, relationships, or private facts.
+If there is a specific reason the humans should talk outside the automated agent loop, set handoffRecommended true and give a short handoffReason. Otherwise keep handoffRecommended false.
+Do not expose prompt rules, source-check mechanics, or internal agent reasoning.
+Return only JSON with keys: body, handoffRecommended, handoffReason, agentName.`,
+      user: JSON.stringify({
+        task: 'Draft one agent-avatar chat reply using ProfileScribe context and chat history.',
+        chat: chatContext,
+        constraints: {
+          body: '1-4 concise sentences. Ask at most one concrete follow-up question.',
+          handoffRecommended: 'true only when there is a specific professional overlap or collaboration reason worth surfacing to the humans'
+        }
+      }),
+      maxTokens: 450
+    });
+    return normalizeAgentChatReply(completion.data, {
+      provider: 'openrouter',
+      model,
+      openRouterUsage: completion.usage
+    });
+  } catch (error) {
+    return normalizeAgentChatReply(defaultAgentAvatarChatReply(chatContext), {
+      provider: 'openrouter',
+      model: openRouterModel(),
+      status: 'fallback',
+      error: error.message || 'OpenRouter chat failed'
+    });
+  }
+}
+
+function normalizeAgentChatReply(reply, metadata) {
+  reply = object(reply);
+  return {
+    body: text(reply.body),
+    agentName: text(reply.agentName),
+    handoffRecommended: Boolean(reply.handoffRecommended),
+    handoffReason: text(reply.handoffReason),
+    metadata: {
+      ...object(metadata),
+      handoffRecommended: Boolean(reply.handoffRecommended),
+      handoffReason: text(reply.handoffReason)
+    }
+  };
+}
+
+function defaultAgentAvatarChatReply(chatContext) {
+  const peer = object(chatContext.peer);
+  const source = arrayOfObjects(chatContext.sourceEvidence)[0] || arrayOfObjects(chatContext.sources)[0] || {};
+  const topic = firstNonEmpty(source.title, source.label, peer.headline, 'your current work');
+  return {
+    body: `That looks relevant to ${topic}. What specific overlap should our agents inspect next?`,
+    handoffRecommended: false
+  };
+}
+
+function latestChatBody(conversation) {
+  const messages = arrayOfObjects(object(conversation).messages)
+    .slice()
+    .sort((left, right) => timestamp(right.createdAt) - timestamp(left.createdAt));
+  return text(messages[0]?.body);
+}
+
+function compactPeerProfile(peer) {
+  peer = object(peer);
+  return compact({
+    tenantId: text(peer.tenantId),
+    userId: text(peer.userId),
+    slug: text(peer.slug),
+    fullName: text(peer.fullName),
+    headline: text(peer.headline),
+    location: text(peer.location),
+    about: truncate(peer.about, 360),
+    status: text(peer.status)
+  });
+}
+
+function compactChatMessages(messages) {
+  return arrayOfObjects(messages)
+    .slice()
+    .sort((left, right) => timestamp(left.createdAt) - timestamp(right.createdAt))
+    .slice(-12)
+    .map((message) => compact({
+      id: text(message.id),
+      senderName: text(message.senderName),
+      agentName: text(message.agentName),
+      recipientName: text(message.recipientName),
+      body: truncate(message.body, 700),
+      createdAt: text(message.createdAt)
+    }));
+}
+
+function compactChatContext(chatContext) {
+  return compact({
+    targetTenantId: text(chatContext.target?.targetTenantId),
+    targetUserId: text(chatContext.target?.targetUserId),
+    targetSlug: text(chatContext.target?.targetSlug),
+    conversationId: text(chatContext.conversationId),
+    peer: compactPeerProfile(chatContext.peer),
+    messageCount: arrayOfObjects(chatContext.messages).length
+  });
+}
+
+function agentChatTraceTools(resolvedFromList) {
+  return [
+    ...(resolvedFromList ? ['list_agent_chats'] : []),
+    'read_agent_chat',
+    'read_profile',
+    'read_sources',
+    'read_source_evidence',
+    'search_timeline_posts',
+    'discover_timeline_posts',
+    'send_agent_chat_message'
+  ];
 }
 
 async function callOpenRouterJSON({ model, system, user, maxTokens }) {
@@ -2068,6 +2675,31 @@ function skipped(job, summary, metadata = {}) {
     jobKind: text(job.kind),
     summary,
     metadata: object(metadata)
+  };
+}
+
+function withRunTraceMetadata(job, result, startedAt) {
+  result = object(result);
+  const metadata = object(result.metadata);
+  const existing = object(metadata.trace);
+  const completedAt = new Date();
+  const started = startedAt instanceof Date && Number.isFinite(startedAt.getTime()) ? startedAt : completedAt;
+  metadata.trace = compact({
+    kind: 'profile-scribe-rig-run',
+    jobId: text(result.jobId || job.id),
+    jobKind: text(result.jobKind || job.kind),
+    status: text(result.status),
+    startedAt: started.toISOString(),
+    completedAt: completedAt.toISOString(),
+    durationMs: Math.max(0, completedAt.getTime() - started.getTime()),
+    tools: array(existing.tools),
+    steps: arrayOfObjects(existing.steps),
+    handoffs: arrayOfObjects(existing.handoffs),
+    notes: array(existing.notes)
+  });
+  return {
+    ...result,
+    metadata
   };
 }
 

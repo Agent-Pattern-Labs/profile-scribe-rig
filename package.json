@@ -9,7 +9,7 @@
   },
   "scripts": {
     "sync": "node bin/sync.mjs",
-    "verify": "npm run smoke:config && npm run smoke:source-ids && npm run smoke:topic-guard && npm run smoke:quality-gate && npm run smoke:openrouter-usage && npm run smoke:timeline-brief && npm run smoke:source-opportunities && npm run smoke:evidence-opportunities",
+    "verify": "npm run smoke:config && npm run smoke:source-ids && npm run smoke:topic-guard && npm run smoke:quality-gate && npm run smoke:openrouter-usage && npm run smoke:timeline-brief && npm run smoke:source-opportunities && npm run smoke:evidence-opportunities && npm run smoke:rewrite-latest-post && npm run smoke:agent-chat",
     "smoke:config": "node scripts/smoke-config.mjs",
     "smoke:source-ids": "node scripts/smoke-run-job-source-ids.mjs",
     "smoke:topic-guard": "node scripts/smoke-run-job-topic-guard.mjs",
@@ -18,6 +18,8 @@
     "smoke:timeline-brief": "node scripts/smoke-run-job-timeline-brief.mjs",
     "smoke:source-opportunities": "node scripts/smoke-run-job-source-opportunities.mjs",
     "smoke:evidence-opportunities": "node scripts/smoke-run-job-evidence-opportunities.mjs",
+    "smoke:rewrite-latest-post": "node scripts/smoke-run-job-rewrite-latest-post.mjs",
+    "smoke:agent-chat": "node scripts/smoke-run-job-agent-chat.mjs",
     "plan": "iso plan .",
     "build:config": "iso build .",
     "lint:agentmd": "agentmd lint iso/instructions.md",
