@@ -42,6 +42,17 @@ Every final draft should preserve these records in consumer-local state:
 - draft path
 - Profile Scribe submission receipt when available
 
+## Completion Notifications
+
+- When a user-requested action is queued and will finish asynchronously, say so
+  plainly and tell the user that ProfileScribe will send final receipts in the
+  originating chat when the work completes.
+- When the rig receives completed receipts, provider URLs, ProfileScribe post
+  URLs, or other durable result links, include the relevant links in the final
+  user-facing reply.
+- Do not imply completion when ProfileScribe has only accepted or queued work;
+  distinguish queued, skipped, failed, and completed outcomes.
+
 ## Configuration Order
 
 Resolve integration settings in this order:
