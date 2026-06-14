@@ -104,7 +104,7 @@ Useful environment:
 export PROFILESCRIBE_AGENT_TOKEN=psagt_...
 export PROFILESCRIBE_MCP_URL=https://profilescribe.com/api/mcp
 export OPENROUTER_API_KEY=sk-or-...
-export PROFILESCRIBE_RIG_OPENROUTER_MODEL=deepseek/deepseek-v4-flash
+export PROFILESCRIBE_RIG_OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 export PROFILESCRIBE_RIG_DRAFT_MODEL=anthropic/claude-opus-4.8
 export PROFILESCRIBE_RIG_DRAFTER_COMMAND='your-drafter-command'
 export PROFILESCRIBE_RIG_INTERVIEW_COMMAND='your-interview-command'
