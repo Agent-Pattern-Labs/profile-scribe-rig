@@ -1449,14 +1449,41 @@ async function crawlUserPromptUrls(prompt) {
 }
 
 function extractURLs(value) {
-  const pattern = /https?:\/\/[^\s,;)'"\]}>]+/g;
-  const matches = String(value || '').match(pattern) || [];
-  return matches
-    .map((match) => match.replace(/[.,;)]+$/, '').trim())
-    .filter((url) => {
-      try { return Boolean(new URL(url)); }
-      catch { return false; }
-    });
+  value = String(value || '');
+  const matches = [];
+  const seen = new Set();
+  const append = (raw) => {
+    let candidate = String(raw || '').replace(/[.,;)]+$/, '').trim();
+    if (!candidate) return;
+    if (!/^https?:\/\//i.test(candidate)) {
+      candidate = defaultSchemeForBareURL(candidate) + candidate;
+    }
+    try {
+      const parsed = new URL(candidate);
+      if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) return;
+      const key = parsed.toString();
+      if (seen.has(key)) return;
+      seen.add(key);
+      matches.push(key);
+    } catch {
+      return;
+    }
+  };
+
+  for (const match of value.match(/https?:\/\/[^\s,;)'"\]}>]+/gi) || []) {
+    append(match);
+  }
+  for (const match of value.match(/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::\d{2,5})?(?:\/[^\s,;)'"\]}>]*)?/gi) || []) {
+    append(match);
+  }
+  for (const match of value.match(/\b(?:localhost|127(?:\.\d{1,3}){3})(?::\d{2,5})?(?:\/[^\s,;)'"\]}>]*)?/gi) || []) {
+    append(match);
+  }
+  return matches;
+}
+
+function defaultSchemeForBareURL(value) {
+  return /^(localhost|127(?:\.\d{1,3}){3})(?::|\/|$)/i.test(String(value || '')) ? 'http://' : 'https://';
 }
 
 async function fetchSingleUrlCrawl(url) {

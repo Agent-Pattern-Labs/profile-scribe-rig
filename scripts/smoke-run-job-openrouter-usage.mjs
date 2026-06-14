@@ -120,6 +120,7 @@ try {
     kind: 'draft_post',
     payload: {
       topic: 'draft about OpenRouter usage telemetry',
+      ownerPrompt: `brand post about ${source.url.replace(/^http:\/\//, '')}`,
       maxSources: 1
     }
   })}\n`, 'utf8');
@@ -144,6 +145,11 @@ try {
 
   if (openRouterCalls.length !== 1) {
     throw new Error(`expected one OpenRouter call, got ${openRouterCalls.length}`);
+  }
+  const openRouterUser = JSON.parse(openRouterCalls[0].messages?.find((message) => message.role === 'user')?.content || '{}');
+  const userUrlCrawls = openRouterUser.userSuppliedUrlCrawls || [];
+  if (!userUrlCrawls.some((crawl) => crawl.url === source.url && /Usage Lab/.test(crawl.title || ''))) {
+    throw new Error(`expected bare ownerPrompt URL to be crawled into OpenRouter context, got ${JSON.stringify(userUrlCrawls)}`);
   }
   if (createPostCalls.length !== 1) {
     throw new Error(`expected one create_source_backed_timeline_post call, got ${createPostCalls.length}`);
