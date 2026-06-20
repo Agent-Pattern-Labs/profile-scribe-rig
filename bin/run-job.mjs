@@ -1602,6 +1602,7 @@ If jobPayload.topic or jobPayload.ownerPrompt asks for a brand post, on-brand po
 Write for a normal professional reader, not for ProfileScribe internals. The public body should sound like the profile owner chose a concrete artifact, decision, launch, repository, article, or product detail worth sharing.
 Open with the specific thing that changed or the named artifact being made visible. Avoid generic openings such as "I've been updating", "I work on", "Planning a source-backed update", or "Small update".
 Avoid meta-analysis constructions a normal person would not post, such as "The useful signal/detail/part is", "The useful implementation detail is", "The page explains", "The page frames", or "The concrete detail is". Say directly what the app, page, repository, article, or launch does.
+Preserve the concrete artifact category from the evidence. If title, meta keywords, JSON-LD schema, feature list, or visible headings call something a game, app, tool, repository, article, guide, or platform, use that noun. Do not downgrade a game/app/tool into "demo", "page", "source", "public signal", or "public surface" unless the evidence itself primarily describes it that way.
 Do not leak internal system terms into public copy: timeline brief, crawl summary, source graph, approved sources, evidence graph, posting workflow, source-backed timeline post, this post should, or generic status update.
 Every body must include at least one concrete detail from selected evidence, such as a product name, repository name, article title, capability, constraint, design choice, customer/user problem, or implementation detail.
 Prefer one sharp angle in 2-3 short paragraphs over a broad recap of the profile.
@@ -1683,6 +1684,7 @@ Do not invent accomplishments, credentials, numbers, affiliations, launches, or 
 Do not leak internal system terms into public copy: timeline brief, crawl summary, source graph, approved sources, evidence graph, posting workflow, source-backed timeline post, this post should, or generic status update.
 The replacement must name a concrete artifact, project, repository, article, capability, launch, constraint, or implementation detail from the evidence.
 Avoid meta-analysis constructions a normal person would not post, such as "The useful signal/detail/part is", "The useful implementation detail is", "The page explains", "The page frames", or "The concrete detail is". Say directly what the app, page, repository, article, or launch does.
+Preserve the concrete artifact category from the evidence. If title, meta keywords, JSON-LD schema, feature list, or visible headings call something a game, app, tool, repository, article, guide, or platform, use that noun. Do not downgrade a game/app/tool into "demo", "page", "source", "public signal", or "public surface" unless the evidence itself primarily describes it that way.
 Avoid the original post's generic framing, opening, and unsupported broad claims.
 Return an empty body if no approved evidence supports a materially better replacement.
 Return only JSON with keys: topic, body, abstracts, tone, sourceIds, platformVariants.`,
@@ -2126,12 +2128,20 @@ async function fetchSingleUrlCrawl(url) {
     const raw = await response.text();
     const title = htmlTitle(raw);
     const description = htmlMetaDescription(raw);
+    const keywords = htmlMetaKeywords(raw);
+    const headings = htmlHeadings(raw);
+    const structured = htmlStructuredFacts(raw);
     const excerpt = contentType.includes('html') ? htmlToText(raw) : raw;
     return compact({
       url,
       label: title || url,
       title,
       description,
+      keywords,
+      headings,
+      structuredTypes: structured.types,
+      applicationCategory: structured.applicationCategory,
+      featureList: structured.featureList,
       excerpt: truncate(excerpt, numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_EXTRACT_CHARS, 2800)),
       kind: 'user_url',
       status: 'crawled'
@@ -2188,6 +2198,9 @@ async function fetchSourceExtract(source) {
     const raw = await response.text();
     const title = htmlTitle(raw);
     const description = htmlMetaDescription(raw);
+    const keywords = htmlMetaKeywords(raw);
+    const headings = htmlHeadings(raw);
+    const structured = htmlStructuredFacts(raw);
     const textContent = contentType.includes('html') ? htmlToText(raw) : raw;
     return compact({
       sourceId: source.sourceId || source.id,
@@ -2200,6 +2213,11 @@ async function fetchSourceExtract(source) {
       opportunityReasons: array(source.opportunityReasons),
       title,
       description,
+      keywords,
+      headings,
+      structuredTypes: structured.types,
+      applicationCategory: structured.applicationCategory,
+      featureList: structured.featureList,
       excerpt: truncate(textContent, numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_EXTRACT_CHARS, 2800))
     });
   } catch (error) {
@@ -2276,6 +2294,10 @@ function compactSourceEvidence(evidence) {
     kind: item.kind,
     title: item.title,
     summary: truncate(item.summary, 500),
+    keywords: array(item.keywords).slice(0, 8),
+    structuredTypes: array(item.structuredTypes).slice(0, 8),
+    applicationCategory: item.applicationCategory,
+    featureList: array(item.featureList).slice(0, 8),
     changeType: item.changeType,
     observedAt: item.observedAt,
     updatedAt: item.updatedAt
@@ -2288,6 +2310,11 @@ function compactUserUrlCrawls(crawls) {
     label: crawl.label || crawl.url,
     title: crawl.title,
     description: crawl.description,
+    keywords: array(crawl.keywords).slice(0, 8),
+    headings: array(crawl.headings).slice(0, 6),
+    structuredTypes: array(crawl.structuredTypes).slice(0, 8),
+    applicationCategory: crawl.applicationCategory,
+    featureList: array(crawl.featureList).slice(0, 8),
     excerpt: truncate(crawl.excerpt, 2800),
     kind: crawl.kind || 'user_url',
     status: crawl.status
@@ -2306,6 +2333,11 @@ function compactSourceExtracts(extracts) {
     opportunityReasons: array(extract.opportunityReasons).slice(0, 6),
     title: extract.title,
     description: extract.description,
+    keywords: array(extract.keywords).slice(0, 8),
+    headings: array(extract.headings).slice(0, 6),
+    structuredTypes: array(extract.structuredTypes).slice(0, 8),
+    applicationCategory: extract.applicationCategory,
+    featureList: array(extract.featureList).slice(0, 8),
     excerpt: truncate(extract.excerpt, 2800),
     status: extract.status
   }));
@@ -2778,9 +2810,114 @@ function htmlTitle(raw) {
 }
 
 function htmlMetaDescription(raw) {
-  const match = String(raw || '').match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["'][^>]*>/i) ||
-    String(raw || '').match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["'][^>]*>/i);
-  return match ? decodeHTML(match[1]).trim() : '';
+  return htmlMetaValue(raw, ['description', 'og:description', 'twitter:description']);
+}
+
+function htmlMetaKeywords(raw) {
+  return htmlMetaValue(raw, ['keywords', 'news_keywords'])
+    .split(',')
+    .map((item) => decodeHTML(item).replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function htmlMetaValue(raw, names) {
+  const wanted = new Set(array(names).map((name) => String(name || '').toLowerCase()));
+  for (const match of String(raw || '').matchAll(/<meta\b[^>]*>/gi)) {
+    const attrs = htmlAttrs(match[0]);
+    const name = String(attrs.name || attrs.property || '').toLowerCase();
+    if (wanted.has(name)) {
+      return decodeHTML(attrs.content || '').replace(/\s+/g, ' ').trim();
+    }
+  }
+  return '';
+}
+
+function htmlHeadings(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const match of String(raw || '').matchAll(/<h[1-3]\b[^>]*>([\s\S]*?)<\/h[1-3]>/gi)) {
+    const heading = htmlToText(match[1]);
+    const key = heading.toLowerCase();
+    if (!heading || seen.has(key)) continue;
+    seen.add(key);
+    out.push(heading);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
+function htmlStructuredFacts(raw) {
+  const facts = {
+    types: [],
+    applicationCategory: '',
+    featureList: []
+  };
+  for (const match of String(raw || '').matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    const attrs = htmlAttrs(match[1]);
+    if (String(attrs.type || '').toLowerCase() !== 'application/ld+json') continue;
+    try {
+      collectStructuredFacts(JSON.parse(decodeHTML(match[2]).trim()), facts);
+    } catch {
+      continue;
+    }
+  }
+  return {
+    types: uniqueStrings(facts.types).slice(0, 8),
+    applicationCategory: text(facts.applicationCategory),
+    featureList: uniqueStrings(facts.featureList).slice(0, 8)
+  };
+}
+
+function collectStructuredFacts(value, facts) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectStructuredFacts(item, facts);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  facts.types.push(...structuredStrings(value['@type']));
+  if (!facts.applicationCategory) {
+    facts.applicationCategory = structuredStrings(value.applicationCategory)[0] ||
+      structuredStrings(value.category)[0] ||
+      '';
+  }
+  facts.featureList.push(...structuredStrings(value.featureList));
+  for (const [key, item] of Object.entries(value)) {
+    if (['@context', 'name', 'description', 'url', 'image', 'logo'].includes(key)) continue;
+    collectStructuredFacts(item, facts);
+  }
+}
+
+function structuredStrings(value) {
+  if (typeof value === 'string') {
+    const cleaned = decodeHTML(value).replace(/\s+/g, ' ').trim();
+    return cleaned ? [cleaned] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => structuredStrings(item));
+  }
+  return [];
+}
+
+function htmlAttrs(raw) {
+  const attrs = {};
+  for (const match of String(raw || '').matchAll(/([a-zA-Z_:.-]+)\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+))/g)) {
+    attrs[match[1].toLowerCase()] = decodeHTML(match[3] || match[4] || match[5] || '');
+  }
+  return attrs;
+}
+
+function uniqueStrings(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of array(values)) {
+    const cleaned = text(value).replace(/\s+/g, ' ').trim();
+    const key = cleaned.toLowerCase();
+    if (!cleaned || seen.has(key)) continue;
+    seen.add(key);
+    out.push(cleaned);
+  }
+  return out;
 }
 
 function htmlToText(raw) {

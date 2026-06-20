@@ -30,7 +30,26 @@ const usage = {
 const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/usage-lab') {
     response.writeHead(200, { 'Content-Type': 'text/html' });
-    response.end('<title>Usage Lab</title><meta name="description" content="Usage Lab shows token telemetry for source-backed drafting."><main>Usage Lab documents OpenRouter token telemetry flowing from draft generation into job metadata.</main>');
+    response.end(`<!doctype html>
+<html>
+<head>
+  <title>Usage Lab | Token Telemetry App</title>
+  <meta name="description" content="Usage Lab shows token telemetry for source-backed drafting.">
+  <meta name="keywords" content="token telemetry app, OpenRouter usage tracking">
+  <script type="application/ld+json">{
+    "@context":"https://schema.org",
+    "@type":"WebApplication",
+    "applicationCategory":"DeveloperApplication",
+    "featureList":["Prompt token capture","Completion token capture","Cost reporting"]
+  }</script>
+</head>
+<body>
+  <main>
+    <h1>Token telemetry app for draft generation</h1>
+    <p>Usage Lab documents OpenRouter token telemetry flowing from draft generation into job metadata.</p>
+  </main>
+</body>
+</html>`);
     return;
   }
 
@@ -150,6 +169,26 @@ try {
   const userUrlCrawls = openRouterUser.userSuppliedUrlCrawls || [];
   if (!userUrlCrawls.some((crawl) => crawl.url === source.url && /Usage Lab/.test(crawl.title || ''))) {
     throw new Error(`expected bare ownerPrompt URL to be crawled into OpenRouter context, got ${JSON.stringify(userUrlCrawls)}`);
+  }
+  const sourceExtracts = openRouterUser.sourceExtracts || [];
+  if (!sourceExtracts.some((extract) =>
+    extract.sourceId === source.id &&
+    (extract.keywords || []).includes('token telemetry app') &&
+    (extract.structuredTypes || []).includes('WebApplication') &&
+    extract.applicationCategory === 'DeveloperApplication' &&
+    (extract.featureList || []).includes('Cost reporting')
+  )) {
+    throw new Error(`expected semantic source extract fields in OpenRouter context, got ${JSON.stringify(sourceExtracts)}`);
+  }
+  if (!userUrlCrawls.some((crawl) =>
+    (crawl.headings || []).includes('Token telemetry app for draft generation') &&
+    (crawl.featureList || []).includes('Prompt token capture')
+  )) {
+    throw new Error(`expected semantic user URL crawl fields in OpenRouter context, got ${JSON.stringify(userUrlCrawls)}`);
+  }
+  const systemPrompt = openRouterCalls[0].messages?.find((message) => message.role === 'system')?.content || '';
+  if (!systemPrompt.includes('Do not downgrade a game/app/tool')) {
+    throw new Error('expected artifact category preservation rule in OpenRouter system prompt');
   }
   if (createPostCalls.length !== 1) {
     throw new Error(`expected one create_source_backed_timeline_post call, got ${createPostCalls.length}`);
