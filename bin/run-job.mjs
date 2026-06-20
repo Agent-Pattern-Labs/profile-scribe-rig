@@ -500,7 +500,9 @@ async function loadProfileScribeContext(payload) {
   });
   const sourceOpportunities = buildSourceOpportunities({
     payload,
+    profile,
     sources: sourceList,
+    sourceEvidence,
     timelineBrief
   });
   const evidenceOpportunities = buildEvidenceOpportunities({
@@ -1224,17 +1226,26 @@ function compactPostRefs(posts) {
   }));
 }
 
-function buildSourceOpportunities({ payload, sources, timelineBrief }) {
+function buildSourceOpportunities({ payload, profile, sources, sourceEvidence, timelineBrief }) {
   payload = object(payload);
   const sourceList = arrayOfObjects(sources).filter((source) => text(source.url));
   const selectedSourceIDs = new Set(array(payload.sourceIds));
   const payloadTopic = comparablePostText(payload.topic);
   const coveredSources = arrayOfObjects(timelineBrief?.coveredSources);
+  const profileTerms = profileDirectionTerms(profile, timelineBrief);
+  const profileText = comparablePostText(JSON.stringify(compactProfile(profile)));
+  const evidenceSummaryBySource = sourceEvidenceSummaries({
+    sourceEvidence,
+    profileTerms,
+    profileText,
+    payloadTopic
+  });
 
   return sourceList
     .map((source, index) => {
       const coverage = coverageForSource(source, coveredSources);
       const coverageCount = Number(coverage.count || 0);
+      const evidenceSummary = evidenceSummaryBySource.get(text(source.id)) || {};
       const selected = selectedSourceIDs.has(text(source.id));
       const topicMatched = sourceMatchesTopic(source, payloadTopic);
       const reasons = [];
@@ -1264,6 +1275,25 @@ function buildSourceOpportunities({ payload, sources, timelineBrief }) {
         score += recency.score;
         reasons.push(recency.reason);
       }
+      if (evidenceSummary.changeScore > 0) {
+        score += evidenceSummary.changeScore;
+        reasons.push(evidenceSummary.changeReason);
+      }
+      if (evidenceSummary.freshnessScore > 0) {
+        score += evidenceSummary.freshnessScore;
+        reasons.push(evidenceSummary.freshnessReason);
+      }
+      if (evidenceSummary.structuredScore > 0) {
+        score += evidenceSummary.structuredScore;
+        reasons.push('structured crawl cues');
+      }
+      if (evidenceSummary.professionalScore > 0) {
+        score += evidenceSummary.professionalScore;
+        reasons.push(evidenceSummary.professionalReason);
+      } else if (evidenceSummary.weakProfessionalFit) {
+        score -= 24;
+        reasons.push('weak professional evidence fit');
+      }
       if (comparablePostText(source.trustLevel).includes('high')) {
         score += 6;
         reasons.push('high-trust source');
@@ -1285,11 +1315,59 @@ function buildSourceOpportunities({ payload, sources, timelineBrief }) {
         score,
         coverageCount,
         latestPost: coverage.latestPost,
-        reasons: reasons.slice(0, 5)
+        evidenceCount: Number(evidenceSummary.evidenceCount || 0),
+        latestEvidenceAt: text(evidenceSummary.latestEvidenceAt),
+        reasons: reasons.slice(0, 6)
       });
     })
     .sort((left, right) => Number(right.score) - Number(left.score))
     .slice(0, numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_OPPORTUNITY_LIMIT, 12));
+}
+
+function sourceEvidenceSummaries({ sourceEvidence, profileTerms, profileText, payloadTopic }) {
+  const summaries = new Map();
+  for (const evidence of arrayOfObjects(sourceEvidence)) {
+    const sourceID = text(evidence.sourceId);
+    if (!sourceID) continue;
+    const current = summaries.get(sourceID) || {
+      evidenceCount: 0,
+      latestTimestamp: 0,
+      latestEvidenceAt: '',
+      changeScore: 0,
+      changeReason: '',
+      freshnessScore: 0,
+      freshnessReason: '',
+      structuredScore: 0,
+      professionalScore: 0,
+      professionalReason: '',
+      weakProfessionalFit: false
+    };
+    current.evidenceCount += 1;
+    const observedTimestamp = evidenceTimestamp(evidence);
+    if (observedTimestamp > current.latestTimestamp) {
+      current.latestTimestamp = observedTimestamp;
+      current.latestEvidenceAt = text(evidence.observedAt || evidence.updatedAt);
+    }
+    const change = evidenceChangeScore(evidence);
+    if (change.score > current.changeScore) {
+      current.changeScore = change.score;
+      current.changeReason = change.reason;
+    }
+    const freshness = evidenceFreshnessScore(evidence);
+    if (freshness.score > current.freshnessScore) {
+      current.freshnessScore = freshness.score;
+      current.freshnessReason = freshness.reason;
+    }
+    current.structuredScore = Math.max(current.structuredScore, structuredEvidenceScore(evidence));
+    const fit = professionalFitForEvidence(evidence, profileTerms, profileText, evidenceMatchesTopic(evidence, payloadTopic));
+    if (fit.score > current.professionalScore) {
+      current.professionalScore = fit.score;
+      current.professionalReason = fit.reason;
+    }
+    if (fit.weak) current.weakProfessionalFit = true;
+    summaries.set(sourceID, current);
+  }
+  return summaries;
 }
 
 function buildEvidenceOpportunities({ payload, profile, sources, sourceEvidence, sourceOpportunities, timelineBrief }) {
@@ -1328,15 +1406,25 @@ function buildEvidenceOpportunities({ payload, profile, sources, sourceEvidence,
     }
 
     const change = comparablePostText(evidence.changeType);
-    if (change === 'new') {
-      score += 45;
-      reasons.push('new evidence');
-    } else if (change === 'changed') {
-      score += 38;
-      reasons.push('changed evidence');
+    const changeScore = evidenceChangeScore(evidence);
+    if (changeScore.score > 0) {
+      score += changeScore.score;
+      reasons.push(changeScore.reason);
     } else if (change === 'unchanged') {
       score -= 18;
       reasons.push('unchanged evidence');
+    }
+
+    const freshness = evidenceFreshnessScore(evidence);
+    if (freshness.score > 0) {
+      score += freshness.score;
+      reasons.push(freshness.reason);
+    }
+
+    const structuredScore = structuredEvidenceScore(evidence);
+    if (structuredScore > 0) {
+      score += structuredScore;
+      reasons.push('structured page cues');
     }
 
     const kind = comparablePostText(evidence.kind);
@@ -1377,6 +1465,10 @@ function buildEvidenceOpportunities({ payload, profile, sources, sourceEvidence,
       kind: text(evidence.kind),
       title: text(evidence.title),
       summary: truncate(evidence.summary, 500),
+      keywords: array(evidence.keywords).slice(0, 8),
+      structuredTypes: array(evidence.structuredTypes).slice(0, 8),
+      applicationCategory: text(evidence.applicationCategory),
+      featureList: array(evidence.featureList).slice(0, 8),
       changeType: text(evidence.changeType),
       observedAt: text(evidence.observedAt),
       updatedAt: text(evidence.updatedAt),
@@ -1389,6 +1481,41 @@ function buildEvidenceOpportunities({ payload, profile, sources, sourceEvidence,
   return out
     .sort((left, right) => Number(right.score) - Number(left.score))
     .slice(0, numberOr(process.env.PROFILESCRIBE_RIG_EVIDENCE_OPPORTUNITY_LIMIT, 24));
+}
+
+function evidenceChangeScore(evidence) {
+  const change = comparablePostText(evidence.changeType);
+  if (change === 'new') return { score: 45, reason: 'new evidence' };
+  if (change === 'changed') return { score: 38, reason: 'changed evidence' };
+  if (change === 'observed') return { score: 12, reason: 'recently observed evidence' };
+  return { score: 0, reason: '' };
+}
+
+function evidenceFreshnessScore(evidence) {
+  const latest = evidenceTimestamp(evidence);
+  if (latest <= 0) return { score: 0, reason: '' };
+  const ageHours = (Date.now() - latest) / (1000 * 60 * 60);
+  if (ageHours <= 48) return { score: 22, reason: 'fresh evidence observation' };
+  if (ageHours <= 24 * 7) return { score: 14, reason: 'evidence observed this week' };
+  if (ageHours <= 24 * 30) return { score: 6, reason: 'evidence observed this month' };
+  return { score: 0, reason: '' };
+}
+
+function evidenceTimestamp(evidence) {
+  return Math.max(
+    timestamp(evidence.observedAt),
+    timestamp(evidence.updatedAt),
+    timestamp(evidence.createdAt)
+  );
+}
+
+function structuredEvidenceScore(evidence) {
+  let score = 0;
+  if (array(evidence.keywords).length > 0) score += 8;
+  if (array(evidence.structuredTypes).length > 0) score += 8;
+  if (text(evidence.applicationCategory)) score += 6;
+  if (array(evidence.featureList).length > 0) score += 12;
+  return Math.min(score, 28);
 }
 
 function profileDirectionTerms(profile, timelineBrief) {
@@ -2351,8 +2478,10 @@ function compactSourceOpportunities(opportunities) {
     kind: opportunity.kind,
     score: opportunity.score,
     coverageCount: opportunity.coverageCount,
+    evidenceCount: opportunity.evidenceCount,
+    latestEvidenceAt: opportunity.latestEvidenceAt,
     latestPost: opportunity.latestPost,
-    reasons: array(opportunity.reasons).slice(0, 5)
+    reasons: array(opportunity.reasons).slice(0, 6)
   }));
 }
 
@@ -2367,6 +2496,10 @@ function compactEvidenceOpportunities(opportunities) {
     kind: opportunity.kind,
     title: opportunity.title,
     summary: truncate(opportunity.summary, 500),
+    keywords: array(opportunity.keywords).slice(0, 8),
+    structuredTypes: array(opportunity.structuredTypes).slice(0, 8),
+    applicationCategory: opportunity.applicationCategory,
+    featureList: array(opportunity.featureList).slice(0, 8),
     changeType: opportunity.changeType,
     observedAt: opportunity.observedAt,
     updatedAt: opportunity.updatedAt,

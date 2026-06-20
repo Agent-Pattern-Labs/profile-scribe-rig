@@ -67,6 +67,24 @@ const server = createServer(async (request, response) => {
     };
   } else if (name === 'read_sources') {
     result = sources;
+  } else if (name === 'read_source_evidence') {
+    result = [{
+      sourceId: 'src-fresh',
+      sourceLabel: 'Fresh Product',
+      sourceUrl: sources[1].url,
+      sourceKind: 'website',
+      observationId: 'obs-fresh-product',
+      url: sources[1].url,
+      kind: 'page',
+      title: 'Fresh Product | Discovery Workflow App',
+      summary: 'Fresh Product turns scattered professional signals into prioritized discovery opportunities for autonomous profile updates.',
+      keywords: ['discovery workflow app', 'professional signal ranking'],
+      structuredTypes: ['WebApplication'],
+      applicationCategory: 'BusinessApplication',
+      featureList: ['Prioritized discovery opportunities', 'Autonomous profile updates'],
+      changeType: 'changed',
+      observedAt: new Date().toISOString()
+    }];
   } else if (name === 'search_timeline_posts') {
     result = { query: envelope?.params?.arguments?.query || '', results: [priorPost] };
   } else if (name === 'discover_timeline_posts') {
@@ -162,6 +180,10 @@ process.stdin.on('end', () => {
   }
   if (receipt.metadata?.sourceOpportunities?.[0]?.sourceId !== 'src-fresh') {
     throw new Error(`expected source opportunity metadata, got ${JSON.stringify(receipt.metadata)}`);
+  }
+  const topReasons = receipt.metadata?.sourceOpportunities?.[0]?.reasons || [];
+  if (!topReasons.includes('changed evidence') || !topReasons.includes('structured crawl cues')) {
+    throw new Error(`expected evidence-backed source opportunity reasons, got ${JSON.stringify(topReasons)}`);
   }
 
   console.log('profile-scribe-rig source opportunity smoke check passed.');

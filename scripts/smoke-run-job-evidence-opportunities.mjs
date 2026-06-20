@@ -78,8 +78,12 @@ const server = createServer(async (request, response) => {
         kind: 'article',
         title: 'Practical AI systems need boring edges',
         summary: 'Review loops, source-backed claims, and constrained automation make practical AI systems useful.',
+        keywords: ['practical AI systems', 'agent workflow guide'],
+        structuredTypes: ['Article'],
+        applicationCategory: 'TechnicalArticle',
+        featureList: ['Review loops', 'Source-backed claims', 'Constrained automation'],
         changeType: 'new',
-        observedAt: '2026-06-03T11:00:00Z'
+        observedAt: new Date().toISOString()
       }
     ];
   } else if (name === 'search_timeline_posts') {
@@ -175,6 +179,10 @@ process.stdin.on('end', () => {
   }
   if (receipt.metadata?.evidenceOpportunities?.[0]?.url !== `${source.url}/blog/practical-ai-systems/`) {
     throw new Error(`expected evidence opportunity metadata, got ${JSON.stringify(receipt.metadata)}`);
+  }
+  const topReasons = receipt.metadata?.evidenceOpportunities?.[0]?.reasons || [];
+  if (!topReasons.includes('structured page cues') || !topReasons.includes('fresh evidence observation')) {
+    throw new Error(`expected structured and fresh evidence reasons, got ${JSON.stringify(topReasons)}`);
   }
 
   console.log('profile-scribe-rig evidence opportunity smoke check passed.');
