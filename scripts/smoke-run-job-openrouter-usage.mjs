@@ -46,7 +46,7 @@ const server = createServer(async (request, response) => {
         message: {
           content: JSON.stringify({
             topic: 'OpenRouter draft usage telemetry',
-            body: 'Usage Lab makes the OpenRouter token telemetry path visible for ProfileScribe drafting. The useful implementation detail is that draft generation can now carry prompt, completion, and total token counts into the job receipt for later cost reporting.',
+            body: 'Usage Lab makes the OpenRouter token telemetry path visible for ProfileScribe drafting. Draft generation now carries prompt, completion, and total token counts into the job receipt for later cost reporting.',
             abstracts: ['Usage Lab documents OpenRouter token telemetry flowing from draft generation into job metadata.'],
             tone: 'technical and concrete',
             sourceIds: [source.id]

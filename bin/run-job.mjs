@@ -712,7 +712,15 @@ function forbiddenDraftCopyMatches(value) {
     'source graph',
     'posting workflow',
     'profile scribe posting workflow',
-    'profile scribe mcp'
+    'profile scribe mcp',
+    'the concrete detail is',
+    'the page explains',
+    'the page frames',
+    'the useful detail',
+    'the useful implementation detail',
+    'the useful part',
+    'the useful signal',
+    'useful implementation detail'
   ];
   for (const phrase of phrases) {
     if (normalized.includes(phrase)) matches.push(phrase);
@@ -1592,7 +1600,8 @@ Then inspect evidenceOpportunities, sourceOpportunities, sourceExtracts, and use
 If the user gave you a URL, that URL's crawled content is in userSuppliedUrlCrawls — use it as the primary source evidence for the post.
 If jobPayload.topic or jobPayload.ownerPrompt asks for a brand post, on-brand post, ProfileScribe post, or another broad product/company update, use evidence that directly supports ProfileScribe, the profile owner's current product, or the named brand. Do not drift to an unrelated approved source just because it ranks highly. If no direct brand/product evidence is available, return an empty body so the assistant can ask for a better angle.
 Write for a normal professional reader, not for ProfileScribe internals. The public body should sound like the profile owner chose a concrete artifact, decision, launch, repository, article, or product detail worth sharing.
-Open with the specific thing that changed or the named artifact being made visible. Avoid generic openings such as "I've been updating", "I work on", "Planning a source-backed update", "Small update", or "The useful signal".
+Open with the specific thing that changed or the named artifact being made visible. Avoid generic openings such as "I've been updating", "I work on", "Planning a source-backed update", or "Small update".
+Avoid meta-analysis constructions a normal person would not post, such as "The useful signal/detail/part is", "The useful implementation detail is", "The page explains", "The page frames", or "The concrete detail is". Say directly what the app, page, repository, article, or launch does.
 Do not leak internal system terms into public copy: timeline brief, crawl summary, source graph, approved sources, evidence graph, posting workflow, source-backed timeline post, this post should, or generic status update.
 Every body must include at least one concrete detail from selected evidence, such as a product name, repository name, article title, capability, constraint, design choice, customer/user problem, or implementation detail.
 Prefer one sharp angle in 2-3 short paragraphs over a broad recap of the profile.
@@ -1673,6 +1682,7 @@ Use the feedback note as the primary editing instruction, but keep claims ground
 Do not invent accomplishments, credentials, numbers, affiliations, launches, or claims.
 Do not leak internal system terms into public copy: timeline brief, crawl summary, source graph, approved sources, evidence graph, posting workflow, source-backed timeline post, this post should, or generic status update.
 The replacement must name a concrete artifact, project, repository, article, capability, launch, constraint, or implementation detail from the evidence.
+Avoid meta-analysis constructions a normal person would not post, such as "The useful signal/detail/part is", "The useful implementation detail is", "The page explains", "The page frames", or "The concrete detail is". Say directly what the app, page, repository, article, or launch does.
 Avoid the original post's generic framing, opening, and unsupported broad claims.
 Return an empty body if no approved evidence supports a materially better replacement.
 Return only JSON with keys: topic, body, abstracts, tone, sourceIds, platformVariants.`,

@@ -77,7 +77,7 @@ process.stdin.on('end', () => {
   JSON.parse(raw || '{}');
   process.stdout.write(JSON.stringify({
     topic: 'Source ID smoke test',
-    body: 'Razroo Projects describes agent-assisted project planning in a concrete enough way to make the current work inspectable. The useful part is the planning pattern: connect source material, project context, and implementation choices before turning the work into a public update.',
+    body: 'Razroo Projects describes agent-assisted project planning in a concrete enough way to make the current work inspectable. The planning pattern connects source material, project context, and implementation choices before turning the work into a public update.',
     abstracts: ['Razroo Projects describes agent-assisted project planning with source material and implementation context.'],
     tone: 'professional',
     sourceIds: [${JSON.stringify(truncatedSourceID)}]
