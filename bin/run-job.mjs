@@ -124,6 +124,11 @@ async function runPostJob(job, options) {
     ...draft,
     topic: resolveTimelinePostTopic(draft, payload)
   };
+  const selectedEvidence = selectedEvidenceForDraft(
+    submissionDraft,
+    context,
+    numberOr(payload.maxSelectedEvidence, 6)
+  );
   if (!draft.body && !boolEnv('PROFILESCRIBE_RIG_ALLOW_HOSTED_DRAFT_FALLBACK')) {
     return {
       status: 'skipped',
@@ -135,7 +140,8 @@ async function runPostJob(job, options) {
         profileName: context.profile?.identity?.fullName || '',
         timelineBrief: compactTimelineBrief(context.timelineBrief),
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
-        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities)
+        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+        selectedEvidence
       }
     };
   }
@@ -149,6 +155,7 @@ async function runPostJob(job, options) {
       timelineBrief: compactTimelineBrief(context.timelineBrief),
       sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
       evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      selectedEvidence,
       drafter: object(draft.metadata)
     });
   }
@@ -161,7 +168,8 @@ async function runPostJob(job, options) {
       checkedSources: context.sources.length,
       timelineBrief: compactTimelineBrief(context.timelineBrief),
       sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
-      evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities)
+      evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      selectedEvidence
     });
   }
 
@@ -173,7 +181,8 @@ async function runPostJob(job, options) {
       abstracts: array(submissionDraft.abstracts),
       tone: submissionDraft.tone || payload.tone || 'professional',
       maxSources: numberOr(payload.maxSources, 3),
-      sourceIds: array(submissionDraft.sourceIds)
+      sourceIds: array(submissionDraft.sourceIds),
+      selectedEvidence
     }));
   } catch (error) {
     if (isDuplicateTimelinePostError(error)) {
@@ -183,7 +192,8 @@ async function runPostJob(job, options) {
         checkedSources: context.sources.length,
         timelineBrief: compactTimelineBrief(context.timelineBrief),
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
-        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities)
+        evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+        selectedEvidence
       });
     }
     throw error;
@@ -203,6 +213,7 @@ async function runPostJob(job, options) {
       timelineBrief: compactTimelineBrief(context.timelineBrief),
       sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
       evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      selectedEvidence,
       drafter: object(draft.metadata)
     }
   };
@@ -244,6 +255,11 @@ async function runRewriteLatestPostJob(job, options) {
       topic: firstNonEmpty(draft.topic, payload.topic, rewriteContext.latestPost.topic)
     })
   };
+  const selectedEvidence = selectedEvidenceForDraft(
+    submissionDraft,
+    context,
+    numberOr(payload.maxSelectedEvidence, 6)
+  );
 
   if (!draft.body) {
     return skipped(job, 'No feedback-aware replacement body was available; leaving rewrite as a no-op.', {
@@ -251,6 +267,7 @@ async function runRewriteLatestPostJob(job, options) {
       timelineBrief: compactTimelineBrief(context.timelineBrief),
       sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
       evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      selectedEvidence,
       drafter: object(draft.metadata),
       trace: {
         tools: rewriteTraceTools(),
@@ -269,6 +286,7 @@ async function runRewriteLatestPostJob(job, options) {
       timelineBrief: compactTimelineBrief(context.timelineBrief),
       sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
       evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      selectedEvidence,
       drafter: object(draft.metadata),
       trace: {
         tools: rewriteTraceTools(),
@@ -289,6 +307,7 @@ async function runRewriteLatestPostJob(job, options) {
       timelineBrief: compactTimelineBrief(context.timelineBrief),
       sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
       evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      selectedEvidence,
       drafter: object(draft.metadata),
       trace: {
         tools: rewriteTraceTools(),
@@ -306,6 +325,7 @@ async function runRewriteLatestPostJob(job, options) {
       tone: submissionDraft.tone || payload.tone || 'professional',
       maxSources: numberOr(payload.maxSources, 3),
       sourceIds: array(submissionDraft.sourceIds),
+      selectedEvidence,
       platformVariants: object(submissionDraft.platformVariants)
     }));
   } catch (error) {
@@ -317,6 +337,7 @@ async function runRewriteLatestPostJob(job, options) {
         timelineBrief: compactTimelineBrief(context.timelineBrief),
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
         evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+        selectedEvidence,
         trace: {
           tools: rewriteTraceTools(),
           steps: [{ name: 'submit_rewrite', status: 'skipped', reason: 'duplicate_recent_timeline_post' }]
@@ -341,6 +362,7 @@ async function runRewriteLatestPostJob(job, options) {
       timelineBrief: compactTimelineBrief(context.timelineBrief),
       sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
       evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
+      selectedEvidence,
       drafter: object(draft.metadata),
       trace: {
         tools: rewriteTraceTools(),
@@ -547,7 +569,8 @@ async function resolveDraft(job, context) {
       body: text(payload.body),
       abstracts: array(payload.abstracts),
       tone: text(payload.tone),
-      sourceIds: array(payload.sourceIds)
+      sourceIds: array(payload.sourceIds),
+      selectedEvidence: arrayOfObjects(payload.selectedEvidence)
     };
   }
 
@@ -561,6 +584,7 @@ async function resolveDraft(job, context) {
     abstracts: array(draft.abstracts),
     tone: text(draft.tone),
     sourceIds: array(draft.sourceIds),
+    selectedEvidence: arrayOfObjects(draft.selectedEvidence),
     metadata: object(draft.metadata)
   };
 }
@@ -576,6 +600,7 @@ async function resolveRewriteDraft(job, context, rewriteContext) {
     abstracts: array(draft.abstracts),
     tone: text(draft.tone),
     sourceIds: array(draft.sourceIds),
+    selectedEvidence: arrayOfObjects(draft.selectedEvidence),
     platformVariants: object(draft.platformVariants),
     metadata: object(draft.metadata)
   };
@@ -848,6 +873,90 @@ function resolveApprovedSourceId(rawID, approvedIDs) {
   );
   if (prefixMatches.length === 1) return prefixMatches[0];
   return '';
+}
+
+function selectedEvidenceForDraft(draft, context, limit = 6) {
+  draft = object(draft);
+  context = object(context);
+  const sourceIDs = new Set(array(draft.sourceIds));
+  if (sourceIDs.size === 0) return [];
+  const sourceByID = new Map(arrayOfObjects(context.sources).map((source) => [text(source.id), source]));
+  const out = [];
+  const seen = new Set();
+  const maxItems = Math.max(1, Math.min(12, numberOr(limit, 6)));
+
+  const addEvidence = (raw) => {
+    if (out.length >= maxItems) return;
+    raw = object(raw);
+    const source = selectedEvidenceSource(raw, sourceByID, sourceIDs);
+    const sourceId = text(raw.sourceId || source?.id);
+    if (!sourceId || !sourceIDs.has(sourceId)) return;
+    const sourceLabel = firstNonEmpty(raw.sourceLabel, raw.label, source?.label);
+    const sourceUrl = firstNonEmpty(raw.sourceUrl, source?.url);
+    const url = firstNonEmpty(raw.url, raw.evidenceUrl, sourceUrl);
+    const title = firstNonEmpty(raw.evidenceTitle, raw.title, raw.label, sourceLabel);
+    const summary = firstNonEmpty(raw.evidenceSummary, raw.summary, raw.description, raw.excerpt);
+    const key = selectedEvidenceComparableKey(sourceId, url, title, summary);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(compact({
+      sourceId,
+      sourceLabel,
+      sourceUrl,
+      observationId: raw.observationId,
+      url,
+      kind: firstNonEmpty(raw.kind, raw.sourceKind, source?.kind),
+      title: truncate(title, 180),
+      summary: truncate(summary, 500)
+    }));
+  };
+
+  for (const item of arrayOfObjects(draft.selectedEvidence)) addEvidence(item);
+  for (const item of arrayOfObjects(context.evidenceOpportunities)) addEvidence(item);
+  for (const item of arrayOfObjects(context.sourceExtracts)) addEvidence(item);
+  for (const item of arrayOfObjects(context.sourceEvidence)) addEvidence(item);
+
+  if (out.length === 0) {
+    for (const sourceId of sourceIDs) {
+      const source = sourceByID.get(sourceId);
+      if (!source) continue;
+      addEvidence({
+        sourceId,
+        sourceLabel: source.label,
+        sourceUrl: source.url,
+        url: source.url,
+        kind: source.kind,
+        title: source.label,
+        summary: source.url
+      });
+    }
+  }
+  return out.slice(0, maxItems);
+}
+
+function selectedEvidenceSource(raw, sourceByID, selectedSourceIDs) {
+  const directID = text(raw.sourceId);
+  if (directID && sourceByID.has(directID)) return sourceByID.get(directID);
+  const rawSourceURL = comparableURL(raw.sourceUrl);
+  const rawURL = comparableURL(raw.url);
+  for (const sourceID of selectedSourceIDs) {
+    const source = sourceByID.get(sourceID);
+    if (!source) continue;
+    const sourceURL = comparableURL(source.url);
+    if (sourceURL && (sourceURL === rawSourceURL || sourceURL === rawURL)) return source;
+    if (sourceURL && rawURL && rawURL.startsWith(`${sourceURL.replace(/\/$/, '')}/`)) return source;
+  }
+  return null;
+}
+
+function selectedEvidenceComparableKey(sourceId, url, title, summary) {
+  const urlKey = comparableURL(url);
+  if (urlKey) return `${sourceId}\0${urlKey}`;
+  const titleKey = text(title).toLowerCase();
+  if (titleKey) return `${sourceId}\0${titleKey}`;
+  const summaryKey = text(summary).toLowerCase();
+  if (summaryKey) return `${sourceId}\0${summaryKey}`;
+  return text(sourceId);
 }
 
 function sourceActivityRewriteRequested(payload) {

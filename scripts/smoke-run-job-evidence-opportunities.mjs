@@ -177,6 +177,13 @@ process.stdin.on('end', () => {
   if (!Array.isArray(createPostCall.sourceIds) || createPostCall.sourceIds[0] !== source.id) {
     throw new Error(`expected parent source id, got ${JSON.stringify(createPostCall.sourceIds)}`);
   }
+  const selectedEvidence = createPostCall.selectedEvidence || [];
+  if (selectedEvidence[0]?.url !== `${source.url}/blog/practical-ai-systems/`) {
+    throw new Error(`expected selected child evidence URL, got ${JSON.stringify(selectedEvidence)}`);
+  }
+  if (!/practical ai systems/i.test(selectedEvidence[0]?.title || '') || !/source-backed claims/i.test(selectedEvidence[0]?.summary || '')) {
+    throw new Error(`expected selected evidence title and summary, got ${JSON.stringify(selectedEvidence[0])}`);
+  }
   if (receipt.metadata?.evidenceOpportunities?.[0]?.url !== `${source.url}/blog/practical-ai-systems/`) {
     throw new Error(`expected evidence opportunity metadata, got ${JSON.stringify(receipt.metadata)}`);
   }
