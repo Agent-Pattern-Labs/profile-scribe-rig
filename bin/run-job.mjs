@@ -1183,7 +1183,8 @@ function normalizeTimelinePost(post) {
     authorSlug: text(post.authorSlug || post.slug),
     url: text(post.url || post.href),
     matchReasons: array(post.matchReasons).slice(0, 4),
-    sources: normalizeTimelinePostSources(post)
+    sources: normalizeTimelinePostSources(post),
+    selectedEvidence: normalizeTimelinePostSelectedEvidence(post)
   });
 }
 
@@ -1196,6 +1197,40 @@ function normalizeTimelinePostSources(post) {
   const sourceLabels = array(post.sourceLabels).map((label) => compact({ label }));
   const sourceUrls = array(post.sourceUrls).map((url) => compact({ url }));
   return [...sources, ...sourceLabels, ...sourceUrls];
+}
+
+function normalizeTimelinePostSelectedEvidence(post) {
+  const out = [];
+  const seen = new Set();
+  const items = [
+    ...arrayOfObjects(post.selectedEvidence),
+    ...arrayOfObjects(post.selected_evidence),
+    ...arrayOfObjects(post.selectedSourceEvidence),
+    ...arrayOfObjects(post.sourceEvidence),
+    ...arrayOfObjects(post.evidence)
+  ];
+
+  for (const raw of items) {
+    const sourceId = text(raw.sourceId || raw.source_id);
+    const sourceLabel = firstNonEmpty(raw.sourceLabel, raw.source_label, raw.label, raw.name);
+    const sourceUrl = firstNonEmpty(raw.sourceUrl, raw.source_url);
+    const url = firstNonEmpty(raw.url, raw.evidenceUrl, raw.evidence_url, sourceUrl);
+    const title = firstNonEmpty(raw.title, raw.evidenceTitle, raw.evidence_title, raw.label);
+    const summary = firstNonEmpty(raw.summary, raw.evidenceSummary, raw.evidence_summary, raw.description, raw.excerpt);
+    const key = selectedEvidenceComparableKey(sourceId, url, title, summary);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(compact({
+      sourceId,
+      sourceLabel,
+      sourceUrl,
+      url,
+      kind: firstNonEmpty(raw.kind, raw.sourceKind, raw.source_kind),
+      title: truncate(title, 180),
+      summary: truncate(summary, 500)
+    }));
+  }
+  return out;
 }
 
 function summarizeTimelineBrief(posts, sources) {
@@ -1222,6 +1257,7 @@ function summarizeTimelineBrief(posts, sources) {
       authorSlug: post.authorSlug,
       url: post.url,
       sources: post.sources,
+      selectedEvidence: compactTimelinePostSelectedEvidence(post.selectedEvidence),
       matchReasons: post.matchReasons
     }))
   });
@@ -1582,8 +1618,8 @@ function buildEvidenceOpportunities({ payload, profile, sources, sourceEvidence,
       observedAt: text(evidence.observedAt),
       updatedAt: text(evidence.updatedAt),
       score,
-      coverageCount: Number(sourceOpportunity.coverageCount || 0),
-      reasons: reasons.slice(0, 6)
+      coverageCount: Number(sourceOpportunity.coverageCount || 0) + (coverage.covered ? 1 : 0),
+      reasons: reasons.slice(0, 8)
     }));
   }
 
@@ -1658,6 +1694,17 @@ function evidenceCoverage(evidence, timelineBrief) {
   for (const post of arrayOfObjects(timelineBrief?.recentPosts)) {
     const postText = comparablePostText(`${post.topic} ${post.body}`);
     if (title && postText.includes(title)) return { covered: true };
+    for (const selected of arrayOfObjects(post.selectedEvidence)) {
+      const selectedURLs = [
+        selected.url,
+        selected.evidenceUrl,
+        selected.sourceUrl
+      ].map(comparableURL).filter(Boolean);
+      if (url && selectedURLs.includes(url)) return { covered: true };
+
+      const selectedText = comparablePostText(`${selected.title} ${selected.summary}`);
+      if (title && selectedText.includes(title)) return { covered: true };
+    }
     for (const source of arrayOfObjects(post.sources)) {
       if (url && comparableURL(source.url || source.href) === url) return { covered: true };
     }
@@ -2614,7 +2661,7 @@ function compactEvidenceOpportunities(opportunities) {
     updatedAt: opportunity.updatedAt,
     score: opportunity.score,
     coverageCount: opportunity.coverageCount,
-    reasons: array(opportunity.reasons).slice(0, 6)
+    reasons: array(opportunity.reasons).slice(0, 8)
   }));
 }
 
@@ -2648,9 +2695,22 @@ function compactTimelineBrief(timelineBrief) {
       publishedAt: post.publishedAt,
       authorSlug: post.authorSlug,
       url: post.url,
-      sources: arrayOfObjects(post.sources).slice(0, 4)
+      sources: arrayOfObjects(post.sources).slice(0, 4),
+      selectedEvidence: compactTimelinePostSelectedEvidence(post.selectedEvidence)
     }))
   });
+}
+
+function compactTimelinePostSelectedEvidence(items) {
+  return arrayOfObjects(items).slice(0, 4).map((item) => compact({
+    sourceId: item.sourceId,
+    sourceLabel: item.sourceLabel,
+    sourceUrl: item.sourceUrl,
+    url: item.url,
+    kind: item.kind,
+    title: item.title,
+    summary: truncate(item.summary, 220)
+  }));
 }
 
 function comparablePostText(value) {
@@ -2746,6 +2806,12 @@ function sourceURLsForPost(post) {
     const url = comparableURL(source.url);
     if (url) urls.add(url);
   }
+  for (const selected of arrayOfObjects(post.selectedEvidence)) {
+    for (const value of [selected.url, selected.evidenceUrl, selected.sourceUrl]) {
+      const url = comparableURL(value);
+      if (url) urls.add(url);
+    }
+  }
   return urls;
 }
 
@@ -2777,6 +2843,15 @@ function sourceRefsForPost(post, context) {
   const values = [];
   for (const source of arrayOfObjects(post.sources)) {
     values.push(source.id, source.sourceId, source.label, source.name, source.title, source.url, source.href);
+  }
+  for (const selected of arrayOfObjects(post.selectedEvidence)) {
+    values.push(
+      selected.sourceId,
+      selected.sourceLabel,
+      selected.sourceUrl,
+      selected.url,
+      selected.title
+    );
   }
   for (const value of values) {
     const ref = sourceComparableRef(value);
