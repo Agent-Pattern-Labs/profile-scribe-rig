@@ -103,8 +103,8 @@ process.stdin.on('end', () => {
   JSON.parse(raw || '{}');
   process.stdout.write(JSON.stringify({
     topic: 'Source spotlight: MakeBind',
-    body: 'Planning a source-backed update from MakeBind. This public web source is part of my approved professional evidence graph, so the post can point back to verifiable work instead of becoming a generic status update.',
-    abstracts: ['Source spotlight public web source is part of my approved professional evidence'],
+    body: 'I\\'m highlighting MakeBind because it gives people a concrete way to inspect the work.\\n\\nSpecifically, We turn source material into working software context. $1,200 one-time. Visible headings include MakeBind, Build Context., Ship.',
+    abstracts: ['MakeBind turns source material into working software context.'],
     tone: 'professional',
     sourceIds: ['${source.id}']
   }));
@@ -135,11 +135,57 @@ process.stdin.on('end', () => {
   if (!/quality gate/i.test(receipt.summary || '')) {
     throw new Error(`expected quality gate summary, got ${JSON.stringify(receipt)}`);
   }
-  if (!/placeholder language/i.test(receipt.metadata?.qualityCheck?.reason || '')) {
+  if (!/placeholder language/i.test(receipt.metadata?.qualityCheck?.reason || '') ||
+      !/visible headings include/i.test(receipt.metadata?.qualityCheck?.reason || '')) {
     throw new Error(`expected placeholder-language quality reason, got ${JSON.stringify(receipt.metadata?.qualityCheck)}`);
   }
   if (createPostCalls.length !== 0) {
     throw new Error(`weak draft should not call create_source_backed_timeline_post: ${JSON.stringify(createPostCalls)}`);
+  }
+
+  writeFileSync(drafterFile, `
+let raw = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { raw += chunk; });
+process.stdin.on('end', () => {
+  JSON.parse(raw || '{}');
+  process.stdout.write(JSON.stringify({
+    topic: 'MakeBind source-to-context workflow',
+    body: 'MakeBind now states its source-to-context workflow clearly: it helps builders turn source material into working software context.',
+    abstracts: ['MakeBind helps builders turn source material into working software context.'],
+    tone: 'professional',
+    sourceIds: ['${source.id}'],
+    platformVariants: {
+      threads: 'Specifically, We turn source material into working software context.'
+    }
+  }));
+});
+`, 'utf8');
+
+  const variantRun = await spawnRun(process.execPath, [join(root, 'bin/run-job.mjs'), '--job-file', jobFile], {
+    cwd: root,
+    env: {
+      ...process.env,
+      OPENROUTER_API_KEY: '',
+      PROFILESCRIBE_AGENT_TOKEN: 'test-token',
+      PROFILESCRIBE_MCP_URL: `http://127.0.0.1:${port}`,
+      PROFILESCRIBE_RIG_DRAFTER_COMMAND: `"${process.execPath}" "${drafterFile}"`
+    }
+  });
+  if (variantRun.code !== 0) {
+    console.error(variantRun.stdout);
+    console.error(variantRun.stderr);
+    throw new Error(`variant run-job exited with status ${variantRun.code}`);
+  }
+  const variantReceipt = JSON.parse(variantRun.stdout || '{}');
+  if (variantReceipt.status !== 'skipped') {
+    throw new Error(`expected variant skipped receipt, got ${JSON.stringify(variantReceipt)}`);
+  }
+  if (!/platform variant/i.test(variantReceipt.metadata?.qualityCheck?.reason || '')) {
+    throw new Error(`expected platform-variant quality reason, got ${JSON.stringify(variantReceipt.metadata?.qualityCheck)}`);
+  }
+  if (createPostCalls.length !== 0) {
+    throw new Error(`bad platform variant should not call create_source_backed_timeline_post: ${JSON.stringify(createPostCalls)}`);
   }
 
   console.log('profile-scribe-rig quality gate smoke check passed.');

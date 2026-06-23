@@ -182,7 +182,8 @@ async function runPostJob(job, options) {
       tone: submissionDraft.tone || payload.tone || 'professional',
       maxSources: numberOr(payload.maxSources, 3),
       sourceIds: array(submissionDraft.sourceIds),
-      selectedEvidence
+      selectedEvidence,
+      platformVariants: object(submissionDraft.platformVariants)
     }));
   } catch (error) {
     if (isDuplicateTimelinePostError(error)) {
@@ -570,7 +571,8 @@ async function resolveDraft(job, context) {
       abstracts: array(payload.abstracts),
       tone: text(payload.tone),
       sourceIds: array(payload.sourceIds),
-      selectedEvidence: arrayOfObjects(payload.selectedEvidence)
+      selectedEvidence: arrayOfObjects(payload.selectedEvidence),
+      platformVariants: object(payload.platformVariants)
     };
   }
 
@@ -585,6 +587,7 @@ async function resolveDraft(job, context) {
     tone: text(draft.tone),
     sourceIds: array(draft.sourceIds),
     selectedEvidence: arrayOfObjects(draft.selectedEvidence),
+    platformVariants: object(draft.platformVariants),
     metadata: object(draft.metadata)
   };
 }
@@ -679,6 +682,7 @@ function draftQualityCheck(draft, context) {
   const sourceIds = array(draft.sourceIds);
   const reasons = [];
   const forbidden = forbiddenDraftCopyMatches(`${topic}\n${body}`);
+  const variantForbidden = forbiddenPlatformVariantCopyMatches(object(draft.platformVariants));
   const support = draftEvidenceSupport(draft, context);
   const generic = genericDraftBodySignals(body);
 
@@ -703,6 +707,9 @@ function draftQualityCheck(draft, context) {
   if (forbidden.length > 0) {
     reasons.push(`draft uses internal or placeholder language: ${forbidden[0]}`);
   }
+  if (variantForbidden.length > 0) {
+    reasons.push(`draft platform variant uses internal or placeholder language: ${variantForbidden[0]}`);
+  }
   if (sourceIds.length > 0 && support.matches.length === 0) {
     reasons.push('draft body does not mention selected source or evidence details');
   }
@@ -715,7 +722,8 @@ function draftQualityCheck(draft, context) {
     reason: reasons[0] || 'draft passed quality gate',
     reasons,
     evidenceSupport: support,
-    genericSignals: generic.matches
+    genericSignals: generic.matches,
+    platformVariantSignals: variantForbidden
   };
 }
 
@@ -740,6 +748,18 @@ function forbiddenDraftCopyMatches(value) {
     'posting workflow',
     'profile scribe posting workflow',
     'profile scribe mcp',
+    'visible headings include',
+    'visible headings',
+    'visible heading',
+    'headings include',
+    'headings mention',
+    'i m highlighting',
+    'listed features include',
+    'meta keywords',
+    'metadata includes',
+    'schema types include',
+    'structured page data',
+    'the page is categorized as',
     'the concrete detail is',
     'the page explains',
     'the page frames',
@@ -752,8 +772,28 @@ function forbiddenDraftCopyMatches(value) {
   for (const phrase of phrases) {
     if (normalized.includes(phrase)) matches.push(phrase);
   }
+  if (/\bSpecifically,\s+We\b/.test(value)) {
+    matches.push('Specifically, We');
+  }
+  if (/\$\d[\d,]*(?:\.\d+)?\s+one[- ]time\./i.test(value)) {
+    matches.push('price one-time fragment');
+  }
+  if (/[A-Za-z0-9]\.,\s+[A-Z]/.test(value)) {
+    matches.push('copied heading punctuation');
+  }
   if (/\bi work on [a-z0-9 ]{2,40}\./i.test(value)) {
     matches.push('i work on');
+  }
+  return matches;
+}
+
+function forbiddenPlatformVariantCopyMatches(variants) {
+  const matches = [];
+  for (const [provider, variant] of Object.entries(variants || {})) {
+    if (!provider || provider.startsWith('__') || !text(variant)) continue;
+    for (const match of forbiddenDraftCopyMatches(variant)) {
+      matches.push(`${provider}: ${match}`);
+    }
   }
   return matches;
 }
