@@ -49,9 +49,10 @@ if (!jobFile) fail('missing --job-file');
 if (!existsSync(jobFile)) fail(`job file not found: ${jobFile}`);
 
 const job = parseJSON(readFileSync(jobFile, 'utf8'), `job file ${jobFile}`);
+const startedAt = new Date();
+const runLLMMetadata = {};
 
 try {
-  const startedAt = new Date();
   const result = withRunTraceMetadata(job, await runJob(job, { dryRun }), startedAt);
   const payload = `${JSON.stringify(result, null, 2)}\n`;
   if (outputFile) {
@@ -60,12 +61,13 @@ try {
     process.stdout.write(payload);
   }
 } catch (error) {
-  const failure = {
+  const failure = withRunTraceMetadata(job, {
     status: 'failed',
     jobId: text(job.id),
     jobKind: text(job.kind),
-    summary: error.message || 'profile-scribe-rig job failed'
-  };
+    summary: error.message || 'profile-scribe-rig job failed',
+    metadata: runLLMMetadata
+  }, startedAt);
   const payload = `${JSON.stringify(failure, null, 2)}\n`;
   if (outputFile) {
     writeFileSync(outputFile, payload, 'utf8');
@@ -115,8 +117,10 @@ async function runPostJob(job, options) {
     context.userUrlCrawls = userUrlCrawls;
     context.sourceExtracts = [...(context.sourceExtracts || []), ...userUrlCrawls];
   }
+  const resolvedDraft = await resolveDraft(job, context);
+  rememberRunLLMMetadata('drafter', resolvedDraft.metadata);
   const draft = normalizeDraftSourceIds(
-    await resolveDraft(job, context),
+    resolvedDraft,
     context,
     numberOr(payload.maxSources, 3)
   );
@@ -141,7 +145,8 @@ async function runPostJob(job, options) {
         timelineBrief: compactTimelineBrief(context.timelineBrief),
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
         evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
-        selectedEvidence
+        selectedEvidence,
+        drafter: object(draft.metadata)
       }
     };
   }
@@ -169,7 +174,8 @@ async function runPostJob(job, options) {
       timelineBrief: compactTimelineBrief(context.timelineBrief),
       sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
       evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
-      selectedEvidence
+      selectedEvidence,
+      drafter: object(draft.metadata)
     });
   }
 
@@ -194,7 +200,8 @@ async function runPostJob(job, options) {
         timelineBrief: compactTimelineBrief(context.timelineBrief),
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
         evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
-        selectedEvidence
+        selectedEvidence,
+        drafter: object(draft.metadata)
       });
     }
     throw error;
@@ -241,8 +248,10 @@ async function runRewriteLatestPostJob(job, options) {
   }
 
   const rewriteContext = rewriteLatestPostContext(payload, latestPost, context);
+  const resolvedDraft = await resolveRewriteDraft(job, context, rewriteContext);
+  rememberRunLLMMetadata('drafter', resolvedDraft.metadata);
   const draft = normalizeDraftSourceIds(
-    await resolveRewriteDraft(job, context, rewriteContext),
+    resolvedDraft,
     context,
     numberOr(payload.maxSources, 3)
   );
@@ -339,6 +348,7 @@ async function runRewriteLatestPostJob(job, options) {
         sourceOpportunities: compactSourceOpportunities(context.sourceOpportunities),
         evidenceOpportunities: compactEvidenceOpportunities(context.evidenceOpportunities),
         selectedEvidence,
+        drafter: object(draft.metadata),
         trace: {
           tools: rewriteTraceTools(),
           steps: [{ name: 'submit_rewrite', status: 'skipped', reason: 'duplicate_recent_timeline_post' }]
@@ -404,6 +414,7 @@ async function runInterviewJob(job, options) {
   const message = command
     ? runJSONCommand(command, { job, context })
     : await resolveInterviewMessage(job, context);
+  rememberRunLLMMetadata('interviewMessageMetadata', message.metadata);
 
   return {
     status: 'completed',
@@ -450,6 +461,7 @@ async function runAgentAvatarChatJob(job, options) {
   });
   const chatContext = agentAvatarChatContext(payload, target, conversation, context);
   const reply = await resolveAgentAvatarChatReply(job, chatContext);
+  rememberRunLLMMetadata('responder', reply.metadata);
   const body = text(reply.body);
   if (!body) {
     return skipped(job, 'No agent-avatar chat reply was produced.', {
@@ -1986,7 +1998,8 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds.`,
         provider: 'openrouter',
         model: openRouterDraftModel(),
         status: 'fallback',
-        error: error.message || 'OpenRouter drafting failed'
+        error: openRouterFailureCode(error),
+        openRouterUsage: openRouterFailureUsage(error)
       }
     };
   }
@@ -2056,7 +2069,8 @@ Return only JSON with keys: topic, body, abstracts, tone, sourceIds, platformVar
         model: openRouterDraftModel(),
         status: 'fallback',
         rewrite: true,
-        error: error.message || 'OpenRouter rewrite failed'
+        error: openRouterFailureCode(error),
+        openRouterUsage: openRouterFailureUsage(error)
       }
     };
   }
@@ -2109,7 +2123,8 @@ Return only JSON with keys: kind, body, status, summary, complete.`,
         provider: 'openrouter',
         model: openRouterModel(),
         status: 'fallback',
-        error: error.message || 'OpenRouter interview failed'
+        error: openRouterFailureCode(error),
+        openRouterUsage: openRouterFailureUsage(error)
       }
     };
   }
@@ -2236,7 +2251,8 @@ Return only JSON with keys: body, handoffRecommended, handoffReason, agentName.`
       provider: 'openrouter',
       model: openRouterModel(),
       status: 'fallback',
-      error: error.message || 'OpenRouter chat failed'
+      error: openRouterFailureCode(error),
+      openRouterUsage: openRouterFailureUsage(error)
     });
   }
 }
@@ -2355,29 +2371,42 @@ async function callOpenRouterJSON({ model, system, user, maxTokens }) {
     throw new Error(`OpenRouter failed with HTTP ${response.status}: ${body.slice(0, 500)}`);
   }
   const envelope = parseJSON(body, 'OpenRouter response');
+  const usage = normalizeOpenRouterUsage(envelope?.usage);
   const content = text(envelope?.choices?.[0]?.message?.content);
   if (!content) {
-    throw new Error('OpenRouter returned an empty message');
+    const error = new Error('OpenRouter returned an empty message');
+    error.openRouterUsage = usage;
+    throw error;
+  }
+  let data;
+  try {
+    data = parseJSON(extractJSONObject(content), 'OpenRouter JSON message');
+  } catch (error) {
+    error.openRouterUsage = usage;
+    throw error;
   }
   return {
-    data: parseJSON(extractJSONObject(content), 'OpenRouter JSON message'),
-    usage: normalizeOpenRouterUsage(envelope?.usage)
+    data,
+    usage
   };
 }
 
 function normalizeOpenRouterUsage(usage) {
   usage = object(usage);
   if (Object.keys(usage).length === 0) return {};
-  return compact({
+  const normalized = compact({
     prompt_tokens: positiveInteger(usage.prompt_tokens),
     completion_tokens: positiveInteger(usage.completion_tokens),
     total_tokens: positiveInteger(usage.total_tokens),
     promptTokens: positiveInteger(usage.promptTokens),
     completionTokens: positiveInteger(usage.completionTokens),
     totalTokens: positiveInteger(usage.totalTokens),
-    cost: finiteNumber(usage.cost),
-    raw: usage
+    cost: finiteNumber(usage.cost)
   });
+  return {
+    ...normalized,
+    raw: { ...normalized }
+  };
 }
 
 async function crawlUserPromptUrls(prompt) {
@@ -3065,6 +3094,61 @@ function runJSONCommand(command, input) {
     throw new Error(`command failed (${command}): ${result.stderr || result.stdout}`);
   }
   return parseJSON(result.stdout, `command output from ${command}`);
+}
+
+function rememberRunLLMMetadata(label, metadata) {
+  label = text(label);
+  const safe = safeOpenRouterAccountingMetadata(metadata);
+  if (!label || Object.keys(safe).length === 0) return;
+  runLLMMetadata[label] = safe;
+}
+
+function safeOpenRouterAccountingMetadata(metadata) {
+  metadata = object(metadata);
+  if (text(metadata.provider).toLowerCase() !== 'openrouter') return {};
+  const usage = safeOpenRouterUsageMetadata(metadata.openRouterUsage);
+  return compact({
+    provider: 'openrouter',
+    model: truncate(metadata.model, 160),
+    status: truncate(metadata.status, 64),
+    rewrite: metadata.rewrite === true ? true : undefined,
+    error: text(metadata.error) ? 'openrouter_call_failed' : undefined,
+    openRouterUsage: Object.keys(usage).length > 0 ? usage : undefined
+  });
+}
+
+function safeOpenRouterUsageMetadata(value) {
+  const usage = object(value);
+  const raw = object(usage.raw);
+  const normalized = compact({
+    prompt_tokens: positiveInteger(usage.prompt_tokens ?? raw.prompt_tokens),
+    completion_tokens: positiveInteger(usage.completion_tokens ?? raw.completion_tokens),
+    total_tokens: positiveInteger(usage.total_tokens ?? raw.total_tokens),
+    promptTokens: positiveInteger(usage.promptTokens ?? raw.promptTokens),
+    completionTokens: positiveInteger(usage.completionTokens ?? raw.completionTokens),
+    totalTokens: positiveInteger(usage.totalTokens ?? raw.totalTokens),
+    cost: finiteNumber(usage.cost ?? raw.cost)
+  });
+  if (Object.keys(normalized).length === 0) return {};
+  return {
+    ...normalized,
+    raw: { ...normalized }
+  };
+}
+
+function openRouterFailureCode(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  const status = message.match(/\bhttp\s+(\d{3})\b/)?.[1];
+  if (status) return `openrouter_http_${status}`;
+  if (message.includes('abort') || message.includes('timeout')) return 'openrouter_transport_error';
+  if (message.includes('not valid json') || message.includes('json message')) return 'openrouter_invalid_response';
+  if (message.includes('empty message')) return 'openrouter_empty_response';
+  return 'openrouter_request_failed';
+}
+
+function openRouterFailureUsage(error) {
+  const usage = safeOpenRouterUsageMetadata(error?.openRouterUsage);
+  return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
 function skipped(job, summary, metadata = {}) {

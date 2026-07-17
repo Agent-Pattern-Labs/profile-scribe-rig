@@ -168,6 +168,9 @@ try {
   if (receipt.metadata?.rewriteLatestPost?.feedback?.receiptId !== 'receipt-needs-edit') {
     throw new Error(`expected feedback receipt metadata, got ${JSON.stringify(receipt.metadata)}`);
   }
+  if (receipt.metadata?.drafter?.rewrite !== true || receipt.metadata?.drafter?.openRouterUsage?.total_tokens !== 1020) {
+    throw new Error(`expected rewrite OpenRouter usage metadata, got ${JSON.stringify(receipt.metadata?.drafter)}`);
+  }
   if (!receipt.metadata?.trace?.tools?.includes('create_source_backed_timeline_post')) {
     throw new Error(`expected trace tools metadata, got ${JSON.stringify(receipt.metadata?.trace)}`);
   }

@@ -143,6 +143,10 @@ MCP tools used, workflow steps, and any handoff recommendation. ProfileScribe
 still owns permissions, storage, ActionProof, distribution queues, receipts, and
 provider execution.
 
+OpenRouter-backed runs also retain provider, model, outcome, token, and cost
+accounting metadata when drafting is skipped or a later MCP step fails. Failure
+receipts intentionally exclude authorization values and generation prompts.
+
 ## Publishing
 
 The npm package is published as
