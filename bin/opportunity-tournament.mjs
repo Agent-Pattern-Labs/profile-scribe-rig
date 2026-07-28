@@ -1436,6 +1436,7 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
       if (name === 'timingTriggers') {
         const supportedRefs = evidenceRefs.filter((id) =>
           /^observation:/i.test(id) &&
+          timingEvidenceIsSafe(evidenceByID.get(id), referenceTime) &&
           evidenceSupportsExactTimingText(
             evidenceByID.get(id),
             supportPhrase,
@@ -2349,7 +2350,7 @@ function repairTimingAsVerification(
   for (const id of compactStrings(evidenceRefs)) {
     if (!/^observation:/i.test(id)) continue;
     const evidence = asObject(evidenceByID.get(id));
-    if (!timingVerificationEvidenceIsSafe(evidence, referenceTime)) continue;
+    if (!timingEvidenceIsSafe(evidence, referenceTime)) continue;
     const supportPhrase = timingVerificationSupportPhrase(evidence);
     if (!supportPhrase) continue;
     const label = truncate(
@@ -2369,7 +2370,7 @@ function repairTimingAsVerification(
   return null;
 }
 
-function timingVerificationEvidenceIsSafe(evidence, referenceTime) {
+function timingEvidenceIsSafe(evidence, referenceTime) {
   if (asObject(evidence).approvedSourceObservation !== true) return false;
   if (asObject(evidence).current === false ||
       /\b(?:archived|cancelled|canceled|closed|discontinued|expired|historical|inactive|superseded|withdrawn)\b/i.test(

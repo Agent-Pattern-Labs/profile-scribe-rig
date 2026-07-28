@@ -541,8 +541,12 @@ const server = createServer(async (request, response) => {
       for (const item of seedSet[dimension]) {
         item.e = [metadataBlockedTimingRef];
         if (dimension === 'timingTriggers') {
-          item.l = 'Determine whether current booking availability supports acting';
-          item.q = 'current booking availability';
+          item.l = oldTimingRef
+            ? 'Book today'
+            : 'Determine whether current booking availability supports acting';
+          item.q = oldTimingRef
+            ? 'Book today'
+            : 'current booking availability';
         }
       }
     }
@@ -1473,7 +1477,7 @@ try {
     sourceId: 'src-delivery-map',
     kind: 'service-page',
     title: 'Consultation booking availability',
-    summary: 'The service page offers consultation booking.',
+    summary: 'The service page says Book today.',
     observedAt: '2026-04-01T12:00:00Z',
     current: true,
     confidence: 'high'
