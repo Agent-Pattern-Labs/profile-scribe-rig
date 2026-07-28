@@ -310,6 +310,10 @@ export async function runOpportunityTournament({
     ...normalizeModelExtractedCandidates(
       completion?.data?.candidates,
       evidenceCatalog
+    ),
+    ...normalizeSeedMentionedOrganizationCandidates(
+      seedSet,
+      evidenceCatalog
     )
   ];
   const ownerIdentity = ownerCandidateIdentity(
@@ -1521,6 +1525,71 @@ function normalizeModelExtractedCandidates(values, evidenceCatalog) {
     }));
   }
   return candidates;
+}
+
+function normalizeSeedMentionedOrganizationCandidates(seedSet, evidenceCatalog) {
+  const buyerRefs = new Set(
+    asArray(seedSet.buyerSegments).flatMap((seed) =>
+      asArray(asObject(seed).evidenceRefs)
+    )
+  );
+  const offerProofRefs = new Set(
+    [
+      ...asArray(seedSet.offers),
+      ...asArray(seedSet.proofPoints)
+    ].flatMap((seed) => asArray(asObject(seed).evidenceRefs))
+  );
+  const seedTexts = DIMENSIONS.flatMap(([name]) =>
+    asArray(seedSet[name]).map((seed) =>
+      compactStrings([
+        asObject(seed).label,
+        asObject(seed).reason
+      ]).join(' ')
+    )
+  );
+  const names = new Set(
+    seedTexts.flatMap(seedMentionedOrganizationNames)
+  );
+  const candidates = [];
+  for (const displayLabel of names) {
+    const evidenceRefs = [];
+    for (const evidence of evidenceCatalog) {
+      if (!buyerRefs.has(evidence.id) ||
+          !offerProofRefs.has(evidence.id) ||
+          !evidenceSupportsExactText(evidence, displayLabel)) {
+        continue;
+      }
+      evidenceRefs.push(evidence.id);
+    }
+    if (evidenceRefs.length === 0) continue;
+    candidates.push({
+      id: `candidate:seed:${stableHash({
+        displayLabel,
+        evidenceRefs
+      }).slice(0, 20)}`,
+      kind: 'evidence_named_organization',
+      displayLabel,
+      organization: displayLabel,
+      providers: ['openrouter_seed_extraction'],
+      evidenceRefs,
+      contactPaths: [],
+      exactNamedCandidate: true,
+      identityResolved: true
+    });
+  }
+  return candidates;
+}
+
+function seedMentionedOrganizationNames(value) {
+  const matches = String(value || '').match(
+    /\b[A-Z][\p{L}\p{N}&.'’+-]*(?:\s+(?:[A-Z][\p{L}\p{N}&.'’+-]*|and|of|the)){1,5}\b/gu
+  ) || [];
+  return compactStrings(matches)
+    .map((match) => match.trim().replace(/[.,;:!?]+$/, ''))
+    .filter((match) =>
+      /\b(?:association|bank|center|centre|co|company|corporation|foundation|group|health|healthcare|hospital|inc|institute|insurance|labs|llc|network|partners|studio|university)\b/i.test(match)
+    )
+    .filter(concreteCandidateLabel);
 }
 
 function evidenceSupportsExactText(evidence, value) {

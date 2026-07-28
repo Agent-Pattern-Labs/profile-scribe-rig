@@ -174,6 +174,7 @@ const server = createServer(async (request, response) => {
     uncertainty: 0.45
   }, candidateFitRefs);
   if (promotableCandidateRef) {
+    buyerSeeds[1].l = 'Promotable Buyer Co operations leaders';
     buyerSeeds[0].e = [sourceRef];
     buyerSeeds[1].e = [promotableCandidateRef];
     buyerSeeds[1].s.of = 0.81;
@@ -283,12 +284,6 @@ const server = createServer(async (request, response) => {
       m: 'Philadelphia, Pennsylvania',
       u: 'https://example.com/context-buyer-co',
       e: [modelCandidateRef]
-    }] : promotableCandidateRef ? [{
-      k: 'organization',
-      l: 'Promotable Buyer Co',
-      m: 'Chicago, Illinois',
-      u: 'https://example.com/promotable-buyer-co',
-      e: [promotableCandidateRef]
     }] : [],
     w: {
       of: 0.22,
@@ -305,6 +300,7 @@ const server = createServer(async (request, response) => {
     }
   };
   if (promotableCandidateRef) {
+    seedSet.offers[0].l = 'Focused workflow audit for Promotable Buyer Co';
     for (const key of [
       'offers',
       'buyerSegments',
@@ -1056,7 +1052,8 @@ try {
   if (promotableCandidate.status !== 'completed' ||
       promotedWinnerCandidate?.displayLabel !== 'Promotable Buyer Co' ||
       promotedWinnerCandidate.identityResolved !== true ||
-      promotableCandidate.metadata?.hypotheses?.[0]?.buyerSegment !== 'Small agency operations leaders' ||
+      !promotedWinnerCandidate.providers?.includes('openrouter_seed_extraction') ||
+      promotableCandidate.metadata?.hypotheses?.[0]?.buyerSegment !== 'Promotable Buyer Co operations leaders' ||
       promotableCandidate.metadata?.hypotheses?.[0]?.rank !== 1 ||
       promotableCandidate.metadata?.hypotheses?.[0]?.status !== 'winner' ||
       promotableCandidate.metadata?.searchSpace?.retainedCount >= 20 ||
