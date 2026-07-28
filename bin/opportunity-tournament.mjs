@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { isIP } from 'net';
 
-export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v1';
+export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v2';
 
 const MAX_HYPOTHESES = 10_000;
 const MAX_FINALISTS = 20;
@@ -58,6 +58,90 @@ const POSITIVE_SCORE_FIELDS = [
 ];
 
 const BURDEN_SCORE_FIELDS = ['effort', 'cost', 'risk', 'uncertainty'];
+
+const COHERENCE_GATE_VERSION = 'strategy_family_motion_v2';
+
+// Patterns run against comparable() text: lowercase ASCII words separated by
+// one space. Keep this vocabulary stable because the control plane mirrors it
+// when independently validating persisted finalist provenance.
+const STRATEGY_MOTION_PATTERNS = {
+  payer_network: [
+    /\bprovider network\b/,
+    /\bnetwork (?:management|contracting|relations|participation)\b/,
+    /\bprovider (?:credentialing|enrollment|relations|contracting)\b/,
+    /\bcredential(?:ing|ed)\b/,
+    /\bin network (?:application|enrollment|credentialing|contracting|participation)\b/,
+    /\bmanaged care (?:contracting|network|organization|leadership|team|executive|director|manager|decision maker)s?\b/,
+    /\b(?:payer|insurer|insurance carrier|insurance company|health plan) (?:contracting|credentialing|network|enrollment|application|participation|relations|partnership|leadership|team|executive|director|manager|decision maker)s?\b/,
+    /\b(?:contracting|credentialing|network|enrollment|application|participation|relations|partnership) (?:with|for) (?:a |an |the )?(?:payer|insurer|insurance carrier|insurance company|health plan)\b/
+  ],
+  patient_inbound: [
+    /\bprospective (?:patient|client|parent|mother|family|caregiver)s?\b/,
+    /\b(?:patient|client|parent|mother|family|caregiver)s? seeking\b/,
+    /\b(?:covered|eligible|insured) (?:patient|client|parent|mother|family|caregiver|member)s?\b/,
+    /\b(?:patient|client|parent|mother|family|caregiver) facing\b/,
+    /\b(?:patient|client|parent|mother|family|caregiver|member) (?:appointment|booking|consultation|coverage|eligibility|inquiry|service|care|benefit|conversion|lead)s?\b/,
+    /\b(?:health plan|insurance|coverage|benefit|benefits) (?:acceptance|accepted|verification|eligibility|coverage|member service|member care)\b/,
+    /\baccept(?:s|ed|ance)?\b.{0,48}\b(?:consultation|care|coverage|insurance|health plan|service)s?\b/,
+    /\bappointment(?:s)?\b/,
+    /\bconsultation (?:booking|inquiry|request|path|page)s?\b/,
+    /\bbook(?:ed|ing)? consultation(?:s)?\b/,
+    /\binquir(?:y|ies)\b/,
+    /\bservice page\b/,
+    /\blanding page\b/,
+    /\bwebsite visitor(?:s)?\b/,
+    /\bconversion (?:path|funnel|page)\b/
+  ],
+  clinical_referral: [
+    /\bclinical referral\b/,
+    /\breferr(?:al|ing) (?:clinician|provider|practice|source)s?\b/,
+    /\bclinician referral\b/,
+    /\bpediatrician(?:s)?\b/,
+    /\bob gyns?\b/,
+    /\bobstetrician(?:s)?\b/,
+    /\bmidwi(?:fe|ves)\b/,
+    /\bdoula(?:s)?\b/,
+    /\bphysician(?:s)?\b/,
+    /\bmedical practice(?:s)?\b/,
+    /\bpediatric practice(?:s)?\b/
+  ],
+  hospital_program: [
+    /\bbaby friendly\b/,
+    /\bhospital (?:program|coordinator|partnership|proposal|recertification|leadership|team|executive|director|manager|system|initiative|accreditation|designation)s?\b/,
+    /\bhospitals (?:program|coordinator|partnership|proposal|recertification|leadership|team|executive|director|manager|system|initiative|accreditation|designation)s?\b/,
+    /\bhealth system(?:s)? (?:program|partnership|proposal|leadership|team|executive|director|manager|initiative|accreditation|designation)s?\b/,
+    /\bbirth(?:ing)? center(?:s)? (?:program|partnership|proposal|leadership|team|initiative|accreditation|designation|review|plan)s?\b/,
+    /\bmaternity (?:unit|ward|program|team|quality|coordinator|center|initiative)s?\b/,
+    /\blabor and delivery (?:unit|ward|program|team|quality|coordinator|center|initiative)s?\b/,
+    /\bfacilit(?:y|ies) (?:designation|quality|maternity|proposal|program|coordinator|accreditation)s?\b/,
+    /\b(?:hospital|health system|birth center|birthing center|maternity|facility) accreditation\b/,
+    /\b(?:hospital|health system|birth center|birthing center|maternity|facility) designation\b/,
+    /\b(?:hospital|health system|birth center|birthing center|maternity|facility) recertification\b/
+  ],
+  employer_workplace: [
+    /\bemployer (?:partnership|program|benefits|leadership|team|executive|director|manager)s?\b/,
+    /\bemployers (?:partnership|program|benefits|leadership|team|executive|director|manager)s?\b/,
+    /\bworkplace (?:program|partnership|benefits|policy|initiative|support|leadership|team)s?\b/,
+    /\bhuman resources\b/,
+    /\bhr (?:leader|manager|team|department|director|executive)s?\b/,
+    /\bemployee benefits?\b/,
+    /\breturn to work (?:program|policy|support|benefit|initiative|plan)s?\b/,
+    /\bcorporate benefits?\b/,
+    /\bworkforce (?:program|benefit|support|initiative)s?\b/,
+    /\bbenefit(?:s)? package\b/,
+    /\bpeople operations\b/
+  ],
+  organization_partnership: [
+    /\borganization(?:al)? (?:buyer|leader|leadership|team|executive|director|manager|decision maker|partnership|proposal|introduction)s?\b/,
+    /\binstitution(?:al)? (?:buyer|leader|leadership|team|executive|director|manager|decision maker|partnership|proposal|introduction)s?\b/,
+    /\b(?:business|company|agency) (?:buyer|leader|leadership|team|executive|director|manager|decision maker|partnership|proposal|introduction)s?\b/,
+    /\b(?:partnership|operations) (?:leader|leadership|team|executive|director|manager|decision maker)s?\b/,
+    /\b(?:founder led|boutique|professional service) (?:business|businesses|company|companies|agency|agencies|organization|organizations|studio|studios)\b/,
+    /\bindependent consultants?\b/,
+    /\bservice founders?\b/,
+    /\bstrategic partnership\b/
+  ]
+};
 
 const SCORE_ALIASES = {
   objectiveFit: ['objectiveFit', 'of'],
@@ -240,19 +324,31 @@ export async function runOpportunityTournament({
   const seedSet = normalizeSeedSet(completion?.data, evidenceCatalog);
   const missingDimension = DIMENSIONS.find(([name]) => seedSet[name].length === 0)?.[0];
   if (missingDimension) {
+    const unsupportedTiming = missingDimension === 'timingTriggers' &&
+      seedSet.unsupportedTimingSeedCount > 0;
     return {
       status: 'skipped',
-      summary: `The strategy generator returned no grounded ${missingDimension} seeds.`,
+      summary: unsupportedTiming
+        ? 'The strategy generator returned no source-backed timing trigger; urgency was not inferred.'
+        : `The strategy generator returned no grounded ${missingDimension} seeds.`,
       ...base,
       llm: { strategyGeneratorJudge: providerMetadata },
       usage,
       searchSpace: {
         ...base.searchSpace,
-        dimensionCounts: dimensionCounts(seedSet)
+        dimensionCounts: dimensionCounts(seedSet),
+        strategyFamilyCount: seedSet.strategyFamilies.length,
+        strategyFamilyCollisionCount: seedSet.strategyFamilyCollisionCount,
+        familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
+        invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
+        unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
+        coherenceGate: COHERENCE_GATE_VERSION
       },
       gate: researchOnlyGate(
         'block',
-        'The structured strategy seed set was incomplete or ungrounded.'
+        unsupportedTiming
+          ? 'No timing claim was directly supported by an exact phrase in approved evidence.'
+          : 'The structured strategy seed set was incomplete or ungrounded.'
       )
     };
   }
@@ -276,8 +372,16 @@ export async function runOpportunityTournament({
     expandedCount: expanded.expandedCount,
     eligibleCount: expanded.eligibleCount,
     filteredCount: expanded.filteredCount,
+    incompatibleCount: expanded.incompatibleCount,
+    motionConflictCount: expanded.motionConflictCount,
     retainedCount: retainedHypotheses.length,
     dimensionCounts: dimensionCounts(seedSet),
+    strategyFamilyCount: seedSet.strategyFamilies.length,
+    strategyFamilyCollisionCount: seedSet.strategyFamilyCollisionCount,
+    familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
+    invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
+    unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
+    coherenceGate: COHERENCE_GATE_VERSION,
     deterministic: true,
     modelCalls: 1,
     judgeWeights: expanded.weights
@@ -348,13 +452,16 @@ export async function runOpportunityTournament({
         profileScribePublicBaseURL,
         ownerIdentity
       );
-  const actionableIndex = initialHypotheses.findIndex((hypothesis) =>
-    provisionalCandidates.some((candidate) =>
-      candidate.identityResolved === true &&
-      candidateEvidenceGroundsHypothesis(candidate.evidenceRefs, hypothesis)
+  const actionableHypotheses = initialHypotheses
+    .filter((hypothesis) =>
+      provisionalCandidates.some((candidate) =>
+        candidate.identityResolved === true &&
+        candidateEvidenceGroundsHypothesis(candidate, hypothesis)
+      )
     )
-  );
-  if (actionableIndex < 0) {
+    .sort(compareHypotheses);
+  const winningHypothesis = actionableHypotheses[0];
+  if (!winningHypothesis) {
     return {
       status: 'skipped',
       summary: 'No named, source-backed candidate grounded a retained strategy.',
@@ -373,8 +480,15 @@ export async function runOpportunityTournament({
       )
     };
   }
-  const hypotheses = initialHypotheses
-    .slice(actionableIndex)
+  const hypotheses = [
+    winningHypothesis,
+    ...initialHypotheses
+      .filter((hypothesis) =>
+        hypothesis.id !== winningHypothesis.id &&
+        hypothesis.score.total <= winningHypothesis.score.total
+      )
+      .sort(compareHypotheses)
+  ]
     .map((hypothesis, index) => ({
       ...hypothesis,
       rank: index + 1,
@@ -412,7 +526,8 @@ export async function runOpportunityTournament({
     hypotheses,
     candidates,
     evidenceCatalog,
-    eligibleCount: expanded.eligibleCount
+    eligibleCount: expanded.eligibleCount,
+    exploredCount: expanded.expandedCount
   });
 
   if (!selected.winner) {
@@ -460,6 +575,7 @@ export async function runOpportunityTournament({
 function publicHypothesis(hypothesis) {
   const {
     _tuple,
+    _strategyFamily,
     ...value
   } = asObject(hypothesis);
   return value;
@@ -744,20 +860,39 @@ export function expandAndJudge({
   const dimensionValues = DIMENSIONS.map(([name]) => seedSet[name]);
   const theoreticalCount = dimensionValues.reduce((total, items) => total * items.length, 1);
   const expandedCount = Math.min(theoreticalCount, budget.maxHypotheses);
-  const indexes = deterministicCartesianIndexes(
+  const priorityIndexes = strategyFamilyPriorityIndexes(
+    dimensionValues,
+    seedSet
+  );
+  const indexes = prioritizedCartesianIndexes(
     theoreticalCount,
     expandedCount,
-    stableHash({ objective, evidence: evidenceCatalog.map((item) => item.id) })
+    stableHash({ objective, evidence: evidenceCatalog.map((item) => item.id) }),
+    priorityIndexes
   );
   const evidenceByID = evidenceIndex(evidenceCatalog);
   const eligible = [];
   let filteredCount = 0;
+  let incompatibleCount = 0;
+  let motionConflictCount = 0;
 
   for (const flatIndex of indexes) {
     const selected = decodeCartesianIndex(flatIndex, dimensionValues);
     const tuple = Object.fromEntries(
       DIMENSIONS.map(([name], index) => [name, selected[index]])
     );
+    const compatibleFamilies = commonCompatibilityFamilies(tuple, seedSet);
+    if (compatibleFamilies.length === 0) {
+      incompatibleCount += 1;
+      filteredCount += 1;
+      continue;
+    }
+    const motionSignature = strategyMotionSignature(tuple);
+    if (!motionSignature.coherent) {
+      motionConflictCount += 1;
+      filteredCount += 1;
+      continue;
+    }
     if (!tupleAllowed(tuple, constraints)) {
       filteredCount += 1;
       continue;
@@ -800,6 +935,7 @@ export function expandAndJudge({
       channel: tuple.channels.label,
       action: tuple.actions.label,
       timingTrigger: tuple.timingTriggers.label,
+      proofPoint: tuple.proofPoints.label,
       followUp: tuple.followUps.label,
       evidenceRefs,
       score,
@@ -807,7 +943,15 @@ export function expandAndJudge({
       judgeReason: hypothesisJudgeReason(tuple, score),
       estimatedSpendMicros: estimatedSpendMicros > 0 ? Math.round(estimatedSpendMicros) : undefined,
       expectedValueMicros: expectedValueMicros > 0 ? Math.round(expectedValueMicros) : undefined,
-      _tuple: tuple
+      _tuple: tuple,
+      _strategyFamily: compatibleFamilies[0],
+      provenance: strategyProvenance(
+        tuple,
+        compatibleFamilies[0],
+        seedSet,
+        evidenceByID,
+        motionSignature
+      )
     }));
   }
 
@@ -822,6 +966,8 @@ export function expandAndJudge({
     expandedCount,
     eligibleCount: eligible.length,
     filteredCount,
+    incompatibleCount,
+    motionConflictCount,
     finalists,
     weights
   };
@@ -958,9 +1104,11 @@ Generate compact strategy dimensions grounded only in the supplied professional 
 This is internal hypothesis exploration, not outreach, publishable copy, or permission to act.
 Never invent accomplishments, customers, affiliations, contact details, market demand, intent, urgency, or relationships.
 Treat experience with a past endDate as historical proof, never as a current role or affiliation.
+Do not recommend applying for, enrolling in, or creating a capability when the evidence says that capability already exists; recommend a bounded way to verify or use it instead.
 Use only exact evidence IDs from evidenceCatalog. Unknown evidence IDs will be discarded.
-You may optionally extract a compact named person or organization candidate only when its exact name and every returned public URL appear verbatim in the cited evidence. Return no candidate rather than infer or complete an identity.
+You may optionally extract a compact named person or organization candidate only when its exact name appears verbatim in the cited evidence. Do not return contact details or URLs; return no candidate rather than infer or complete an identity.
 When an exact named organization is the intended target buyer, begin that buyerSegments label with the exact organization name and return the same organization in candidates.
+Keep every strategy family coherent end to end. Never mix a buyer, offer, channel, action, timing trigger, proof point, or follow-up from different business motions.
 Return no email, direct message, post, pitch, sales script, or other outreach copy.
 Reject spray-and-pray, bulk outreach, scraping, automated form submission, or high-volume behavior.
 Each seed should be a short structured concept. Each reason must explain a grounded inference, not assert an unobserved fact.
@@ -974,11 +1122,18 @@ Return only JSON.`;
     priorOutcomes,
     outputRules: {
       seedCount: `Return exactly ${maxSeedsPerDimension} diverse items per dimension when the evidence supports them; otherwise return at least 2.`,
+      familySchema: {
+        id: 'short stable strategy-family id',
+        l: 'short internal label for one coherent end-to-end business motion',
+        e: ['one or more exact evidenceCatalog.id values grounding this family, including a specific shared anchor cited by every compatible seed']
+      },
       requiredDimensions: DIMENSIONS.map(([name]) => name),
       itemSchema: {
         id: 'short stable local label',
         l: 'concise internal strategy component; never outreach copy',
+        f: ['one or more declared family ids with which this item is compatible; never blank or wildcard'],
         e: ['one or more exact evidenceCatalog.id values'],
+        q: 'timingTriggers only: a short exact phrase copied from cited evidence that directly proves the trigger; omit q on all other dimensions',
         s: {
           of: 'objectiveFit 0..1 when relevant',
           es: 'evidenceStrength 0..1 when relevant',
@@ -1003,7 +1158,6 @@ Return only JSON.`;
         o: 'optional exact organization copied from cited evidence',
         r: 'optional exact role copied from cited evidence',
         m: 'optional exact market/location copied from cited evidence',
-        u: 'optional exact public http(s) URL already present in cited evidence; never construct one',
         e: ['one or more exact evidenceCatalog.id values that contain the candidate name']
       },
       w: 'Optional judge-weight object using the short score keys. Keep evidence and objective fit dominant.',
@@ -1011,16 +1165,28 @@ Return only JSON.`;
       hardRules: [
         'Offers and proofPoints must cite direct evidence.',
         'Buyer segments may be plausible inferences but must cite evidence supporting the fit.',
+        'Return 2 to 4 declared strategy families. Every family must have at least one compatible item in every required dimension.',
+        'For each family, choose at least one specific shared evidence anchor other than a generic source record. Put that exact evidence ID in the family e and in every seed compatible with that family.',
+        'Every seed must carry one or more declared family ids in f. Reusable generic items may list multiple family ids; blank, unknown, or wildcard families are forbidden.',
+        'Every seed-family membership must share at least one evidence id between the seed e list and that family e list.',
+        'For each family, choose at least one non-source evidence id and include that same anchor id in the family e list and in one compatible seed in every required dimension.',
+        'Family ids must remain distinct after lowercasing and replacing punctuation or spaces with hyphens; do not return aliases that normalize to the same id.',
+        'A retained family must describe one coherent motion. Do not combine insurance-network, hospital-program, employer, clinical-referral, content-conversion, or other distinct motions in one family.',
         'Channels and actions must remain singular, bounded, and review-first.',
-        'Timing triggers must not claim live intent unless the evidence explicitly proves it.',
+        'Every timing trigger must include q copied exactly from its cited evidence and q must directly support the claimed timing. A crawl timestamp alone is not a business trigger.',
+        'The evidence id that contains q must be an observation:* source-evidence record so the control plane can verify the phrase against the approved stored observation.',
+        'If timing is not directly observed, phrase the timing trigger as a review-first verification step beginning with Verify, Confirm, Check, Research, or Determine, and cite the exact evidence phrase that makes that verification relevant.',
+        'Do not name an enrollment window, recertification period, planning cycle, deadline, quarter, month, or year unless that exact timing appears in q.',
         'Follow-ups must remain low-volume and permissioned.',
         'Return at most 8 candidates. A candidate must be a named person or organization copied exactly from approved evidence, never a generic buyer segment.',
-        'Candidate names, optional details, and URLs must be exact evidence text. Return candidates: [] when no exact named candidate exists.',
+        'Candidate names and optional details must be exact evidence text. Do not return candidate URLs or contact details. Return candidates: [] when no exact named candidate exists.',
         'A candidate evidence ID must also ground a buyerSegments seed and at least one relevant offers or proofPoints seed; do not attach a candidate using an unrelated citation.',
-        'If a named organization is the intended target buyer, start the buyerSegments label with that exact organization name and include the same organization in candidates.'
+        'If a named organization is the intended target buyer, start the buyerSegments label with that exact organization name and include the same organization in candidates.',
+        'If evidence says a provider, credential, connection, or service is already accepted, active, or available, do not recommend applying for it as though it were missing.'
       ]
     },
     responseSchema: {
+      families: [],
       offers: [],
       buyerSegments: [],
       channels: [],
@@ -1038,7 +1204,18 @@ Return only JSON.`;
 function normalizeSeedSet(value, evidenceCatalog) {
   const raw = asObject(value);
   const evidenceByID = evidenceIndex(evidenceCatalog);
-  const out = {};
+  const normalizedFamilies = normalizeStrategyFamilies(
+    firstArray(raw.families, raw.strategyFamilies),
+    evidenceByID
+  );
+  const strategyFamilies = normalizedFamilies.families;
+  const out = {
+    strategyFamilies: [...strategyFamilies.values()],
+    strategyFamilyCollisionCount: normalizedFamilies.collisionCount,
+    familyEvidenceMismatchSeedCount: 0,
+    invalidFamilySeedCount: 0,
+    unsupportedTimingSeedCount: 0
+  };
   for (const [name, aliases] of DIMENSIONS) {
     const values = firstArray(...aliases.map((alias) => raw[alias]));
     const seen = new Set();
@@ -1047,18 +1224,74 @@ function normalizeSeedSet(value, evidenceCatalog) {
       const seed = asObject(seedValue);
       const label = truncate(firstText(seed.l, seed.label, seed.name, seed.title), 180);
       if (!label) continue;
-      const evidenceRefs = compactStrings([
+      let evidenceRefs = compactStrings([
         ...asArray(seed.e),
         ...asArray(seed.evidenceRefs),
         ...asArray(seed.evidenceIds)
-      ]).filter((id) => evidenceByID.has(id));
+      ])
+        .map((id) => evidenceByID.get(id)?.id)
+        .filter(Boolean)
+        .filter((id, evidenceIndexValue, ids) =>
+          ids.indexOf(id) === evidenceIndexValue
+        );
+      const supportPhrase = name === 'timingTriggers'
+        ? truncate(firstText(
+          seed.q,
+          seed.supportPhrase,
+          seed.timingEvidencePhrase
+        ), 180)
+        : '';
+      let supportEvidenceRefs = [];
+      if (name === 'timingTriggers') {
+        const supportedRefs = evidenceRefs.filter((id) =>
+          /^observation:/i.test(id) &&
+          evidenceSupportsExactTimingText(
+            evidenceByID.get(id),
+            supportPhrase,
+            label
+          )
+        );
+        if (!supportPhrase ||
+            supportedRefs.length === 0 ||
+            !timingSupportPhraseGroundsLabel(label, supportPhrase)) {
+          out.unsupportedTimingSeedCount += 1;
+          continue;
+        }
+        supportEvidenceRefs = supportedRefs;
+      }
+      const declaredFamilyIds = compactStrings([
+        ...asArray(seed.f),
+        ...asArray(seed.familyIds),
+        seed.family,
+        seed.strategyFamily
+      ])
+        .map(normalizeStrategyFamilyID)
+        .filter((id) => strategyFamilies.has(id))
+        .filter((id, familyIndex, ids) => ids.indexOf(id) === familyIndex)
+        .slice(0, 4);
+      const familyIds = declaredFamilyIds.filter((id) =>
+        stringsOverlap(
+          evidenceRefs,
+          strategyFamilies.get(id)?.evidenceRefs
+        )
+      );
+      if (declaredFamilyIds.length > 0 && familyIds.length === 0) {
+        out.familyEvidenceMismatchSeedCount += 1;
+      }
+      if (familyIds.length === 0) {
+        out.invalidFamilySeedCount += 1;
+        continue;
+      }
       const key = comparable(label);
       if (seen.has(key)) continue;
       seen.add(key);
       out[name].push({
         id: normalizeSeedID(firstText(seed.id, `${name}-${index + 1}`), name, label),
         label,
+        familyIds,
         evidenceRefs,
+        supportPhrase,
+        supportEvidenceRefs,
         reason: truncate(firstText(seed.r, seed.reason, seed.rationale), 320),
         uncertainty: truncate(firstText(seed.u, seed.uncertainty, seed.unknown), 240),
         scores: normalizeScores(seed.s ?? seed.scores),
@@ -1069,6 +1302,57 @@ function normalizeSeedSet(value, evidenceCatalog) {
     }
   }
   return out;
+}
+
+function normalizeStrategyFamilies(values, evidenceByID) {
+  const families = new Map();
+  const collidedIDs = new Set();
+  let collisionCount = 0;
+  for (const value of asArray(values).slice(0, 4)) {
+    const raw = asObject(value);
+    const id = normalizeStrategyFamilyID(firstText(
+      raw.id,
+      raw.familyId,
+      raw.name
+    ));
+    if (!id || collidedIDs.has(id)) continue;
+    const evidenceRefs = compactStrings([
+      ...asArray(raw.e),
+      ...asArray(raw.evidenceRefs),
+      ...asArray(raw.evidenceIds)
+    ])
+      .map((ref) => evidenceByID.get(ref)?.id)
+      .filter(Boolean)
+      .filter((ref, index, refs) => refs.indexOf(ref) === index)
+      .slice(0, 12);
+    if (evidenceRefs.length === 0) continue;
+    const family = {
+      id,
+      label: truncate(firstText(raw.l, raw.label, raw.name, id), 120),
+      evidenceRefs
+    };
+    const existing = families.get(id);
+    if (existing) {
+      const sameDefinition = comparable(existing.label) === comparable(family.label) &&
+        stableHash([...existing.evidenceRefs].sort()) ===
+          stableHash([...family.evidenceRefs].sort());
+      if (!sameDefinition) {
+        families.delete(id);
+        collidedIDs.add(id);
+        collisionCount += 1;
+      }
+      continue;
+    }
+    families.set(id, family);
+  }
+  return { families, collisionCount };
+}
+
+function normalizeStrategyFamilyID(value) {
+  return comparable(firstText(value))
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
 }
 
 function normalizeJudgeWeights(value) {
@@ -1149,6 +1433,10 @@ function scoreHypothesis({
   const priorAdjustment = priorOutcomeAdjustment(tuple, priorOutcomes);
   semantic.expectedValue = clamp01(semantic.expectedValue + priorAdjustment.value);
   semantic.uncertainty = clamp01(semantic.uncertainty + priorAdjustment.uncertainty);
+  if (timingIsVerificationStep(tuple.timingTriggers.label)) {
+    semantic.timing = Math.min(semantic.timing, 0.25);
+    semantic.uncertainty = Math.max(semantic.uncertainty, 0.75);
+  }
 
   let positive = 0;
   let burden = 0;
@@ -1247,7 +1535,14 @@ function hypothesisSimilarity(left, right) {
   return same / fields.length;
 }
 
-function selectWinner({ objective, hypotheses, candidates, evidenceCatalog, eligibleCount }) {
+function selectWinner({
+  objective,
+  hypotheses,
+  candidates,
+  evidenceCatalog,
+  eligibleCount,
+  exploredCount
+}) {
   if (hypotheses.length === 0) {
     return { winner: null, runnerUp: null, candidates };
   }
@@ -1257,7 +1552,7 @@ function selectWinner({ objective, hypotheses, candidates, evidenceCatalog, elig
     .filter((candidate) =>
       candidate.identityResolved === true &&
       candidateEvidenceGroundsHypothesis(
-        candidate.evidenceRefs,
+        candidate,
         winnerHypothesis
       )
     )
@@ -1278,16 +1573,18 @@ function selectWinner({ objective, hypotheses, candidates, evidenceCatalog, elig
     runnerUp: runnerHypothesis,
     candidate: selectedCandidate,
     evidenceCatalog,
-    eligibleCount
+    eligibleCount,
+    exploredCount
   });
   const runnerUp = runnerHypothesis
     ? recommendationFor({
       objective,
       hypothesis: runnerHypothesis,
-      runnerUp: winnerHypothesis,
+      runnerUp: null,
       candidate: normalizedCandidates.find((candidate) => candidate.hypothesisId === runnerHypothesis.id),
       evidenceCatalog,
-      eligibleCount
+      eligibleCount,
+      exploredCount
     })
     : null;
   return { winner, runnerUp, candidates: normalizedCandidates };
@@ -1299,31 +1596,51 @@ function recommendationFor({
   runnerUp,
   candidate,
   evidenceCatalog,
-  eligibleCount
+  eligibleCount,
+  exploredCount
 }) {
   const tuple = hypothesis._tuple;
   const candidateLabel = truncate(firstText(candidate?.displayLabel), 180);
-  const whyNow = firstText(
-    tuple?.timingTriggers?.reason,
-    tuple?.timingTriggers?.label,
-    'The timing remains a hypothesis and should be verified before acting.'
+  const buyerMotions = strategyMotions(
+    hypothesis.buyerSegment,
+    'buyerSegment'
   );
+  const candidateIsContextAnchor =
+    organizationCandidateRequiresBuyerMatch(candidate) &&
+    buyerMotions.includes('patient_inbound') &&
+    !buyerMotions.includes('payer_network');
+  const candidateCopyLabel = candidateIsContextAnchor ? '' : candidateLabel;
+  const timingLabel = firstText(tuple?.timingTriggers?.label);
+  const timingSupport = firstText(tuple?.timingTriggers?.supportPhrase);
+  const whyNow = timingLabel && timingSupport
+    ? timingIsVerificationStep(timingLabel)
+      ? `Timing is unverified; ${timingLabel}. Source relevance: ${timingSupport}`
+      : `${timingLabel} Source support: ${timingSupport}`
+    : 'The timing remains a hypothesis and should be verified before acting.';
   const uncertainty = compactStrings([
     tuple?.buyerSegments?.uncertainty,
     tuple?.timingTriggers?.uncertainty,
     tuple?.channels?.uncertainty,
     'No real-world outcome has been observed yet; this is a review-first research recommendation.'
   ]).slice(0, 2).join(' ');
+  const actionNamesCandidate = exactTextContains(
+    hypothesis.action,
+    candidateCopyLabel
+  );
+  const offerNamesCandidate = exactTextContains(
+    hypothesis.offer,
+    candidateCopyLabel
+  );
   const action = truncate(
-    candidateLabel
-      ? `${hypothesis.action} for ${candidateLabel} through ${hypothesis.channel}; prepare only the singular, reviewable next step.`
+    candidateCopyLabel && !actionNamesCandidate
+      ? `${hypothesis.action} for ${candidateCopyLabel} through ${hypothesis.channel}; prepare only the singular, reviewable next step.`
       : `${hypothesis.action} through ${hypothesis.channel}; prepare only the singular, reviewable next step.`,
-    360
+    600
   );
   const title = truncate(
-    candidateLabel
-      ? `${hypothesis.offer} with ${candidateLabel}`
-      : `${hypothesis.offer} for ${hypothesis.buyerSegment}`,
+    candidateCopyLabel && !offerNamesCandidate
+      ? `${hypothesis.offer} with ${candidateCopyLabel}`
+      : hypothesis.offer,
     180
   );
   const evidenceRefs = compactStrings(hypothesis.evidenceRefs)
@@ -1337,9 +1654,29 @@ function recommendationFor({
     ? `Cited evidence: ${citedEvidenceLabels.join('; ')}.`
     : 'Its evidence references remain attached for review.';
   const why = candidateLabel
-    ? `${candidateLabel} is the exact named candidate attached to this strategy. ${grounding} It was the strongest of ${eligibleCount.toLocaleString('en-US')} eligible evidence-grounded strategies on objective fit, evidence strength, buyer authority, timing, expected value, effort, cost, risk, and uncertainty.`
-    : `${grounding} This was the strongest of ${eligibleCount.toLocaleString('en-US')} eligible evidence-grounded strategies on objective fit, evidence strength, buyer authority, timing, expected value, effort, cost, risk, and uncertainty.`;
-  return compact({
+    ? `${candidateLabel} is the exact named ${candidateIsContextAnchor ? 'evidence anchor' : 'candidate'} attached to this strategy. ${grounding} It led ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations on objective fit, evidence strength, buyer authority, timing, expected value, effort, cost, risk, and uncertainty.`
+    : `${grounding} This was one of ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations.`;
+  const whyOverRunnerUp = runnerUp
+    ? comparisonReason(hypothesis, runnerUp)
+    : '';
+  const recommendationMotionSignatures = compactStrings([
+    title,
+    action,
+    why,
+    whyNow,
+    whyOverRunnerUp,
+    uncertainty
+  ].flatMap((value) => strategyMotions(value))).sort();
+  const hypothesisMotionSignatures = compactStrings(
+    asObject(hypothesis.provenance).motionSignatures
+  ).sort();
+  if (recommendationMotionSignatures.length > 1 ||
+      recommendationMotionSignatures.some((motion) =>
+        !hypothesisMotionSignatures.includes(motion)
+      )) {
+    return null;
+  }
+  const recommendation = compact({
     hypothesisId: hypothesis.id,
     candidateId: candidate?.id,
     actionId: `action-${stableHash(`${hypothesis.id}|${action}`).slice(0, 20)}`,
@@ -1347,8 +1684,9 @@ function recommendationFor({
     action,
     why,
     whyNow,
-    whyOverRunnerUp: runnerUp ? comparisonReason(hypothesis, runnerUp) : '',
+    whyOverRunnerUp,
     uncertainty,
+    motionSignatures: recommendationMotionSignatures,
     evidenceRefs,
     requiresReview: true,
     score: hypothesis.score,
@@ -1358,6 +1696,10 @@ function recommendationFor({
       successMetric: objective.successMetric
     }
   });
+  // An empty signature is meaningful: it proves the deterministic
+  // recommendation text introduced no independently classified motion.
+  recommendation.motionSignatures = recommendationMotionSignatures;
+  return recommendation;
 }
 
 function comparisonReason(winner, runnerUp) {
@@ -1466,8 +1808,8 @@ function normalizeModelExtractedCandidates(values, evidenceCatalog) {
   const candidates = [];
   for (const [index, candidateValue] of asArray(values).slice(0, 8).entries()) {
     const raw = asObject(candidateValue);
-    const kind = comparable(firstText(raw.k, raw.kind, raw.type));
-    if (kind !== 'person' && kind !== 'organization') continue;
+    const declaredKind = comparable(firstText(raw.k, raw.kind, raw.type));
+    if (declaredKind !== 'person' && declaredKind !== 'organization') continue;
     const displayLabel = truncate(firstText(
       raw.l,
       raw.displayLabel,
@@ -1475,6 +1817,13 @@ function normalizeModelExtractedCandidates(values, evidenceCatalog) {
       raw.name
     ), 180);
     if (!concreteCandidateLabel(displayLabel)) continue;
+    // Model-declared types are hints, not authority. Obvious organizations
+    // must retain the stricter buyer-name binding even when the model labels
+    // them as people.
+    const kind = declaredKind === 'person' &&
+      organizationLikeCandidateLabel(displayLabel)
+      ? 'organization'
+      : declaredKind;
     const requestedRefs = compactStrings([
       ...asArray(raw.e),
       ...asArray(raw.evidenceRefs),
@@ -1494,19 +1843,6 @@ function normalizeModelExtractedCandidates(values, evidenceCatalog) {
     }
     if (supportedEvidence.length === 0) continue;
 
-    const requestedPublicURL = firstText(
-      raw.u,
-      raw.publicUrl,
-      raw.profileUrl,
-      raw.url
-    );
-    const publicUrl = safePublicURL(requestedPublicURL);
-    if (requestedPublicURL &&
-        (!publicUrl || !supportedEvidence.some((evidence) =>
-          evidenceSupportsExactPublicURL(evidence, publicUrl)
-        ))) {
-      continue;
-    }
     const exactOptionalText = (...candidateValues) => {
       const value = truncate(firstText(...candidateValues), 180);
       return value && supportedEvidence.some((evidence) =>
@@ -1522,23 +1858,16 @@ function normalizeModelExtractedCandidates(values, evidenceCatalog) {
       id: `candidate:model:${stableHash({
         displayLabel,
         kind,
-        evidenceRefs: supportedEvidence.map((item) => item.id),
-        publicUrl
+        evidenceRefs: supportedEvidence.map((item) => item.id)
       }).slice(0, 20)}`,
       kind: kind === 'organization' ? 'evidence_named_organization' : 'evidence_named_person',
       displayLabel,
       organization,
       role: exactOptionalText(raw.r, raw.role, raw.title),
       market: exactOptionalText(raw.m, raw.market, raw.location),
-      publicUrl,
       providers: ['openrouter_evidence_extraction'],
       evidenceRefs: supportedEvidence.map((item) => item.id),
-      contactPaths: publicUrl ? [{
-        kind: 'public_profile',
-        available: true,
-        verified: false,
-        reference: publicUrl
-      }] : [],
+      contactPaths: [],
       exactNamedCandidate: true,
       identityResolved: true,
       modelCandidateIndex: index
@@ -1623,29 +1952,87 @@ function seedMentionedOrganizationNames(value) {
 }
 
 function evidenceSupportsExactText(evidence, value) {
-  const needle = comparable(value);
-  if (!needle) return false;
-  const haystack = comparable(compactStrings([
+  const haystack = compactStrings([
     asObject(evidence).label,
     asObject(evidence).summary
-  ]).join(' '));
-  return ` ${haystack} `.includes(` ${needle} `);
+  ]).join(' ');
+  return exactTextContains(haystack, value);
+}
+
+function evidenceSupportsExactTimingText(evidence, value, timingLabel) {
+  if (!evidenceSupportsExactText(evidence, value)) return false;
+  const evidenceTokens = comparable(compactStrings([
+    asObject(evidence).label,
+    asObject(evidence).summary
+  ]).join(' ')).split(' ');
+  const phraseTokens = comparable(value).split(' ').filter(Boolean);
+  if (phraseTokens.length === 0) return false;
+  const negativeTokens = new Set([
+    'no',
+    'not',
+    'never',
+    'without',
+    'unknown',
+    'unconfirmed',
+    'missing',
+    'lack',
+    'lacks',
+    'neither',
+    'closed',
+    'unavailable',
+    'absent',
+    'ended',
+    'expired'
+  ]);
+  const staleTokens = new Set([
+    'archived',
+    'former',
+    'formerly',
+    'historical',
+    'historic',
+    'inactive',
+    'obsolete',
+    'old',
+    'outdated',
+    'previous',
+    'previously',
+    'superseded'
+  ]);
+  const directTimingClaim = !timingIsVerificationStep(timingLabel);
+  for (let index = 0;
+    index + phraseTokens.length <= evidenceTokens.length;
+    index += 1) {
+    if (!phraseTokens.every((token, offset) =>
+      evidenceTokens[index + offset] === token
+    )) {
+      continue;
+    }
+    const context = [
+      ...evidenceTokens.slice(Math.max(0, index - 12), index),
+      ...evidenceTokens.slice(
+        index + phraseTokens.length,
+        index + phraseTokens.length + 12
+      )
+    ];
+    const historicallyQualified = directTimingClaim &&
+      [...phraseTokens, ...context].some((token) => staleTokens.has(token));
+    if (!context.some((token) => negativeTokens.has(token)) &&
+        !historicallyQualified) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function exactTextContains(haystackValue, needleValue) {
+  const haystack = comparable(haystackValue);
+  const needle = comparable(needleValue);
+  return Boolean(needle) && ` ${haystack} `.includes(` ${needle} `);
 }
 
 function sourceIsResearchApproved(source) {
   return RESEARCH_APPROVED_SOURCE_STATUSES.has(
     comparable(asObject(source).status)
-  );
-}
-
-function evidenceSupportsExactPublicURL(evidence, value) {
-  const target = comparableURL(value);
-  if (!target) return false;
-  return compactStrings([
-    asObject(evidence).url,
-    ...asArray(asObject(evidence).aliases)
-  ]).some((candidate) =>
-    comparableURL(safePublicURL(candidate)) === target
   );
 }
 
@@ -1658,6 +2045,13 @@ function concreteCandidateLabel(value) {
     return false;
   }
   return /[a-z]/i.test(label);
+}
+
+function organizationLikeCandidateLabel(value) {
+  const label = firstText(value);
+  return /\b(?:association|bank|clinic|co|company|corporation|foundation|group|healthcare|health[- ]plan|health system|hospital|inc|insurance|labs|llc|ltd|network|organization|partners|plc|practice|services|university)\b(?:[.,]?\s*)$/i.test(
+    label
+  );
 }
 
 function structuredCandidateFromTimelinePost(value, profileScribePublicBaseURL) {
@@ -1963,13 +2357,18 @@ function normalizeCandidates(
       .filter((id, refIndex, refs) => refs.indexOf(id) === refIndex)
       .slice(0, 12);
     if (evidenceRefs.length === 0) continue;
+    const groundingCandidate = {
+      ...raw,
+      displayLabel,
+      evidenceRefs
+    };
     const overlappingHypotheses = hypotheses.filter((hypothesis) =>
-      candidateEvidenceGroundsHypothesis(evidenceRefs, hypothesis)
+      candidateEvidenceGroundsHypothesis(groundingCandidate, hypothesis)
     );
     if (overlappingHypotheses.length === 0) continue;
     let hypothesis = hypothesisByID.get(firstText(raw.hypothesisId));
     if (!hypothesis ||
-        !candidateEvidenceGroundsHypothesis(evidenceRefs, hypothesis)) {
+        !candidateEvidenceGroundsHypothesis(groundingCandidate, hypothesis)) {
       hypothesis = [...overlappingHypotheses].sort((left, right) => {
         const leftFit = textOverlap(
           `${raw.role || ''} ${raw.organization || ''} ${displayLabel}`,
@@ -2039,6 +2438,7 @@ function normalizeCandidates(
       contactPaths: normalizeContactPaths(raw.contactPaths),
       score,
       rank: 0,
+      exactNamedCandidate: raw.exactNamedCandidate === true,
       identityResolved: raw.identityResolved === true || Boolean(authorSlug),
       selected: false,
       discoveredAt: validISOString(raw.discoveredAt) || timestamp
@@ -2273,6 +2673,96 @@ function safeContactPathReference(value) {
     : '';
 }
 
+function timingSupportPhraseGroundsLabel(label, supportPhrase) {
+  if (textOverlap(label, supportPhrase) < 0.35) return false;
+  const normalizedLabel = comparable(label);
+  const support = comparable(supportPhrase);
+  const verificationStep = /^(?:verify|confirm|check|research|determine)\b/.test(
+    normalizedLabel
+  );
+  if (verificationStep) {
+    // A prefix such as "Confirm current opportunity" still presupposes the
+    // very claim it is meant to verify. Require the whole trigger to be
+    // explicitly uncertainty-scoped.
+    if (!/^(?:verify|confirm|check|research|determine)\s+(?:whether|if|when|the status of|the timing of)\b/.test(
+      normalizedLabel
+    )) {
+      return false;
+    }
+    return specificTimingClaims(label)
+      .filter((claim) => !verificationTimingClaimMayBeQuestioned(claim))
+      .every((claim) => support.includes(claim));
+  }
+  // A non-verification trigger is a direct factual timing assertion. Preserve
+  // it only when that complete assertion was copied from approved evidence.
+  return exactTextContains(supportPhrase, label);
+}
+
+function timingIsVerificationStep(value) {
+  return /^(?:verify|confirm|check|research|determine)\b/i.test(
+    firstText(value)
+  );
+}
+
+function specificTimingClaims(value) {
+  const normalized = comparable(value);
+  const patterns = [
+    /\bcurrent(?:ly)?\b/g,
+    /\bnow\b/g,
+    /\btoday\b/g,
+    /\btomorrow\b/g,
+    /\bimmediate(?:ly)?\b/g,
+    /\burgent(?:ly|cy)?\b/g,
+    /\blive\b/g,
+    /\bactive(?:ly)?\b/g,
+    /\bopen\b/g,
+    /\bongoing\b/g,
+    /\brecent(?:ly)?\b/g,
+    /\bnew(?:ly)?\b/g,
+    /\bupcoming\b/g,
+    /\bimminent(?:ly)?\b/g,
+    /\bsoon\b/g,
+    /\bopen enrollment(?: window| period)?\b/g,
+    /\benrollment(?: window| period| cycle| deadline)?\b/g,
+    /\brecertification(?: window| period| cycle| deadline)?\b/g,
+    /\bplanning cycle\b/g,
+    /\bawareness month\b/g,
+    /\b(?:application|budget|grant|procurement|renewal) (?:window|deadline|cycle|period)\b/g,
+    /\bdeadline\b/g,
+    /\b(?:this|next|last) (?:week|month|quarter|year)\b/g,
+    /\bq[1-4]\b/g,
+    /\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b/g,
+    /\b20\d{2}\b/g
+  ];
+  return compactStrings(
+    patterns.flatMap((pattern) => normalized.match(pattern) || [])
+  );
+}
+
+function verificationTimingClaimMayBeQuestioned(value) {
+  return new Set([
+    'open enrollment',
+    'provider enrollment',
+    'enrollment window',
+    'enrollment period',
+    'enrollment deadline',
+    'recertification',
+    'planning cycle',
+    'awareness month',
+    'application window',
+    'application deadline',
+    'budget window',
+    'budget cycle',
+    'grant window',
+    'grant deadline',
+    'procurement window',
+    'procurement cycle',
+    'renewal window',
+    'renewal deadline',
+    'deadline'
+  ]).has(comparable(value));
+}
+
 function tupleAllowed(tuple, constraints) {
   const combined = DIMENSIONS.map(([name]) => tuple[name].label).join(' ');
   if (/\b(mass|bulk|blast|spray(?:\s+and\s+pray)?|scrape|automated form submission)\b/i.test(combined)) {
@@ -2320,6 +2810,209 @@ function hypothesisJudgeReason(tuple, score) {
   return `Grounded by ${tuple.proofPoints.label}; strongest dimension was ${strongest[1]} (${score[strongest[0]].toFixed(3)}).`;
 }
 
+function commonCompatibilityFamilies(tuple, seedSet) {
+  const familySets = DIMENSIONS.map(([name]) =>
+    new Set(compactStrings(asObject(tuple[name]).familyIds))
+  );
+  if (familySets.some((families) => families.size === 0)) return [];
+  return [...familySets[0]]
+    .filter((family) =>
+      familySets.slice(1).every((families) => families.has(family)) &&
+      commonStrategyEvidenceRefs(tuple, family, seedSet).length > 0
+    )
+    .sort();
+}
+
+function commonStrategyEvidenceRefs(tuple, familyID, seedSet) {
+  const family = asArray(asObject(seedSet).strategyFamilies)
+    .map(asObject)
+    .find((item) => item.id === familyID);
+  let shared = strategyAnchorEvidenceRefs(family?.evidenceRefs);
+  for (const [dimension] of DIMENSIONS) {
+    const dimensionRefs = new Set(
+      strategyAnchorEvidenceRefs(asObject(tuple[dimension]).evidenceRefs)
+    );
+    shared = shared.filter((ref) => dimensionRefs.has(ref));
+  }
+  return shared;
+}
+
+function strategyAnchorEvidenceRefs(values) {
+  return compactStrings(values)
+    .filter((ref) => !/^source:/i.test(ref));
+}
+
+function strategyProvenance(
+  tuple,
+  familyID,
+  seedSet,
+  evidenceByID,
+  motionSignature = strategyMotionSignature(tuple)
+) {
+  const family = asArray(asObject(seedSet).strategyFamilies)
+    .map(asObject)
+    .find((item) => item.id === familyID);
+  const dimensionNames = {
+    offer: 'offers',
+    buyerSegment: 'buyerSegments',
+    channel: 'channels',
+    action: 'actions',
+    timingTrigger: 'timingTriggers',
+    proofPoint: 'proofPoints',
+    followUp: 'followUps'
+  };
+  const dimensions = Object.fromEntries(
+    Object.entries(dimensionNames).map(([publicName, tupleName]) => {
+      const seed = asObject(tuple[tupleName]);
+      return [publicName, {
+        familyIds: compactStrings(seed.familyIds),
+        evidenceRefs: compactStrings(seed.evidenceRefs)
+      }];
+    })
+  );
+  const timingSeed = asObject(tuple.timingTriggers);
+  const timingEvidenceRef = compactStrings(timingSeed.supportEvidenceRefs)[0];
+  const timingEvidence = asObject(evidenceByID.get(timingEvidenceRef));
+  return {
+    strategyFamilyId: familyID,
+    motionSignatures: motionSignature.motionSignatures,
+    motionDimensions: motionSignature.dimensions,
+    familyEvidenceRefs: compactStrings(family?.evidenceRefs),
+    sharedEvidenceRefs: commonStrategyEvidenceRefs(tuple, familyID, seedSet),
+    dimensions,
+    timingSupportPhrase: firstText(timingSeed.supportPhrase),
+    timingEvidenceRef,
+    timingEvidenceText: truncate(compactStrings([
+      timingEvidence.label,
+      timingEvidence.summary
+    ]).join(' '), 600)
+  };
+}
+
+function strategyMotionSignature(tuple) {
+  const dimensionNames = {
+    offer: 'offers',
+    buyerSegment: 'buyerSegments',
+    channel: 'channels',
+    action: 'actions',
+    timingTrigger: 'timingTriggers',
+    proofPoint: 'proofPoints',
+    followUp: 'followUps'
+  };
+  const dimensions = Object.fromEntries(
+    Object.entries(dimensionNames).map(([publicName, tupleName]) => [
+      publicName,
+      strategyMotions(asObject(tuple[tupleName]).label, publicName)
+    ])
+  );
+  const buyerMotions = dimensions.buyerSegment;
+  const primaryMotion = buyerMotions.length === 1
+    ? buyerMotions[0]
+    : '';
+  const coherent = Boolean(primaryMotion) &&
+    Object.keys(dimensions).every((dimension) => {
+      const motions = dimensions[dimension];
+      return motions.length <= 1 &&
+        (motions.length === 0 || motions[0] === primaryMotion);
+    });
+  const motionSignatures = coherent
+    ? [primaryMotion]
+    : compactStrings(Object.values(dimensions).flat()).sort();
+  return {
+    coherent,
+    motionSignatures,
+    dimensions
+  };
+}
+
+function strategyMotions(value, dimension = '') {
+  const label = comparable(firstText(value));
+  if (!label) return [];
+  const motions = Object.entries(STRATEGY_MOTION_PATTERNS)
+    .filter(([, patterns]) =>
+      patterns.some((pattern) => pattern.test(label))
+    )
+    .map(([motion]) => motion);
+  if (dimension === 'buyerSegment' &&
+      /\b(?:patient|parent|mother|family|caregiver|member)s?\b/.test(label) &&
+      !motions.includes('patient_inbound')) {
+    motions.push('patient_inbound');
+  }
+  const hasPatientBuyer = dimension === 'buyerSegment' &&
+    motions.includes('patient_inbound');
+  const hasPayerOrganizationIntent =
+    /\b(?:contracting|credentialing|credentialed|enrollment|application|participation|relations|partnership|leadership|team|executive|director|manager|decision maker)s?\b/.test(label);
+  if (hasPatientBuyer &&
+      motions.includes('payer_network') &&
+      !hasPayerOrganizationIntent) {
+    motions.splice(motions.indexOf('payer_network'), 1);
+  }
+  const specializedMotions = motions.filter((motion) =>
+    motion !== 'organization_partnership'
+  );
+  if (specializedMotions.length > 0 &&
+      motions.includes('organization_partnership')) {
+    motions.splice(motions.indexOf('organization_partnership'), 1);
+  }
+  return [...new Set(motions)].sort();
+}
+
+function strategyFamilyPriorityIndexes(dimensions, seedSet) {
+  if (dimensions.some((items) => items.length === 0)) return [];
+  const commonFamilies = compactStrings(
+    dimensions[0].flatMap((item) => asArray(item.familyIds))
+  ).filter((family, index, families) =>
+    families.indexOf(family) === index &&
+    dimensions.slice(1).every((items) =>
+      items.some((item) => asArray(item.familyIds).includes(family))
+    )
+  );
+  const priorityIndexes = [];
+  for (const family of commonFamilies) {
+    const familyDefinition = asArray(asObject(seedSet).strategyFamilies)
+      .map(asObject)
+      .find((item) => item.id === family);
+    const candidateAnchors = strategyAnchorEvidenceRefs(
+      familyDefinition?.evidenceRefs
+    );
+    for (const anchor of candidateAnchors) {
+      const indexes = dimensions.map((items) =>
+        items.findIndex((item) =>
+          asArray(item.familyIds).includes(family) &&
+          asArray(item.evidenceRefs).includes(anchor)
+        )
+      );
+      if (indexes.every((index) => index >= 0)) {
+        priorityIndexes.push(encodeCartesianIndex(indexes, dimensions));
+        break;
+      }
+    }
+  }
+  return priorityIndexes;
+}
+
+function prioritizedCartesianIndexes(total, limit, seed, priorityIndexes) {
+  const out = [];
+  const seen = new Set();
+  const append = (index) => {
+    if (!Number.isInteger(index) ||
+        index < 0 ||
+        index >= total ||
+        seen.has(index) ||
+        out.length >= limit) {
+      return;
+    }
+    seen.add(index);
+    out.push(index);
+  };
+  for (const index of asArray(priorityIndexes)) append(index);
+  const sampleCount = Math.min(total, limit + out.length);
+  for (const index of deterministicCartesianIndexes(total, sampleCount, seed)) {
+    append(index);
+  }
+  return out;
+}
+
 function deterministicCartesianIndexes(total, limit, seed) {
   if (total <= limit) return Array.from({ length: total }, (_, index) => index);
   const start = hashInteger(seed) % total;
@@ -2333,6 +3026,14 @@ function deterministicCartesianIndexes(total, limit, seed) {
     out.push((start + index * step) % total);
   }
   return out;
+}
+
+function encodeCartesianIndex(indexes, dimensions) {
+  let flatIndex = 0;
+  for (let index = 0; index < dimensions.length; index += 1) {
+    flatIndex = flatIndex * dimensions[index].length + indexes[index];
+  }
+  return flatIndex;
 }
 
 function decodeCartesianIndex(flatIndex, dimensions) {
@@ -2371,13 +3072,51 @@ function stringsOverlap(left, right) {
   return compactStrings(left).some((value) => rightValues.has(value));
 }
 
-function candidateEvidenceGroundsHypothesis(evidenceRefs, hypothesis) {
+function candidateEvidenceGroundsHypothesis(candidateValue, hypothesis) {
+  const candidate = asObject(candidateValue);
+  const evidenceRefs = asArray(candidate.evidenceRefs);
   const tuple = asObject(hypothesis?._tuple);
   const buyerEvidence = asArray(asObject(tuple.buyerSegments).evidenceRefs);
   const offerEvidence = asArray(asObject(tuple.offers).evidenceRefs);
   const proofEvidence = asArray(asObject(tuple.proofPoints).evidenceRefs);
+  if (organizationCandidateRequiresBuyerMatch(candidate) &&
+      !exactTextContains(
+        asObject(tuple.buyerSegments).label,
+        candidate.displayLabel
+      )) {
+    return false;
+  }
   return stringsOverlap(evidenceRefs, buyerEvidence) &&
     stringsOverlap(evidenceRefs, [...offerEvidence, ...proofEvidence]);
+}
+
+function organizationCandidateRequiresBuyerMatch(candidateValue) {
+  const candidate = asObject(candidateValue);
+  const kind = comparable(firstText(candidate.kind, candidate.k));
+  const organization = firstText(candidate.organization, candidate.company);
+  const displayLabel = firstText(candidate.displayLabel, candidate.l);
+  const organizationKind =
+    /\b(?:organization|company|business|institution|hospital|employer|association|university|health system|payer|insurer|agency|practice|facility)\b/.test(
+      kind
+    );
+  const displayIsOrganization = Boolean(
+    organization &&
+    comparable(organization) === comparable(displayLabel)
+  );
+  return (
+    organizationKind ||
+    displayIsOrganization ||
+    organizationLikeCandidateLabel(displayLabel)
+  ) &&
+    (
+      candidate.exactNamedCandidate === true ||
+      candidate.identityResolved === true ||
+      compactStrings(candidate.providers).some((provider) =>
+        /^(?:openrouter_(?:evidence|seed)_extraction|source_evidence)$/i.test(
+          provider
+        )
+      )
+    );
 }
 
 function evidenceQuality(item) {
@@ -2408,8 +3147,16 @@ function emptySearchSpace(budget) {
     expandedCount: 0,
     eligibleCount: 0,
     filteredCount: 0,
+    incompatibleCount: 0,
+    motionConflictCount: 0,
     retainedCount: 0,
     dimensionCounts: {},
+    strategyFamilyCount: 0,
+    strategyFamilyCollisionCount: 0,
+    familyEvidenceMismatchSeedCount: 0,
+    invalidFamilySeedCount: 0,
+    unsupportedTimingSeedCount: 0,
+    coherenceGate: COHERENCE_GATE_VERSION,
     deterministic: true,
     modelCalls: 0
   };
