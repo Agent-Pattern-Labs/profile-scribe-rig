@@ -2603,7 +2603,14 @@ function agentChatTraceTools(resolvedFromList) {
   ];
 }
 
-async function callOpenRouterJSON({ model, system, user, maxTokens, provider }) {
+async function callOpenRouterJSON({
+  model,
+  system,
+  user,
+  maxTokens,
+  provider,
+  reasoning
+}) {
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
   model = text(model) || openRouterModel();
@@ -2621,6 +2628,7 @@ async function callOpenRouterJSON({ model, system, user, maxTokens, provider }) 
       temperature: 0.25,
       max_tokens: numberOr(maxTokens, 700),
       ...(Object.keys(object(provider)).length > 0 ? { provider: object(provider) } : {}),
+      ...(Object.keys(object(reasoning)).length > 0 ? { reasoning: object(reasoning) } : {}),
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user }
