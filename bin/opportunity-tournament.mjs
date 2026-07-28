@@ -990,6 +990,16 @@ export function expandAndJudge({
       filteredCount += 1;
       continue;
     }
+    if (timingEvidenceConflictsWithStrategyMotion(
+      tuple,
+      motionSignature,
+      evidenceByID
+    )) {
+      motionConflictCount += 1;
+      motionConflictDimensions.timingTrigger += 1;
+      filteredCount += 1;
+      continue;
+    }
     if (!tupleAllowed(tuple, constraints)) {
       filteredCount += 1;
       continue;
@@ -1416,11 +1426,15 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
           const familyEvidence = new Set(
             asArray(strategyFamilies.get(familyID)?.evidenceRefs)
           );
-          const alreadyGroundedFamilyObservations =
-            normalizedFamilyObservationEvidenceRefs(out, familyID)
+          const buyerGroundedFamilyObservations =
+            normalizedFamilyBuyerObservationEvidenceRefs(
+              out,
+              familyID,
+              evidenceByID
+            )
               .filter((ref) => familyEvidence.has(ref));
           familyLocalTimingRepair = repairTimingAsVerification(
-            alreadyGroundedFamilyObservations,
+            buyerGroundedFamilyObservations,
             evidenceByID,
             referenceTime
           );
@@ -1632,13 +1646,32 @@ function strategyObservationEvidenceRefs(values) {
     .filter((ref) => /^observation:/i.test(ref));
 }
 
-function normalizedFamilyObservationEvidenceRefs(seedSet, familyID) {
+function normalizedFamilyBuyerObservationEvidenceRefs(
+  seedSet,
+  familyID,
+  evidenceByID
+) {
+  const buyerSeeds = asArray(asObject(seedSet).buyerSegments)
+    .map(asObject)
+    .filter((seed) => asArray(seed.familyIds).includes(familyID));
+  if (buyerSeeds.length === 0) return [];
+  let buyerMotion = '';
   const refs = [];
-  for (const [dimension] of DIMENSIONS) {
-    for (const seedValue of asArray(asObject(seedSet)[dimension])) {
-      const seed = asObject(seedValue);
-      if (!asArray(seed.familyIds).includes(familyID)) continue;
-      refs.push(...strategyObservationEvidenceRefs(seed.evidenceRefs));
+  for (const seed of buyerSeeds) {
+    const seedMotions = strategyMotions(seed.label, 'buyerSegment');
+    if (seedMotions.length !== 1) return [];
+    if (buyerMotion && buyerMotion !== seedMotions[0]) return [];
+    buyerMotion = seedMotions[0];
+    for (const ref of strategyObservationEvidenceRefs(seed.evidenceRefs)) {
+      const evidence = asObject(evidenceByID.get(ref));
+      const evidenceMotions = strategyMotions(compactStrings([
+        evidence.label,
+        evidence.summary
+      ]).join(' '));
+      if (evidenceMotions.length === 1 &&
+          evidenceMotions[0] === buyerMotion) {
+        refs.push(ref);
+      }
     }
   }
   return compactStrings(refs)
@@ -2415,7 +2448,7 @@ function repairTimingAsVerification(
 function timingEvidenceIsSafe(evidence, referenceTime) {
   if (asObject(evidence).approvedSourceObservation !== true) return false;
   if (asObject(evidence).current === false ||
-      /\b(?:archived|cancelled|canceled|closed|discontinued|expired|historical|inactive|superseded|withdrawn)\b/i.test(
+      /\b(?:absent|archived|cancelled|canceled|closed|discontinued|ended|expired|former|formerly|historical|historic|inactive|lack|lacks|missing|neither|never|no|not|obsolete|old|outdated|previous|previously|superseded|unavailable|unconfirmed|unknown|was|without|withdrawn)\b/i.test(
         firstText(asObject(evidence).status)
       )) {
     return false;
@@ -3412,6 +3445,27 @@ function strategyMotionSignature(tuple) {
     dimensions,
     conflictDimensions
   };
+}
+
+function timingEvidenceConflictsWithStrategyMotion(
+  tuple,
+  motionSignature,
+  evidenceByID
+) {
+  const primaryMotion = asArray(motionSignature?.motionSignatures)[0];
+  if (!primaryMotion) return true;
+  const timingSeed = asObject(tuple?.timingTriggers);
+  for (const ref of compactStrings(timingSeed.supportEvidenceRefs)) {
+    const evidence = asObject(evidenceByID.get(ref));
+    const evidenceMotions = strategyMotions(compactStrings([
+      evidence.label,
+      evidence.summary
+    ]).join(' '));
+    if (evidenceMotions.some((motion) => motion !== primaryMotion)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function emptyMotionConflictDimensions() {

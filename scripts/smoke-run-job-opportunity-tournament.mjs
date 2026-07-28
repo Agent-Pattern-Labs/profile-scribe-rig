@@ -156,6 +156,9 @@ const server = createServer(async (request, response) => {
   const oldTimingRef = evidenceIDs.find(
     (id) => id === 'observation:obs-old-timing'
   );
+  const endedTimingRef = evidenceIDs.find(
+    (id) => id === 'observation:obs-ended-timing'
+  );
   const unknownFamilyRef = evidenceIDs.find(
     (id) => id === 'observation:obs-unknown-family'
   );
@@ -182,6 +185,9 @@ const server = createServer(async (request, response) => {
   );
   const patientInboundEvidenceRef = evidenceIDs.find(
     (id) => id === 'observation:obs-patient-inbound'
+  );
+  const crossMotionTimingEvidenceRef = evidenceIDs.find(
+    (id) => id === 'observation:obs-cross-motion-timing'
   );
   const profileIdentityRef = evidenceIDs.find((id) => id === 'profile:identity');
   const candidateFitRefs = [
@@ -524,7 +530,8 @@ const server = createServer(async (request, response) => {
       }
     }
   }
-  const metadataBlockedTimingRef = inactiveTimingRef || oldTimingRef;
+  const metadataBlockedTimingRef =
+    inactiveTimingRef || oldTimingRef || endedTimingRef;
   if (metadataBlockedTimingRef) {
     for (const family of seedSet.families) {
       family.e = [metadataBlockedTimingRef];
@@ -763,7 +770,8 @@ const server = createServer(async (request, response) => {
     'obj-incomplete-family-bundles',
     'obj-forged-timing-family-bundles',
     'obj-inactive-timing-family-bundles',
-    'obj-old-timing-family-bundles'
+    'obj-old-timing-family-bundles',
+    'obj-ended-timing-family-bundles'
   ].includes(input.objective?.id)) {
     const multiVariantDimensions = new Set([
       'offers',
@@ -857,6 +865,57 @@ const server = createServer(async (request, response) => {
         ]
       }],
       candidates: structuredClone(seedSet.candidates),
+      w: structuredClone(seedSet.w)
+    };
+  }
+  if (crossMotionTimingEvidenceRef && patientInboundEvidenceRef) {
+    const dimensions = {};
+    for (const dimension of [
+      'offers',
+      'buyerSegments',
+      'channels',
+      'actions',
+      'timingTriggers',
+      'proofPoints',
+      'followUps'
+    ]) {
+      const { f: _familyIds, ...familyAItem } =
+        structuredClone(seedSet[dimension][0]);
+      const { f: _otherFamilyIds, ...familyBItem } =
+        structuredClone(seedSet[dimension][1]);
+      familyAItem.e = [crossMotionTimingEvidenceRef];
+      familyBItem.e = [patientInboundEvidenceRef];
+      if (dimension === 'timingTriggers') {
+        familyAItem.e = [patientInboundEvidenceRef];
+        familyAItem.l =
+          'Determine whether applications are accepted today';
+        familyAItem.q = 'applications are accepted today';
+      }
+      dimensions[dimension] = {
+        familyA: [familyAItem],
+        familyB: [familyBItem]
+      };
+    }
+    responseSeedSet = {
+      familyA: {
+        id: 'family-a',
+        l: 'Patient inbound family with a cross-motion evidence trap',
+        m: 'patient_inbound',
+        e: [crossMotionTimingEvidenceRef],
+        d: Object.fromEntries(Object.entries(dimensions).map(
+          ([dimension, values]) => [dimension, values.familyA]
+        ))
+      },
+      familyB: {
+        id: 'family-b',
+        l: 'Grounded patient inbound control family',
+        m: 'patient_inbound',
+        e: [patientInboundEvidenceRef],
+        d: Object.fromEntries(Object.entries(dimensions).map(
+          ([dimension, values]) => [dimension, values.familyB]
+        ))
+      },
+      candidates: [],
       w: structuredClone(seedSet.w)
     };
   }
@@ -1501,6 +1560,29 @@ try {
     'utf8'
   );
   const oldTiming = await runJob(oldTimingJobFile, port);
+  const endedTimingJob = structuredClone(candidateFreeJob);
+  endedTimingJob.id = 'job-opportunity-tournament-ended-timing-smoke';
+  endedTimingJob.payload.tournamentId = 'opturn-ended-timing-smoke';
+  endedTimingJob.payload.objective.id =
+    'obj-ended-timing-family-bundles';
+  endedTimingJob.payload.evidenceSnapshot.sourceEvidence.push({
+    observationId: 'obs-ended-timing',
+    sourceId: 'src-delivery-map',
+    kind: 'service-page',
+    title: 'Consultation booking availability',
+    summary: 'The service page offers consultation booking.',
+    observedAt: '2026-07-25T12:00:00Z',
+    current: true,
+    status: 'ended',
+    confidence: 'high'
+  });
+  const endedTimingJobFile = join(tmp, 'ended-timing-job.json');
+  writeFileSync(
+    endedTimingJobFile,
+    `${JSON.stringify(endedTimingJob)}\n`,
+    'utf8'
+  );
+  const endedTiming = await runJob(endedTimingJobFile, port);
   const unknownFamilyJob = structuredClone(candidateFreeJob);
   unknownFamilyJob.id = 'job-opportunity-tournament-unknown-family-smoke';
   unknownFamilyJob.payload.tournamentId = 'opturn-unknown-family-smoke';
@@ -1709,6 +1791,34 @@ try {
     'utf8'
   );
   const patientInbound = await runJob(patientInboundJobFile, port);
+  const crossMotionTimingJob = structuredClone(patientInboundJob);
+  crossMotionTimingJob.id =
+    'job-opportunity-tournament-cross-motion-timing-smoke';
+  crossMotionTimingJob.payload.tournamentId =
+    'opturn-cross-motion-timing-smoke';
+  crossMotionTimingJob.payload.evidenceSnapshot.sourceEvidence.push({
+    observationId: 'obs-cross-motion-timing',
+    sourceId: 'src-delivery-map',
+    kind: 'hospital-program',
+    title: 'Baby-Friendly hospital program',
+    summary: 'Applications are accepted today.',
+    observedAt: '2026-07-25T12:00:00Z',
+    current: true,
+    confidence: 'high'
+  });
+  const crossMotionTimingJobFile = join(
+    tmp,
+    'cross-motion-timing-job.json'
+  );
+  writeFileSync(
+    crossMotionTimingJobFile,
+    `${JSON.stringify(crossMotionTimingJob)}\n`,
+    'utf8'
+  );
+  const crossMotionTiming = await runJob(
+    crossMotionTimingJobFile,
+    port
+  );
   const familyCollisionJob = structuredClone(candidateFreeJob);
   familyCollisionJob.id = 'job-opportunity-tournament-family-collision-smoke';
   familyCollisionJob.payload.tournamentId = 'opturn-family-collision-smoke';
@@ -1756,7 +1866,7 @@ try {
     { env: { OPENROUTER_API_KEY: '' } }
   );
 
-  if (openRouterCalls.length !== 27) {
+  if (openRouterCalls.length !== 29) {
     throw new Error(`expected one OpenRouter call per tournament run, got ${openRouterCalls.length}`);
   }
   if (unexpectedRequests.length !== 0) {
@@ -2271,7 +2381,8 @@ try {
   }
   for (const [label, result] of [
     ['explicitly non-current observation', inactiveTiming],
-    ['old observation', oldTiming]
+    ['old observation', oldTiming],
+    ['ended observation', endedTiming]
   ]) {
     if (result.status !== 'skipped' ||
         result.metadata?.searchSpace?.seedContract !== 'family_bundle_v2' ||
@@ -2370,6 +2481,19 @@ try {
       patientInbound.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
       patientInbound.metadata?.usage?.calls !== 1) {
     throw new Error(`legitimate patient-inbound insurance-context strategy was blocked or rewritten as insurer outreach: ${JSON.stringify(patientInbound)}`);
+  }
+  if (crossMotionTiming.status !== 'skipped' ||
+      crossMotionTiming.metadata?.searchSpace?.seedContract !==
+        'family_bundle_v2' ||
+      crossMotionTiming.metadata?.searchSpace?.completeStrategyFamilyCount !== 1 ||
+      crossMotionTiming.metadata?.searchSpace?.incompleteStrategyFamilyCount !== 1 ||
+      crossMotionTiming.metadata?.searchSpace?.familyEvidenceMismatchSeedCount !== 1 ||
+      crossMotionTiming.metadata?.searchSpace?.invalidFamilySeedCount < 1 ||
+      crossMotionTiming.metadata?.searchSpace?.timingVerificationRepairCount !== 1 ||
+      crossMotionTiming.metadata?.winner !== null ||
+      crossMotionTiming.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      crossMotionTiming.metadata?.usage?.calls !== 1) {
+    throw new Error(`cross-motion family timing evidence was salvaged: ${JSON.stringify(crossMotionTiming)}`);
   }
   if (familyCollision.status !== 'skipped' ||
       familyCollision.metadata?.searchSpace?.strategyFamilyCollisionCount !== 1 ||
