@@ -128,6 +128,15 @@ const server = createServer(async (request, response) => {
   const promotableCandidateRef = evidenceIDs.find(
     (id) => id === 'observation:obs-promotable-candidate'
   );
+  const ownerOrganizationRef = evidenceIDs.find(
+    (id) => id === 'observation:obs-owner-organization'
+  );
+  const proofOnlyOrganizationRef = evidenceIDs.find(
+    (id) => id === 'observation:obs-proof-only-organization'
+  );
+  const genericOrganizationRef = evidenceIDs.find(
+    (id) => id === 'observation:obs-generic-organization'
+  );
   const profileIdentityRef = evidenceIDs.find((id) => id === 'profile:identity');
   const candidateFitRefs = [
     sourceRef,
@@ -136,7 +145,14 @@ const server = createServer(async (request, response) => {
     modelCandidateRef,
     profileIdentityRef
   ].filter((value, index, values) => value && values.indexOf(value) === index);
-  const groundingRefs = [...candidateFitRefs, proofRef, promotableCandidateRef]
+  const groundingRefs = [
+    ...candidateFitRefs,
+    proofRef,
+    promotableCandidateRef,
+    ownerOrganizationRef,
+    proofOnlyOrganizationRef,
+    genericOrganizationRef
+  ]
     .filter((value, index, values) => value && values.indexOf(value) === index);
   const scoreKeys = {
     objectiveFit: 'of',
@@ -175,10 +191,18 @@ const server = createServer(async (request, response) => {
   }, candidateFitRefs);
   if (promotableCandidateRef) {
     buyerSeeds[1].l = 'Promotable Buyer Co operations leaders';
-    buyerSeeds[0].e = [sourceRef];
+    buyerSeeds[0].e = [modelCandidateRef || sourceRef];
     buyerSeeds[1].e = [promotableCandidateRef];
     buyerSeeds[1].s.of = 0.81;
     buyerSeeds[1].s.ba = 0.77;
+  } else if (ownerOrganizationRef) {
+    buyerSeeds[1].l = 'Owner Services Co operations leaders';
+    buyerSeeds[1].e = [ownerOrganizationRef];
+  } else if (proofOnlyOrganizationRef) {
+    buyerSeeds[1].e = [proofOnlyOrganizationRef];
+  } else if (genericOrganizationRef) {
+    buyerSeeds[1].l = 'Digital Health Network operations leaders';
+    buyerSeeds[1].e = [genericOrganizationRef];
   }
   const seedSet = {
     offers: make('offer', [
@@ -301,6 +325,17 @@ const server = createServer(async (request, response) => {
   };
   if (promotableCandidateRef) {
     seedSet.offers[0].l = 'Focused workflow audit for Promotable Buyer Co';
+  } else if (ownerOrganizationRef) {
+    seedSet.offers[0].l = 'Focused workflow audit for Owner Services Co';
+  } else if (proofOnlyOrganizationRef) {
+    seedSet.offers[0].l = 'Focused workflow audit for Proof Only Co';
+  } else if (genericOrganizationRef) {
+    seedSet.offers[0].l = 'Focused workflow audit for Digital Health Network';
+  }
+  if (promotableCandidateRef ||
+      ownerOrganizationRef ||
+      proofOnlyOrganizationRef ||
+      genericOrganizationRef) {
     for (const key of [
       'offers',
       'buyerSegments',
@@ -751,6 +786,92 @@ try {
   const promotableCandidateJobFile = join(tmp, 'promotable-candidate-job.json');
   writeFileSync(promotableCandidateJobFile, `${JSON.stringify(promotableCandidateJob)}\n`, 'utf8');
   const promotableCandidate = await runJob(promotableCandidateJobFile, port);
+  const explicitCandidatePrecedenceJob = structuredClone(promotableCandidateJob);
+  explicitCandidatePrecedenceJob.id = 'job-opportunity-tournament-explicit-candidate-precedence-smoke';
+  explicitCandidatePrecedenceJob.payload.tournamentId = 'opturn-explicit-candidate-precedence-smoke';
+  explicitCandidatePrecedenceJob.payload.evidenceSnapshot.sourceEvidence.push(
+    structuredClone(
+      job.payload.evidenceSnapshot.sourceEvidence.find(
+        (item) => item.observationId === 'obs-model-candidate'
+      )
+    )
+  );
+  const explicitCandidatePrecedenceJobFile = join(tmp, 'explicit-candidate-precedence-job.json');
+  writeFileSync(
+    explicitCandidatePrecedenceJobFile,
+    `${JSON.stringify(explicitCandidatePrecedenceJob)}\n`,
+    'utf8'
+  );
+  const explicitCandidatePrecedence = await runJob(
+    explicitCandidatePrecedenceJobFile,
+    port
+  );
+  const ownerOrganizationJob = structuredClone(candidateFreeJob);
+  ownerOrganizationJob.id = 'job-opportunity-tournament-owner-organization-smoke';
+  ownerOrganizationJob.payload.tournamentId = 'opturn-owner-organization-smoke';
+  ownerOrganizationJob.payload.evidenceSnapshot.profile.experience = [{
+    id: 'experience-owner-services',
+    company: 'Owner Services Co',
+    role: 'Founder',
+    startDate: '2024-01',
+    endDate: ''
+  }];
+  ownerOrganizationJob.payload.evidenceSnapshot.sourceEvidence.push({
+    observationId: 'obs-owner-organization',
+    sourceId: 'src-delivery-map',
+    kind: 'company-page',
+    title: 'Owner Services Co',
+    summary: 'Owner Services Co is the profile owner’s own professional-services company.',
+    observedAt: '2026-07-25T12:00:00Z',
+    confidence: 'high'
+  });
+  const ownerOrganizationJobFile = join(tmp, 'owner-organization-job.json');
+  writeFileSync(ownerOrganizationJobFile, `${JSON.stringify(ownerOrganizationJob)}\n`, 'utf8');
+  const ownerOrganization = await runJob(ownerOrganizationJobFile, port);
+  const proofOnlyOrganizationJob = structuredClone(candidateFreeJob);
+  proofOnlyOrganizationJob.id = 'job-opportunity-tournament-proof-only-organization-smoke';
+  proofOnlyOrganizationJob.payload.tournamentId = 'opturn-proof-only-organization-smoke';
+  proofOnlyOrganizationJob.payload.evidenceSnapshot.sourceEvidence.push({
+    observationId: 'obs-proof-only-organization',
+    sourceId: 'src-delivery-map',
+    kind: 'case-study',
+    title: 'Proof Only Co',
+    summary: 'Proof Only Co is mentioned only as evidence for an offer, not as the target buyer.',
+    observedAt: '2026-07-25T12:00:00Z',
+    confidence: 'high'
+  });
+  const proofOnlyOrganizationJobFile = join(tmp, 'proof-only-organization-job.json');
+  writeFileSync(
+    proofOnlyOrganizationJobFile,
+    `${JSON.stringify(proofOnlyOrganizationJob)}\n`,
+    'utf8'
+  );
+  const proofOnlyOrganization = await runJob(
+    proofOnlyOrganizationJobFile,
+    port
+  );
+  const genericOrganizationJob = structuredClone(candidateFreeJob);
+  genericOrganizationJob.id = 'job-opportunity-tournament-generic-organization-smoke';
+  genericOrganizationJob.payload.tournamentId = 'opturn-generic-organization-smoke';
+  genericOrganizationJob.payload.evidenceSnapshot.sourceEvidence.push({
+    observationId: 'obs-generic-organization',
+    sourceId: 'src-delivery-map',
+    kind: 'market-summary',
+    title: 'Digital Health Network',
+    summary: 'Digital Health Network is a generic capitalized market phrase, not a resolved organization.',
+    observedAt: '2026-07-25T12:00:00Z',
+    confidence: 'high'
+  });
+  const genericOrganizationJobFile = join(tmp, 'generic-organization-job.json');
+  writeFileSync(
+    genericOrganizationJobFile,
+    `${JSON.stringify(genericOrganizationJob)}\n`,
+    'utf8'
+  );
+  const genericOrganization = await runJob(
+    genericOrganizationJobFile,
+    port
+  );
   const singleFinalistJob = structuredClone(job);
   singleFinalistJob.id = 'job-opportunity-tournament-single-finalist-smoke';
   singleFinalistJob.payload.tournamentId = 'opturn-single-finalist-smoke';
@@ -767,7 +888,7 @@ try {
   writeFileSync(nonResearchJobFile, `${JSON.stringify(nonResearchJob)}\n`, 'utf8');
   const nonResearch = await runJob(nonResearchJobFile, port);
 
-  if (openRouterCalls.length !== 7) {
+  if (openRouterCalls.length !== 11) {
     throw new Error(`expected one OpenRouter call per tournament run, got ${openRouterCalls.length}`);
   }
   if (unexpectedRequests.length !== 0) {
@@ -1060,6 +1181,32 @@ try {
       promotableCandidate.metadata?.hypotheses?.length < 2 ||
       !promotableCandidate.metadata?.winner?.evidenceRefs?.includes('observation:obs-promotable-candidate')) {
     throw new Error(`best lower-ranked actionable hypothesis was not promoted safely: ${JSON.stringify(promotableCandidate)}`);
+  }
+  if (explicitCandidatePrecedence.status !== 'completed' ||
+      explicitCandidatePrecedence.metadata?.winner?.candidateId == null ||
+      !explicitCandidatePrecedence.metadata?.candidates?.some(
+        (candidate) =>
+          candidate.id === explicitCandidatePrecedence.metadata.winner.candidateId &&
+          candidate.providers?.includes('openrouter_evidence_extraction')
+      ) ||
+      explicitCandidatePrecedence.metadata?.candidates?.some(
+        (candidate) => candidate.providers?.includes('openrouter_seed_extraction')
+      )) {
+    throw new Error(`seed fallback overrode an explicit candidate: ${JSON.stringify(explicitCandidatePrecedence)}`);
+  }
+  for (const [label, result] of [
+    ['profile owner organization', ownerOrganization],
+    ['proof-only organization', proofOnlyOrganization],
+    ['generic capitalized phrase', genericOrganization]
+  ]) {
+    if (result.status !== 'skipped' ||
+        result.metadata?.candidates?.length !== 0 ||
+        result.metadata?.winner !== null ||
+        result.metadata?.gate?.decision !== 'needs_more_approved_evidence' ||
+        result.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
+        result.metadata?.usage?.calls !== 1) {
+      throw new Error(`${label} was incorrectly promoted as a candidate: ${JSON.stringify(result)}`);
+    }
   }
   if (singleFinalist.status !== 'skipped' ||
       singleFinalist.metadata?.hypotheses?.length !== 1 ||

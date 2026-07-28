@@ -301,7 +301,7 @@ export async function runOpportunityTournament({
     payload.profileScribePublicBaseURL,
     payload.publicBaseUrl
   );
-  const candidateValues = [
+  const primaryCandidateValues = [
     ...collectStructuredCandidates(
       payload,
       context,
@@ -309,10 +309,6 @@ export async function runOpportunityTournament({
     ),
     ...normalizeModelExtractedCandidates(
       completion?.data?.candidates,
-      evidenceCatalog
-    ),
-    ...normalizeSeedMentionedOrganizationCandidates(
-      seedSet,
       evidenceCatalog
     )
   ];
@@ -322,14 +318,36 @@ export async function runOpportunityTournament({
     context,
     profileScribePublicBaseURL
   );
-  const provisionalCandidates = normalizeCandidates(
-    candidateValues,
+  const primaryCandidates = normalizeCandidates(
+    primaryCandidateValues,
     initialHypotheses,
     evidenceCatalog,
     timestamp,
     profileScribePublicBaseURL,
     ownerIdentity
   );
+  const hasActionablePrimaryCandidate = primaryCandidates.some(
+    (candidate) => candidate.identityResolved === true
+  );
+  const candidateValues = hasActionablePrimaryCandidate
+    ? primaryCandidateValues
+    : [
+        ...primaryCandidateValues,
+        ...normalizeSeedMentionedOrganizationCandidates(
+          seedSet,
+          evidenceCatalog
+        )
+      ];
+  const provisionalCandidates = hasActionablePrimaryCandidate
+    ? primaryCandidates
+    : normalizeCandidates(
+        candidateValues,
+        initialHypotheses,
+        evidenceCatalog,
+        timestamp,
+        profileScribePublicBaseURL,
+        ownerIdentity
+      );
   const actionableIndex = initialHypotheses.findIndex((hypothesis) =>
     provisionalCandidates.some((candidate) =>
       candidate.identityResolved === true &&
@@ -942,6 +960,7 @@ Never invent accomplishments, customers, affiliations, contact details, market d
 Treat experience with a past endDate as historical proof, never as a current role or affiliation.
 Use only exact evidence IDs from evidenceCatalog. Unknown evidence IDs will be discarded.
 You may optionally extract a compact named person or organization candidate only when its exact name and every returned public URL appear verbatim in the cited evidence. Return no candidate rather than infer or complete an identity.
+When an exact named organization is the intended target buyer, begin that buyerSegments label with the exact organization name and return the same organization in candidates.
 Return no email, direct message, post, pitch, sales script, or other outreach copy.
 Reject spray-and-pray, bulk outreach, scraping, automated form submission, or high-volume behavior.
 Each seed should be a short structured concept. Each reason must explain a grounded inference, not assert an unobserved fact.
@@ -997,7 +1016,8 @@ Return only JSON.`;
         'Follow-ups must remain low-volume and permissioned.',
         'Return at most 8 candidates. A candidate must be a named person or organization copied exactly from approved evidence, never a generic buyer segment.',
         'Candidate names, optional details, and URLs must be exact evidence text. Return candidates: [] when no exact named candidate exists.',
-        'A candidate evidence ID must also ground a buyerSegments seed and at least one relevant offers or proofPoints seed; do not attach a candidate using an unrelated citation.'
+        'A candidate evidence ID must also ground a buyerSegments seed and at least one relevant offers or proofPoints seed; do not attach a candidate using an unrelated citation.',
+        'If a named organization is the intended target buyer, start the buyerSegments label with that exact organization name and include the same organization in candidates.'
       ]
     },
     responseSchema: {
@@ -1528,56 +1548,66 @@ function normalizeModelExtractedCandidates(values, evidenceCatalog) {
 }
 
 function normalizeSeedMentionedOrganizationCandidates(seedSet, evidenceCatalog) {
-  const buyerRefs = new Set(
-    asArray(seedSet.buyerSegments).flatMap((seed) =>
-      asArray(asObject(seed).evidenceRefs)
-    )
-  );
+  const evidenceByID = evidenceIndex(evidenceCatalog);
   const offerProofRefs = new Set(
     [
       ...asArray(seedSet.offers),
       ...asArray(seedSet.proofPoints)
-    ].flatMap((seed) => asArray(asObject(seed).evidenceRefs))
-  );
-  const seedTexts = DIMENSIONS.flatMap(([name]) =>
-    asArray(seedSet[name]).map((seed) =>
-      compactStrings([
-        asObject(seed).label,
-        asObject(seed).reason
-      ]).join(' ')
+    ].flatMap((seed) =>
+      asArray(asObject(seed).evidenceRefs)
+        .map((ref) => evidenceByID.get(ref)?.id)
+        .filter(Boolean)
     )
   );
-  const names = new Set(
-    seedTexts.flatMap(seedMentionedOrganizationNames)
-  );
-  const candidates = [];
-  for (const displayLabel of names) {
-    const evidenceRefs = [];
-    for (const evidence of evidenceCatalog) {
-      if (!buyerRefs.has(evidence.id) ||
-          !offerProofRefs.has(evidence.id) ||
-          !evidenceSupportsExactText(evidence, displayLabel)) {
-        continue;
-      }
-      evidenceRefs.push(evidence.id);
-    }
-    if (evidenceRefs.length === 0) continue;
-    candidates.push({
-      id: `candidate:seed:${stableHash({
+  const candidatesByName = new Map();
+  for (const buyerSeedValue of asArray(seedSet.buyerSegments)) {
+    const buyerSeed = asObject(buyerSeedValue);
+    const buyerRefs = new Set(
+      asArray(buyerSeed.evidenceRefs)
+        .map((ref) => evidenceByID.get(ref)?.id)
+        .filter(Boolean)
+    );
+    for (const displayLabel of seedMentionedOrganizationNames(
+      buyerSeed.label
+    )) {
+      const key = comparable(displayLabel);
+      const existing = candidatesByName.get(key) || {
         displayLabel,
-        evidenceRefs
-      }).slice(0, 20)}`,
-      kind: 'evidence_named_organization',
-      displayLabel,
-      organization: displayLabel,
-      providers: ['openrouter_seed_extraction'],
-      evidenceRefs,
-      contactPaths: [],
-      exactNamedCandidate: true,
-      identityResolved: true
-    });
+        evidenceRefs: new Set()
+      };
+      for (const evidenceRef of buyerRefs) {
+        const evidence = evidenceByID.get(evidenceRef);
+        if (!evidence ||
+            !offerProofRefs.has(evidence.id) ||
+            !evidenceSupportsExactText(evidence, displayLabel)) {
+          continue;
+        }
+        existing.evidenceRefs.add(evidence.id);
+      }
+      if (existing.evidenceRefs.size > 0) {
+        candidatesByName.set(key, existing);
+      }
+    }
   }
-  return candidates;
+  return [...candidatesByName.values()]
+    .slice(0, 8)
+    .map(({ displayLabel, evidenceRefs: refSet }) => {
+      const evidenceRefs = [...refSet];
+      return {
+        id: `candidate:seed:${stableHash({
+          displayLabel,
+          evidenceRefs
+        }).slice(0, 20)}`,
+        kind: 'evidence_named_organization',
+        displayLabel,
+        organization: displayLabel,
+        providers: ['openrouter_seed_extraction'],
+        evidenceRefs,
+        contactPaths: [],
+        exactNamedCandidate: true,
+        identityResolved: true
+      };
+    });
 }
 
 function seedMentionedOrganizationNames(value) {
@@ -1587,7 +1617,7 @@ function seedMentionedOrganizationNames(value) {
   return compactStrings(matches)
     .map((match) => match.trim().replace(/[.,;:!?]+$/, ''))
     .filter((match) =>
-      /\b(?:association|bank|center|centre|co|company|corporation|foundation|group|health|healthcare|hospital|inc|institute|insurance|labs|llc|network|partners|studio|university)\b/i.test(match)
+      /\b(?:association|bank|co|company|corporation|foundation|healthcare|hospital|inc|insurance|labs|llc|ltd|plc|university)\b/i.test(match)
     )
     .filter(concreteCandidateLabel);
 }
@@ -2041,6 +2071,28 @@ function ownerCandidateIdentity(
     profile.name,
     payload.ownerName
   ]).map(comparable));
+  const currentExperienceOrganizations = firstArray(profile.experience)
+    .map(asObject)
+    .filter((experience) => {
+      const endDate = comparable(firstText(experience.endDate));
+      return experience.current === true ||
+        experience.isCurrent === true ||
+        experience.active === true ||
+        !endDate ||
+        ['present', 'current', 'now', 'ongoing'].includes(endDate);
+    })
+    .map((experience) =>
+      firstText(
+        experience.company,
+        experience.organization,
+        experience.companyName
+      )
+    );
+  const organizations = new Set(compactStrings([
+    ...currentExperienceOrganizations,
+    payload.ownerOrganization,
+    payload.ownerCompany
+  ]).map(comparable));
   const ownerSlugs = compactStrings([
     identity.slug,
     identity.profileSlug,
@@ -2069,7 +2121,15 @@ function ownerCandidateIdentity(
       : '',
     ...ownerSlugs.map((slug) => `candidate:profilescribe:${slug}`)
   ]));
-  return { names, slugs, urls, candidateIDs, tenantID, userID };
+  return {
+    names,
+    organizations,
+    slugs,
+    urls,
+    candidateIDs,
+    tenantID,
+    userID
+  };
 }
 
 function candidateIdentityIsConcrete({
@@ -2118,7 +2178,9 @@ function candidateIsProfileOwner({
       ownerUserID === ownerIdentity.userID) {
     return true;
   }
-  return ownerIdentity.names?.has(comparable(displayLabel)) === true;
+  const candidateName = comparable(displayLabel);
+  return ownerIdentity.names?.has(candidateName) === true ||
+    ownerIdentity.organizations?.has(candidateName) === true;
 }
 
 function combineExactCandidates(candidates) {
