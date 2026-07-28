@@ -60,6 +60,7 @@ const POSITIVE_SCORE_FIELDS = [
 const BURDEN_SCORE_FIELDS = ['effort', 'cost', 'risk', 'uncertainty'];
 
 const COHERENCE_GATE_VERSION = 'strategy_family_motion_v2';
+const SEED_CONTRACT_VERSION = 'family_bundle_v1';
 
 // Patterns run against comparable() text: lowercase ASCII words separated by
 // one space. Keep this vocabulary stable because the control plane mirrors it
@@ -337,7 +338,12 @@ export async function runOpportunityTournament({
       searchSpace: {
         ...base.searchSpace,
         dimensionCounts: dimensionCounts(seedSet),
+        seedContract: seedSet.seedContract,
+        declaredStrategyFamilyCount: seedSet.declaredStrategyFamilyCount,
         strategyFamilyCount: seedSet.strategyFamilies.length,
+        completeStrategyFamilyCount: seedSet.completeStrategyFamilyCount,
+        incompleteStrategyFamilyCount: seedSet.incompleteStrategyFamilyCount,
+        strategyFamilyAnchorCoverage: seedSet.strategyFamilyAnchorCoverage,
         strategyFamilyCollisionCount: seedSet.strategyFamilyCollisionCount,
         familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
         invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
@@ -349,6 +355,34 @@ export async function runOpportunityTournament({
         unsupportedTiming
           ? 'No timing claim was directly supported by an exact phrase in approved evidence.'
           : 'The structured strategy seed set was incomplete or ungrounded.'
+      )
+    };
+  }
+  if (seedSet.completeStrategyFamilyCount < 2) {
+    return {
+      status: 'skipped',
+      summary: 'The strategy generator returned fewer than two complete, source-anchored strategy families.',
+      ...base,
+      llm: { strategyGeneratorJudge: providerMetadata },
+      usage,
+      searchSpace: {
+        ...base.searchSpace,
+        dimensionCounts: dimensionCounts(seedSet),
+        seedContract: seedSet.seedContract,
+        declaredStrategyFamilyCount: seedSet.declaredStrategyFamilyCount,
+        strategyFamilyCount: seedSet.strategyFamilies.length,
+        completeStrategyFamilyCount: seedSet.completeStrategyFamilyCount,
+        incompleteStrategyFamilyCount: seedSet.incompleteStrategyFamilyCount,
+        strategyFamilyAnchorCoverage: seedSet.strategyFamilyAnchorCoverage,
+        strategyFamilyCollisionCount: seedSet.strategyFamilyCollisionCount,
+        familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
+        invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
+        unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
+        coherenceGate: COHERENCE_GATE_VERSION
+      },
+      gate: researchOnlyGate(
+        'needs_more_approved_evidence',
+        'A completed tournament requires two complete strategy families with a shared approved-observation anchor in every dimension.'
       )
     };
   }
@@ -374,9 +408,15 @@ export async function runOpportunityTournament({
     filteredCount: expanded.filteredCount,
     incompatibleCount: expanded.incompatibleCount,
     motionConflictCount: expanded.motionConflictCount,
+    motionConflictDimensions: expanded.motionConflictDimensions,
     retainedCount: retainedHypotheses.length,
     dimensionCounts: dimensionCounts(seedSet),
+    seedContract: seedSet.seedContract,
+    declaredStrategyFamilyCount: seedSet.declaredStrategyFamilyCount,
     strategyFamilyCount: seedSet.strategyFamilies.length,
+    completeStrategyFamilyCount: seedSet.completeStrategyFamilyCount,
+    incompleteStrategyFamilyCount: seedSet.incompleteStrategyFamilyCount,
+    strategyFamilyAnchorCoverage: seedSet.strategyFamilyAnchorCoverage,
     strategyFamilyCollisionCount: seedSet.strategyFamilyCollisionCount,
     familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
     invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
@@ -480,14 +520,23 @@ export async function runOpportunityTournament({
       )
     };
   }
+  const remainingHypotheses = initialHypotheses
+    .filter((hypothesis) =>
+      hypothesis.id !== winningHypothesis.id &&
+      hypothesis.score.total <= winningHypothesis.score.total
+    )
+    .sort(compareHypotheses);
+  const alternateFamilyIndex = remainingHypotheses.findIndex((hypothesis) =>
+    firstText(hypothesis._strategyFamily) !==
+      firstText(winningHypothesis._strategyFamily)
+  );
+  const familyDiverseRunner = alternateFamilyIndex >= 0
+    ? remainingHypotheses.splice(alternateFamilyIndex, 1)
+    : [];
   const hypotheses = [
     winningHypothesis,
-    ...initialHypotheses
-      .filter((hypothesis) =>
-        hypothesis.id !== winningHypothesis.id &&
-        hypothesis.score.total <= winningHypothesis.score.total
-      )
-      .sort(compareHypotheses)
+    ...familyDiverseRunner,
+    ...remainingHypotheses
   ]
     .map((hypothesis, index) => ({
       ...hypothesis,
@@ -875,6 +924,7 @@ export function expandAndJudge({
   let filteredCount = 0;
   let incompatibleCount = 0;
   let motionConflictCount = 0;
+  const motionConflictDimensions = emptyMotionConflictDimensions();
 
   for (const flatIndex of indexes) {
     const selected = decodeCartesianIndex(flatIndex, dimensionValues);
@@ -890,6 +940,9 @@ export function expandAndJudge({
     const motionSignature = strategyMotionSignature(tuple);
     if (!motionSignature.coherent) {
       motionConflictCount += 1;
+      for (const dimension of motionSignature.conflictDimensions) {
+        motionConflictDimensions[dimension] += 1;
+      }
       filteredCount += 1;
       continue;
     }
@@ -968,6 +1021,7 @@ export function expandAndJudge({
     filteredCount,
     incompatibleCount,
     motionConflictCount,
+    motionConflictDimensions,
     finalists,
     weights
   };
@@ -1109,6 +1163,8 @@ Use only exact evidence IDs from evidenceCatalog. Unknown evidence IDs will be d
 You may optionally extract a compact named person or organization candidate only when its exact name appears verbatim in the cited evidence. Do not return contact details or URLs; return no candidate rather than infer or complete an identity.
 When an exact named organization is the intended target buyer, begin that buyerSegments label with the exact organization name and return the same organization in candidates.
 Keep every strategy family coherent end to end. Never mix a buyer, offer, channel, action, timing trigger, proof point, or follow-up from different business motions.
+Return exactly two complete top-level family bundles named familyA and familyB. Family A is the strongest grounded path; family B is the strongest coherent alternative. They may use distinct tactics within the same business motion when the evidence does not support two different motions.
+Within each family bundle, return exactly two family-specific offers, buyer segments, channels, actions, and follow-ups, plus exactly one timing trigger and one proof point. Never return global dimension arrays or cross-family compatibility tags.
 Return no email, direct message, post, pitch, sales script, or other outreach copy.
 Reject spray-and-pray, bulk outreach, scraping, automated form submission, or high-volume behavior.
 Each seed should be a short structured concept. Each reason must explain a grounded inference, not assert an unobserved fact.
@@ -1121,17 +1177,26 @@ Return only JSON.`;
     evidenceCatalog,
     priorOutcomes,
     outputRules: {
-      seedCount: `Return exactly ${maxSeedsPerDimension} diverse items per dimension when the evidence supports them; otherwise return at least 2.`,
-      familySchema: {
-        id: 'short stable strategy-family id',
+      seedCount: `Across familyA and familyB this yields at most ${maxSeedsPerDimension} items per multi-variant dimension, two timing triggers, and two proof points.`,
+      familyBundleSchema: {
+        id: 'family-a for familyA or family-b for familyB',
         l: 'short internal label for one coherent end-to-end business motion',
-        e: ['one or more exact evidenceCatalog.id values grounding this family, including a specific shared anchor cited by every compatible seed']
+        m: 'one semantic motion: payer_network, patient_inbound, clinical_referral, hospital_program, employer_workplace, or organization_partnership',
+        e: ['one or more exact evidenceCatalog.id values grounding this family, including one specific observation:* anchor cited by every item in d'],
+        d: {
+          offers: ['exactly two itemSchema objects'],
+          buyerSegments: ['exactly two itemSchema objects'],
+          channels: ['exactly two itemSchema objects'],
+          actions: ['exactly two itemSchema objects'],
+          timingTriggers: ['exactly one itemSchema object with q'],
+          proofPoints: ['exactly one itemSchema object'],
+          followUps: ['exactly two itemSchema objects']
+        }
       },
       requiredDimensions: DIMENSIONS.map(([name]) => name),
       itemSchema: {
         id: 'short stable local label',
         l: 'concise internal strategy component; never outreach copy',
-        f: ['one or more declared family ids with which this item is compatible; never blank or wildcard'],
         e: ['one or more exact evidenceCatalog.id values'],
         q: 'timingTriggers only: a short exact phrase copied from cited evidence that directly proves the trigger; omit q on all other dimensions',
         s: {
@@ -1165,13 +1230,13 @@ Return only JSON.`;
       hardRules: [
         'Offers and proofPoints must cite direct evidence.',
         'Buyer segments may be plausible inferences but must cite evidence supporting the fit.',
-        'Return 2 to 4 declared strategy families. Every family must have at least one compatible item in every required dimension.',
-        'For each family, choose at least one specific shared evidence anchor other than a generic source record. Put that exact evidence ID in the family e and in every seed compatible with that family.',
-        'Every seed must carry one or more declared family ids in f. Reusable generic items may list multiple family ids; blank, unknown, or wildcard families are forbidden.',
-        'Every seed-family membership must share at least one evidence id between the seed e list and that family e list.',
-        'For each family, choose at least one non-source evidence id and include that same anchor id in the family e list and in one compatible seed in every required dimension.',
-        'Family ids must remain distinct after lowercasing and replacing punctuation or spaces with hyphens; do not return aliases that normalize to the same id.',
+        'Return both familyA and familyB. Do not omit either complete bundle.',
+        'Use id family-a inside familyA and family-b inside familyB.',
+        'For each family, choose one specific observation:* evidence anchor. Put that exact evidence ID in the family e and in every item in that family d.',
+        'Every item belongs only to its containing family bundle. Do not add f, familyIds, wildcards, or cross-family reuse.',
         'A retained family must describe one coherent motion. Do not combine insurance-network, hospital-program, employer, clinical-referral, content-conversion, or other distinct motions in one family.',
+        'Make each buyerSegments label explicitly name exactly one motion. For patient inbound use prospective or eligible patients, parents, mothers, families, caregivers, or members; do not describe the payer as the buyer.',
+        'Every other item in a family must either use that same motion vocabulary or remain motion-neutral. Never mention a second motion merely as an example.',
         'Channels and actions must remain singular, bounded, and review-first.',
         'Every timing trigger must include q copied exactly from its cited evidence and q must directly support the claimed timing. A crawl timestamp alone is not a business trigger.',
         'The evidence id that contains q must be an observation:* source-evidence record so the control plane can verify the phrase against the approved stored observation.',
@@ -1186,14 +1251,37 @@ Return only JSON.`;
       ]
     },
     responseSchema: {
-      families: [],
-      offers: [],
-      buyerSegments: [],
-      channels: [],
-      actions: [],
-      timingTriggers: [],
-      proofPoints: [],
-      followUps: [],
+      seedContract: 'family_bundle_v1',
+      familyA: {
+        id: 'family-a',
+        l: '',
+        m: '',
+        e: [],
+        d: {
+          offers: [],
+          buyerSegments: [],
+          channels: [],
+          actions: [],
+          timingTriggers: [],
+          proofPoints: [],
+          followUps: []
+        }
+      },
+      familyB: {
+        id: 'family-b',
+        l: '',
+        m: '',
+        e: [],
+        d: {
+          offers: [],
+          buyerSegments: [],
+          channels: [],
+          actions: [],
+          timingTriggers: [],
+          proofPoints: [],
+          followUps: []
+        }
+      },
       candidates: [],
       w: {}
     }
@@ -1204,12 +1292,20 @@ Return only JSON.`;
 function normalizeSeedSet(value, evidenceCatalog) {
   const raw = asObject(value);
   const evidenceByID = evidenceIndex(evidenceCatalog);
+  const familyInputs = strategyFamilyInputs(raw);
+  const hasFamilyBundleContract =
+    Object.keys(asObject(raw.familyA)).length > 0 &&
+    Object.keys(asObject(raw.familyB)).length > 0;
   const normalizedFamilies = normalizeStrategyFamilies(
-    firstArray(raw.families, raw.strategyFamilies),
+    familyInputs,
     evidenceByID
   );
   const strategyFamilies = normalizedFamilies.families;
   const out = {
+    seedContract: hasFamilyBundleContract
+      ? SEED_CONTRACT_VERSION
+      : 'legacy_flat',
+    declaredStrategyFamilyCount: familyInputs.length,
     strategyFamilies: [...strategyFamilies.values()],
     strategyFamilyCollisionCount: normalizedFamilies.collisionCount,
     familyEvidenceMismatchSeedCount: 0,
@@ -1217,7 +1313,10 @@ function normalizeSeedSet(value, evidenceCatalog) {
     unsupportedTimingSeedCount: 0
   };
   for (const [name, aliases] of DIMENSIONS) {
-    const values = firstArray(...aliases.map((alias) => raw[alias]));
+    const values = [
+      ...nestedStrategyFamilySeeds(familyInputs, name, aliases),
+      ...firstArray(...aliases.map((alias) => raw[alias]))
+    ];
     const seen = new Set();
     out[name] = [];
     for (const [index, seedValue] of values.entries()) {
@@ -1282,7 +1381,7 @@ function normalizeSeedSet(value, evidenceCatalog) {
         out.invalidFamilySeedCount += 1;
         continue;
       }
-      const key = comparable(label);
+      const key = `${comparable(label)}|${familyIds.join(',')}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out[name].push({
@@ -1301,7 +1400,97 @@ function normalizeSeedSet(value, evidenceCatalog) {
       if (out[name].length >= MAX_SEEDS_PER_DIMENSION) break;
     }
   }
+  out.strategyFamilyAnchorCoverage = strategyFamilyAnchorCoverage(out);
+  out.completeStrategyFamilyCount = out.strategyFamilyAnchorCoverage
+    .filter((family) => family.complete)
+    .length;
+  out.incompleteStrategyFamilyCount =
+    out.strategyFamilies.length - out.completeStrategyFamilyCount;
   return out;
+}
+
+function strategyFamilyInputs(rawValue) {
+  const raw = asObject(rawValue);
+  const fixedBundles = [
+    ['family-a', raw.familyA],
+    ['family-b', raw.familyB]
+  ]
+    .filter(([, value]) => Object.keys(asObject(value)).length > 0)
+    .map(([id, value]) => ({
+      ...asObject(value),
+      id
+    }));
+  if (fixedBundles.length > 0) return fixedBundles;
+  return firstArray(raw.families, raw.strategyFamilies);
+}
+
+function nestedStrategyFamilySeeds(familyInputs, dimension, aliases) {
+  const out = [];
+  for (const familyValue of asArray(familyInputs)) {
+    const family = asObject(familyValue);
+    const familyID = normalizeStrategyFamilyID(firstText(
+      family.id,
+      family.familyId,
+      family.name
+    ));
+    if (!familyID) continue;
+    const dimensions = Object.keys(asObject(family.d)).length > 0
+      ? asObject(family.d)
+      : asObject(family.dimensions);
+    const values = firstArray(
+      ...aliases.map((alias) => dimensions[alias]),
+      ...aliases.map((alias) => family[alias])
+    );
+    for (const [index, value] of values.entries()) {
+      const seed = asObject(value);
+      out.push({
+        ...seed,
+        id: `${familyID}-${firstText(
+          seed.id,
+          `${dimension}-${index + 1}`
+        )}`,
+        f: [familyID]
+      });
+    }
+  }
+  return out;
+}
+
+function strategyFamilyAnchorCoverage(seedSet) {
+  return asArray(asObject(seedSet).strategyFamilies)
+    .map(asObject)
+    .map((family) => {
+      let sharedAnchorRefs = strategyObservationEvidenceRefs(
+        family.evidenceRefs
+      );
+      const dimensions = {};
+      for (const [dimension] of DIMENSIONS) {
+        const familySeeds = asArray(asObject(seedSet)[dimension])
+          .map(asObject)
+          .filter((seed) => asArray(seed.familyIds).includes(family.id));
+        dimensions[dimension] = familySeeds.length;
+        const dimensionRefs = new Set(
+          familySeeds.flatMap((seed) =>
+            strategyObservationEvidenceRefs(seed.evidenceRefs)
+          )
+        );
+        sharedAnchorRefs = sharedAnchorRefs.filter((ref) =>
+          dimensionRefs.has(ref)
+        );
+      }
+      return {
+        id: family.id,
+        complete: Object.values(dimensions).every((count) => count > 0) &&
+          sharedAnchorRefs.length > 0,
+        sharedAnchorCount: sharedAnchorRefs.length,
+        dimensions
+      };
+    });
+}
+
+function strategyObservationEvidenceRefs(values) {
+  return compactStrings(values)
+    .filter((ref) => /^observation:/i.test(ref));
 }
 
 function normalizeStrategyFamilies(values, evidenceByID) {
@@ -1501,6 +1690,21 @@ function diverseFinalists(hypotheses, limit) {
     .sort(compareHypotheses)
     .slice(0, Math.max(200, limit * 25));
   const selected = [];
+  const selectedFamilies = new Set();
+  if (remaining.length > 0 && selected.length < limit) {
+    const winner = remaining.shift();
+    selected.push(winner);
+    selectedFamilies.add(firstText(winner._strategyFamily));
+  }
+  while (remaining.length > 0 && selected.length < limit) {
+    const nextFamilyIndex = remaining.findIndex((candidate) =>
+      !selectedFamilies.has(firstText(candidate._strategyFamily))
+    );
+    if (nextFamilyIndex < 0) break;
+    const candidate = remaining.splice(nextFamilyIndex, 1)[0];
+    selected.push(candidate);
+    selectedFamilies.add(firstText(candidate._strategyFamily));
+  }
   while (remaining.length > 0 && selected.length < limit) {
     let bestIndex = 0;
     let bestAdjusted = -Infinity;
@@ -2917,19 +3121,35 @@ function strategyMotionSignature(tuple) {
   const primaryMotion = buyerMotions.length === 1
     ? buyerMotions[0]
     : '';
-  const coherent = Boolean(primaryMotion) &&
-    Object.keys(dimensions).every((dimension) => {
+  const conflictDimensions = Object.keys(dimensions)
+    .filter((dimension) => {
       const motions = dimensions[dimension];
-      return motions.length <= 1 &&
-        (motions.length === 0 || motions[0] === primaryMotion);
+      if (dimension === 'buyerSegment') return motions.length !== 1;
+      return motions.length > 1 ||
+        (motions.length === 1 && motions[0] !== primaryMotion);
     });
+  const coherent = Boolean(primaryMotion) &&
+    conflictDimensions.length === 0;
   const motionSignatures = coherent
     ? [primaryMotion]
     : compactStrings(Object.values(dimensions).flat()).sort();
   return {
     coherent,
     motionSignatures,
-    dimensions
+    dimensions,
+    conflictDimensions
+  };
+}
+
+function emptyMotionConflictDimensions() {
+  return {
+    offer: 0,
+    buyerSegment: 0,
+    channel: 0,
+    action: 0,
+    timingTrigger: 0,
+    proofPoint: 0,
+    followUp: 0
   };
 }
 
@@ -3157,9 +3377,15 @@ function emptySearchSpace(budget) {
     filteredCount: 0,
     incompatibleCount: 0,
     motionConflictCount: 0,
+    motionConflictDimensions: emptyMotionConflictDimensions(),
     retainedCount: 0,
     dimensionCounts: {},
+    seedContract: '',
+    declaredStrategyFamilyCount: 0,
     strategyFamilyCount: 0,
+    completeStrategyFamilyCount: 0,
+    incompleteStrategyFamilyCount: 0,
+    strategyFamilyAnchorCoverage: [],
     strategyFamilyCollisionCount: 0,
     familyEvidenceMismatchSeedCount: 0,
     invalidFamilySeedCount: 0,

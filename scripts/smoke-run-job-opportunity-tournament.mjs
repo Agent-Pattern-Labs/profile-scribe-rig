@@ -691,11 +691,62 @@ const server = createServer(async (request, response) => {
       for (const item of seedSet[key]) item.f = ['undeclared-family'];
     }
   }
+  let responseSeedSet = seedSet;
+  if (input.objective?.id === 'obj-nested-family-bundles') {
+    const multiVariantDimensions = new Set([
+      'offers',
+      'buyerSegments',
+      'channels',
+      'actions',
+      'followUps'
+    ]);
+    const nestedFamilies = seedSet.families.slice(0, 2).map((family, familyIndex) => {
+      const familyIndexes = familyIndex === 0 ? [0, 2] : [1, 3];
+      const dimensions = {};
+      for (const dimension of [
+        'offers',
+        'buyerSegments',
+        'channels',
+        'actions',
+        'timingTriggers',
+        'proofPoints',
+        'followUps'
+      ]) {
+        const indexes = multiVariantDimensions.has(dimension)
+          ? familyIndexes
+          : [familyIndex];
+        dimensions[dimension] = indexes.map((index) => {
+          const { f: _familyIds, ...item } = seedSet[dimension][index];
+          return {
+            ...structuredClone(item),
+            // Models commonly restart local ids inside each bundle. The
+            // parser must namespace them by the fixed parent family.
+            id: `${dimension}-${indexes.indexOf(index) + 1}`
+          };
+        });
+      }
+      return {
+        ...structuredClone(family),
+        // The fixed top-level wrapper is the trusted namespace boundary; a
+        // duplicated model-supplied id must not collapse the two bundles.
+        id: 'model-duplicated-id',
+        m: 'organization_partnership',
+        d: dimensions
+      };
+    });
+    responseSeedSet = {
+      seedContract: 'family_bundle_v1',
+      familyA: nestedFamilies[0],
+      familyB: nestedFamilies[1],
+      candidates: structuredClone(seedSet.candidates),
+      w: structuredClone(seedSet.w)
+    };
+  }
 
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-tournament-${openRouterCalls.length}`,
-    choices: [{ message: { content: JSON.stringify(seedSet) } }],
+    choices: [{ message: { content: JSON.stringify(responseSeedSet) } }],
     usage
   }));
 });
@@ -1053,6 +1104,17 @@ try {
   const contextJobFile = join(tmp, 'context-job.json');
   writeFileSync(contextJobFile, `${JSON.stringify(contextJob)}\n`, 'utf8');
   const contextResult = await runJob(contextJobFile, port, '/mcp');
+  const nestedFamilyJob = structuredClone(job);
+  nestedFamilyJob.id = 'job-opportunity-tournament-nested-family-smoke';
+  nestedFamilyJob.payload.tournamentId = 'opturn-nested-family-smoke';
+  nestedFamilyJob.payload.objective.id = 'obj-nested-family-bundles';
+  const nestedFamilyJobFile = join(tmp, 'nested-family-job.json');
+  writeFileSync(
+    nestedFamilyJobFile,
+    `${JSON.stringify(nestedFamilyJob)}\n`,
+    'utf8'
+  );
+  const nestedFamily = await runJob(nestedFamilyJobFile, port);
   const unrelatedCandidateJob = structuredClone(job);
   unrelatedCandidateJob.id = 'job-opportunity-tournament-unrelated-candidate-smoke';
   unrelatedCandidateJob.payload.tournamentId = 'opturn-unrelated-candidate-smoke';
@@ -1466,7 +1528,7 @@ try {
   writeFileSync(nonResearchJobFile, `${JSON.stringify(nonResearchJob)}\n`, 'utf8');
   const nonResearch = await runJob(nonResearchJobFile, port);
 
-  if (openRouterCalls.length !== 21) {
+  if (openRouterCalls.length !== 22) {
     throw new Error(`expected one OpenRouter call per tournament run, got ${openRouterCalls.length}`);
   }
   if (unexpectedRequests.length !== 0) {
@@ -1521,6 +1583,16 @@ try {
     if (leakedMarker) {
       throw new Error(`non-approved source evidence leaked into generator input (${leakedMarker}): ${serializedEvidence}`);
     }
+    if (input.responseSchema?.seedContract !== 'family_bundle_v1' ||
+        !input.responseSchema?.familyA?.d ||
+        !input.responseSchema?.familyB?.d ||
+        'offers' in (input.responseSchema || {}) ||
+        input.outputRules?.familyBundleSchema?.m == null ||
+        !input.outputRules?.hardRules?.some((rule) =>
+          /Every item belongs only to its containing family bundle/i.test(rule)
+        )) {
+      throw new Error(`generator prompt lost the nested family-bundle contract: ${JSON.stringify(input.responseSchema)}`);
+    }
   }
   for (const call of openRouterCalls) {
     if (call.max_tokens !== 8000) {
@@ -1541,7 +1613,8 @@ try {
     }
     if (!/exact name appears verbatim/i.test(system) ||
         !/Do not return contact details or URLs/i.test(system) ||
-        !/strategy family coherent end to end/i.test(system)) {
+        !/strategy family coherent end to end/i.test(system) ||
+        !/exactly two complete top-level family bundles/i.test(system)) {
       throw new Error('expected strict same-call candidate extraction boundary');
     }
   }
@@ -1822,6 +1895,28 @@ try {
       !contextResult.metadata?.candidates?.[0]?.evidenceRefs?.includes('observation:obs-context-candidate') ||
       contextResult.metadata?.gate?.sideEffects?.providerWrites !== 0) {
     throw new Error(`persisted-context tournament did not return its exact grounded candidate: ${JSON.stringify(contextResult)}`);
+  }
+  if (nestedFamily.status !== 'completed' ||
+      nestedFamily.metadata?.searchSpace?.theoreticalCount !== 4096 ||
+      nestedFamily.metadata?.searchSpace?.expandedCount !== 4096 ||
+      nestedFamily.metadata?.searchSpace?.eligibleCount !== 64 ||
+      nestedFamily.metadata?.searchSpace?.seedContract !== 'family_bundle_v1' ||
+      nestedFamily.metadata?.searchSpace?.declaredStrategyFamilyCount !== 2 ||
+      nestedFamily.metadata?.searchSpace?.strategyFamilyCount !== 2 ||
+      nestedFamily.metadata?.searchSpace?.completeStrategyFamilyCount !== 2 ||
+      nestedFamily.metadata?.searchSpace?.incompleteStrategyFamilyCount !== 0 ||
+      nestedFamily.metadata?.searchSpace?.strategyFamilyCollisionCount !== 0 ||
+      nestedFamily.metadata?.searchSpace?.motionConflictCount !== 0 ||
+      nestedFamily.metadata?.searchSpace?.modelCalls !== 1 ||
+      nestedFamily.metadata?.hypotheses?.length !== 20 ||
+      new Set(
+        nestedFamily.metadata?.hypotheses?.map((hypothesis) => hypothesis.id)
+      ).size !== nestedFamily.metadata?.hypotheses?.length ||
+      nestedFamily.metadata?.hypotheses?.[0]?.provenance?.strategyFamilyId ===
+        nestedFamily.metadata?.hypotheses?.[1]?.provenance?.strategyFamilyId ||
+      nestedFamily.metadata?.gate?.decision !== 'human_review' ||
+      nestedFamily.metadata?.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(`nested family bundles did not produce a complete family-diverse tournament: ${JSON.stringify(nestedFamily)}`);
   }
   if (unrelatedCandidate.status !== 'skipped' ||
       unrelatedCandidate.metadata?.candidates?.length !== 0 ||
