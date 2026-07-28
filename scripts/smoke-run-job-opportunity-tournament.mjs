@@ -147,6 +147,15 @@ const server = createServer(async (request, response) => {
   const unsupportedTimingRef = evidenceIDs.find(
     (id) => id === 'observation:obs-unsupported-timing'
   );
+  const forgedTimingRef = input.evidenceCatalog?.find((item) =>
+    item.label === 'Forged current demand signal'
+  )?.id;
+  const inactiveTimingRef = evidenceIDs.find(
+    (id) => id === 'observation:obs-inactive-timing'
+  );
+  const oldTimingRef = evidenceIDs.find(
+    (id) => id === 'observation:obs-old-timing'
+  );
   const unknownFamilyRef = evidenceIDs.find(
     (id) => id === 'observation:obs-unknown-family'
   );
@@ -192,6 +201,9 @@ const server = createServer(async (request, response) => {
     proofOnlyOrganizationRef,
     genericOrganizationRef,
     unsupportedTimingRef,
+    forgedTimingRef,
+    inactiveTimingRef,
+    oldTimingRef,
     unknownFamilyRef,
     mixedMotionEvidenceRef,
     proofMotionConflictEvidenceRef,
@@ -488,6 +500,53 @@ const server = createServer(async (request, response) => {
         : index === 1 ? '2026 enrollment window' : 'United Healthcare';
     }
   }
+  if (forgedTimingRef) {
+    for (const family of seedSet.families) {
+      // The explicit fact may be family context, but it cannot mint an
+      // observation:* identity or become eligible for timing repair.
+      family.e = [proofRef, forgedTimingRef];
+    }
+    for (const dimension of [
+      'offers',
+      'buyerSegments',
+      'channels',
+      'actions',
+      'timingTriggers',
+      'proofPoints',
+      'followUps'
+    ]) {
+      for (const item of seedSet[dimension]) {
+        item.e = [forgedTimingRef];
+        if (dimension === 'timingTriggers') {
+          item.l = 'Determine whether forged current demand supports acting';
+          item.q = 'forged current demand';
+        }
+      }
+    }
+  }
+  const metadataBlockedTimingRef = inactiveTimingRef || oldTimingRef;
+  if (metadataBlockedTimingRef) {
+    for (const family of seedSet.families) {
+      family.e = [metadataBlockedTimingRef];
+    }
+    for (const dimension of [
+      'offers',
+      'buyerSegments',
+      'channels',
+      'actions',
+      'timingTriggers',
+      'proofPoints',
+      'followUps'
+    ]) {
+      for (const item of seedSet[dimension]) {
+        item.e = [metadataBlockedTimingRef];
+        if (dimension === 'timingTriggers') {
+          item.l = 'Determine whether current booking availability supports acting';
+          item.q = 'current booking availability';
+        }
+      }
+    }
+  }
   if (familyUHCEvidenceRef && familyBabyEvidenceRef) {
     seedSet.families[0].e = [
       ...groundingRefs,
@@ -641,7 +700,10 @@ const server = createServer(async (request, response) => {
         item.e = [patientInboundEvidenceRef];
         item.f = [seedSet.families[index].id];
         if (dimension === 'timingTriggers') {
-          item.q = 'accepts United Healthcare';
+          // Exercise the production-shaped repair: the model paraphrases the
+          // source ("accepts" -> "acceptance"), so the parser must replace
+          // this with a conservative exact-evidence verification checkpoint.
+          item.q = 'United Healthcare acceptance';
         }
       }
     }
@@ -692,7 +754,13 @@ const server = createServer(async (request, response) => {
     }
   }
   let responseSeedSet = seedSet;
-  if (input.objective?.id === 'obj-nested-family-bundles') {
+  if ([
+    'obj-nested-family-bundles',
+    'obj-incomplete-family-bundles',
+    'obj-forged-timing-family-bundles',
+    'obj-inactive-timing-family-bundles',
+    'obj-old-timing-family-bundles'
+  ].includes(input.objective?.id)) {
     const multiVariantDimensions = new Set([
       'offers',
       'buyerSegments',
@@ -702,6 +770,14 @@ const server = createServer(async (request, response) => {
     ]);
     const nestedFamilies = seedSet.families.slice(0, 2).map((family, familyIndex) => {
       const familyIndexes = familyIndex === 0 ? [0, 2] : [1, 3];
+      const distributedFamilyEvidenceRef = familyIndex === 0
+        ? modelCandidateRef
+        : structuredPersonRef;
+      const exerciseDistributedEvidence =
+        input.objective?.id === 'obj-nested-family-bundles' &&
+        distributedFamilyEvidenceRef &&
+        proofRef &&
+        distributedFamilyEvidenceRef !== proofRef;
       const dimensions = {};
       for (const dimension of [
         'offers',
@@ -717,16 +793,28 @@ const server = createServer(async (request, response) => {
           : [familyIndex];
         dimensions[dimension] = indexes.map((index) => {
           const { f: _familyIds, ...item } = seedSet[dimension][index];
-          return {
+          const nestedItem = {
             ...structuredClone(item),
             // Models commonly restart local ids inside each bundle. The
             // parser must namespace them by the fixed parent family.
             id: `${dimension}-${indexes.indexOf(index) + 1}`
           };
+          if (exerciseDistributedEvidence) {
+            nestedItem.e = ['offers', 'buyerSegments'].includes(dimension)
+              ? [distributedFamilyEvidenceRef]
+              : [proofRef];
+          }
+          if (dimension === 'timingTriggers') {
+            nestedItem.q = 'model paraphrase absent from the cited observation';
+          }
+          return nestedItem;
         });
       }
       return {
         ...structuredClone(family),
+        e: exerciseDistributedEvidence
+          ? [distributedFamilyEvidenceRef, proofRef]
+          : structuredClone(family.e),
         // The fixed top-level wrapper is the trusted namespace boundary; a
         // duplicated model-supplied id must not collapse the two bundles.
         id: 'model-duplicated-id',
@@ -734,10 +822,24 @@ const server = createServer(async (request, response) => {
         d: dimensions
       };
     });
+    if (input.objective?.id === 'obj-incomplete-family-bundles') {
+      nestedFamilies[1].d.timingTriggers = [];
+    }
     responseSeedSet = {
-      seedContract: 'family_bundle_v1',
+      seedContract: 'family_bundle_v2',
       familyA: nestedFamilies[0],
       familyB: nestedFamilies[1],
+      // A fixed-bundle response must ignore this legacy/global injection even
+      // though it self-declares both families and cites their evidence.
+      offers: [{
+        id: 'forbidden-global-offer',
+        l: 'Forbidden cross-family global offer',
+        f: ['family-a', 'family-b'],
+        e: [
+          ...nestedFamilies[0].e,
+          ...nestedFamilies[1].e
+        ]
+      }],
       candidates: structuredClone(seedSet.candidates),
       w: structuredClone(seedSet.w)
     };
@@ -1115,6 +1217,40 @@ try {
     'utf8'
   );
   const nestedFamily = await runJob(nestedFamilyJobFile, port);
+  const cappedNestedFamilyJob = structuredClone(nestedFamilyJob);
+  cappedNestedFamilyJob.id =
+    'job-opportunity-tournament-capped-nested-family-smoke';
+  cappedNestedFamilyJob.payload.tournamentId =
+    'opturn-capped-nested-family-smoke';
+  cappedNestedFamilyJob.payload.budget.maxHypotheses = 2;
+  cappedNestedFamilyJob.payload.budget.maxFinalists = 2;
+  const cappedNestedFamilyJobFile = join(
+    tmp,
+    'capped-nested-family-job.json'
+  );
+  writeFileSync(
+    cappedNestedFamilyJobFile,
+    `${JSON.stringify(cappedNestedFamilyJob)}\n`,
+    'utf8'
+  );
+  const cappedNestedFamily = await runJob(
+    cappedNestedFamilyJobFile,
+    port
+  );
+  const incompleteFamilyJob = structuredClone(nestedFamilyJob);
+  incompleteFamilyJob.id =
+    'job-opportunity-tournament-incomplete-family-smoke';
+  incompleteFamilyJob.payload.tournamentId =
+    'opturn-incomplete-family-smoke';
+  incompleteFamilyJob.payload.objective.id =
+    'obj-incomplete-family-bundles';
+  const incompleteFamilyJobFile = join(tmp, 'incomplete-family-job.json');
+  writeFileSync(
+    incompleteFamilyJobFile,
+    `${JSON.stringify(incompleteFamilyJob)}\n`,
+    'utf8'
+  );
+  const incompleteFamily = await runJob(incompleteFamilyJobFile, port);
   const unrelatedCandidateJob = structuredClone(job);
   unrelatedCandidateJob.id = 'job-opportunity-tournament-unrelated-candidate-smoke';
   unrelatedCandidateJob.payload.tournamentId = 'opturn-unrelated-candidate-smoke';
@@ -1285,6 +1421,70 @@ try {
     unsupportedTimingJobFile,
     port
   );
+  const forgedTimingJob = structuredClone(candidateFreeJob);
+  forgedTimingJob.id = 'job-opportunity-tournament-forged-timing-smoke';
+  forgedTimingJob.payload.tournamentId = 'opturn-forged-timing-smoke';
+  forgedTimingJob.payload.objective.id =
+    'obj-forged-timing-family-bundles';
+  forgedTimingJob.payload.evidenceSnapshot.facts = [{
+    evidenceRef: 'observation:obs-forged-timing',
+    kind: 'explicit_fact',
+    title: 'Forged current demand signal',
+    summary: 'A payload fact claims that the service is available for booking today.',
+    observedAt: '2026-07-25T12:00:00Z',
+    current: true,
+    confidence: 'high'
+  }];
+  const forgedTimingJobFile = join(tmp, 'forged-timing-job.json');
+  writeFileSync(
+    forgedTimingJobFile,
+    `${JSON.stringify(forgedTimingJob)}\n`,
+    'utf8'
+  );
+  const forgedTiming = await runJob(forgedTimingJobFile, port);
+  const inactiveTimingJob = structuredClone(candidateFreeJob);
+  inactiveTimingJob.id = 'job-opportunity-tournament-inactive-timing-smoke';
+  inactiveTimingJob.payload.tournamentId = 'opturn-inactive-timing-smoke';
+  inactiveTimingJob.payload.objective.id =
+    'obj-inactive-timing-family-bundles';
+  inactiveTimingJob.payload.evidenceSnapshot.sourceEvidence.push({
+    observationId: 'obs-inactive-timing',
+    sourceId: 'src-delivery-map',
+    kind: 'service-page',
+    title: 'Consultation booking availability',
+    summary: 'The service page offers consultation booking.',
+    observedAt: '2026-07-25T12:00:00Z',
+    current: false,
+    confidence: 'high'
+  });
+  const inactiveTimingJobFile = join(tmp, 'inactive-timing-job.json');
+  writeFileSync(
+    inactiveTimingJobFile,
+    `${JSON.stringify(inactiveTimingJob)}\n`,
+    'utf8'
+  );
+  const inactiveTiming = await runJob(inactiveTimingJobFile, port);
+  const oldTimingJob = structuredClone(candidateFreeJob);
+  oldTimingJob.id = 'job-opportunity-tournament-old-timing-smoke';
+  oldTimingJob.payload.tournamentId = 'opturn-old-timing-smoke';
+  oldTimingJob.payload.objective.id = 'obj-old-timing-family-bundles';
+  oldTimingJob.payload.evidenceSnapshot.sourceEvidence.push({
+    observationId: 'obs-old-timing',
+    sourceId: 'src-delivery-map',
+    kind: 'service-page',
+    title: 'Consultation booking availability',
+    summary: 'The service page offers consultation booking.',
+    observedAt: '2026-04-01T12:00:00Z',
+    current: true,
+    confidence: 'high'
+  });
+  const oldTimingJobFile = join(tmp, 'old-timing-job.json');
+  writeFileSync(
+    oldTimingJobFile,
+    `${JSON.stringify(oldTimingJob)}\n`,
+    'utf8'
+  );
+  const oldTiming = await runJob(oldTimingJobFile, port);
   const unknownFamilyJob = structuredClone(candidateFreeJob);
   unknownFamilyJob.id = 'job-opportunity-tournament-unknown-family-smoke';
   unknownFamilyJob.payload.tournamentId = 'opturn-unknown-family-smoke';
@@ -1527,8 +1727,20 @@ try {
   const nonResearchJobFile = join(tmp, 'non-research-job.json');
   writeFileSync(nonResearchJobFile, `${JSON.stringify(nonResearchJob)}\n`, 'utf8');
   const nonResearch = await runJob(nonResearchJobFile, port);
+  const dryRun = await runJob(
+    candidateFreeJobFile,
+    port,
+    '/unexpected-mcp',
+    { args: ['--dry-run'] }
+  );
+  const missingKey = await runJob(
+    candidateFreeJobFile,
+    port,
+    '/unexpected-mcp',
+    { env: { OPENROUTER_API_KEY: '' } }
+  );
 
-  if (openRouterCalls.length !== 22) {
+  if (openRouterCalls.length !== 27) {
     throw new Error(`expected one OpenRouter call per tournament run, got ${openRouterCalls.length}`);
   }
   if (unexpectedRequests.length !== 0) {
@@ -1583,7 +1795,7 @@ try {
     if (leakedMarker) {
       throw new Error(`non-approved source evidence leaked into generator input (${leakedMarker}): ${serializedEvidence}`);
     }
-    if (input.responseSchema?.seedContract !== 'family_bundle_v1' ||
+    if (input.responseSchema?.seedContract !== 'family_bundle_v2' ||
         !input.responseSchema?.familyA?.d ||
         !input.responseSchema?.familyB?.d ||
         'offers' in (input.responseSchema || {}) ||
@@ -1781,11 +1993,12 @@ try {
         metadata.usage?.withinBudget !== true) {
       throw new Error(`expected exact bounded usage metadata: ${JSON.stringify(metadata.usage)}`);
     }
-    if (!Array.isArray(metadata.candidates) || metadata.candidates.length !== 4) {
-      throw new Error(`expected exact caller, timeline, source, and model candidates: ${JSON.stringify(metadata.candidates)}`);
+    if (!Array.isArray(metadata.candidates) || metadata.candidates.length !== 3) {
+      throw new Error(`expected exact timeline, source, and model candidates: ${JSON.stringify(metadata.candidates)}`);
     }
     if (metadata.candidates.some((candidate) =>
       candidate.id === 'candidate-queued-person' ||
+      candidate.id === 'candidate-public-smoke' ||
       candidate.displayLabel === 'Queued Candidate Must Not Appear' ||
       candidate.id === 'candidate-ungrounded-exact-person' ||
       candidate.displayLabel === 'Ungrounded Exact Person' ||
@@ -1839,25 +2052,6 @@ try {
         modelCandidate.identityResolved !== true) {
       throw new Error(`expected exact same-call model candidate: ${JSON.stringify(modelCandidate)}`);
     }
-    const callerCandidate = metadata.candidates.find(
-      (candidate) => candidate.id === 'candidate-public-smoke'
-    );
-    if (!callerCandidate?.contactPaths?.some((path) =>
-      path.reference === 'candidate-record-smoke'
-    ) ||
-        !callerCandidate.contactPaths.some((path) =>
-          path.reference === 'http://example.com/public-profile'
-        ) ||
-        callerCandidate.contactPaths.some((path) =>
-          path.reference === 'private-candidate@example.com' ||
-          path.reference === '+1 (212) 555-0199' ||
-          path.reference === 'http://127.0.0.1:9999/internal' ||
-          path.reference === 'http://169.254.169.254/latest/meta-data' ||
-          path.reference === 'http://[::1]/internal' ||
-          path.reference === 'https://user:password@example.com/private'
-        )) {
-      throw new Error(`raw candidate contact values were not removed: ${JSON.stringify(callerCandidate)}`);
-    }
     const serialized = JSON.stringify(receipt);
     if (serialized.includes('private-candidate@example.com') ||
         serialized.includes('+1 (212) 555-0199') ||
@@ -1900,15 +2094,44 @@ try {
       nestedFamily.metadata?.searchSpace?.theoreticalCount !== 4096 ||
       nestedFamily.metadata?.searchSpace?.expandedCount !== 4096 ||
       nestedFamily.metadata?.searchSpace?.eligibleCount !== 64 ||
-      nestedFamily.metadata?.searchSpace?.seedContract !== 'family_bundle_v1' ||
+      nestedFamily.metadata?.searchSpace?.dimensionCounts?.offers !== 4 ||
+      nestedFamily.metadata?.searchSpace?.seedContract !== 'family_bundle_v2' ||
       nestedFamily.metadata?.searchSpace?.declaredStrategyFamilyCount !== 2 ||
       nestedFamily.metadata?.searchSpace?.strategyFamilyCount !== 2 ||
       nestedFamily.metadata?.searchSpace?.completeStrategyFamilyCount !== 2 ||
       nestedFamily.metadata?.searchSpace?.incompleteStrategyFamilyCount !== 0 ||
+      nestedFamily.metadata?.searchSpace?.strategyFamilyAnchorCoverage?.some(
+        (family) =>
+          family.familyAnchorCount < 1 ||
+          family.sharedAnchorCount !== 0
+      ) ||
       nestedFamily.metadata?.searchSpace?.strategyFamilyCollisionCount !== 0 ||
       nestedFamily.metadata?.searchSpace?.motionConflictCount !== 0 ||
+      nestedFamily.metadata?.searchSpace?.timingVerificationRepairCount !== 2 ||
+      nestedFamily.metadata?.searchSpace?.unsupportedTimingSeedCount !== 0 ||
       nestedFamily.metadata?.searchSpace?.modelCalls !== 1 ||
       nestedFamily.metadata?.hypotheses?.length !== 20 ||
+      nestedFamily.metadata?.hypotheses?.some((hypothesis) =>
+        /forbidden cross-family global offer/i.test(hypothesis.offer || '') ||
+        !/^Determine whether the cited fact /i.test(
+          hypothesis.timingTrigger || ''
+        ) ||
+        hypothesis.score?.timing > 0.25 ||
+        hypothesis.score?.risk < 0.35 ||
+        hypothesis.score?.uncertainty < 0.75 ||
+        JSON.stringify(
+          [...new Set(
+            Object.values(hypothesis.provenance?.dimensions || {})
+              .flatMap((dimension) =>
+                (dimension.evidenceRefs || []).filter((ref) =>
+                  !ref.startsWith('source:')
+                )
+              )
+          )].sort()
+        ) !== JSON.stringify(
+          [...(hypothesis.provenance?.sharedEvidenceRefs || [])].sort()
+        )
+      ) ||
       new Set(
         nestedFamily.metadata?.hypotheses?.map((hypothesis) => hypothesis.id)
       ).size !== nestedFamily.metadata?.hypotheses?.length ||
@@ -1917,6 +2140,39 @@ try {
       nestedFamily.metadata?.gate?.decision !== 'human_review' ||
       nestedFamily.metadata?.gate?.sideEffects?.providerWrites !== 0) {
     throw new Error(`nested family bundles did not produce a complete family-diverse tournament: ${JSON.stringify(nestedFamily)}`);
+  }
+  if (cappedNestedFamily.status !== 'completed' ||
+      cappedNestedFamily.metadata?.searchSpace?.theoreticalCount !== 4096 ||
+      cappedNestedFamily.metadata?.searchSpace?.expandedCount !== 2 ||
+      cappedNestedFamily.metadata?.searchSpace?.retainedCount !== 2 ||
+      cappedNestedFamily.metadata?.searchSpace?.eligibleCount !== 2 ||
+      cappedNestedFamily.metadata?.hypotheses?.length !== 2 ||
+      cappedNestedFamily.metadata?.hypotheses?.[0]?.provenance?.strategyFamilyId ===
+        cappedNestedFamily.metadata?.hypotheses?.[1]?.provenance?.strategyFamilyId ||
+      cappedNestedFamily.metadata?.searchSpace?.strategyFamilyAnchorCoverage?.some(
+        (family) => family.sharedAnchorCount !== 0
+      ) ||
+      cappedNestedFamily.metadata?.gate?.decision !== 'human_review' ||
+      cappedNestedFamily.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      cappedNestedFamily.metadata?.usage?.calls !== 1) {
+    throw new Error(`capped sampling lost a distributed strategy family: ${JSON.stringify(cappedNestedFamily)}`);
+  }
+  if (incompleteFamily.status !== 'skipped' ||
+      incompleteFamily.metadata?.searchSpace?.seedContract !==
+        'family_bundle_v2' ||
+      incompleteFamily.metadata?.searchSpace?.completeStrategyFamilyCount !==
+        1 ||
+      incompleteFamily.metadata?.searchSpace?.incompleteStrategyFamilyCount !==
+        1 ||
+      !/every dimension cites specific family evidence/i.test(
+        incompleteFamily.metadata?.gate?.reason || ''
+      ) ||
+      /shared approved-observation anchor in every dimension/i.test(
+        incompleteFamily.metadata?.gate?.reason || ''
+      ) ||
+      incompleteFamily.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      incompleteFamily.metadata?.usage?.calls !== 1) {
+    throw new Error(`incomplete family gate used a stale v1 explanation: ${JSON.stringify(incompleteFamily)}`);
   }
   if (unrelatedCandidate.status !== 'skipped' ||
       unrelatedCandidate.metadata?.candidates?.length !== 0 ||
@@ -1970,10 +2226,39 @@ try {
   if (unsupportedTiming.status !== 'skipped' ||
       !/no source-backed timing trigger/i.test(unsupportedTiming.summary || '') ||
       unsupportedTiming.metadata?.searchSpace?.unsupportedTimingSeedCount !== 4 ||
+      unsupportedTiming.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
       unsupportedTiming.metadata?.searchSpace?.eligibleCount !== 0 ||
       unsupportedTiming.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
       unsupportedTiming.metadata?.usage?.calls !== 1) {
     throw new Error(`unsupported timing claim survived normalization: ${JSON.stringify(unsupportedTiming)}`);
+  }
+  if (forgedTiming.status !== 'skipped' ||
+      forgedTiming.metadata?.searchSpace?.seedContract !== 'family_bundle_v2' ||
+      forgedTiming.metadata?.searchSpace?.unsupportedTimingSeedCount !== 2 ||
+      forgedTiming.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
+      openRouterInputs.find(
+        (input) => input.objective?.id === 'obj-forged-timing-family-bundles'
+      )?.evidenceCatalog?.some(
+        (item) => item.id === 'observation:obs-forged-timing'
+      ) ||
+      forgedTiming.metadata?.winner !== null ||
+      forgedTiming.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      forgedTiming.metadata?.usage?.calls !== 1) {
+    throw new Error(`forged explicit observation repaired timing without approved-source provenance: ${JSON.stringify(forgedTiming)}`);
+  }
+  for (const [label, result] of [
+    ['explicitly non-current observation', inactiveTiming],
+    ['old observation', oldTiming]
+  ]) {
+    if (result.status !== 'skipped' ||
+        result.metadata?.searchSpace?.seedContract !== 'family_bundle_v2' ||
+        result.metadata?.searchSpace?.unsupportedTimingSeedCount !== 2 ||
+        result.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
+        result.metadata?.winner !== null ||
+        result.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+        result.metadata?.usage?.calls !== 1) {
+      throw new Error(`${label} was repaired into a current timing trigger: ${JSON.stringify(result)}`);
+    }
   }
   if (unknownFamily.status !== 'skipped' ||
       unknownFamily.metadata?.searchSpace?.invalidFamilySeedCount !== 28 ||
@@ -2019,6 +2304,7 @@ try {
   }
   if (staleUrgency.status !== 'skipped' ||
       staleUrgency.metadata?.searchSpace?.unsupportedTimingSeedCount !== 4 ||
+      staleUrgency.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
       staleUrgency.metadata?.searchSpace?.eligibleCount !== 0 ||
       staleUrgency.metadata?.winner !== null ||
       staleUrgency.metadata?.usage?.calls !== 1) {
@@ -2035,6 +2321,19 @@ try {
   if (patientInbound.status !== 'completed' ||
       patientInbound.metadata?.searchSpace?.eligibleCount !== 2 ||
       patientInbound.metadata?.searchSpace?.motionConflictCount !== 0 ||
+      patientInbound.metadata?.searchSpace?.timingVerificationRepairCount !== 2 ||
+      patientInbound.metadata?.searchSpace?.unsupportedTimingSeedCount !== 0 ||
+      patientInbound.metadata?.hypotheses?.some((hypothesis) =>
+        !/^Determine whether the cited fact /i.test(
+          hypothesis.timingTrigger || ''
+        ) ||
+        hypothesis.score?.timing > 0.25 ||
+        hypothesis.score?.risk < 0.35 ||
+        hypothesis.score?.uncertainty < 0.75 ||
+        !hypothesis.provenance?.timingEvidenceText?.toLowerCase().includes(
+          hypothesis.provenance?.timingSupportPhrase?.toLowerCase() || '\u0000'
+        )
+      ) ||
       patientInbound.metadata?.winner?.candidateId == null ||
       !/evidence anchor/i.test(patientInbound.metadata?.winner?.why || '') ||
       /(?:for|with) United Healthcare/i.test(
@@ -2085,6 +2384,18 @@ try {
       nonResearch.metadata?.gate?.sideEffects?.publishAttempts !== 0) {
     throw new Error(`non-research tournament request was not blocked: ${JSON.stringify(nonResearch)}`);
   }
+  for (const [label, result] of [
+    ['dry-run', dryRun],
+    ['missing-key', missingKey]
+  ]) {
+    if (result.status !== 'skipped' ||
+        result.metadata?.searchSpace?.modelCalls !== 0 ||
+        result.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
+        result.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+        result.metadata?.usage?.calls !== 0) {
+      throw new Error(`${label} tournament path lost its zero-repair trace: ${JSON.stringify(result)}`);
+    }
+  }
 
   const firstIDs = first.metadata.hypotheses.map((hypothesis) => hypothesis.id);
   const secondIDs = second.metadata.hypotheses.map((hypothesis) => hypothesis.id);
@@ -2099,12 +2410,18 @@ try {
   rmSync(tmp, { recursive: true, force: true });
 }
 
-function runJob(jobFile, port, mcpPath = '/unexpected-mcp') {
+function runJob(
+  jobFile,
+  port,
+  mcpPath = '/unexpected-mcp',
+  options = {}
+) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [
       join(root, 'bin/run-job.mjs'),
       '--job-file',
-      jobFile
+      jobFile,
+      ...Array.isArray(options.args) ? options.args : []
     ], {
       cwd: root,
       env: {
@@ -2115,7 +2432,8 @@ function runJob(jobFile, port, mcpPath = '/unexpected-mcp') {
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_RIG_SOURCE_FETCH_TIMEOUT_MS: '250',
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL: `http://127.0.0.1:${port}/openrouter`,
-        PROFILESCRIBE_RIG_TOURNAMENT_MODEL: 'test/opportunity-tournament'
+        PROFILESCRIBE_RIG_TOURNAMENT_MODEL: 'test/opportunity-tournament',
+        ...options.env
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });

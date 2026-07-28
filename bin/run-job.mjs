@@ -537,7 +537,8 @@ async function runOpportunityTournamentJob(job, options) {
           maxHypotheses: Math.min(10000, numberOr(object(payload.budget).maxHypotheses, 10000)),
           expandedCount: 0,
           deterministic: true,
-          modelCalls: 0
+          modelCalls: 0,
+          timingVerificationRepairCount: 0
         },
         gate: {
           decision: 'human_review',
@@ -578,7 +579,8 @@ async function runOpportunityTournamentJob(job, options) {
           maxHypotheses: Math.min(10000, numberOr(object(payload.budget).maxHypotheses, 10000)),
           expandedCount: 0,
           deterministic: true,
-          modelCalls: 0
+          modelCalls: 0,
+          timingVerificationRepairCount: 0
         },
         gate: {
           decision: 'block',

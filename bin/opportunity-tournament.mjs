@@ -7,6 +7,10 @@ const MAX_HYPOTHESES = 10_000;
 const MAX_FINALISTS = 20;
 const MAX_EVIDENCE_ITEMS = 64;
 const MAX_SEEDS_PER_DIMENSION = 8;
+const DAY_MILLISECONDS = 24 * 60 * 60 * 1000;
+const MAX_TIMING_VERIFICATION_OBSERVATION_AGE_MS =
+  45 * DAY_MILLISECONDS;
+const MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS = DAY_MILLISECONDS;
 // OpenRouter prompt/completion ceilings are USD per million tokens. Request is
 // the maximum total USD price for this single generation. Callers may tighten,
 // but never loosen, these tournament-specific caps.
@@ -60,7 +64,7 @@ const POSITIVE_SCORE_FIELDS = [
 const BURDEN_SCORE_FIELDS = ['effort', 'cost', 'risk', 'uncertainty'];
 
 const COHERENCE_GATE_VERSION = 'strategy_family_motion_v2';
-const SEED_CONTRACT_VERSION = 'family_bundle_v1';
+const SEED_CONTRACT_VERSION = 'family_bundle_v2';
 
 // Patterns run against comparable() text: lowercase ASCII words separated by
 // one space. Keep this vocabulary stable because the control plane mirrors it
@@ -322,7 +326,11 @@ export async function runOpportunityTournament({
     };
   }
 
-  const seedSet = normalizeSeedSet(completion?.data, evidenceCatalog);
+  const seedSet = normalizeSeedSet(
+    completion?.data,
+    evidenceCatalog,
+    timestamp
+  );
   const missingDimension = DIMENSIONS.find(([name]) => seedSet[name].length === 0)?.[0];
   if (missingDimension) {
     const unsupportedTiming = missingDimension === 'timingTriggers' &&
@@ -348,6 +356,7 @@ export async function runOpportunityTournament({
         familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
         invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
         unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
+        timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
         coherenceGate: COHERENCE_GATE_VERSION
       },
       gate: researchOnlyGate(
@@ -378,11 +387,12 @@ export async function runOpportunityTournament({
         familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
         invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
         unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
+        timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
         coherenceGate: COHERENCE_GATE_VERSION
       },
       gate: researchOnlyGate(
         'needs_more_approved_evidence',
-        'A completed tournament requires two complete strategy families with a shared approved-observation anchor in every dimension.'
+        'A completed tournament requires two complete strategy families where every dimension cites specific family evidence and each family uses at least one approved observation.'
       )
     };
   }
@@ -421,6 +431,7 @@ export async function runOpportunityTournament({
     familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
     invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
     unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
+    timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
     coherenceGate: COHERENCE_GATE_VERSION,
     deterministic: true,
     modelCalls: 1,
@@ -530,6 +541,22 @@ export async function runOpportunityTournament({
     firstText(hypothesis._strategyFamily) !==
       firstText(winningHypothesis._strategyFamily)
   );
+  if (alternateFamilyIndex < 0) {
+    return {
+      status: 'skipped',
+      summary: 'The best candidate-grounded strategy had no family-diverse runner-up.',
+      ...base,
+      hypotheses: initialHypotheses.map(publicHypothesis),
+      candidates: provisionalCandidates,
+      searchSpace: searchSpaceFor(initialHypotheses),
+      llm: { strategyGeneratorJudge: providerMetadata },
+      usage,
+      gate: researchOnlyGate(
+        'needs_more_approved_evidence',
+        'A completed tournament requires a candidate-grounded winner and a lower-ranked runner-up from a different complete strategy family.'
+      )
+    };
+  }
   const familyDiverseRunner = alternateFamilyIndex >= 0
     ? remainingHypotheses.splice(alternateFamilyIndex, 1)
     : [];
@@ -684,7 +711,7 @@ export function buildEvidenceCatalog(payload, context = {}) {
   const catalog = [];
   const seen = new Set();
 
-  const append = (raw, fallbackType, fallbackID) => {
+  const append = (raw, fallbackType, fallbackID, origin = {}) => {
     raw = asObject(raw);
     const type = firstText(raw.type, raw.kind, fallbackType, 'evidence');
     const label = firstText(
@@ -719,9 +746,22 @@ export function buildEvidenceCatalog(payload, context = {}) {
       raw.factID,
       fallbackID
     );
-    const id = rawID
+    let id = rawID
       ? normalizeEvidenceID(rawID, type, sourceID)
       : `evidence:${stableHash({ type, label, summary, url }).slice(0, 20)}`;
+    // The observation namespace is owned by persisted source observations.
+    // Explicit facts, extracts, timeline posts, and caller payloads cannot mint
+    // an observation:* identifier that later looks source-approved.
+    if (/^observation:/i.test(id) &&
+        asObject(origin).approvedSourceObservation !== true) {
+      id = `evidence:${stableHash({
+        type,
+        label,
+        summary,
+        url,
+        claimedID: id
+      }).slice(0, 20)}`;
+    }
     if (!id || (!label && !summary) || seen.has(id)) return;
     seen.add(id);
     catalog.push(compact({
@@ -734,10 +774,12 @@ export function buildEvidenceCatalog(payload, context = {}) {
       observedAt: firstText(raw.observedAt, raw.updatedAt, raw.publishedAt),
       startDate: firstText(raw.startDate),
       endDate: firstText(raw.endDate),
-      current: raw.current === true ? true : undefined,
+      current: typeof raw.current === 'boolean' ? raw.current : undefined,
       status: firstText(raw.status),
       priority: firstText(raw.priority),
       confidence: normalizeConfidence(raw.confidence, raw.trustLevel),
+      approvedSourceObservation:
+        asObject(origin).approvedSourceObservation === true ? true : undefined,
       aliases: compactStrings([
         sourceID ? `source:${sourceID}` : '',
         url
@@ -853,7 +895,9 @@ export function buildEvidenceCatalog(payload, context = {}) {
       type: firstText(value.kind, 'source_evidence'),
       label: firstText(value.title, value.sourceLabel, value.label),
       summary: firstText(value.summary, value.description)
-    }, 'source_evidence');
+    }, 'source_evidence', undefined, {
+      approvedSourceObservation: true
+    });
   }
   for (const extract of sourceExtracts.slice(0, 24)) {
     const sourceID = firstText(asObject(extract).sourceId, asObject(extract).sourceID);
@@ -1182,7 +1226,7 @@ Return only JSON.`;
         id: 'family-a for familyA or family-b for familyB',
         l: 'short internal label for one coherent end-to-end business motion',
         m: 'one semantic motion: payer_network, patient_inbound, clinical_referral, hospital_program, employer_workplace, or organization_partnership',
-        e: ['one or more exact evidenceCatalog.id values grounding this family, including one specific observation:* anchor cited by every item in d'],
+        e: ['one or more exact evidenceCatalog.id values grounding this family, including at least one observation:* anchor'],
         d: {
           offers: ['exactly two itemSchema objects'],
           buyerSegments: ['exactly two itemSchema objects'],
@@ -1232,7 +1276,8 @@ Return only JSON.`;
         'Buyer segments may be plausible inferences but must cite evidence supporting the fit.',
         'Return both familyA and familyB. Do not omit either complete bundle.',
         'Use id family-a inside familyA and family-b inside familyB.',
-        'For each family, choose one specific observation:* evidence anchor. Put that exact evidence ID in the family e and in every item in that family d.',
+        'For each family, include at least one observation:* evidence anchor in family e.',
+        'Every item must cite at least one exact evidence ID that also appears in its containing family e. Different dimensions may use different family evidence IDs when that is the truthful provenance.',
         'Every item belongs only to its containing family bundle. Do not add f, familyIds, wildcards, or cross-family reuse.',
         'A retained family must describe one coherent motion. Do not combine insurance-network, hospital-program, employer, clinical-referral, content-conversion, or other distinct motions in one family.',
         'Make each buyerSegments label explicitly name exactly one motion. For patient inbound use prospective or eligible patients, parents, mothers, families, caregivers, or members; do not describe the payer as the buyer.',
@@ -1251,7 +1296,7 @@ Return only JSON.`;
       ]
     },
     responseSchema: {
-      seedContract: 'family_bundle_v1',
+      seedContract: 'family_bundle_v2',
       familyA: {
         id: 'family-a',
         l: '',
@@ -1289,7 +1334,7 @@ Return only JSON.`;
   return { system, user };
 }
 
-function normalizeSeedSet(value, evidenceCatalog) {
+function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
   const raw = asObject(value);
   const evidenceByID = evidenceIndex(evidenceCatalog);
   const familyInputs = strategyFamilyInputs(raw);
@@ -1310,18 +1355,29 @@ function normalizeSeedSet(value, evidenceCatalog) {
     strategyFamilyCollisionCount: normalizedFamilies.collisionCount,
     familyEvidenceMismatchSeedCount: 0,
     invalidFamilySeedCount: 0,
-    unsupportedTimingSeedCount: 0
+    unsupportedTimingSeedCount: 0,
+    timingVerificationRepairCount: 0
   };
   for (const [name, aliases] of DIMENSIONS) {
-    const values = [
-      ...nestedStrategyFamilySeeds(familyInputs, name, aliases),
-      ...firstArray(...aliases.map((alias) => raw[alias]))
-    ];
+    const nestedValues = nestedStrategyFamilySeeds(
+      familyInputs,
+      name,
+      aliases
+    );
+    // The fixed family wrappers are the v2 trust boundary. Once present,
+    // ignore all top-level dimension arrays so a model cannot inject a seed
+    // that declares both families or carries evidence across the wrappers.
+    const values = hasFamilyBundleContract
+      ? nestedValues
+      : [
+          ...nestedValues,
+          ...firstArray(...aliases.map((alias) => raw[alias]))
+        ];
     const seen = new Set();
     out[name] = [];
     for (const [index, seedValue] of values.entries()) {
       const seed = asObject(seedValue);
-      const label = truncate(firstText(seed.l, seed.label, seed.name, seed.title), 180);
+      let label = truncate(firstText(seed.l, seed.label, seed.name, seed.title), 180);
       if (!label) continue;
       let evidenceRefs = compactStrings([
         ...asArray(seed.e),
@@ -1333,7 +1389,42 @@ function normalizeSeedSet(value, evidenceCatalog) {
         .filter((id, evidenceIndexValue, ids) =>
           ids.indexOf(id) === evidenceIndexValue
         );
-      const supportPhrase = name === 'timingTriggers'
+      const declaredFamilyIds = compactStrings([
+        ...asArray(seed.f),
+        ...asArray(seed.familyIds),
+        seed.family,
+        seed.strategyFamily
+      ])
+        .map(normalizeStrategyFamilyID)
+        .filter((id) => strategyFamilies.has(id))
+        .filter((id, familyIndex, ids) => ids.indexOf(id) === familyIndex)
+        .slice(0, 4);
+      const specificEvidenceRefs = strategyAnchorEvidenceRefs(evidenceRefs);
+      const familyIds = declaredFamilyIds.filter((id) =>
+        stringsOverlap(
+          specificEvidenceRefs,
+          strategyAnchorEvidenceRefs(
+            strategyFamilies.get(id)?.evidenceRefs
+          )
+        )
+      );
+      if (declaredFamilyIds.length > 0 && familyIds.length === 0) {
+        out.familyEvidenceMismatchSeedCount += 1;
+      }
+      if (familyIds.length === 0) {
+        out.invalidFamilySeedCount += 1;
+        continue;
+      }
+      // A seed is allowed to retain only evidence declared by its family.
+      // This keeps the emitted provenance a real containment proof instead of
+      // allowing one valid family ref to smuggle unrelated refs into a tuple.
+      evidenceRefs = evidenceRefs.filter((ref) =>
+        familyIds.some((familyID) =>
+          asArray(strategyFamilies.get(familyID)?.evidenceRefs)
+            .includes(ref)
+        )
+      );
+      let supportPhrase = name === 'timingTriggers'
         ? truncate(firstText(
           seed.q,
           seed.supportPhrase,
@@ -1341,6 +1432,7 @@ function normalizeSeedSet(value, evidenceCatalog) {
         ), 180)
         : '';
       let supportEvidenceRefs = [];
+      let timingWasRepaired = false;
       if (name === 'timingTriggers') {
         const supportedRefs = evidenceRefs.filter((id) =>
           /^observation:/i.test(id) &&
@@ -1353,37 +1445,46 @@ function normalizeSeedSet(value, evidenceCatalog) {
         if (!supportPhrase ||
             supportedRefs.length === 0 ||
             !timingSupportPhraseGroundsLabel(label, supportPhrase)) {
-          out.unsupportedTimingSeedCount += 1;
-          continue;
+          const repaired = repairTimingAsVerification(
+            evidenceRefs.filter((ref) =>
+              familyIds.some((familyID) =>
+                asArray(strategyFamilies.get(familyID)?.evidenceRefs)
+                  .includes(ref)
+              )
+            ),
+            evidenceByID,
+            referenceTime
+          );
+          if (!repaired) {
+            out.unsupportedTimingSeedCount += 1;
+            continue;
+          }
+          label = repaired.label;
+          supportPhrase = repaired.supportPhrase;
+          supportEvidenceRefs = repaired.supportEvidenceRefs;
+          timingWasRepaired = true;
+        } else {
+          supportEvidenceRefs = supportedRefs;
         }
-        supportEvidenceRefs = supportedRefs;
-      }
-      const declaredFamilyIds = compactStrings([
-        ...asArray(seed.f),
-        ...asArray(seed.familyIds),
-        seed.family,
-        seed.strategyFamily
-      ])
-        .map(normalizeStrategyFamilyID)
-        .filter((id) => strategyFamilies.has(id))
-        .filter((id, familyIndex, ids) => ids.indexOf(id) === familyIndex)
-        .slice(0, 4);
-      const familyIds = declaredFamilyIds.filter((id) =>
-        stringsOverlap(
-          evidenceRefs,
-          strategyFamilies.get(id)?.evidenceRefs
-        )
-      );
-      if (declaredFamilyIds.length > 0 && familyIds.length === 0) {
-        out.familyEvidenceMismatchSeedCount += 1;
-      }
-      if (familyIds.length === 0) {
-        out.invalidFamilySeedCount += 1;
-        continue;
       }
       const key = `${comparable(label)}|${familyIds.join(',')}`;
       if (seen.has(key)) continue;
       seen.add(key);
+      const scores = normalizeScores(seed.s ?? seed.scores);
+      if (timingWasRepaired) {
+        scores.timing = Math.min(
+          finite(scores.timing) ?? defaultScoreForField('timing'),
+          0.25
+        );
+        scores.risk = Math.max(
+          finite(scores.risk) ?? defaultScoreForField('risk'),
+          0.35
+        );
+        scores.uncertainty = Math.max(
+          finite(scores.uncertainty) ?? defaultScoreForField('uncertainty'),
+          0.75
+        );
+      }
       out[name].push({
         id: normalizeSeedID(firstText(seed.id, `${name}-${index + 1}`), name, label),
         label,
@@ -1391,12 +1492,18 @@ function normalizeSeedSet(value, evidenceCatalog) {
         evidenceRefs,
         supportPhrase,
         supportEvidenceRefs,
+        timingVerificationRepaired: timingWasRepaired,
         reason: truncate(firstText(seed.r, seed.reason, seed.rationale), 320),
-        uncertainty: truncate(firstText(seed.u, seed.uncertainty, seed.unknown), 240),
-        scores: normalizeScores(seed.s ?? seed.scores),
+        uncertainty: timingWasRepaired
+          ? 'Timing is not established; verify the cited observation before treating it as a trigger.'
+          : truncate(firstText(seed.u, seed.uncertainty, seed.unknown), 240),
+        scores,
         estimatedSpendMicros: nonNegativeInteger(seed.sp ?? seed.estimatedSpendMicros),
         expectedValueMicros: nonNegativeInteger(seed.vm ?? seed.expectedValueMicros)
       });
+      if (timingWasRepaired) {
+        out.timingVerificationRepairCount += 1;
+      }
       if (out[name].length >= MAX_SEEDS_PER_DIMENSION) break;
     }
   }
@@ -1460,9 +1567,10 @@ function strategyFamilyAnchorCoverage(seedSet) {
   return asArray(asObject(seedSet).strategyFamilies)
     .map(asObject)
     .map((family) => {
-      let sharedAnchorRefs = strategyObservationEvidenceRefs(
+      const familyAnchorRefs = strategyObservationEvidenceRefs(
         family.evidenceRefs
       );
+      let sharedAnchorRefs = [...familyAnchorRefs];
       const dimensions = {};
       for (const [dimension] of DIMENSIONS) {
         const familySeeds = asArray(asObject(seedSet)[dimension])
@@ -1481,7 +1589,8 @@ function strategyFamilyAnchorCoverage(seedSet) {
       return {
         id: family.id,
         complete: Object.values(dimensions).every((count) => count > 0) &&
-          sharedAnchorRefs.length > 0,
+          familyAnchorRefs.length > 0,
+        familyAnchorCount: familyAnchorRefs.length,
         sharedAnchorCount: sharedAnchorRefs.length,
         dimensions
       };
@@ -1514,7 +1623,10 @@ function normalizeStrategyFamilies(values, evidenceByID) {
       .filter(Boolean)
       .filter((ref, index, refs) => refs.indexOf(ref) === index)
       .slice(0, 12);
-    if (evidenceRefs.length === 0) continue;
+    if (evidenceRefs.length === 0 ||
+        strategyObservationEvidenceRefs(evidenceRefs).length === 0) {
+      continue;
+    }
     const family = {
       id,
       label: truncate(firstText(raw.l, raw.label, raw.name, id), 120),
@@ -1624,6 +1736,7 @@ function scoreHypothesis({
   semantic.uncertainty = clamp01(semantic.uncertainty + priorAdjustment.uncertainty);
   if (timingIsVerificationStep(tuple.timingTriggers.label)) {
     semantic.timing = Math.min(semantic.timing, 0.25);
+    semantic.risk = Math.max(semantic.risk, 0.35);
     semantic.uncertainty = Math.max(semantic.uncertainty, 0.75);
   }
 
@@ -2226,6 +2339,118 @@ function evidenceSupportsExactTimingText(evidence, value, timingLabel) {
     }
   }
   return false;
+}
+
+function repairTimingAsVerification(
+  evidenceRefs,
+  evidenceByID,
+  referenceTime
+) {
+  for (const id of compactStrings(evidenceRefs)) {
+    if (!/^observation:/i.test(id)) continue;
+    const evidence = asObject(evidenceByID.get(id));
+    if (!timingVerificationEvidenceIsSafe(evidence, referenceTime)) continue;
+    const supportPhrase = timingVerificationSupportPhrase(evidence);
+    if (!supportPhrase) continue;
+    const label = truncate(
+      `Determine whether the cited fact "${supportPhrase}" supports acting`,
+      180
+    );
+    if (!evidenceSupportsExactTimingText(evidence, supportPhrase, label) ||
+        !timingSupportPhraseGroundsLabel(label, supportPhrase)) {
+      continue;
+    }
+    return {
+      label,
+      supportPhrase,
+      supportEvidenceRefs: [id]
+    };
+  }
+  return null;
+}
+
+function timingVerificationEvidenceIsSafe(evidence, referenceTime) {
+  if (asObject(evidence).approvedSourceObservation !== true) return false;
+  if (asObject(evidence).current === false ||
+      /\b(?:archived|cancelled|canceled|closed|discontinued|expired|historical|inactive|superseded|withdrawn)\b/i.test(
+        firstText(asObject(evidence).status)
+      )) {
+    return false;
+  }
+  const referenceDate = new Date(referenceTime);
+  const observedDate = new Date(firstText(asObject(evidence).observedAt));
+  if (!Number.isFinite(referenceDate.getTime()) ||
+      !Number.isFinite(observedDate.getTime())) {
+    return false;
+  }
+  const observationAge = referenceDate.getTime() - observedDate.getTime();
+  if (observationAge < -MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS ||
+      observationAge > MAX_TIMING_VERIFICATION_OBSERVATION_AGE_MS) {
+    return false;
+  }
+  const rawEndDate = firstText(asObject(evidence).endDate);
+  if (rawEndDate) {
+    const endDate = new Date(rawEndDate);
+    if (!Number.isFinite(endDate.getTime()) ||
+        endDate.getTime() < referenceDate.getTime()) {
+      return false;
+    }
+  }
+  const text = comparable(compactStrings([
+    asObject(evidence).label,
+    asObject(evidence).summary
+  ]).join(' '));
+  if (!text) return false;
+  // Verification repair is allowed only for an affirmative, current-looking
+  // observation. A single negation or stale qualifier makes the fallback fail
+  // closed so archived/closed evidence cannot be reframed as a live trigger.
+  if (/\b(?:no|not|never|without|unknown|unconfirmed|missing|lack|lacks|neither|closed|unavailable|absent|ended|expired|archived|cancelled|canceled|discontinued|former|formerly|historical|historic|inactive|obsolete|old|outdated|previous|previously|superseded|was|withdrawn)\b/.test(
+    text
+  )) {
+    return false;
+  }
+  const referenceYear = referenceDate.getUTCFullYear();
+  return !(text.match(/\b20\d{2}\b/g) || [])
+    .some((year) => Number(year) < referenceYear);
+}
+
+function timingVerificationSupportPhrase(evidence) {
+  const candidates = compactStrings([
+    asObject(evidence).label,
+    ...String(asObject(evidence).summary || '').split(/[.!?;\n]+/)
+  ]);
+  const operationalSignal =
+    /\b(?:accepts?|accepted|available|availability|book|booked|booking|call now|currently|live|offers?|open|provides?|same day|same-day|schedule|scheduled|scheduling|today)\b/i;
+  for (const candidate of candidates) {
+    const phrase = exactPhraseWindow(candidate, operationalSignal, 24);
+    if (phrase) return phrase;
+  }
+  for (const candidate of candidates) {
+    const phrase = exactPhraseWindow(candidate, /[\p{L}\p{N}]/u, 24);
+    if (phrase && meaningfulTokens(phrase).size >= 3) return phrase;
+  }
+  return '';
+}
+
+function exactPhraseWindow(value, signalPattern, maxWords) {
+  const text = firstText(value).replace(/\s+/g, ' ').trim();
+  if (!text || !signalPattern.test(text)) return '';
+  const words = text.split(' ');
+  const match = text.match(signalPattern);
+  if (!match || match.index == null) return '';
+  const before = text.slice(0, match.index).trim();
+  const matchWordIndex = before ? before.split(' ').length : 0;
+  const start = Math.max(
+    0,
+    Math.min(matchWordIndex - Math.floor(maxWords / 3), words.length - maxWords)
+  );
+  const boundedWords = words.slice(start, start + maxWords);
+  while (boundedWords.length > 1 &&
+      boundedWords.join(' ').length > 120) {
+    boundedWords.pop();
+  }
+  const phrase = boundedWords.join(' ');
+  return signalPattern.test(phrase) ? phrase : '';
 }
 
 function exactTextContains(haystackValue, needleValue) {
@@ -3029,8 +3254,7 @@ function commonCompatibilityFamilies(tuple, seedSet) {
   if (familySets.some((families) => families.size === 0)) return [];
   return [...familySets[0]]
     .filter((family) =>
-      familySets.slice(1).every((families) => families.has(family)) &&
-      commonStrategyEvidenceRefs(tuple, family, seedSet).length > 0
+      familySets.slice(1).every((families) => families.has(family))
     )
     .sort();
 }
@@ -3039,14 +3263,18 @@ function commonStrategyEvidenceRefs(tuple, familyID, seedSet) {
   const family = asArray(asObject(seedSet).strategyFamilies)
     .map(asObject)
     .find((item) => item.id === familyID);
-  let shared = strategyAnchorEvidenceRefs(family?.evidenceRefs);
+  const familyRefs = new Set(
+    strategyAnchorEvidenceRefs(family?.evidenceRefs)
+  );
+  const used = new Set();
   for (const [dimension] of DIMENSIONS) {
-    const dimensionRefs = new Set(
-      strategyAnchorEvidenceRefs(asObject(tuple[dimension]).evidenceRefs)
-    );
-    shared = shared.filter((ref) => dimensionRefs.has(ref));
+    for (const ref of strategyAnchorEvidenceRefs(
+      asObject(tuple[dimension]).evidenceRefs
+    )) {
+      if (familyRefs.has(ref)) used.add(ref);
+    }
   }
-  return shared;
+  return [...used].sort();
 }
 
 function strategyAnchorEvidenceRefs(values) {
@@ -3097,7 +3325,9 @@ function strategyProvenance(
     timingEvidenceText: truncate(compactStrings([
       timingEvidence.label,
       timingEvidence.summary
-    ]).join(' '), 600)
+    ]).join(' '), 600),
+    timingVerificationRepaired:
+      timingSeed.timingVerificationRepaired === true
   };
 }
 
@@ -3200,20 +3430,61 @@ function strategyFamilyPriorityIndexes(dimensions, seedSet) {
     const familyDefinition = asArray(asObject(seedSet).strategyFamilies)
       .map(asObject)
       .find((item) => item.id === family);
-    const candidateAnchors = strategyAnchorEvidenceRefs(
-      familyDefinition?.evidenceRefs
+    const familyRefs = new Set(
+      strategyAnchorEvidenceRefs(familyDefinition?.evidenceRefs)
     );
-    for (const anchor of candidateAnchors) {
-      const indexes = dimensions.map((items) =>
-        items.findIndex((item) =>
+    const familyIndexes = dimensions.map((items) =>
+      items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) =>
           asArray(item.familyIds).includes(family) &&
-          asArray(item.evidenceRefs).includes(anchor)
+          strategyAnchorEvidenceRefs(item.evidenceRefs)
+            .some((ref) => familyRefs.has(ref))
         )
+        .map(({ index }) => index)
+    );
+    if (familyIndexes.some((indexes) => indexes.length === 0)) continue;
+    const familyCombinationCount = familyIndexes.reduce(
+      (total, indexes) => total * indexes.length,
+      1
+    );
+    const familySampleCount = Math.min(
+      familyCombinationCount,
+      MAX_HYPOTHESES
+    );
+    let firstSameFamilyIndex = null;
+    let coherentFamilyIndex = null;
+    for (const localFlatIndex of deterministicCartesianIndexes(
+      familyCombinationCount,
+      familySampleCount,
+      `${family}:priority`
+    )) {
+      const indexes = decodeCartesianIndex(
+        localFlatIndex,
+        familyIndexes
       );
-      if (indexes.every((index) => index >= 0)) {
-        priorityIndexes.push(encodeCartesianIndex(indexes, dimensions));
+      const tuple = Object.fromEntries(
+        DIMENSIONS.map(([name], index) => [
+          name,
+          dimensions[index][indexes[index]]
+        ])
+      );
+      const encodedIndex = encodeCartesianIndex(indexes, dimensions);
+      if (firstSameFamilyIndex == null) {
+        firstSameFamilyIndex = encodedIndex;
+      }
+      if (strategyMotionSignature(tuple).coherent) {
+        coherentFamilyIndex = encodedIndex;
         break;
       }
+    }
+    if (coherentFamilyIndex != null) {
+      priorityIndexes.push(coherentFamilyIndex);
+    } else if (firstSameFamilyIndex != null) {
+      // Preserve one same-family adversarial tuple so the main gate records a
+      // semantic motion conflict instead of bounded sampling observing only
+      // cross-family incompatibility.
+      priorityIndexes.push(firstSameFamilyIndex);
     }
   }
   return priorityIndexes;
@@ -3302,11 +3573,17 @@ function stringsOverlap(left, right) {
 
 function candidateEvidenceGroundsHypothesis(candidateValue, hypothesis) {
   const candidate = asObject(candidateValue);
-  const evidenceRefs = asArray(candidate.evidenceRefs);
+  const evidenceRefs = strategyAnchorEvidenceRefs(candidate.evidenceRefs);
   const tuple = asObject(hypothesis?._tuple);
-  const buyerEvidence = asArray(asObject(tuple.buyerSegments).evidenceRefs);
-  const offerEvidence = asArray(asObject(tuple.offers).evidenceRefs);
-  const proofEvidence = asArray(asObject(tuple.proofPoints).evidenceRefs);
+  const buyerEvidence = strategyAnchorEvidenceRefs(
+    asObject(tuple.buyerSegments).evidenceRefs
+  );
+  const offerEvidence = strategyAnchorEvidenceRefs(
+    asObject(tuple.offers).evidenceRefs
+  );
+  const proofEvidence = strategyAnchorEvidenceRefs(
+    asObject(tuple.proofPoints).evidenceRefs
+  );
   if (organizationCandidateRequiresBuyerMatch(candidate) &&
       !exactTextContains(
         asObject(tuple.buyerSegments).label,
@@ -3390,6 +3667,7 @@ function emptySearchSpace(budget) {
     familyEvidenceMismatchSeedCount: 0,
     invalidFamilySeedCount: 0,
     unsupportedTimingSeedCount: 0,
+    timingVerificationRepairCount: 0,
     coherenceGate: COHERENCE_GATE_VERSION,
     deterministic: true,
     modelCalls: 0
