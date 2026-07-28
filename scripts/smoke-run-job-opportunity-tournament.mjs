@@ -1412,7 +1412,17 @@ try {
     title: 'United Healthcare lactation consultations',
     summary: 'The practice accepts United Healthcare for eligible in-home lactation consultations and provides an existing booking path.',
     observedAt: '2026-07-25T12:00:00Z',
-    confidence: 'high'
+    confidence: 'high',
+    candidate: {
+      // Approved-source extraction can still misclassify a payer as a
+      // person. The common candidate output boundary must correct the kind
+      // even when the organization legitimately appears in the buyer seed.
+      id: 'candidate-source-person-uhc',
+      kind: 'source_evidence_person',
+      name: 'United Healthcare',
+      organization: 'United Healthcare',
+      market: 'New York, New York'
+    }
   });
   const patientInboundJobFile = join(tmp, 'patient-inbound-job.json');
   writeFileSync(
@@ -1934,6 +1944,11 @@ try {
       !/evidence anchor/i.test(patientInbound.metadata?.winner?.why || '') ||
       /(?:for|with) United Healthcare/i.test(
         `${patientInbound.metadata?.winner?.action || ''} ${patientInbound.metadata?.winner?.title || ''}`
+      ) ||
+      !patientInbound.metadata?.candidates?.some(
+        (candidate) =>
+          candidate.id === 'candidate-source-person-uhc' &&
+          candidate.kind === 'organization'
       ) ||
       patientInbound.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
       patientInbound.metadata?.usage?.calls !== 1) {

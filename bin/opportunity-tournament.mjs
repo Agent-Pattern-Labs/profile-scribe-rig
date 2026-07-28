@@ -2401,6 +2401,14 @@ function normalizeCandidates(
     const candidateDisplayLabel = concreteCandidateLabel(displayLabel)
       ? displayLabel
       : organization;
+    // Candidate kinds supplied by callers and approved-source extraction are
+    // still untrusted classification hints. Normalize obvious organizations
+    // here as the common output boundary so a payer brand cannot retain a
+    // person-like kind and become eligible for downstream person enrichment.
+    const declaredKind = firstText(raw.kind, 'public_professional');
+    const candidateKind = organizationLikeCandidateLabel(candidateDisplayLabel)
+      ? 'organization'
+      : declaredKind;
     if (!candidateIdentityIsConcrete({
       raw,
       displayLabel: candidateDisplayLabel,
@@ -2424,7 +2432,7 @@ function normalizeCandidates(
     candidates.push({
       id,
       hypothesisId: hypothesis.id,
-      kind: firstText(raw.kind, 'public_professional'),
+      kind: candidateKind,
       displayLabel: candidateDisplayLabel,
       organization,
       role: truncate(firstText(raw.role, raw.title), 180),
