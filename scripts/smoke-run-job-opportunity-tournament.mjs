@@ -42,7 +42,7 @@ const server = createServer(async (request, response) => {
           kind: 'website',
           label: 'Persisted safe buyer evidence',
           url: 'https://example.com/context-safe',
-          status: 'approved',
+          status: 'monitoring',
           trustLevel: 'high'
         },
         {
@@ -400,7 +400,7 @@ try {
             kind: 'website',
             label: 'Delivery Map',
             url: 'https://example.com/delivery-map',
-            status: 'approved',
+            status: 'monitoring',
             trustLevel: 'high',
             summary: 'Documents the delivery diagnostic and its review-gated workflow.'
           },
@@ -430,7 +430,7 @@ try {
             kind: 'website',
             label: 'Unknown-status source must not ground the tournament',
             url: 'https://example.com/unknown',
-            status: 'monitoring'
+            status: 'mystery'
           },
           ...Array.from({ length: 27 }, (_, index) => ({
             id: `src-approved-noise-${String(index + 1).padStart(2, '0')}`,

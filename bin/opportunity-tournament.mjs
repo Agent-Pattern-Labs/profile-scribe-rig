@@ -17,6 +17,11 @@ const MAX_PROVIDER_PRICE = {
 };
 const RESEARCH_ONLY_CONSTRAINT =
   'Research and recommendation only; do not contact, message, publish, purchase ads, or submit forms.';
+const RESEARCH_APPROVED_SOURCE_STATUSES = new Set([
+  'approved',
+  'connected',
+  'monitoring'
+]);
 
 const DIMENSIONS = [
   ['offers', ['offers', 'offerSeeds']],
@@ -464,7 +469,7 @@ export function buildEvidenceCatalog(payload, context = {}) {
   const approvedSourceIDs = new Set(
     sources
       .map(asObject)
-      .filter((source) => comparable(source.status) === 'approved')
+      .filter(sourceIsResearchApproved)
       .map((source) => firstText(source.id, source.sourceId))
       .filter(Boolean)
   );
@@ -1358,7 +1363,7 @@ function collectStructuredCandidates(payload, context, profileScribePublicBaseUR
   const approvedSourceIDs = new Set(
     sources
       .map(asObject)
-      .filter((source) => comparable(source.status) === 'approved')
+      .filter(sourceIsResearchApproved)
       .map((source) => firstText(source.id, source.sourceId))
       .filter(Boolean)
   );
@@ -1523,6 +1528,12 @@ function evidenceSupportsExactText(evidence, value) {
     asObject(evidence).summary
   ]).join(' '));
   return ` ${haystack} `.includes(` ${needle} `);
+}
+
+function sourceIsResearchApproved(source) {
+  return RESEARCH_APPROVED_SOURCE_STATUSES.has(
+    comparable(asObject(source).status)
+  );
 }
 
 function evidenceSupportsExactPublicURL(evidence, value) {
