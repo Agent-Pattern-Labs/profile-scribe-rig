@@ -408,6 +408,14 @@ const server = createServer(async (request, response) => {
       k: 'person',
       l: 'United Healthcare',
       e: [modelCandidateRef]
+    }, {
+      k: 'person',
+      l: 'UnitedHealthcare',
+      e: [modelCandidateRef]
+    }, {
+      k: 'person',
+      l: 'UHC',
+      e: [modelCandidateRef]
     }] : modelCandidateRef === 'observation:obs-patient-inbound' ? [{
       k: 'organization',
       l: 'United Healthcare',
@@ -1917,7 +1925,7 @@ try {
       organizationBinding.metadata?.gate?.decision !== 'needs_more_approved_evidence' ||
       organizationBinding.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
       organizationBinding.metadata?.usage?.calls !== 1) {
-    throw new Error(`named organization bound to a buyer segment that did not name it: ${JSON.stringify(organizationBinding)}`);
+    throw new Error(`named organization spelling bound to a buyer segment that did not name it: ${JSON.stringify(organizationBinding)}`);
   }
   if (patientInbound.status !== 'completed' ||
       patientInbound.metadata?.searchSpace?.eligibleCount !== 2 ||

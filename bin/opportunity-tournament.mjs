@@ -2049,7 +2049,7 @@ function concreteCandidateLabel(value) {
 
 function organizationLikeCandidateLabel(value) {
   const label = firstText(value);
-  return /\b(?:association|bank|clinic|co|company|corporation|foundation|group|healthcare|health[- ]plan|health system|hospital|inc|insurance|labs|llc|ltd|network|organization|partners|plc|practice|services|university)\b(?:[.,]?\s*)$/i.test(
+  return /\b(?:association|bank|clinic|co|company|corporation|foundation|group|healthcare|health[- ]plan|health system|hospital|inc|insurance|labs|llc|ltd|network|organization|partners|plc|practice|services|uhc|united[\s-]*healthcare|university)\b(?:[.,]?\s*)$/i.test(
     label
   );
 }
