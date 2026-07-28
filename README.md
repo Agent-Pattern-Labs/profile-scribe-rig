@@ -106,6 +106,7 @@ export PROFILESCRIBE_MCP_URL=https://profilescribe.com/api/mcp
 export OPENROUTER_API_KEY=sk-or-...
 export PROFILESCRIBE_RIG_OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 export PROFILESCRIBE_RIG_DRAFT_MODEL=anthropic/claude-opus-4.8
+export PROFILESCRIBE_RIG_TOURNAMENT_MODEL=deepseek/deepseek-v4-pro
 export PROFILESCRIBE_RIG_DRAFTER_COMMAND='your-drafter-command'
 export PROFILESCRIBE_RIG_REWRITE_COMMAND='your-rewrite-command'
 export PROFILESCRIBE_RIG_CHAT_COMMAND='your-agent-chat-command'
@@ -126,6 +127,40 @@ the hosted fallback generator.
 
 Additional managed job kinds:
 
+- `opportunity_tournament` accepts a concrete win objective, hard budget,
+  optional evidence snapshot, prior outcomes, and already discovered public
+  candidates. It can also preserve exact candidates already present in
+  ProfileScribe timeline-author and approved structured source-evidence fields;
+  it does not run a discovery provider. The same bounded model call may extract
+  named person or organization candidates only when their names, optional
+  details, public URLs, and evidence references are copied exactly from the
+  supplied catalog; deterministic validation rejects inventions and the
+  profile owner. Only source records, observations, and extracts tied to an
+  explicitly `approved` source ID may ground the tournament. One bounded,
+  provider-price-capped OpenRouter call generates evidence-referenced strategy
+  dimensions, semantic score inputs, and those optional exact candidates.
+  Deterministic code then expands and judges at most 10,000 tuples, retains at
+  most 20 finalists, and returns one review-required winner plus a runner-up.
+  Direct receipt metadata includes `hypotheses`, `candidates`, `winner`,
+  `runnerUp`, `searchSpace`, `gate`, and `usage` for the ProfileScribe worker.
+  A completed result requires an unbroken objective → tournament → hypothesis
+  → named candidate → reviewable action chain. Candidate evidence must overlap
+  the winning buyer-segment seed plus its offer or proof evidence—not merely an
+  unrelated citation—and the winning candidate must carry a resolved exact
+  identity tuple. The internal recommendation names that candidate and one or
+  two cited evidence labels. If the original score leader has no qualifying
+  candidate, the highest-scoring candidate-grounded finalist becomes rank 1;
+  higher ungrounded finalists are dropped so the score order and distinct
+  runner-up contract remain valid. For model-extracted candidates, “resolved”
+  means the named person/organization and optional public fields passed exact
+  approved-evidence validation; it does not claim third-party verification.
+  When no such candidate exists, the job skips with
+  `needs_more_approved_evidence`; it never completes with a generic
+  strategy-only winner. Tournament context uses only persisted profile,
+  timeline, and approved crawl evidence returned by scoped read-only
+  ProfileScribe tools. It never fetches a source URL directly—even when that
+  source is marked approved. This job never calls People Data Labs, sends
+  outreach, publishes content, or performs provider writes.
 - `rewrite_latest_post` uses the latest ProfileScribe timeline post, mobile
   review feedback such as `rewriteNote` / `rewriteFeedbackReceiptId`, approved
   source evidence, and prior timeline context to submit a narrower replacement
@@ -142,6 +177,12 @@ Every `run-job` receipt includes `metadata.trace` with the job kind, duration,
 MCP tools used, workflow steps, and any handoff recommendation. ProfileScribe
 still owns permissions, storage, ActionProof, distribution queues, receipts, and
 provider execution.
+
+Opportunity tournaments are also research-only when the input includes public
+candidate records: the rig keeps only minimal professional identity, public
+URLs, opaque contact-path references, and availability flags. It does not
+accept or return raw email addresses or phone numbers. Starting a tournament
+does not authorize its recommended action.
 
 OpenRouter-backed runs also retain provider, model, outcome, token, and cost
 accounting metadata when drafting is skipped or a later MCP step fails. Failure

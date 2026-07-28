@@ -40,6 +40,55 @@ Consumer projects own private runtime data:
    submission.
 10. The harness stages the draft back to Profile Scribe.
 
+## Opportunity Tournament Workflow
+
+The `opportunity_tournament` worker path is separate from post composition:
+
+1. ProfileScribe supplies a concrete win objective, hard budget, prior outcome
+   signals, and optionally a compact evidence snapshot and public candidates.
+2. If no snapshot is supplied, the rig reads profile, source, source-evidence,
+   and timeline context through read-only ProfileScribe MCP tools. Source,
+   observation, and extract records enter the grounding catalog only when their
+   source ID is explicitly `approved`; profile/user facts remain eligible.
+   Source metadata alone is not evidence: a source record enters the model
+   catalog only when persisted crawl evidence exists for that approved source.
+   The tournament loader never issues a direct GET to source URLs, follows
+   source redirects, or uses the general source-extract fetcher.
+   Exact structured timeline authors and people in approved source evidence can
+   become candidates, with an internal ProfileScribe profile URL when an author
+   slug exists. The same model call may return up to eight named person or
+   organization candidates, but deterministic validation retains one only when
+   its name and optional fields occur exactly in its approved evidence, its URL
+   is already present there, it is not the profile owner, and its evidence
+   overlaps an evaluated hypothesis. Accepted exact named candidates are marked
+   identity-resolved for the tournament chain; this denotes a resolved
+   evidence tuple, not People Data Labs or another provider's verification.
+3. One bounded OpenRouter call, routed with prompt/completion/request price
+   ceilings, returns compact offers, buyer segments, channels, actions, timing
+   triggers, proof points, follow-ups, and semantic score inputs tied to exact
+   evidence references.
+4. Deterministic code expands at most 10,000 combinations, applies permission,
+   grounding, and anti-volume gates, scores every eligible tuple, and performs
+   diversity selection over a bounded top pool.
+5. The rig returns at most 20 attributable hypotheses, one singular winner,
+   one runner-up, usage/cost accounting, and a mandatory human-review gate whose
+   winning hypothesis ID matches rank 1. Completion requires a named candidate
+   whose approved evidence overlaps the rank-one buyer-segment seed and its
+   offer or proof evidence. The winner action and explanation name that exact
+   candidate and cited evidence, preserving the full objective → tournament →
+   hypothesis → candidate → action chain. The highest-scoring finalist with
+   that complete candidate grounding is promoted to rank 1; any higher-scoring
+   but unactionable finalists are removed while the remaining score order is
+   preserved. Completion also requires at least two finalists so the runner-up
+   is distinct. Without either invariant, the one-call research run skips with
+   `needs_more_approved_evidence` and zero external side effects.
+
+The tournament boundary permits research and recommendation only. It contains
+no People Data Labs integration, contact purchase, outreach execution,
+publishable outreach copy, post submission, or provider mutation. Candidate
+records contain only minimal public professional identity and opaque
+contact-path references; raw contact values stay outside the rig.
+
 ## Integration Boundary
 
 Profile Scribe should be reached through `profilescribe-mcp` by default. The

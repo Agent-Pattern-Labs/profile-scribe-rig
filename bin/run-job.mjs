@@ -2,6 +2,9 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
+import {
+  runOpportunityTournament
+} from './opportunity-tournament.mjs';
 
 const args = process.argv.slice(2);
 
@@ -16,6 +19,8 @@ Environment:
   OPENROUTER_API_KEY                   Optional OpenRouter key for native rig drafting/interviews
   PROFILESCRIBE_RIG_OPENROUTER_MODEL   Optional OpenRouter model override for non-draft native tasks
   PROFILESCRIBE_RIG_DRAFT_MODEL        Optional OpenRouter model override for final post drafting
+  PROFILESCRIBE_RIG_TOURNAMENT_MODEL   Optional OpenRouter model override for opportunity tournaments
+  PROFILESCRIBE_APP_URL                Optional public ProfileScribe base URL for internal profile candidates
   PROFILESCRIBE_RIG_DRAFTER_COMMAND    Optional command that receives context JSON and returns draft JSON
   PROFILESCRIBE_RIG_REWRITE_COMMAND    Optional command that receives rewrite context JSON and returns draft JSON
   PROFILESCRIBE_RIG_CHAT_COMMAND       Optional command that receives chat context JSON and returns reply JSON
@@ -93,6 +98,8 @@ async function runJob(job, options) {
     case 'continue_agent_chat':
     case 'continue_hosted_agent_chat':
       return await runAgentAvatarChatJob(job, options);
+    case 'opportunity_tournament':
+      return await runOpportunityTournamentJob(job, options);
     case 'source_activity_check':
       return sourceActivityRewriteRequested(job.payload)
         ? await runRewriteLatestPostJob(job, options)
@@ -510,6 +517,245 @@ async function runAgentAvatarChatJob(job, options) {
         }] : []
       }
     }
+  };
+}
+
+async function runOpportunityTournamentJob(job, options) {
+  const payload = object(job.payload);
+  const tournamentId = firstNonEmpty(payload.tournamentId, job.id);
+  const model = openRouterTournamentModel();
+  if (options.dryRun) {
+    return {
+      ...skipped(job, 'dry run: opportunity tournament would perform research and return one reviewable recommendation', {
+        tournamentId,
+        hypotheses: [],
+        candidates: [],
+        winner: null,
+        runnerUp: null,
+        searchSpace: {
+          maxHypotheses: Math.min(10000, numberOr(object(payload.budget).maxHypotheses, 10000)),
+          expandedCount: 0,
+          deterministic: true,
+          modelCalls: 0
+        },
+        gate: {
+          decision: 'human_review',
+          requiresReview: true,
+          reason: 'Dry run performed no research and authorized no action.',
+          prohibitedEffects: ['pdl_enrichment', 'outreach', 'publishing', 'provider_writes'],
+          sideEffects: {
+            pdlCalls: 0,
+            outreachAttempts: 0,
+            publishAttempts: 0,
+            providerWrites: 0
+          }
+        },
+        usage: {
+          provider: 'openrouter',
+          calls: 0,
+          reportedCostMicros: 0
+        },
+        trace: {
+          tools: [],
+          steps: [{ name: 'dry_run', status: 'skipped', reason: 'no_provider_calls' }],
+          notes: ['research_only', 'no_pdl', 'no_outreach', 'no_publish']
+        }
+      }),
+      artifactType: 'opportunity_tournament_result',
+      artifactId: tournamentId
+    };
+  }
+  if (!openRouterApiKey()) {
+    return {
+      ...skipped(job, 'Opportunity tournament requires OPENROUTER_API_KEY; no deterministic recommendation was substituted.', {
+        tournamentId,
+        hypotheses: [],
+        candidates: [],
+        winner: null,
+        runnerUp: null,
+        searchSpace: {
+          maxHypotheses: Math.min(10000, numberOr(object(payload.budget).maxHypotheses, 10000)),
+          expandedCount: 0,
+          deterministic: true,
+          modelCalls: 0
+        },
+        gate: {
+          decision: 'block',
+          requiresReview: true,
+          reason: 'The semantic strategy seed generator is unavailable.',
+          prohibitedEffects: ['pdl_enrichment', 'outreach', 'publishing', 'provider_writes'],
+          sideEffects: {
+            pdlCalls: 0,
+            outreachAttempts: 0,
+            publishAttempts: 0,
+            providerWrites: 0
+          }
+        },
+        usage: {
+          provider: 'openrouter',
+          calls: 0,
+          reportedCostMicros: 0
+        },
+        trace: {
+          tools: [],
+          steps: [{ name: 'strategy_generation', status: 'skipped', reason: 'missing_openrouter_key' }],
+          notes: ['research_only', 'no_pdl', 'no_outreach', 'no_publish']
+        }
+      }),
+      artifactType: 'opportunity_tournament_result',
+      artifactId: tournamentId
+    };
+  }
+
+  const hasEvidenceSnapshot = Object.keys(object(payload.evidenceSnapshot)).length > 0;
+  const context = hasEvidenceSnapshot
+    ? {}
+    : await loadOpportunityTournamentContext({
+      ...payload,
+      topic: firstNonEmpty(
+        object(payload.objective).outcome,
+        object(payload.objective).desiredOutcome,
+        payload.outcome,
+        'professional opportunity'
+      )
+    });
+  const tournament = await runOpportunityTournament({
+    job: {
+      ...job,
+      payload: {
+        ...payload,
+        profileScribePublicBaseURL: firstNonEmpty(
+          payload.profileScribePublicBaseURL,
+          configuredProfileScribePublicBaseURL()
+        )
+      }
+    },
+    context,
+    model,
+    completeJSON: async (request) => {
+      try {
+        const completion = await callOpenRouterJSON(request);
+        rememberRunLLMMetadata('opportunityTournament', {
+          provider: 'openrouter',
+          model,
+          status: 'completed',
+          openRouterUsage: completion.usage
+        });
+        return completion;
+      } catch (error) {
+        rememberRunLLMMetadata('opportunityTournament', {
+          provider: 'openrouter',
+          model,
+          status: 'failed',
+          error: openRouterFailureCode(error),
+          openRouterUsage: openRouterFailureUsage(error)
+        });
+        throw error;
+      }
+    }
+  });
+  rememberRunLLMMetadata(
+    'opportunityTournament',
+    object(object(tournament.llm).strategyGeneratorJudge)
+  );
+
+  const completed = tournament.status === 'completed';
+  const researchTools = hasEvidenceSnapshot
+    ? []
+    : [
+      'read_profile',
+      'read_sources',
+      'read_source_evidence',
+      'search_timeline_posts',
+      'discover_timeline_posts'
+    ];
+  return {
+    status: tournament.status,
+    jobId: text(job.id),
+    jobKind: text(job.kind),
+    summary: tournament.summary,
+    artifactType: 'opportunity_tournament_result',
+    artifactId: tournament.tournamentId || tournamentId,
+    metadata: {
+      tournamentId: tournament.tournamentId || tournamentId,
+      algorithmVersion: tournament.algorithmVersion,
+      objective: object(tournament.objective),
+      evidenceHash: text(tournament.evidenceHash),
+      hypotheses: arrayOfObjects(tournament.hypotheses),
+      candidates: arrayOfObjects(tournament.candidates),
+      winner: tournament.winner || null,
+      runnerUp: tournament.runnerUp || null,
+      searchSpace: object(tournament.searchSpace),
+      gate: object(tournament.gate),
+      usage: object(tournament.usage),
+      llm: object(tournament.llm),
+      trace: {
+        tools: researchTools,
+        steps: [
+          { name: 'validate_objective', status: tournament.objective?.outcome ? 'completed' : 'skipped' },
+          { name: 'build_evidence_snapshot', status: tournament.evidenceHash ? 'completed' : 'skipped' },
+          {
+            name: 'generate_semantic_strategy_seeds',
+            status: object(tournament.usage).successfulCalls > 0 ? 'completed' : 'skipped'
+          },
+          {
+            name: 'expand_and_judge_strategy_space',
+            status: object(tournament.searchSpace).expandedCount > 0 ? 'completed' : 'skipped'
+          },
+          { name: 'select_singular_recommendation', status: completed ? 'completed' : 'skipped' },
+          { name: 'human_review_gate', status: completed ? 'waiting_for_review' : 'skipped' }
+        ],
+        notes: [
+          'research_only',
+          'one_bounded_llm_call',
+          'deterministic_expansion',
+          'no_pdl',
+          'no_outreach',
+          'no_publish'
+        ]
+      }
+    }
+  };
+}
+
+async function loadOpportunityTournamentContext(payload) {
+  const profile = await callMCPTool('read_profile', {});
+  const sources = await callMCPTool('read_sources', {});
+  const sourceList = Array.isArray(sources) ? sources : [];
+  const sourceEvidence = await readSourceEvidence(
+    numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_EVIDENCE_LIMIT, 160)
+  );
+  let timelineSearch = null;
+  const query = text(
+    payload.topic ||
+    profile?.identity?.headline ||
+    profile?.identity?.fullName
+  );
+  if (query) {
+    try {
+      timelineSearch = await callMCPTool(
+        'search_timeline_posts',
+        { query, limit: 8 }
+      );
+    } catch {
+      timelineSearch = null;
+    }
+  }
+  const timelineBrief = await buildTimelineBrief({
+    payload,
+    profile,
+    sources: sourceList,
+    primarySearch: timelineSearch
+  });
+  return {
+    profile,
+    sources: sourceList,
+    sourceEvidence,
+    timelineSearch,
+    timelineBrief,
+    // Opportunity tournaments consume only persisted safe crawl evidence.
+    // They never fetch a source URL directly, regardless of source status.
+    sourceExtracts: []
   };
 }
 
@@ -1226,13 +1472,21 @@ function dedupeTimelinePosts(posts) {
 
 function normalizeTimelinePost(post) {
   post = object(post);
+  const author = object(post.author);
   return compact({
     id: text(post.id || post.postId || post.draftId),
     postId: text(post.postId || post.id || post.draftId),
     topic: text(post.topic || post.title || post.headline),
     body: text(post.body || post.text || post.content),
     publishedAt: text(post.publishedAt || post.createdAt || post.updatedAt),
-    authorSlug: text(post.authorSlug || post.slug),
+    ownerTenantId: text(post.ownerTenantId || author.tenantId),
+    ownerUserId: text(post.ownerUserId || author.userId),
+    authorSlug: text(post.authorSlug || author.slug || post.slug),
+    authorName: text(post.authorName || author.fullName || author.name),
+    authorHeadline: text(post.authorHeadline || author.headline || author.role),
+    authorCompany: text(post.authorCompany || author.company || author.organization),
+    authorLocation: text(post.authorLocation || author.location),
+    authorProfileUrl: text(post.authorProfileUrl || author.profileUrl || author.publicUrl),
     url: text(post.url || post.href),
     matchReasons: array(post.matchReasons).slice(0, 4),
     sources: normalizeTimelinePostSources(post),
@@ -1306,7 +1560,14 @@ function summarizeTimelineBrief(posts, sources) {
       topic: post.topic,
       body: truncate(post.body, 700),
       publishedAt: post.publishedAt,
+      ownerTenantId: post.ownerTenantId,
+      ownerUserId: post.ownerUserId,
       authorSlug: post.authorSlug,
+      authorName: post.authorName,
+      authorHeadline: post.authorHeadline,
+      authorCompany: post.authorCompany,
+      authorLocation: post.authorLocation,
+      authorProfileUrl: post.authorProfileUrl,
       url: post.url,
       sources: post.sources,
       selectedEvidence: compactTimelinePostSelectedEvidence(post.selectedEvidence),
@@ -2342,7 +2603,7 @@ function agentChatTraceTools(resolvedFromList) {
   ];
 }
 
-async function callOpenRouterJSON({ model, system, user, maxTokens }) {
+async function callOpenRouterJSON({ model, system, user, maxTokens, provider }) {
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
   model = text(model) || openRouterModel();
@@ -2359,6 +2620,7 @@ async function callOpenRouterJSON({ model, system, user, maxTokens }) {
       model,
       temperature: 0.25,
       max_tokens: numberOr(maxTokens, 700),
+      ...(Object.keys(object(provider)).length > 0 ? { provider: object(provider) } : {}),
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user }
@@ -2387,7 +2649,8 @@ async function callOpenRouterJSON({ model, system, user, maxTokens }) {
   }
   return {
     data,
-    usage
+    usage,
+    generationId: text(envelope?.id)
   };
 }
 
@@ -2607,6 +2870,27 @@ function openRouterDraftModel() {
     DEFAULT_OPENROUTER_DRAFT_MODEL;
 }
 
+function openRouterTournamentModel() {
+  return text(process.env.PROFILESCRIBE_RIG_TOURNAMENT_MODEL) ||
+    openRouterModel();
+}
+
+function configuredProfileScribePublicBaseURL() {
+  const raw = firstNonEmpty(
+    process.env.PROFILESCRIBE_APP_URL,
+    process.env.PROFILE_SCRIBE_API_URL,
+    'https://profilescribe.com'
+  );
+  try {
+    const parsed = new URL(raw);
+    return ['http:', 'https:'].includes(parsed.protocol)
+      ? parsed.origin
+      : 'https://profilescribe.com';
+  } catch {
+    return 'https://profilescribe.com';
+  }
+}
+
 function openRouterChatCompletionsURL() {
   return text(process.env.PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL) ||
     text(process.env.PROFILESCRIBE_OPENROUTER_CHAT_COMPLETIONS_URL) ||
@@ -2762,7 +3046,14 @@ function compactTimelineBrief(timelineBrief) {
       topic: post.topic,
       body: truncate(post.body, 500),
       publishedAt: post.publishedAt,
+      ownerTenantId: post.ownerTenantId,
+      ownerUserId: post.ownerUserId,
       authorSlug: post.authorSlug,
+      authorName: post.authorName,
+      authorHeadline: post.authorHeadline,
+      authorCompany: post.authorCompany,
+      authorLocation: post.authorLocation,
+      authorProfileUrl: post.authorProfileUrl,
       url: post.url,
       sources: arrayOfObjects(post.sources).slice(0, 4),
       selectedEvidence: compactTimelinePostSelectedEvidence(post.selectedEvidence)

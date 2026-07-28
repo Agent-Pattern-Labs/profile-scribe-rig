@@ -52,6 +52,46 @@
         { "name": "submittedAt", "type": "datetime" },
         { "name": "failure", "type": "string" }
       ]
+    },
+    {
+      "name": "profile-scribe.opportunity-tournament-job",
+      "version": "1.0.0",
+      "description": "Research-only worker input for selecting one evidence-grounded professional opportunity.",
+      "fields": [
+        { "name": "id", "type": "string", "required": true },
+        { "name": "kind", "type": "enum", "required": true, "values": ["opportunity_tournament"] },
+        { "name": "tenantId", "type": "string", "required": true },
+        { "name": "userId", "type": "string", "required": true },
+        { "name": "payload.tournamentId", "type": "string", "required": true },
+        { "name": "payload.objective", "type": "object", "required": true },
+        { "name": "payload.budget", "type": "object", "required": true },
+        { "name": "payload.evidenceSnapshot", "type": "object" },
+        { "name": "payload.priorOutcomes", "type": "array" },
+        { "name": "payload.candidates", "type": "array" },
+        { "name": "payload.researchOnly", "type": "boolean", "required": true }
+      ]
+    },
+    {
+      "name": "profile-scribe.opportunity-tournament-result",
+      "version": "1.0.0",
+      "description": "Compact tournament receipt stored by the ProfileScribe worker; it authorizes no outreach, enrichment, publishing, or provider write.",
+      "fields": [
+        { "name": "status", "type": "enum", "required": true, "values": ["completed", "skipped"] },
+        { "name": "jobId", "type": "string", "required": true },
+        { "name": "jobKind", "type": "enum", "required": true, "values": ["opportunity_tournament"] },
+        { "name": "artifactType", "type": "enum", "required": true, "values": ["opportunity_tournament_result"] },
+        { "name": "artifactId", "type": "string", "required": true },
+        { "name": "metadata.objective", "type": "object", "required": true },
+        { "name": "metadata.hypotheses", "type": "array", "required": true },
+        { "name": "metadata.candidates", "type": "array", "required": true },
+        { "name": "metadata.winner", "type": "object" },
+        { "name": "metadata.winner.candidateId", "type": "string" },
+        { "name": "metadata.runnerUp", "type": "object" },
+        { "name": "metadata.searchSpace", "type": "object", "required": true },
+        { "name": "metadata.gate", "type": "object", "required": true },
+        { "name": "metadata.gate.winnerHypothesisId", "type": "string" },
+        { "name": "metadata.usage", "type": "object", "required": true }
+      ]
     }
   ]
 }
