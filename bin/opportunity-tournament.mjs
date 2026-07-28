@@ -1400,7 +1400,7 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
         .filter((id, familyIndex, ids) => ids.indexOf(id) === familyIndex)
         .slice(0, 4);
       const specificEvidenceRefs = strategyAnchorEvidenceRefs(evidenceRefs);
-      const familyIds = declaredFamilyIds.filter((id) =>
+      let familyIds = declaredFamilyIds.filter((id) =>
         stringsOverlap(
           specificEvidenceRefs,
           strategyAnchorEvidenceRefs(
@@ -1408,8 +1408,29 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
           )
         )
       );
+      let familyLocalTimingRepair = null;
       if (declaredFamilyIds.length > 0 && familyIds.length === 0) {
         out.familyEvidenceMismatchSeedCount += 1;
+        if (name === 'timingTriggers' && declaredFamilyIds.length === 1) {
+          const familyID = declaredFamilyIds[0];
+          const familyEvidence = new Set(
+            asArray(strategyFamilies.get(familyID)?.evidenceRefs)
+          );
+          const alreadyGroundedFamilyObservations =
+            normalizedFamilyObservationEvidenceRefs(out, familyID)
+              .filter((ref) => familyEvidence.has(ref));
+          familyLocalTimingRepair = repairTimingAsVerification(
+            alreadyGroundedFamilyObservations,
+            evidenceByID,
+            referenceTime
+          );
+          if (familyLocalTimingRepair) {
+            familyIds = [familyID];
+            evidenceRefs = [
+              ...familyLocalTimingRepair.supportEvidenceRefs
+            ];
+          }
+        }
       }
       if (familyIds.length === 0) {
         out.invalidFamilySeedCount += 1;
@@ -1434,38 +1455,46 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
       let supportEvidenceRefs = [];
       let timingWasRepaired = false;
       if (name === 'timingTriggers') {
-        const supportedRefs = evidenceRefs.filter((id) =>
-          /^observation:/i.test(id) &&
-          timingEvidenceIsSafe(evidenceByID.get(id), referenceTime) &&
-          evidenceSupportsExactTimingText(
-            evidenceByID.get(id),
-            supportPhrase,
-            label
-          )
-        );
-        if (!supportPhrase ||
-            supportedRefs.length === 0 ||
-            !timingSupportPhraseGroundsLabel(label, supportPhrase)) {
-          const repaired = repairTimingAsVerification(
-            evidenceRefs.filter((ref) =>
-              familyIds.some((familyID) =>
-                asArray(strategyFamilies.get(familyID)?.evidenceRefs)
-                  .includes(ref)
-              )
-            ),
-            evidenceByID,
-            referenceTime
-          );
-          if (!repaired) {
-            out.unsupportedTimingSeedCount += 1;
-            continue;
-          }
-          label = repaired.label;
-          supportPhrase = repaired.supportPhrase;
-          supportEvidenceRefs = repaired.supportEvidenceRefs;
+        if (familyLocalTimingRepair) {
+          label = familyLocalTimingRepair.label;
+          supportPhrase = familyLocalTimingRepair.supportPhrase;
+          supportEvidenceRefs =
+            familyLocalTimingRepair.supportEvidenceRefs;
           timingWasRepaired = true;
         } else {
-          supportEvidenceRefs = supportedRefs;
+          const supportedRefs = evidenceRefs.filter((id) =>
+            /^observation:/i.test(id) &&
+            timingEvidenceIsSafe(evidenceByID.get(id), referenceTime) &&
+            evidenceSupportsExactTimingText(
+              evidenceByID.get(id),
+              supportPhrase,
+              label
+            )
+          );
+          if (!supportPhrase ||
+              supportedRefs.length === 0 ||
+              !timingSupportPhraseGroundsLabel(label, supportPhrase)) {
+            const repaired = repairTimingAsVerification(
+              evidenceRefs.filter((ref) =>
+                familyIds.some((familyID) =>
+                  asArray(strategyFamilies.get(familyID)?.evidenceRefs)
+                    .includes(ref)
+                )
+              ),
+              evidenceByID,
+              referenceTime
+            );
+            if (!repaired) {
+              out.unsupportedTimingSeedCount += 1;
+              continue;
+            }
+            label = repaired.label;
+            supportPhrase = repaired.supportPhrase;
+            supportEvidenceRefs = repaired.supportEvidenceRefs;
+            timingWasRepaired = true;
+          } else {
+            supportEvidenceRefs = supportedRefs;
+          }
         }
       }
       const key = `${comparable(label)}|${familyIds.join(',')}`;
@@ -1601,6 +1630,19 @@ function strategyFamilyAnchorCoverage(seedSet) {
 function strategyObservationEvidenceRefs(values) {
   return compactStrings(values)
     .filter((ref) => /^observation:/i.test(ref));
+}
+
+function normalizedFamilyObservationEvidenceRefs(seedSet, familyID) {
+  const refs = [];
+  for (const [dimension] of DIMENSIONS) {
+    for (const seedValue of asArray(asObject(seedSet)[dimension])) {
+      const seed = asObject(seedValue);
+      if (!asArray(seed.familyIds).includes(familyID)) continue;
+      refs.push(...strategyObservationEvidenceRefs(seed.evidenceRefs));
+    }
+  }
+  return compactStrings(refs)
+    .filter((ref, index, values) => values.indexOf(ref) === index);
 }
 
 function normalizeStrategyFamilies(values, evidenceByID) {

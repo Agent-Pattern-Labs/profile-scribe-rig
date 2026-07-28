@@ -826,6 +826,18 @@ const server = createServer(async (request, response) => {
         d: dimensions
       };
     });
+    if (input.objective?.id === 'obj-nested-family-bundles') {
+      const foreignTimingRef = nestedFamilies[1].e.find((ref) =>
+        !nestedFamilies[0].e.includes(ref)
+      );
+      if (foreignTimingRef) {
+        // Exercise the production-shaped one-call failure: the model placed
+        // family B evidence on family A's only timing item. Normalization may
+        // salvage timing only by using a safe observation already accepted by
+        // family A and rewriting the item as a conservative verification.
+        nestedFamilies[0].d.timingTriggers[0].e = [foreignTimingRef];
+      }
+    }
     if (input.objective?.id === 'obj-incomplete-family-bundles') {
       nestedFamilies[1].d.timingTriggers = [];
     }
@@ -2110,6 +2122,7 @@ try {
           family.sharedAnchorCount !== 0
       ) ||
       nestedFamily.metadata?.searchSpace?.strategyFamilyCollisionCount !== 0 ||
+      nestedFamily.metadata?.searchSpace?.familyEvidenceMismatchSeedCount !== 1 ||
       nestedFamily.metadata?.searchSpace?.motionConflictCount !== 0 ||
       nestedFamily.metadata?.searchSpace?.timingVerificationRepairCount !== 2 ||
       nestedFamily.metadata?.searchSpace?.unsupportedTimingSeedCount !== 0 ||
@@ -2123,6 +2136,12 @@ try {
         hypothesis.score?.timing > 0.25 ||
         hypothesis.score?.risk < 0.35 ||
         hypothesis.score?.uncertainty < 0.75 ||
+        !hypothesis.provenance?.familyEvidenceRefs?.includes(
+          hypothesis.provenance?.timingEvidenceRef
+        ) ||
+        !hypothesis.provenance?.dimensions?.timingTrigger?.evidenceRefs?.includes(
+          hypothesis.provenance?.timingEvidenceRef
+        ) ||
         JSON.stringify(
           [...new Set(
             Object.values(hypothesis.provenance?.dimensions || {})
