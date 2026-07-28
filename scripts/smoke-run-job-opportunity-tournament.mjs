@@ -831,9 +831,8 @@ try {
     if (call.max_tokens !== 4000) {
       throw new Error(`expected bounded 4000-token completion, got ${call.max_tokens}`);
     }
-    if (call.reasoning?.effort !== 'none' ||
-        call.reasoning?.exclude !== true) {
-      throw new Error(`expected tournament reasoning to be disabled, got ${JSON.stringify(call.reasoning)}`);
+    if (call.response_format?.type !== 'json_object') {
+      throw new Error(`expected tournament JSON-object response mode, got ${JSON.stringify(call.response_format)}`);
     }
     const maxPrice = call.provider?.max_price || {};
     if (maxPrice.prompt !== 2 ||

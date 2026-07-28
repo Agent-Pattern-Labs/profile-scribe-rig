@@ -187,9 +187,8 @@ export async function runOpportunityTournament({
       system: prompt.system,
       user: prompt.user,
       maxTokens: budget.maxOutputTokens,
-      reasoning: {
-        effort: 'none',
-        exclude: true
+      responseFormat: {
+        type: 'json_object'
       },
       provider: {
         max_price: budget.providerMaxPrice

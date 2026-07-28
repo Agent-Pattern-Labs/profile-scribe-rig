@@ -28,6 +28,7 @@ Environment:
 `;
 
 const DEFAULT_OPENROUTER_MODEL = 'deepseek/deepseek-v4-pro';
+const DEFAULT_OPENROUTER_TOURNAMENT_MODEL = 'mistralai/mistral-large-2512';
 const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-4.8';
 const DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -2609,7 +2610,7 @@ async function callOpenRouterJSON({
   user,
   maxTokens,
   provider,
-  reasoning
+  responseFormat
 }) {
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
@@ -2628,7 +2629,9 @@ async function callOpenRouterJSON({
       temperature: 0.25,
       max_tokens: numberOr(maxTokens, 700),
       ...(Object.keys(object(provider)).length > 0 ? { provider: object(provider) } : {}),
-      ...(Object.keys(object(reasoning)).length > 0 ? { reasoning: object(reasoning) } : {}),
+      ...(Object.keys(object(responseFormat)).length > 0
+        ? { response_format: object(responseFormat) }
+        : {}),
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user }
@@ -2880,7 +2883,7 @@ function openRouterDraftModel() {
 
 function openRouterTournamentModel() {
   return text(process.env.PROFILESCRIBE_RIG_TOURNAMENT_MODEL) ||
-    openRouterModel();
+    DEFAULT_OPENROUTER_TOURNAMENT_MODEL;
 }
 
 function configuredProfileScribePublicBaseURL() {
