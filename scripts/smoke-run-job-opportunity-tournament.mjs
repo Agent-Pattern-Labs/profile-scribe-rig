@@ -828,8 +828,8 @@ try {
     }
   }
   for (const call of openRouterCalls) {
-    if (call.max_tokens !== 4000) {
-      throw new Error(`expected bounded 4000-token completion, got ${call.max_tokens}`);
+    if (call.max_tokens !== 8000) {
+      throw new Error(`expected bounded 8000-token completion, got ${call.max_tokens}`);
     }
     if (call.response_format?.type !== 'json_object') {
       throw new Error(`expected tournament JSON-object response mode, got ${JSON.stringify(call.response_format)}`);

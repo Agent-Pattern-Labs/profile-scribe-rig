@@ -875,7 +875,7 @@ function normalizeBudget(value) {
     maxHypotheses: clampInteger(raw.maxHypotheses, 1, MAX_HYPOTHESES, MAX_HYPOTHESES),
     maxFinalists: clampInteger(raw.maxFinalists, 2, MAX_FINALISTS, MAX_FINALISTS),
     maxLLMCalls: clampInteger(raw.maxLLMCalls, 0, 1, 1),
-    maxOutputTokens: clampInteger(raw.maxOutputTokens, 600, 4_200, 4_000),
+    maxOutputTokens: clampInteger(raw.maxOutputTokens, 600, 10_000, 8_000),
     minimumScore: clampNumber(raw.minimumScore, 0.2, 0.9, 0.42),
     hardStop: raw.hardStop !== false
   };
