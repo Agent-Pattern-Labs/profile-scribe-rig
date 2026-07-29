@@ -3600,7 +3600,7 @@ function revenueEvidenceExperiment({
   const stopCondition =
     asset
       ? 'Stop after 1 attributable paid outcome or 14 calendar days from launch, followed by at most 1 rerun informed by the result; do not expand volume automatically.'
-      : 'Stop after 1 evidence approval and 1 rerun; do not launch or expand an external test automatically.';
+      : 'Stop after 1 evidence approval or 14 calendar days, followed by at most 1 rerun; do not launch or expand an external test automatically.';
   return {
     contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
     id: `experiment-${stableHash({
@@ -3780,13 +3780,13 @@ function inboundAssetEvidenceSupportsPaidConversion(
   if (/\b(?:complimentary|free|no fee|without charge|zero cost)\b/.test(text)) {
     return false;
   }
-  if (/\b(?:insurance (?:is )?not accepted|not covered|no coverage|without coverage|not reimburs(?:able|ed)|no reimbursement|claim denied)\b/.test(
+  if (/\b(?:insurance (?:is )?not accepted|health ?care (?:is )?not accepted|no health ?care accepted|not covered|no coverage|without coverage|not reimburs(?:able|ed)|no reimbursement|claim denied)\b/.test(
     text
   )) {
     return false;
   }
   const insurancePaidContext =
-    /\b(?:covered by insurance|insurance[- ]covered|insurance (?:is )?accepted|accepts insurance|bill(?:s|ing)? insurance|insurance claim|reimburs(?:able|ed|ement)|claim payment)\b/.test(
+    /\b(?:covered by insurance|insurance[- ]covered|insurance (?:is )?accepted|accepts insurance|health ?care accepted|bill(?:s|ing)? insurance|insurance claim|reimburs(?:able|ed|ement)|claim payment)\b/.test(
       text
     );
   const namesOffer =

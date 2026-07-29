@@ -2604,7 +2604,14 @@ try {
   uhcOperationsOnlyJob.payload.objective.id =
     'obj-uhc-eligibility-scheduling-no-revenue';
   uhcOperationsOnlyJob.payload.objective.outcome =
-    'Generate one new paid in-home lactation consultation booking.';
+    'Generate one new paid same-day United Healthcare-accepted home-visit booking.';
+  const uhcOwnedObservation =
+    uhcOperationsOnlyJob.payload.evidenceSnapshot.sourceEvidence.find(
+      (item) => item.observationId === 'obs-patient-inbound'
+    );
+  uhcOwnedObservation.title = 'Lactation Consultant NYC';
+  uhcOwnedObservation.summary =
+    'Book a Same-Day Home Visit Today. United Healthcare Accepted. Helping Mothers Breastfeed with Confidence.';
   const uhcOperationsOnlyJobFile = join(
     tmp,
     'uhc-operations-only-job.json'
@@ -3180,6 +3187,9 @@ try {
         result.metadata?.nextExperiment?.contractVersion !==
           'revenue_evidence_experiment_v1' ||
         result.metadata?.nextExperiment?.asset !== null ||
+        !/\b14\s+calendar\s+days\b/i.test(
+          result.metadata?.nextExperiment?.stopCondition || ''
+        ) ||
         !/\b1\s+rerun\b/i.test(
           result.metadata?.nextExperiment?.stopCondition || ''
         ) ||
@@ -3201,6 +3211,9 @@ try {
         'revenue_evidence_experiment_v1' ||
       !nonInboundOwnedAsset.metadata?.nextExperiment?.action ||
       !nonInboundOwnedAsset.metadata?.nextExperiment?.successSignal ||
+      !/\b14\s+calendar\s+days\b/i.test(
+        nonInboundOwnedAsset.metadata?.nextExperiment?.stopCondition || ''
+      ) ||
       !/\b1\s+rerun\b/i.test(
         nonInboundOwnedAsset.metadata?.nextExperiment?.stopCondition || ''
       ) ||
@@ -3858,6 +3871,15 @@ try {
         'inbound_revenue_evidence' ||
       uhcOperationsOnly.metadata?.nextExperiment?.asset?.publicUrl !==
         'https://example.com/delivery-map/lactation-consultant-home-visit' ||
+      !uhcOperationsOnly.metadata?.nextExperiment?.evidenceRefs?.includes(
+        'observation:obs-patient-inbound'
+      ) ||
+      !/\b14\s+calendar\s+days\b/i.test(
+        uhcOperationsOnly.metadata?.nextExperiment?.stopCondition || ''
+      ) ||
+      !/organic\/local search/i.test(
+        uhcOperationsOnly.metadata?.nextExperiment?.action || ''
+      ) ||
       uhcOperationsOnly.metadata?.nextExperiment?.rerunPolicy?.maxReruns !==
         1 ||
       uhcOperationsOnly.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
