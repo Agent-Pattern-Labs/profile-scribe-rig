@@ -304,11 +304,10 @@ export async function runOpportunityTournament({
       system: prompt.system,
       user: prompt.user,
       maxTokens: budget.maxOutputTokens,
-      responseFormat: {
-        type: 'json_object'
-      },
+      responseFormat: tournamentStructuredResponseFormat(evidenceCatalog),
       provider: {
-        max_price: budget.providerMaxPrice
+        max_price: budget.providerMaxPrice,
+        require_parameters: true
       }
     });
   } catch (error) {
@@ -1262,13 +1261,14 @@ Generate compact incremental-income strategy dimensions grounded only in the sup
 This is internal hypothesis exploration, not outreach, publishable copy, or permission to act.
 Never invent accomplishments, customers, affiliations, contact details, market demand, intent, urgency, or relationships.
 Treat experience with a past endDate as historical proof, never as a current role or affiliation.
-Do not recommend applying for, enrolling in, or creating a capability when the evidence says that capability already exists; recommend a bounded way to verify or use it instead.
+Do not recommend applying for, enrolling in, or creating a capability when the evidence says that capability already exists. Treat the existing capability as proof or supporting context for a paid acquisition/conversion path. Any verification of that capability belongs only in supportingBottleneck and must never be the primary action.
 Use only exact evidence IDs from evidenceCatalog. Unknown evidence IDs will be discarded.
 You may optionally extract a compact named person or organization candidate only when its exact name appears verbatim in the cited evidence. Do not return contact details or URLs; return no candidate rather than infer or complete an identity.
 When an exact named organization is the intended target buyer, begin that buyerSegments label with the exact organization name and return the same organization in candidates.
 Keep every strategy family coherent end to end. Never mix a buyer, offer, channel, action, timing trigger, proof point, or follow-up from different business motions.
 Every family must trace one actual buyer and explicitly paid offer through inbound, warm, existing-customer, partner, or otherwise permissioned acquisition to an observable paid conversion and durable attribution record. A conversation, inquiry, eligibility check, scheduled consultation, profile change, post, impression, workflow improvement, or completed research task is not incremental income.
 Operations, administration, visibility, content, research, and workflow improvements may appear only as auxiliary supportingBottleneck context. The singular action must itself advance permissioned acquisition or paid conversion, align with revenuePath.conversionAction, and must never merely perform the supporting bottleneck.
+Construct each family's revenuePath first. Then derive that family's paid offer, buyer, channel, action, timing, proof, and follow-up items from the same revenue path.
 Return exactly two complete top-level family bundles named familyA and familyB. Family A is the strongest grounded path; family B is the strongest coherent alternative. They may use distinct tactics within the same business motion when the evidence does not support two different motions.
 Prefer an inbound paid-conversion path for familyA when approved evidence can ground it. Use warm referral, partner channel, existing-customer, or permissioned-outreach paths when inbound is ungrounded or semantically weaker; never invent inbound demand or an inbound asset.
 Within each family bundle, return exactly two family-specific offers, buyer segments, channels, actions, and follow-ups, plus exactly one timing trigger, one proof point, and one revenue path. Never return global dimension arrays or cross-family compatibility tags.
@@ -1291,14 +1291,14 @@ Return only JSON.`;
         m: 'one semantic motion: payer_network, patient_inbound, clinical_referral, hospital_program, employer_workplace, or organization_partnership',
         e: ['one or more exact evidenceCatalog.id values grounding this family, including at least one observation:* anchor'],
         d: {
+          revenuePaths: ['exactly one revenuePathSchema object; construct this first'],
           offers: ['exactly two itemSchema objects'],
           buyerSegments: ['exactly two itemSchema objects'],
           channels: ['exactly two itemSchema objects'],
           actions: ['exactly two itemSchema objects'],
           timingTriggers: ['exactly one itemSchema object with q'],
           proofPoints: ['exactly one itemSchema object'],
-          followUps: ['exactly two itemSchema objects'],
-          revenuePaths: ['exactly one revenuePathSchema object']
+          followUps: ['exactly two itemSchema objects']
         }
       },
       requiredDimensions: DIMENSIONS.map(([name]) => name),
@@ -1351,13 +1351,16 @@ Return only JSON.`;
       w: 'Optional judge-weight object using the short score keys. Keep evidence and objective fit dominant.',
       compactness: 'Use only the compact item keys above. Do not restate the evidence or schema and do not add prose outside JSON.',
       hardRules: [
+        'Before returning JSON, silently audit every family against the revenuePathSchema and every rule below. Repair the family in place when any required paid, acquisition, conversion, revenue-proof, attribution, or evidence term is missing.',
         'Offers and proofPoints must cite direct evidence.',
-        'Every offer must explicitly be paid, billable, reimbursable, subscription, retainer, sale, pilot, or contract work. Free activity and generic awareness are not offers.',
+        'Every offers item l must literally contain paid, billable, reimbursable, subscription, retainer, sale, paid pilot, or contract. Free activity and generic awareness are not offers.',
         'Each buyer segment must identify the actual payer/customer or a payer-linked beneficiary path that produces the paid outcome.',
         'Every family must include exactly one incremental_revenue_v1 revenuePaths item with all revenuePathSchema fields except optional supportingBottleneck.',
         'Every revenue path must cite evidence shared with its buyer, offer, channel, and action or proof, and must include a positive conservative vm.',
         'A qualified inquiry, eligibility check, coverage verification, scheduled consultation, completed workflow, post, impression, or conversation is not a revenue outcome unless the path also specifies the downstream paid conversion and durable attribution signal.',
-        'The family action and revenuePath conversionAction must independently advance inbound or permissioned acquisition or the paid conversion. Reject operations-only verification, scheduling, administration, content, profile, workflow, research, and optimization actions as the recommendation even when supportingBottleneck records them.',
+        'Every actions item l and revenuePath conversionAction must each literally name its inbound, warm referral, permissioned, existing-customer, or partner acquisition path and a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot commitment. Reject operations-only verification, scheduling, administration, content, profile, workflow, research, and optimization actions as the recommendation even when supportingBottleneck records them.',
+        'Every observableRevenueOutcome must literally name a durable paid booking, paid claim, payment receipt, signed contract/agreement, deposit received, paid invoice, checkout/order/purchase/sale, subscription, retainer, recorded revenue/income, or reimbursement received.',
+        'Every attributionSignal must literally name source, referral, UTM, campaign, origin, channel, code, or CRM and the booking/payment/invoice/contract/checkout/order/claim/CRM/referral record that stores it.',
         'Acquisition must be inbound, warm referral, explicitly permissioned outreach, existing-customer, or partner-channel. Reject cold outreach, purchased lists, scraping, bulk contact, and spray-and-pray.',
         'Attribution must connect the paid outcome to the acquisition source through a booking, payment, invoice/contract, checkout/order, claim, CRM-source, or referral-code record.',
         'Buyer segments may be plausible inferences but must cite evidence supporting the fit.',
@@ -1390,14 +1393,14 @@ Return only JSON.`;
         m: '',
         e: [],
         d: {
+          revenuePaths: [],
           offers: [],
           buyerSegments: [],
           channels: [],
           actions: [],
           timingTriggers: [],
           proofPoints: [],
-          followUps: [],
-          revenuePaths: []
+          followUps: []
         }
       },
       familyB: {
@@ -1406,14 +1409,14 @@ Return only JSON.`;
         m: '',
         e: [],
         d: {
+          revenuePaths: [],
           offers: [],
           buyerSegments: [],
           channels: [],
           actions: [],
           timingTriggers: [],
           proofPoints: [],
-          followUps: [],
-          revenuePaths: []
+          followUps: []
         }
       },
       candidates: [],
@@ -1421,6 +1424,304 @@ Return only JSON.`;
     }
   });
   return { system, user };
+}
+
+function tournamentStructuredResponseFormat(evidenceCatalog) {
+  const evidenceIDs = compactStrings(
+    asArray(evidenceCatalog).map((item) => asObject(item).id)
+  ).slice(0, MAX_EVIDENCE_ITEMS);
+  const evidenceRef = {
+    type: 'string',
+    ...(evidenceIDs.length > 0
+      ? { enum: evidenceIDs }
+      : { minLength: 1 })
+  };
+  const evidenceRefs = {
+    type: 'array',
+    items: { $ref: '#/$defs/evidenceRef' },
+    minItems: 1,
+    maxItems: 12
+  };
+  const scoreProperties = Object.fromEntries([
+    'of',
+    'es',
+    'ba',
+    'ti',
+    'wp',
+    're',
+    'ev',
+    'ef',
+    'co',
+    'ri',
+    'un'
+  ].map((key) => [
+    key,
+    { type: 'number', minimum: 0, maximum: 1 }
+  ]));
+  const scores = {
+    type: 'object',
+    properties: scoreProperties,
+    required: Object.keys(scoreProperties),
+    additionalProperties: false
+  };
+  const item = (labelDescription, timing = false) => {
+    const properties = {
+      id: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 80
+      },
+      l: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 180,
+        description: labelDescription
+      },
+      e: { $ref: '#/$defs/evidenceRefs' },
+      ...(timing
+        ? {
+            q: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 180,
+              description:
+                'An exact phrase copied from a cited observation that supports the timing, or the exact phrase that makes a review-first timing verification relevant.'
+            }
+          }
+        : {}),
+      s: { $ref: '#/$defs/scores' },
+      u: {
+        type: 'string',
+        maxLength: 240,
+        description:
+          'A short material unknown; use an empty string only when no material unknown remains.'
+      }
+    };
+    return {
+      type: 'object',
+      properties,
+      required: Object.keys(properties),
+      additionalProperties: false
+    };
+  };
+  const exactItems = (ref, count) => ({
+    type: 'array',
+    items: { $ref: ref },
+    minItems: count,
+    maxItems: count
+  });
+  const family = (id) => ({
+    type: 'object',
+    properties: {
+      id: { type: 'string', enum: [id] },
+      l: { type: 'string', minLength: 1, maxLength: 180 },
+      m: {
+        type: 'string',
+        enum: [
+          'payer_network',
+          'patient_inbound',
+          'clinical_referral',
+          'hospital_program',
+          'employer_workplace',
+          'organization_partnership'
+        ]
+      },
+      e: { $ref: '#/$defs/evidenceRefs' },
+      d: {
+        type: 'object',
+        properties: {
+          revenuePaths: exactItems('#/$defs/revenuePath', 1),
+          offers: exactItems('#/$defs/offerItem', 2),
+          buyerSegments: exactItems('#/$defs/buyerItem', 2),
+          channels: exactItems('#/$defs/channelItem', 2),
+          actions: exactItems('#/$defs/actionItem', 2),
+          timingTriggers: exactItems('#/$defs/timingItem', 1),
+          proofPoints: exactItems('#/$defs/proofItem', 1),
+          followUps: exactItems('#/$defs/followUpItem', 2)
+        },
+        required: [
+          'revenuePaths',
+          'offers',
+          'buyerSegments',
+          'channels',
+          'actions',
+          'timingTriggers',
+          'proofPoints',
+          'followUps'
+        ],
+        additionalProperties: false
+      }
+    },
+    required: ['id', 'l', 'm', 'e', 'd'],
+    additionalProperties: false
+  });
+  const weightProperties = Object.fromEntries(
+    Object.keys(scoreProperties).map((key) => [
+      key,
+      { type: 'number', minimum: 0, maximum: 1 }
+    ])
+  );
+
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: 'profile_scribe_opportunity_tournament_v3',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: {
+          seedContract: {
+            type: 'string',
+            enum: [SEED_CONTRACT_VERSION]
+          },
+          familyA: family('family-a'),
+          familyB: family('family-b'),
+          candidates: {
+            type: 'array',
+            items: { $ref: '#/$defs/candidate' },
+            maxItems: 8
+          },
+          w: {
+            type: 'object',
+            properties: weightProperties,
+            required: Object.keys(weightProperties),
+            additionalProperties: false
+          }
+        },
+        required: [
+          'seedContract',
+          'familyA',
+          'familyB',
+          'candidates',
+          'w'
+        ],
+        additionalProperties: false,
+        $defs: {
+          evidenceRef,
+          evidenceRefs,
+          scores,
+          offerItem: item(
+            'An explicitly paid, billable, reimbursable, subscription, retainer, sale, paid-pilot, or contract offer grounded in cited evidence.'
+          ),
+          buyerItem: item(
+            'One actual payer/customer or payer-linked beneficiary segment for this revenue path.'
+          ),
+          channelItem: item(
+            'One bounded inbound, warm-referral, permissioned, existing-customer, or partner channel, using that acquisition vocabulary literally.'
+          ),
+          actionItem: item(
+            'One singular action that literally names the acquisition path and advances a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot.'
+          ),
+          timingItem: item(
+            'One observed timing trigger or a review-first verification of timing; never claim unsupported urgency.',
+            true
+          ),
+          proofItem: item(
+            'One direct cited proof point supporting the paid offer or buyer fit.'
+          ),
+          followUpItem: item(
+            'One low-volume review-first follow-up after the acquisition or paid-conversion step.'
+          ),
+          revenuePath: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', minLength: 1, maxLength: 80 },
+              l: { type: 'string', minLength: 1, maxLength: 180 },
+              e: { $ref: '#/$defs/evidenceRefs' },
+              contractVersion: {
+                type: 'string',
+                enum: [REVENUE_PATH_CONTRACT_VERSION]
+              },
+              revenueMechanism: {
+                type: 'string',
+                enum: [...REVENUE_MECHANISMS]
+              },
+              incrementalIncomeOutcome: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 320,
+                description:
+                  'A specific outcome using new, additional, or incremental plus paid, revenue, income, sale, contract, booking, order, reimbursement, retainer, or subscription language.'
+              },
+              acquisitionMode: {
+                type: 'string',
+                enum: [...ACQUISITION_MODES]
+              },
+              conversionAction: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 320,
+                description:
+                  'A singular action that literally names the acquisition mode and advances a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot.'
+              },
+              observableRevenueOutcome: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 320,
+                description:
+                  'A durable paid booking, paid claim, payment receipt, signed contract/agreement, deposit received, paid invoice, checkout/order/purchase/sale, subscription, retainer, recorded revenue/income, or reimbursement received.'
+              },
+              attributionMethod: {
+                type: 'string',
+                enum: [...ATTRIBUTION_METHODS]
+              },
+              attributionSignal: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 320,
+                description:
+                  'The booking/payment/invoice/contract/checkout/order/claim/CRM/referral record and its source, referral, UTM, campaign, origin, channel, code, or CRM field.'
+              },
+              supportingBottleneck: {
+                type: 'string',
+                maxLength: 240,
+                description:
+                  'Optional operational support only. Use an empty string when none; never repeat the primary action.'
+              },
+              vm: {
+                type: 'integer',
+                minimum: 1,
+                description:
+                  'A positive conservative expected incremental gross-income value in USD micros.'
+              }
+            },
+            required: [
+              'id',
+              'l',
+              'e',
+              'contractVersion',
+              'revenueMechanism',
+              'incrementalIncomeOutcome',
+              'acquisitionMode',
+              'conversionAction',
+              'observableRevenueOutcome',
+              'attributionMethod',
+              'attributionSignal',
+              'supportingBottleneck',
+              'vm'
+            ],
+            additionalProperties: false
+          },
+          candidate: {
+            type: 'object',
+            properties: {
+              k: {
+                type: 'string',
+                enum: ['person', 'organization']
+              },
+              l: { type: 'string', minLength: 1, maxLength: 180 },
+              o: { type: 'string', maxLength: 180 },
+              r: { type: 'string', maxLength: 180 },
+              m: { type: 'string', maxLength: 180 },
+              e: { $ref: '#/$defs/evidenceRefs' }
+            },
+            required: ['k', 'l', 'o', 'r', 'm', 'e'],
+            additionalProperties: false
+          }
+        }
+      }
+    }
+  };
 }
 
 function normalizeSeedSet(value, evidenceCatalog, referenceTime) {

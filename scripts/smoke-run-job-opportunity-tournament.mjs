@@ -2131,6 +2131,8 @@ try {
         !Array.isArray(input.responseSchema?.familyA?.d?.revenuePaths) ||
         !Array.isArray(input.responseSchema?.familyB?.d?.revenuePaths) ||
         'offers' in (input.responseSchema || {}) ||
+        Object.keys(input.outputRules?.familyBundleSchema?.d || {})[0] !==
+          'revenuePaths' ||
         input.outputRules?.familyBundleSchema?.m == null ||
         input.outputRules?.revenuePathSchema?.contractVersion !==
           'incremental_revenue_v1' ||
@@ -2139,6 +2141,12 @@ try {
         ) ||
         !input.outputRules?.hardRules?.some((rule) =>
           /operations-only/i.test(rule)
+        ) ||
+        !input.outputRules?.hardRules?.some((rule) =>
+          /Every attributionSignal must literally name/i.test(rule)
+        ) ||
+        !input.outputRules?.hardRules?.some((rule) =>
+          /silently audit every family/i.test(rule)
         )) {
       throw new Error(`generator prompt lost the nested family-bundle contract: ${JSON.stringify(input.responseSchema)}`);
     }
@@ -2147,13 +2155,33 @@ try {
     if (call.max_tokens !== 8000) {
       throw new Error(`expected bounded 8000-token completion, got ${call.max_tokens}`);
     }
-    if (call.response_format?.type !== 'json_object') {
-      throw new Error(`expected tournament JSON-object response mode, got ${JSON.stringify(call.response_format)}`);
+    const responseFormat = call.response_format || {};
+    const responseSchema = responseFormat.json_schema?.schema || {};
+    const responseDefinitions = responseSchema.$defs || {};
+    if (responseFormat.type !== 'json_schema' ||
+        responseFormat.json_schema?.name !==
+          'profile_scribe_opportunity_tournament_v3' ||
+        responseFormat.json_schema?.strict !== true ||
+        responseSchema.additionalProperties !== false ||
+        responseSchema.properties?.familyA?.properties?.d?.properties
+          ?.revenuePaths?.minItems !== 1 ||
+        responseDefinitions.revenuePath?.properties?.contractVersion
+          ?.enum?.[0] !== 'incremental_revenue_v1' ||
+        responseDefinitions.revenuePath?.properties?.acquisitionMode
+          ?.enum?.includes('inbound') !== true ||
+        responseDefinitions.revenuePath?.properties?.vm?.minimum !== 1 ||
+        responseDefinitions.offerItem?.properties?.l?.description
+          ?.includes('explicitly paid') !== true ||
+        responseDefinitions.actionItem?.properties?.l?.description
+          ?.includes('paid booking') !== true ||
+        responseDefinitions.evidenceRef?.enum?.length < 1) {
+      throw new Error(`expected strict tournament JSON-schema response mode, got ${JSON.stringify(responseFormat)}`);
     }
     const maxPrice = call.provider?.max_price || {};
     if (maxPrice.prompt !== 2 ||
         maxPrice.completion !== 8 ||
-        maxPrice.request !== 0.12) {
+        maxPrice.request !== 0.12 ||
+        call.provider?.require_parameters !== true) {
       throw new Error(`expected conservative OpenRouter max_price routing caps, got ${JSON.stringify(maxPrice)}`);
     }
     const system = call.messages?.find((message) => message.role === 'system')?.content || '';
@@ -2167,7 +2195,10 @@ try {
         !/actual buyer and explicitly paid offer/i.test(system) ||
         !/observable paid conversion and durable attribution record/i.test(system) ||
         !/singular action must itself advance permissioned acquisition or paid conversion/i.test(system) ||
-        !/Prefer an inbound paid-conversion path for familyA/i.test(system)) {
+        !/Prefer an inbound paid-conversion path for familyA/i.test(system) ||
+        !/Construct each family's revenuePath first/i.test(system) ||
+        !/verification of that capability belongs only in supportingBottleneck/i.test(system) ||
+        /recommend a bounded way to verify or use it instead/i.test(system)) {
       throw new Error('expected strict same-call candidate extraction boundary');
     }
   }
