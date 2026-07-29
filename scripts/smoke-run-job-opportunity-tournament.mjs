@@ -1016,6 +1016,15 @@ const server = createServer(async (request, response) => {
       };
     });
     if (input.objective?.id === 'obj-nested-family-bundles') {
+      const omittedRevenueCoreRef =
+        nestedFamilies[0].d.offers[0]?.e?.[0];
+      nestedFamilies[0].e = nestedFamilies[0].e.filter(
+        (ref) => ref !== omittedRevenueCoreRef
+      );
+      // A fixed family wrapper is the namespace boundary. The normalizer must
+      // derive its canonical evidence union from the nested revenue-bearing
+      // items instead of discarding an otherwise valid family because the
+      // model forgot to repeat one approved ref in the redundant family list.
       const foreignTimingRef = nestedFamilies[1].e.find((ref) =>
         !nestedFamilies[0].e.includes(ref)
       );
@@ -2147,6 +2156,9 @@ try {
         ) ||
         !input.outputRules?.hardRules?.some((rule) =>
           /silently audit every family/i.test(rule)
+        ) ||
+        !input.outputRules?.hardRules?.some((rule) =>
+          /Family e must contain every evidence ID/i.test(rule)
         )) {
       throw new Error(`generator prompt lost the nested family-bundle contract: ${JSON.stringify(input.responseSchema)}`);
     }
@@ -2174,7 +2186,10 @@ try {
           ?.includes('explicitly paid') !== true ||
         responseDefinitions.actionItem?.properties?.l?.description
           ?.includes('paid booking') !== true ||
-        responseDefinitions.evidenceRef?.enum?.length < 1) {
+        responseDefinitions.evidenceRef?.enum?.length < 1 ||
+        responseDefinitions.evidenceRef?.enum?.some((id) =>
+          /^source:/i.test(id)
+        )) {
       throw new Error(`expected strict tournament JSON-schema response mode, got ${JSON.stringify(responseFormat)}`);
     }
     const maxPrice = call.provider?.max_price || {};

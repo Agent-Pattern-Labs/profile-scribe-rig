@@ -1289,7 +1289,7 @@ Return only JSON.`;
         id: 'family-a for familyA or family-b for familyB',
         l: 'short internal label for one coherent end-to-end business motion',
         m: 'one semantic motion: payer_network, patient_inbound, clinical_referral, hospital_program, employer_workplace, or organization_partnership',
-        e: ['one or more exact evidenceCatalog.id values grounding this family, including at least one observation:* anchor'],
+        e: ['the exact union of approved non-source evidence IDs used by this family revenue path, offers, buyers, channels, actions, and proof, including at least one observation:* anchor'],
         d: {
           revenuePaths: ['exactly one revenuePathSchema object; construct this first'],
           offers: ['exactly two itemSchema objects'],
@@ -1367,6 +1367,7 @@ Return only JSON.`;
         'Return both familyA and familyB. Do not omit either complete bundle.',
         'Use id family-a inside familyA and family-b inside familyB.',
         'For each family, include at least one observation:* evidence anchor in family e.',
+        'Family e must contain every evidence ID used by that family revenue path, offers, buyer segments, channels, actions, and proof points. Timing and follow-up items must cite from that same revenue-bearing evidence set.',
         'Every item must cite at least one exact evidence ID that also appears in its containing family e. Different dimensions may use different family evidence IDs when that is the truthful provenance.',
         'Every item belongs only to its containing family bundle. Do not add f, familyIds, wildcards, or cross-family reuse.',
         'A retained family must describe one coherent motion. Do not combine insurance-network, hospital-program, employer, clinical-referral, content-conversion, or other distinct motions in one family.',
@@ -1429,7 +1430,9 @@ Return only JSON.`;
 function tournamentStructuredResponseFormat(evidenceCatalog) {
   const evidenceIDs = compactStrings(
     asArray(evidenceCatalog).map((item) => asObject(item).id)
-  ).slice(0, MAX_EVIDENCE_ITEMS);
+  )
+    .filter((id) => !/^source:/i.test(id))
+    .slice(0, MAX_EVIDENCE_ITEMS);
   const evidenceRef = {
     type: 'string',
     ...(evidenceIDs.length > 0
@@ -2121,6 +2124,38 @@ function normalizedFamilyBuyerObservationEvidenceRefs(
     .filter((ref, index, values) => values.indexOf(ref) === index);
 }
 
+function strategyFamilyRevenueCoreEvidenceRefs(rawValue) {
+  const raw = asObject(rawValue);
+  const dimensions = Object.keys(asObject(raw.d)).length > 0
+    ? asObject(raw.d)
+    : asObject(raw.dimensions);
+  const coreDimensions = new Set([
+    'offers',
+    'buyerSegments',
+    'channels',
+    'actions',
+    'proofPoints',
+    'revenuePaths'
+  ]);
+  const refs = [];
+  for (const [dimension, aliases] of DIMENSIONS) {
+    if (!coreDimensions.has(dimension)) continue;
+    const values = firstArray(
+      ...aliases.map((alias) => dimensions[alias]),
+      ...aliases.map((alias) => raw[alias])
+    );
+    for (const value of values) {
+      const item = asObject(value);
+      refs.push(
+        ...asArray(item.e),
+        ...asArray(item.evidenceRefs),
+        ...asArray(item.evidenceIds)
+      );
+    }
+  }
+  return compactStrings(refs);
+}
+
 function normalizeStrategyFamilies(values, evidenceByID) {
   const families = new Map();
   const collidedIDs = new Set();
@@ -2136,12 +2171,13 @@ function normalizeStrategyFamilies(values, evidenceByID) {
     const evidenceRefs = compactStrings([
       ...asArray(raw.e),
       ...asArray(raw.evidenceRefs),
-      ...asArray(raw.evidenceIds)
+      ...asArray(raw.evidenceIds),
+      ...strategyFamilyRevenueCoreEvidenceRefs(raw)
     ])
       .map((ref) => evidenceByID.get(ref)?.id)
       .filter(Boolean)
       .filter((ref, index, refs) => refs.indexOf(ref) === index)
-      .slice(0, 12);
+      .slice(0, MAX_EVIDENCE_ITEMS);
     if (evidenceRefs.length === 0 ||
         strategyObservationEvidenceRefs(evidenceRefs).length === 0) {
       continue;
