@@ -307,6 +307,9 @@ const server = createServer(async (request, response) => {
   } else if (modelCandidateRef === 'observation:obs-context-candidate') {
     buyerSeeds[0].l = 'Context Buyer Co operations leaders';
     buyerSeeds[0].e = [modelCandidateRef, proofRef];
+    buyerSeeds[0].s.of = 1;
+    buyerSeeds[0].s.ba = 1;
+    buyerSeeds[0].s.ev = 1;
   } else if (ownerOrganizationRef) {
     buyerSeeds[1].l = 'Owner Services Co operations leaders';
     buyerSeeds[1].e = [ownerOrganizationRef, proofRef];
@@ -319,10 +322,10 @@ const server = createServer(async (request, response) => {
   const seedSet = {
     families: strategyFamilies,
     offers: make('offer', [
-      'A focused workflow audit',
+      'A paid focused workflow audit',
       'A paid implementation diagnostic',
-      'A proof-backed pilot plan',
-      'A narrow operating-system review'
+      'A paid proof-backed pilot',
+      'A paid narrow operating-system review'
     ], {
       objectiveFit: 0.9,
       evidenceStrength: 0.9,
@@ -334,10 +337,10 @@ const server = createServer(async (request, response) => {
     }, groundingRefs),
     buyerSegments: buyerSeeds,
     channels: make('channel', [
-      'One warm introduction',
-      'One review-first professional-network approach',
-      'One public-profile research path',
-      'One existing-network referral path'
+      'One warm referral introduction',
+      'One permissioned professional-network introduction request',
+      'One inbound paid-offer discovery path',
+      'One existing-customer referral path'
     ], {
       warmPath: 0.78,
       reachability: 0.52,
@@ -347,10 +350,10 @@ const server = createServer(async (request, response) => {
       uncertainty: 0.4
     }),
     actions: make('action', [
-      'Prepare one evidence-backed fit brief for review',
-      'Map one buyer problem to one proven capability',
-      'Prepare one introduction request for human approval',
-      'Validate one buyer hypothesis against public evidence'
+      'Prepare one paid workflow-audit offer and booking request for a warm introduction',
+      'Prepare one paid implementation-diagnostic proposal and permissioned contract request',
+      'Prepare one paid pilot offer and inbound checkout request',
+      'Prepare one paid operating-system review offer and existing-customer referral booking request'
     ], {
       objectiveFit: 0.84,
       expectedValue: 0.7,
@@ -391,6 +394,96 @@ const server = createServer(async (request, response) => {
       risk: 0.12,
       uncertainty: 0.3
     }),
+    revenuePaths: [
+      {
+        id: 'revenue-path-1',
+        l: 'One new paid workflow-audit booking through a warm referral',
+        f: [strategyFamilies[0].id],
+        e: groundingRefs,
+        contractVersion: 'incremental_revenue_v1',
+        revenueMechanism: 'paid_booking',
+        incrementalIncomeOutcome: 'One new paid workflow-audit booking adds incremental gross income',
+        acquisitionMode: 'warm_referral',
+        conversionAction: 'Prepare one paid workflow-audit offer and booking request for a warm introduction',
+        observableRevenueOutcome: 'One paid booking recorded',
+        attributionMethod: 'booking_record',
+        attributionSignal: 'Booking record source field stores the warm referral',
+        vm: 250000,
+        s: compactScores({
+          objectiveFit: 0.88,
+          evidenceStrength: 0.86,
+          expectedValue: 0.8,
+          risk: 0.22,
+          uncertainty: 0.42
+        })
+      },
+      {
+        id: 'revenue-path-2',
+        l: 'One new paid implementation contract through permissioned outreach',
+        f: [strategyFamilies[1].id],
+        e: groundingRefs,
+        contractVersion: 'incremental_revenue_v1',
+        revenueMechanism: 'signed_contract',
+        incrementalIncomeOutcome: 'One new paid implementation contract adds incremental gross income',
+        acquisitionMode: 'permissioned_outreach',
+        conversionAction: 'Prepare one paid implementation-diagnostic proposal and permissioned contract request',
+        observableRevenueOutcome: 'One signed contract recorded',
+        attributionMethod: 'invoice_or_contract',
+        attributionSignal: 'Contract source field records the permissioned professional-network introduction',
+        vm: 500000,
+        s: compactScores({
+          objectiveFit: 0.86,
+          evidenceStrength: 0.84,
+          expectedValue: 0.84,
+          risk: 0.24,
+          uncertainty: 0.44
+        })
+      },
+      {
+        id: 'revenue-path-3',
+        l: 'One new paid pilot order through inbound offer discovery',
+        f: [strategyFamilies[2].id],
+        e: groundingRefs,
+        contractVersion: 'incremental_revenue_v1',
+        revenueMechanism: 'paid_pilot',
+        incrementalIncomeOutcome: 'One new paid pilot order adds incremental gross income',
+        acquisitionMode: 'inbound',
+        conversionAction: 'Prepare one paid pilot offer and inbound checkout request',
+        observableRevenueOutcome: 'One paid pilot order recorded at checkout',
+        attributionMethod: 'checkout_or_order',
+        attributionSignal: 'Checkout order record stores the inbound UTM source',
+        vm: 750000,
+        s: compactScores({
+          objectiveFit: 0.84,
+          evidenceStrength: 0.82,
+          expectedValue: 0.86,
+          risk: 0.26,
+          uncertainty: 0.46
+        })
+      },
+      {
+        id: 'revenue-path-4',
+        l: 'One new paid operating review through an existing-customer referral',
+        f: [strategyFamilies[3].id],
+        e: groundingRefs,
+        contractVersion: 'incremental_revenue_v1',
+        revenueMechanism: 'paid_booking',
+        incrementalIncomeOutcome: 'One new paid operating review adds incremental gross income',
+        acquisitionMode: 'existing_customer',
+        conversionAction: 'Prepare one paid operating-system review offer and existing-customer referral booking request',
+        observableRevenueOutcome: 'One paid booking recorded',
+        attributionMethod: 'booking_record',
+        attributionSignal: 'Booking record source field stores the existing-customer referral',
+        vm: 350000,
+        s: compactScores({
+          objectiveFit: 0.82,
+          evidenceStrength: 0.8,
+          expectedValue: 0.78,
+          risk: 0.2,
+          uncertainty: 0.4
+        })
+      }
+    ],
     candidates: modelCandidateRef === 'observation:obs-model-candidate' ? [
       {
         k: 'person',
@@ -454,13 +547,13 @@ const server = createServer(async (request, response) => {
     }
   };
   if (promotableCandidateRef) {
-    seedSet.offers[0].l = 'Focused workflow audit for Promotable Buyer Co';
+    seedSet.offers[0].l = 'Paid focused workflow audit for Promotable Buyer Co';
   } else if (ownerOrganizationRef) {
-    seedSet.offers[0].l = 'Focused workflow audit for Owner Services Co';
+    seedSet.offers[0].l = 'Paid focused workflow audit for Owner Services Co';
   } else if (proofOnlyOrganizationRef) {
-    seedSet.offers[0].l = 'Focused workflow audit for Proof Only Co';
+    seedSet.offers[0].l = 'Paid focused workflow audit for Proof Only Co';
   } else if (genericOrganizationRef) {
-    seedSet.offers[0].l = 'Focused workflow audit for Digital Health Network';
+    seedSet.offers[0].l = 'Paid focused workflow audit for Digital Health Network';
   }
   if (promotableCandidateRef ||
       ownerOrganizationRef ||
@@ -474,7 +567,8 @@ const server = createServer(async (request, response) => {
       'actions',
       'timingTriggers',
       'proofPoints',
-      'followUps'
+      'followUps',
+      'revenuePaths'
     ]) {
       seedSet[key] = seedSet[key].slice(0, 2);
     }
@@ -484,7 +578,8 @@ const server = createServer(async (request, response) => {
       'actions',
       'timingTriggers',
       'proofPoints',
-      'followUps'
+      'followUps',
+      'revenuePaths'
     ]) {
       for (const scoreKey of Object.keys(seedSet[key][1].s || {})) {
         seedSet[key][1].s[scoreKey] = ['ef', 'co', 'ri', 'un'].includes(scoreKey)
@@ -519,7 +614,8 @@ const server = createServer(async (request, response) => {
       'actions',
       'timingTriggers',
       'proofPoints',
-      'followUps'
+      'followUps',
+      'revenuePaths'
     ]) {
       for (const item of seedSet[dimension]) {
         item.e = [forgedTimingRef];
@@ -543,7 +639,8 @@ const server = createServer(async (request, response) => {
       'actions',
       'timingTriggers',
       'proofPoints',
-      'followUps'
+      'followUps',
+      'revenuePaths'
     ]) {
       for (const item of seedSet[dimension]) {
         item.e = [metadataBlockedTimingRef];
@@ -658,7 +755,8 @@ const server = createServer(async (request, response) => {
       'actions',
       'timingTriggers',
       'proofPoints',
-      'followUps'
+      'followUps',
+      'revenuePaths'
     ]) {
       for (const [index, item] of seedSet[dimension].entries()) {
         item.e = [staleUrgencyEvidenceRef];
@@ -676,8 +774,8 @@ const server = createServer(async (request, response) => {
     }
     const patientLabels = {
       offers: [
-        'United Healthcare-covered patient consultation booking path',
-        'United Healthcare patient service-page inquiry path'
+        'A reimbursable United Healthcare-covered patient consultation',
+        'A billable United Healthcare patient consultation'
       ],
       buyerSegments: [
         'United Healthcare-covered prospective patients',
@@ -688,8 +786,8 @@ const server = createServer(async (request, response) => {
         'Existing consultation booking page'
       ],
       actions: [
-        'Prepare one patient-facing booking-path review',
-        'Prepare one consultation inquiry-path review'
+        'Prepare one reimbursable consultation offer and inbound paid-booking request',
+        'Prepare one billable consultation offer and inbound service-page booking request'
       ],
       timingTriggers: [
         'Determine whether United Healthcare acceptance supports acting',
@@ -718,6 +816,83 @@ const server = createServer(async (request, response) => {
         }
       }
     }
+    seedSet.revenuePaths = seedSet.revenuePaths.slice(0, 2);
+    const patientRevenuePaths = [
+      {
+        l: 'One new reimbursed patient consultation through an inbound service page',
+        incrementalIncomeOutcome: 'One new reimbursed patient consultation adds incremental gross income',
+        conversionAction: 'Prepare one reimbursable consultation offer and inbound paid-booking request',
+        observableRevenueOutcome: 'One claim paid and reimbursement received',
+        attributionSignal: 'Claim record acquisition source field stores the inbound service page'
+      },
+      {
+        l: 'One new billable patient consultation through an inbound booking page',
+        incrementalIncomeOutcome: 'One new paid patient consultation adds incremental gross income',
+        conversionAction: 'Prepare one billable consultation offer and inbound service-page booking request',
+        observableRevenueOutcome: 'One paid booking recorded',
+        attributionSignal: 'Booking record source field stores the inbound service page'
+      }
+    ];
+    for (const [index, item] of seedSet.revenuePaths.entries()) {
+      Object.assign(item, patientRevenuePaths[index], {
+        e: [patientInboundEvidenceRef],
+        f: [seedSet.families[index].id],
+        contractVersion: 'incremental_revenue_v1',
+        revenueMechanism: index === 0
+          ? 'insurance_reimbursement'
+          : 'paid_booking',
+        acquisitionMode: 'inbound',
+        attributionMethod: index === 0
+          ? 'claim_record'
+          : 'booking_record',
+        vm: index === 0 ? 180000 : 160000
+      });
+    }
+    if (input.objective?.id === 'obj-uhc-eligibility-scheduling-no-revenue') {
+      for (const [index, offer] of seedSet.offers.entries()) {
+        offer.l = index === 0
+          ? 'United Healthcare eligibility and scheduling workflow'
+          : 'United Healthcare coverage verification workflow';
+      }
+      for (const [index, action] of seedSet.actions.entries()) {
+        action.l = index === 0
+          ? 'Verify eligibility and coverage, then book a consultation'
+          : 'Prepare one inbound content post about eligibility and scheduling';
+        action.s = compactScores({
+          objectiveFit: 1,
+          evidenceStrength: 1,
+          expectedValue: 1,
+          effort: 0,
+          cost: 0,
+          risk: 0,
+          uncertainty: 0
+        });
+      }
+      for (const [index, revenuePath] of seedSet.revenuePaths.entries()) {
+        Object.assign(revenuePath, {
+          l: 'Eligibility verification and consultation scheduling',
+          incrementalIncomeOutcome:
+            'Verify eligibility and schedule one consultation',
+          conversionAction: index === 0
+            ? 'Verify eligibility and coverage, then book a consultation'
+            : 'Prepare one inbound content post about eligibility and scheduling',
+          observableRevenueOutcome:
+            'One eligible consultation scheduled',
+          attributionSignal:
+            'Eligibility record stores coverage status',
+          vm: 9_999_999,
+          s: compactScores({
+            objectiveFit: 1,
+            evidenceStrength: 1,
+            expectedValue: 1,
+            effort: 0,
+            cost: 0,
+            risk: 0,
+            uncertainty: 0
+          })
+        });
+      }
+    }
   }
   if (familyCollisionEvidenceRef) {
     seedSet.families = [
@@ -739,7 +914,8 @@ const server = createServer(async (request, response) => {
       'actions',
       'timingTriggers',
       'proofPoints',
-      'followUps'
+      'followUps',
+      'revenuePaths'
     ]) {
       for (const [index, item] of seedSet[dimension].entries()) {
         item.f = [index % 2 === 0 ? 'hospital.program' : 'hospital-program'];
@@ -759,7 +935,8 @@ const server = createServer(async (request, response) => {
       'actions',
       'timingTriggers',
       'proofPoints',
-      'followUps'
+      'followUps',
+      'revenuePaths'
     ]) {
       for (const item of seedSet[key]) item.f = ['undeclared-family'];
     }
@@ -767,6 +944,7 @@ const server = createServer(async (request, response) => {
   let responseSeedSet = seedSet;
   if ([
     'obj-nested-family-bundles',
+    'obj-persisted-context-family-bundles',
     'obj-incomplete-family-bundles',
     'obj-forged-timing-family-bundles',
     'obj-inactive-timing-family-bundles',
@@ -798,7 +976,8 @@ const server = createServer(async (request, response) => {
         'actions',
         'timingTriggers',
         'proofPoints',
-        'followUps'
+        'followUps',
+        'revenuePaths'
       ]) {
         const indexes = multiVariantDimensions.has(dimension)
           ? familyIndexes
@@ -812,9 +991,11 @@ const server = createServer(async (request, response) => {
             id: `${dimension}-${indexes.indexOf(index) + 1}`
           };
           if (exerciseDistributedEvidence) {
-            nestedItem.e = ['offers', 'buyerSegments'].includes(dimension)
-              ? [distributedFamilyEvidenceRef]
-              : [proofRef];
+            nestedItem.e = dimension === 'revenuePaths'
+              ? [distributedFamilyEvidenceRef, proofRef]
+              : ['offers', 'buyerSegments'].includes(dimension)
+                ? [distributedFamilyEvidenceRef]
+                : [proofRef];
           }
           if (dimension === 'timingTriggers') {
             nestedItem.q = 'model paraphrase absent from the cited observation';
@@ -850,7 +1031,7 @@ const server = createServer(async (request, response) => {
       nestedFamilies[1].d.timingTriggers = [];
     }
     responseSeedSet = {
-      seedContract: 'family_bundle_v2',
+      seedContract: 'revenue_family_bundle_v1',
       familyA: nestedFamilies[0],
       familyB: nestedFamilies[1],
       // A fixed-bundle response must ignore this legacy/global injection even
@@ -877,7 +1058,8 @@ const server = createServer(async (request, response) => {
       'actions',
       'timingTriggers',
       'proofPoints',
-      'followUps'
+      'followUps',
+      'revenuePaths'
     ]) {
       const { f: _familyIds, ...familyAItem } =
         structuredClone(seedSet[dimension][0]);
@@ -938,12 +1120,12 @@ try {
     userId: 'user-smoke',
     payload: {
       tournamentId: 'opturn-smoke',
-      algorithmVersion: 'cheap_tournament_v2',
+      algorithmVersion: 'cheap_tournament_v3',
       researchOnly: true,
       objective: {
         id: 'obj-smoke',
-        outcome: 'Book one qualified conversation for a professional-service offer.',
-        successMetric: 'One explicit qualified reply or booked conversation tied to the recommendation.',
+        outcome: 'Generate one new paid professional-service engagement.',
+        successMetric: 'One payment receipt, paid booking, or signed contract attributed to the recommendation.',
         targetCount: 1,
         deadline: '2026-08-31T00:00:00Z',
         estimatedValueMicros: 5_000_000,
@@ -1275,6 +1457,8 @@ try {
   const contextJob = structuredClone(job);
   contextJob.id = 'job-opportunity-tournament-persisted-context-smoke';
   contextJob.payload.tournamentId = 'opturn-persisted-context-smoke';
+  contextJob.payload.objective.id =
+    'obj-persisted-context-family-bundles';
   contextJob.payload.budget.maxHypotheses = 256;
   contextJob.payload.budget.maxFinalists = 10;
   delete contextJob.payload.evidenceSnapshot;
@@ -1791,6 +1975,26 @@ try {
     'utf8'
   );
   const patientInbound = await runJob(patientInboundJobFile, port);
+  const uhcOperationsOnlyJob = structuredClone(patientInboundJob);
+  uhcOperationsOnlyJob.id =
+    'job-opportunity-tournament-uhc-operations-only-smoke';
+  uhcOperationsOnlyJob.payload.tournamentId =
+    'opturn-uhc-operations-only-smoke';
+  uhcOperationsOnlyJob.payload.objective.id =
+    'obj-uhc-eligibility-scheduling-no-revenue';
+  const uhcOperationsOnlyJobFile = join(
+    tmp,
+    'uhc-operations-only-job.json'
+  );
+  writeFileSync(
+    uhcOperationsOnlyJobFile,
+    `${JSON.stringify(uhcOperationsOnlyJob)}\n`,
+    'utf8'
+  );
+  const uhcOperationsOnly = await runJob(
+    uhcOperationsOnlyJobFile,
+    port
+  );
   const crossMotionTimingJob = structuredClone(patientInboundJob);
   crossMotionTimingJob.id =
     'job-opportunity-tournament-cross-motion-timing-smoke';
@@ -1866,7 +2070,7 @@ try {
     { env: { OPENROUTER_API_KEY: '' } }
   );
 
-  if (openRouterCalls.length !== 29) {
+  if (openRouterCalls.length !== 30) {
     throw new Error(`expected one OpenRouter call per tournament run, got ${openRouterCalls.length}`);
   }
   if (unexpectedRequests.length !== 0) {
@@ -1921,13 +2125,20 @@ try {
     if (leakedMarker) {
       throw new Error(`non-approved source evidence leaked into generator input (${leakedMarker}): ${serializedEvidence}`);
     }
-    if (input.responseSchema?.seedContract !== 'family_bundle_v2' ||
+    if (input.responseSchema?.seedContract !== 'revenue_family_bundle_v1' ||
         !input.responseSchema?.familyA?.d ||
         !input.responseSchema?.familyB?.d ||
+        !Array.isArray(input.responseSchema?.familyA?.d?.revenuePaths) ||
+        !Array.isArray(input.responseSchema?.familyB?.d?.revenuePaths) ||
         'offers' in (input.responseSchema || {}) ||
         input.outputRules?.familyBundleSchema?.m == null ||
+        input.outputRules?.revenuePathSchema?.contractVersion !==
+          'incremental_revenue_v1' ||
         !input.outputRules?.hardRules?.some((rule) =>
           /Every item belongs only to its containing family bundle/i.test(rule)
+        ) ||
+        !input.outputRules?.hardRules?.some((rule) =>
+          /operations-only/i.test(rule)
         )) {
       throw new Error(`generator prompt lost the nested family-bundle contract: ${JSON.stringify(input.responseSchema)}`);
     }
@@ -1952,7 +2163,11 @@ try {
     if (!/exact name appears verbatim/i.test(system) ||
         !/Do not return contact details or URLs/i.test(system) ||
         !/strategy family coherent end to end/i.test(system) ||
-        !/exactly two complete top-level family bundles/i.test(system)) {
+        !/exactly two complete top-level family bundles/i.test(system) ||
+        !/actual buyer and explicitly paid offer/i.test(system) ||
+        !/observable paid conversion and durable attribution record/i.test(system) ||
+        !/singular action must itself advance permissioned acquisition or paid conversion/i.test(system) ||
+        !/Prefer an inbound paid-conversion path for familyA/i.test(system)) {
       throw new Error('expected strict same-call candidate extraction boundary');
     }
   }
@@ -1967,13 +2182,20 @@ try {
     for (const key of ['hypotheses', 'candidates', 'winner', 'runnerUp', 'searchSpace', 'gate', 'usage']) {
       if (!(key in metadata)) throw new Error(`expected direct metadata.${key}`);
     }
-    if (metadata.searchSpace?.theoreticalCount !== 16384 ||
+    if (metadata.searchSpace?.theoreticalCount !== 65536 ||
         metadata.searchSpace?.expandedCount !== 10000 ||
         metadata.searchSpace?.modelCalls !== 1 ||
         metadata.searchSpace?.eligibleCount !== 4 ||
         metadata.searchSpace?.incompatibleCount <= 0 ||
         metadata.searchSpace?.strategyFamilyCount !== 4 ||
         metadata.searchSpace?.coherenceGate !== 'strategy_family_motion_v2' ||
+        metadata.searchSpace?.revenueGate !== 'incremental_income_v1' ||
+        metadata.searchSpace?.revenuePathContract !==
+          'incremental_revenue_v1' ||
+        metadata.searchSpace?.revenueRejectedCount !== 0 ||
+        Object.keys(
+          metadata.searchSpace?.revenueRejectionReasons || {}
+        ).length !== 0 ||
         metadata.hypotheses?.length !== 4) {
       throw new Error(`unexpected compact search-space result: ${JSON.stringify(metadata.searchSpace)}`);
     }
@@ -1985,13 +2207,24 @@ try {
     for (const hypothesis of metadata.hypotheses) {
       const provenance = hypothesis.provenance || {};
       const dimensionValues = Object.values(provenance.dimensions || {});
+      const revenuePath = hypothesis.revenuePath || {};
       if (!hypothesis.proofPoint ||
+          hypothesis.expectedValueMicros <= 0 ||
+          revenuePath.contractVersion !== 'incremental_revenue_v1' ||
+          !revenuePath.incrementalIncomeOutcome ||
+          !revenuePath.conversionAction ||
+          !revenuePath.observableRevenueOutcome ||
+          !revenuePath.attributionSignal ||
+          !revenuePath.evidenceRefs?.length ||
           !provenance.strategyFamilyId ||
           provenance.motionSignatures?.length !== 1 ||
-          Object.keys(provenance.motionDimensions || {}).length !== 7 ||
+          Object.keys(provenance.motionDimensions || {}).length !== 8 ||
           !provenance.familyEvidenceRefs?.length ||
           !provenance.sharedEvidenceRefs?.length ||
-          dimensionValues.length !== 7 ||
+          provenance.revenueContractVersion !==
+            'incremental_revenue_v1' ||
+          !provenance.dimensions?.revenuePath ||
+          dimensionValues.length !== 8 ||
           dimensionValues.some((dimension) =>
             !dimension.familyIds?.includes(provenance.strategyFamilyId) ||
             !dimension.evidenceRefs?.some((ref) =>
@@ -2007,39 +2240,45 @@ try {
       }
     }
     if (!Array.isArray(metadata.winner?.motionSignatures) ||
-        !Array.isArray(metadata.runnerUp?.motionSignatures)) {
+        !Array.isArray(metadata.runnerUp?.motionSignatures) ||
+        metadata.winner?.revenuePath?.contractVersion !==
+          'incremental_revenue_v1' ||
+        metadata.runnerUp?.revenuePath?.contractVersion !==
+          'incremental_revenue_v1' ||
+        metadata.winner?.expectedValueMicros <= 0 ||
+        metadata.runnerUp?.expectedValueMicros <= 0) {
       throw new Error('recommendation motion signatures were not retained');
     }
     const coherentPaths = [
       [
-        'A focused workflow audit',
+        'A paid focused workflow audit',
         'Founder-led professional service businesses',
-        'One warm introduction',
-        'Prepare one evidence-backed fit brief for review',
+        'One warm referral introduction',
+        'Prepare one paid workflow-audit offer and booking request for a warm introduction',
         'Determine whether the review-gated client delivery workflow supports acting',
         'Stop after one unanswered review-gated attempt'
       ],
       [
         'A paid implementation diagnostic',
         'Small agency operations leaders',
-        'One review-first professional-network approach',
-        'Map one buyer problem to one proven capability',
+        'One permissioned professional-network introduction request',
+        'Prepare one paid implementation-diagnostic proposal and permissioned contract request',
         'Determine whether the observed handoff bottlenecks support acting',
         'Request human review before any follow-up'
       ],
       [
-        'A proof-backed pilot plan',
+        'A paid proof-backed pilot',
         'Independent consultants with repeatable delivery',
-        'One public-profile research path',
-        'Prepare one introduction request for human approval',
+        'One inbound paid-offer discovery path',
+        'Prepare one paid pilot offer and inbound checkout request',
         'Determine whether one prioritized operating change supports acting',
         'Record the outcome before selecting another strategy'
       ],
       [
-        'A narrow operating-system review',
+        'A paid narrow operating-system review',
         'Boutique service founders improving client workflows',
-        'One existing-network referral path',
-        'Validate one buyer hypothesis against public evidence',
+        'One existing-customer referral path',
+        'Prepare one paid operating-system review offer and existing-customer referral booking request',
         'Determine whether the workflow identifies handoff bottlenecks before acting',
         'Use one permissioned clarification only'
       ]
@@ -2217,11 +2456,11 @@ try {
     throw new Error(`persisted-context tournament did not return its exact grounded candidate: ${JSON.stringify(contextResult)}`);
   }
   if (nestedFamily.status !== 'completed' ||
-      nestedFamily.metadata?.searchSpace?.theoreticalCount !== 4096 ||
-      nestedFamily.metadata?.searchSpace?.expandedCount !== 4096 ||
+      nestedFamily.metadata?.searchSpace?.theoreticalCount !== 8192 ||
+      nestedFamily.metadata?.searchSpace?.expandedCount !== 8192 ||
       nestedFamily.metadata?.searchSpace?.eligibleCount !== 64 ||
       nestedFamily.metadata?.searchSpace?.dimensionCounts?.offers !== 4 ||
-      nestedFamily.metadata?.searchSpace?.seedContract !== 'family_bundle_v2' ||
+      nestedFamily.metadata?.searchSpace?.seedContract !== 'revenue_family_bundle_v1' ||
       nestedFamily.metadata?.searchSpace?.declaredStrategyFamilyCount !== 2 ||
       nestedFamily.metadata?.searchSpace?.strategyFamilyCount !== 2 ||
       nestedFamily.metadata?.searchSpace?.completeStrategyFamilyCount !== 2 ||
@@ -2275,7 +2514,7 @@ try {
     throw new Error(`nested family bundles did not produce a complete family-diverse tournament: ${JSON.stringify(nestedFamily)}`);
   }
   if (cappedNestedFamily.status !== 'completed' ||
-      cappedNestedFamily.metadata?.searchSpace?.theoreticalCount !== 4096 ||
+      cappedNestedFamily.metadata?.searchSpace?.theoreticalCount !== 8192 ||
       cappedNestedFamily.metadata?.searchSpace?.expandedCount !== 2 ||
       cappedNestedFamily.metadata?.searchSpace?.retainedCount !== 2 ||
       cappedNestedFamily.metadata?.searchSpace?.eligibleCount !== 2 ||
@@ -2292,7 +2531,7 @@ try {
   }
   if (incompleteFamily.status !== 'skipped' ||
       incompleteFamily.metadata?.searchSpace?.seedContract !==
-        'family_bundle_v2' ||
+        'revenue_family_bundle_v1' ||
       incompleteFamily.metadata?.searchSpace?.completeStrategyFamilyCount !==
         1 ||
       incompleteFamily.metadata?.searchSpace?.incompleteStrategyFamilyCount !==
@@ -2366,7 +2605,7 @@ try {
     throw new Error(`unsupported timing claim survived normalization: ${JSON.stringify(unsupportedTiming)}`);
   }
   if (forgedTiming.status !== 'skipped' ||
-      forgedTiming.metadata?.searchSpace?.seedContract !== 'family_bundle_v2' ||
+      forgedTiming.metadata?.searchSpace?.seedContract !== 'revenue_family_bundle_v1' ||
       forgedTiming.metadata?.searchSpace?.unsupportedTimingSeedCount !== 2 ||
       forgedTiming.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
       openRouterInputs.find(
@@ -2385,7 +2624,7 @@ try {
     ['ended observation', endedTiming]
   ]) {
     if (result.status !== 'skipped' ||
-        result.metadata?.searchSpace?.seedContract !== 'family_bundle_v2' ||
+        result.metadata?.searchSpace?.seedContract !== 'revenue_family_bundle_v1' ||
         result.metadata?.searchSpace?.unsupportedTimingSeedCount !== 2 ||
         result.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
         result.metadata?.winner !== null ||
@@ -2395,7 +2634,7 @@ try {
     }
   }
   if (unknownFamily.status !== 'skipped' ||
-      unknownFamily.metadata?.searchSpace?.invalidFamilySeedCount !== 28 ||
+      unknownFamily.metadata?.searchSpace?.invalidFamilySeedCount !== 32 ||
       unknownFamily.metadata?.searchSpace?.eligibleCount !== 0 ||
       unknownFamily.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
       unknownFamily.metadata?.usage?.calls !== 1) {
@@ -2455,6 +2694,11 @@ try {
   if (patientInbound.status !== 'completed' ||
       patientInbound.metadata?.searchSpace?.eligibleCount !== 2 ||
       patientInbound.metadata?.searchSpace?.motionConflictCount !== 0 ||
+      patientInbound.metadata?.searchSpace?.revenueRejectedCount !== 0 ||
+      patientInbound.metadata?.searchSpace?.revenueGate !==
+        'incremental_income_v1' ||
+      patientInbound.metadata?.searchSpace?.revenuePathContract !==
+        'incremental_revenue_v1' ||
       patientInbound.metadata?.searchSpace?.timingVerificationRepairCount !== 2 ||
       patientInbound.metadata?.searchSpace?.unsupportedTimingSeedCount !== 0 ||
       patientInbound.metadata?.hypotheses?.some((hypothesis) =>
@@ -2464,6 +2708,10 @@ try {
         hypothesis.score?.timing > 0.25 ||
         hypothesis.score?.risk < 0.35 ||
         hypothesis.score?.uncertainty < 0.75 ||
+        hypothesis.revenuePath?.acquisitionMode !== 'inbound' ||
+        hypothesis.revenuePath?.contractVersion !==
+          'incremental_revenue_v1' ||
+        hypothesis.expectedValueMicros <= 0 ||
         !hypothesis.provenance?.timingEvidenceText?.toLowerCase().includes(
           hypothesis.provenance?.timingSupportPhrase?.toLowerCase() || '\u0000'
         )
@@ -2482,9 +2730,31 @@ try {
       patientInbound.metadata?.usage?.calls !== 1) {
     throw new Error(`legitimate patient-inbound insurance-context strategy was blocked or rewritten as insurer outreach: ${JSON.stringify(patientInbound)}`);
   }
+  if (uhcOperationsOnly.status !== 'skipped' ||
+      uhcOperationsOnly.metadata?.searchSpace?.eligibleCount !== 0 ||
+      uhcOperationsOnly.metadata?.searchSpace?.revenueRejectedCount < 1 ||
+      uhcOperationsOnly.metadata?.searchSpace?.revenueGate !==
+        'incremental_income_v1' ||
+      uhcOperationsOnly.metadata?.searchSpace?.revenuePathContract !==
+        'incremental_revenue_v1' ||
+      uhcOperationsOnly.metadata?.searchSpace
+        ?.revenueRejectionReasons?.operations_only_action < 1 ||
+      uhcOperationsOnly.metadata?.searchSpace
+        ?.revenueRejectionReasons?.missing_paid_offer < 1 ||
+      uhcOperationsOnly.metadata?.searchSpace
+        ?.revenueRejectionReasons?.missing_incremental_income < 1 ||
+      uhcOperationsOnly.metadata?.searchSpace
+        ?.revenueRejectionReasons?.missing_observable_revenue < 1 ||
+      uhcOperationsOnly.metadata?.hypotheses?.length !== 0 ||
+      uhcOperationsOnly.metadata?.winner !== null ||
+      uhcOperationsOnly.metadata?.runnerUp !== null ||
+      uhcOperationsOnly.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      uhcOperationsOnly.metadata?.usage?.calls !== 1) {
+    throw new Error(`UHC eligibility/scheduling operations won without incremental demand and paid conversion: ${JSON.stringify(uhcOperationsOnly)}`);
+  }
   if (crossMotionTiming.status !== 'skipped' ||
       crossMotionTiming.metadata?.searchSpace?.seedContract !==
-        'family_bundle_v2' ||
+        'revenue_family_bundle_v1' ||
       crossMotionTiming.metadata?.searchSpace?.completeStrategyFamilyCount !== 1 ||
       crossMotionTiming.metadata?.searchSpace?.incompleteStrategyFamilyCount !== 1 ||
       crossMotionTiming.metadata?.searchSpace?.familyEvidenceMismatchSeedCount !== 1 ||
@@ -2526,6 +2796,11 @@ try {
   if (nonResearch.status !== 'skipped' ||
       nonResearch.metadata?.gate?.decision !== 'block' ||
       nonResearch.metadata?.gate?.requiresReview !== true ||
+      nonResearch.metadata?.searchSpace?.revenueGate !==
+        'incremental_income_v1' ||
+      nonResearch.metadata?.searchSpace?.revenuePathContract !==
+        'incremental_revenue_v1' ||
+      nonResearch.metadata?.searchSpace?.revenueRejectedCount !== 0 ||
       nonResearch.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
       nonResearch.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
       nonResearch.metadata?.gate?.sideEffects?.publishAttempts !== 0) {
@@ -2538,6 +2813,14 @@ try {
     if (result.status !== 'skipped' ||
         result.metadata?.searchSpace?.modelCalls !== 0 ||
         result.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
+        result.metadata?.searchSpace?.revenueGate !==
+          'incremental_income_v1' ||
+        result.metadata?.searchSpace?.revenuePathContract !==
+          'incremental_revenue_v1' ||
+        result.metadata?.searchSpace?.revenueRejectedCount !== 0 ||
+        Object.keys(
+          result.metadata?.searchSpace?.revenueRejectionReasons || {}
+        ).length !== 0 ||
         result.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
         result.metadata?.usage?.calls !== 0) {
       throw new Error(`${label} tournament path lost its zero-repair trace: ${JSON.stringify(result)}`);

@@ -138,11 +138,24 @@ Additional managed job kinds:
   profile owner. Only source records, observations, and extracts tied to an
   explicitly `approved` source ID may ground the tournament. One bounded,
   provider-price-capped OpenRouter call generates evidence-referenced strategy
-  dimensions, semantic score inputs, and those optional exact candidates.
+  dimensions, semantic score inputs, and those optional exact candidates. The
+  `cheap_tournament_v3` seed contract requires each family to identify an
+  actual buyer, explicitly paid offer, inbound or permissioned acquisition
+  path, paid conversion, observable revenue event, and durable attribution
+  signal. Evidence-grounded inbound paths receive a small preference; warm,
+  partner, existing-customer, and permissioned alternatives remain eligible.
   Deterministic code then expands and judges at most 10,000 tuples, retains at
   most 20 finalists, and returns one review-required winner plus a runner-up.
+  Operations-only work, including eligibility, scheduling, workflow, profile,
+  content, or research tasks, cannot be the singular opportunity even when it
+  is useful supporting context. A completed finalist carries
+  `incremental_revenue_v1`, positive expected incremental gross income, and
+  evidence-linked acquisition, conversion, outcome, and attribution fields.
   Direct receipt metadata includes `hypotheses`, `candidates`, `winner`,
   `runnerUp`, `searchSpace`, `gate`, and `usage` for the ProfileScribe worker.
+  `searchSpace` records `incremental_income_v1`, the revenue-path contract, and
+  stable deterministic rejection counts/reasons so the control plane can
+  validate the gate independently.
   A completed result requires an unbroken objective → tournament → hypothesis
   → named candidate → reviewable action chain. Candidate evidence must overlap
   the winning buyer-segment seed plus its offer or proof evidence—not merely an

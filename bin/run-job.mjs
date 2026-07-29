@@ -3,6 +3,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import {
+  REVENUE_GATE_VERSION,
+  REVENUE_PATH_CONTRACT_VERSION,
   runOpportunityTournament
 } from './opportunity-tournament.mjs';
 
@@ -538,7 +540,11 @@ async function runOpportunityTournamentJob(job, options) {
           expandedCount: 0,
           deterministic: true,
           modelCalls: 0,
-          timingVerificationRepairCount: 0
+          timingVerificationRepairCount: 0,
+          revenueGate: REVENUE_GATE_VERSION,
+          revenuePathContract: REVENUE_PATH_CONTRACT_VERSION,
+          revenueRejectedCount: 0,
+          revenueRejectionReasons: {}
         },
         gate: {
           decision: 'human_review',
@@ -580,7 +586,11 @@ async function runOpportunityTournamentJob(job, options) {
           expandedCount: 0,
           deterministic: true,
           modelCalls: 0,
-          timingVerificationRepairCount: 0
+          timingVerificationRepairCount: 0,
+          revenueGate: REVENUE_GATE_VERSION,
+          revenuePathContract: REVENUE_PATH_CONTRACT_VERSION,
+          revenueRejectedCount: 0,
+          revenueRejectionReasons: {}
         },
         gate: {
           decision: 'block',
