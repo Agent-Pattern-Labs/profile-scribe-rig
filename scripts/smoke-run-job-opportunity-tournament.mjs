@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
+import { buildEvidenceCatalog } from '../bin/opportunity-tournament.mjs';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const tmp = mkdtempSync(join(tmpdir(), 'profilescribe-rig-opportunity-tournament-'));
@@ -116,13 +117,30 @@ const server = createServer(async (request, response) => {
   const userMessage = envelope.messages?.find((message) => message.role === 'user')?.content || '{}';
   const input = JSON.parse(userMessage);
   openRouterInputs.push(input);
+  if (input.objective?.id === 'obj-provider-failure-fail-forward') {
+    response.writeHead(503, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      error: { message: 'deliberate bounded provider failure fixture' }
+    }));
+    return;
+  }
+  if (input.objective?.id === 'obj-budget-route-failure-fail-forward') {
+    response.writeHead(400, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      error: {
+        message:
+          'No provider route fits the max_price request budget cap.'
+      }
+    }));
+    return;
+  }
   const evidenceIDs = (input.evidenceCatalog || []).map((item) => item.id);
   const sourceRef = evidenceIDs.find((id) => id.startsWith('source:')) || evidenceIDs[0];
   const proofRef = evidenceIDs.find(
-    (id) => id === 'observation:obs-delivery-proof'
+    (id) => id === 'observation:obs-delivery-booking'
   ) || evidenceIDs.find((id) => id.startsWith('observation:')) || evidenceIDs[1] || sourceRef;
   const timingEvidenceRef = evidenceIDs.find(
-    (id) => id === 'observation:obs-delivery-proof'
+    (id) => id === 'observation:obs-delivery-booking'
   ) || proofRef;
   const timelineRef = evidenceIDs.find((id) => id === 'timeline:peer-post-smoke');
   const structuredPersonRef = evidenceIDs.find((id) => id === 'observation:obs-structured-person');
@@ -253,9 +271,9 @@ const server = createServer(async (request, response) => {
       );
   const timingLabels = timingEvidenceRef === 'observation:obs-delivery-proof'
     ? [
-        'Determine whether the review-gated client delivery workflow supports acting',
-        'Determine whether the observed handoff bottlenecks support acting',
-        'Determine whether one prioritized operating change supports acting',
+        'Determine whether Paid client-delivery diagnostic booking supports acting on the Workflow audit motion',
+        'Determine whether Paid client-delivery diagnostic booking supports acting on the Implementation diagnostic motion',
+        'Determine whether Paid client-delivery diagnostic booking supports acting on the Pilot plan motion',
         'Determine whether the workflow identifies handoff bottlenecks before acting'
       ]
     : timingSupportPhrases.map((phrase, index) =>
@@ -339,7 +357,7 @@ const server = createServer(async (request, response) => {
     channels: make('channel', [
       'One warm referral introduction',
       'One permissioned professional-network introduction request',
-      'One inbound paid-offer discovery path',
+      'One organic-search inbound discovery path to the paid-offer checkout',
       'One existing-customer referral path'
     ], {
       warmPath: 0.78,
@@ -782,8 +800,8 @@ const server = createServer(async (request, response) => {
         'United Healthcare-covered parents seeking lactation consultations'
       ],
       channels: [
-        'Existing patient service-page',
-        'Existing consultation booking page'
+        'Local-search inbound discovery sends prospective patients to the existing patient service page',
+        'Organic-search inbound discovery sends prospective parents to the existing consultation booking page'
       ],
       actions: [
         'Prepare one reimbursable consultation offer and inbound paid-booking request',
@@ -891,6 +909,13 @@ const server = createServer(async (request, response) => {
             uncertainty: 0
           })
         });
+      }
+    }
+    if (input.objective?.id === 'obj-destination-only-inbound') {
+      for (const [index, channel] of seedSet.channels.entries()) {
+        channel.l = index === 0
+          ? 'Existing patient service page'
+          : 'Existing consultation booking page';
       }
     }
   }
@@ -1058,6 +1083,27 @@ const server = createServer(async (request, response) => {
       w: structuredClone(seedSet.w)
     };
   }
+  if (input.objective?.id === 'obj-owned-asset-cannot-replace-warm-target') {
+    for (const [index, channel] of seedSet.channels.entries()) {
+      channel.l = 'One warm referral introduction';
+      seedSet.actions[index].l =
+        'Prepare one paid offer and paid-booking request for a warm referral';
+      Object.assign(seedSet.revenuePaths[index], {
+        l: 'One new paid booking through a warm referral',
+        revenueMechanism: 'paid_booking',
+        incrementalIncomeOutcome:
+          'One new paid booking adds incremental gross income',
+        acquisitionMode: 'warm_referral',
+        conversionAction:
+          'Prepare one paid offer and paid-booking request for a warm referral',
+        observableRevenueOutcome: 'One paid booking recorded',
+        attributionMethod: 'booking_record',
+        attributionSignal:
+          'Booking record source field stores the warm referral'
+      });
+    }
+    responseSeedSet = seedSet;
+  }
   if (crossMotionTimingEvidenceRef && patientInboundEvidenceRef) {
     const dimensions = {};
     for (const dimension of [
@@ -1122,6 +1168,79 @@ const server = createServer(async (request, response) => {
 try {
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
   const port = server.address().port;
+  const crossPortEvidenceCatalog = buildEvidenceCatalog({
+    evidenceSnapshot: {
+      profile: {
+        identity: {
+          website: 'https://example.com'
+        }
+      },
+      sources: [{
+        id: 'src-cross-port',
+        kind: 'website',
+        label: 'Cross-port source',
+        url: 'https://example.com:8443/services',
+        status: 'approved'
+      }],
+      sourceEvidence: [{
+        observationId: 'obs-cross-port',
+        sourceId: 'src-cross-port',
+        kind: 'service-page',
+        title: 'Paid consultation booking',
+        summary: 'Book and pay for one consultation.',
+        url: 'https://example.com:8443/services/book',
+        observedAt: '2026-07-25T12:00:00Z',
+        confidence: 'high'
+      }]
+    }
+  });
+  const crossPortObservation = crossPortEvidenceCatalog.find(
+    (evidence) => evidence.id === 'observation:obs-cross-port'
+  );
+  if (!crossPortObservation ||
+      crossPortObservation.profileControlledSource === true) {
+    throw new Error(
+      `a profile URL declaration controlled a different port: ${JSON.stringify(crossPortObservation)}`
+    );
+  }
+  const crossQueryEvidenceCatalog = buildEvidenceCatalog({
+    evidenceSnapshot: {
+      profile: {
+        identity: {
+          bookingUrl:
+            'https://app.acuityscheduling.com/schedule.php?owner=casey'
+        }
+      },
+      sources: [{
+        id: 'src-cross-query',
+        kind: 'website',
+        label: 'Another booking tenant',
+        url:
+          'https://app.acuityscheduling.com/schedule.php?owner=another-practice',
+        status: 'approved'
+      }],
+      sourceEvidence: [{
+        observationId: 'obs-cross-query',
+        sourceId: 'src-cross-query',
+        kind: 'service-page',
+        title: 'Paid consultation booking',
+        summary: 'Book and pay for one consultation.',
+        url:
+          'https://app.acuityscheduling.com/schedule.php?owner=another-practice',
+        observedAt: '2026-07-25T12:00:00Z',
+        confidence: 'high'
+      }]
+    }
+  });
+  const crossQueryObservation = crossQueryEvidenceCatalog.find(
+    (evidence) => evidence.id === 'observation:obs-cross-query'
+  );
+  if (!crossQueryObservation ||
+      crossQueryObservation.profileControlledSource === true) {
+    throw new Error(
+      `a query-scoped booking declaration controlled another tenant: ${JSON.stringify(crossQueryObservation)}`
+    );
+  }
   const job = {
     id: 'job-opportunity-tournament-smoke',
     kind: 'opportunity_tournament',
@@ -1129,7 +1248,7 @@ try {
     userId: 'user-smoke',
     payload: {
       tournamentId: 'opturn-smoke',
-      algorithmVersion: 'cheap_tournament_v3',
+      algorithmVersion: 'cheap_tournament_v4',
       researchOnly: true,
       objective: {
         id: 'obj-smoke',
@@ -1158,7 +1277,8 @@ try {
           identity: {
             fullName: 'Casey Founder',
             slug: 'casey-founder',
-            headline: 'Improves delivery systems for professional-service businesses'
+            headline: 'Improves delivery systems for professional-service businesses',
+            website: 'https://example.com/delivery-map'
           },
           currentFocus: [{
             id: 'focus-workflow',
@@ -1210,7 +1330,7 @@ try {
             url: 'https://example.com/unknown',
             status: 'mystery'
           },
-          ...Array.from({ length: 27 }, (_, index) => ({
+          ...Array.from({ length: 26 }, (_, index) => ({
             id: `src-approved-noise-${String(index + 1).padStart(2, '0')}`,
             kind: 'website',
             label: `Approved catalog pressure source ${index + 1}`,
@@ -1229,6 +1349,16 @@ try {
             summary: 'The workflow identifies handoff bottlenecks and produces one prioritized operating change.',
             url: 'https://example.com/delivery-map/case-study',
             observedAt: '2026-07-20T12:00:00Z',
+            confidence: 'high'
+          },
+          {
+            observationId: 'obs-delivery-booking',
+            sourceId: 'src-delivery-map',
+            kind: 'service-page',
+            title: 'Paid client-delivery diagnostic booking',
+            summary: 'Professional-service businesses can book and pay for one delivery diagnostic through a tracked booking form.',
+            url: 'https://example.com/delivery-map/book',
+            observedAt: '2026-07-21T11:00:00Z',
             confidence: 'high'
           },
           {
@@ -1463,6 +1593,284 @@ try {
   const candidateFreeJobFile = join(tmp, 'candidate-free-job.json');
   writeFileSync(candidateFreeJobFile, `${JSON.stringify(candidateFreeJob)}\n`, 'utf8');
   const candidateFree = await runJob(candidateFreeJobFile, port);
+  const freeAssetJob = structuredClone(candidateFreeJob);
+  freeAssetJob.id =
+    'job-opportunity-tournament-free-asset-smoke';
+  freeAssetJob.payload.tournamentId =
+    'opturn-free-asset-smoke';
+  freeAssetJob.payload.objective.id =
+    'obj-free-asset-cannot-ground-paid-conversion';
+  const freeAssetEvidence =
+    freeAssetJob.payload.evidenceSnapshot.sourceEvidence.find(
+      (item) => item.observationId === 'obs-delivery-booking'
+    );
+  freeAssetEvidence.title = 'Book a free consultation';
+  freeAssetEvidence.summary =
+    'This free healthcare consultation has no fee and no paid service; insurance is not accepted.';
+  freeAssetEvidence.url =
+    'https://example.com/delivery-map/free-consultation';
+  const freeAssetJobFile = join(tmp, 'free-asset-job.json');
+  writeFileSync(
+    freeAssetJobFile,
+    `${JSON.stringify(freeAssetJob)}\n`,
+    'utf8'
+  );
+  const freeAsset = await runJob(freeAssetJobFile, port);
+  const negatedPaidAssetJob = structuredClone(candidateFreeJob);
+  negatedPaidAssetJob.id =
+    'job-opportunity-tournament-negated-paid-asset-smoke';
+  negatedPaidAssetJob.payload.tournamentId =
+    'opturn-negated-paid-asset-smoke';
+  negatedPaidAssetJob.payload.objective.id =
+    'obj-negated-paid-asset-cannot-ground-conversion';
+  const negatedPaidAssetEvidence =
+    negatedPaidAssetJob.payload.evidenceSnapshot.sourceEvidence.find(
+      (item) => item.observationId === 'obs-delivery-booking'
+    );
+  negatedPaidAssetEvidence.title = 'Book a healthcare consultation';
+  negatedPaidAssetEvidence.summary =
+    'This service is not billable, appointments are not reimbursable, and payment is not required.';
+  negatedPaidAssetEvidence.url =
+    'https://example.com/delivery-map/not-billable-consultation';
+  const negatedPaidAssetJobFile = join(
+    tmp,
+    'negated-paid-asset-job.json'
+  );
+  writeFileSync(
+    negatedPaidAssetJobFile,
+    `${JSON.stringify(negatedPaidAssetJob)}\n`,
+    'utf8'
+  );
+  const negatedPaidAsset = await runJob(
+    negatedPaidAssetJobFile,
+    port
+  );
+  const articleAssetJob = structuredClone(candidateFreeJob);
+  articleAssetJob.id =
+    'job-opportunity-tournament-article-asset-smoke';
+  articleAssetJob.payload.tournamentId =
+    'opturn-article-asset-smoke';
+  articleAssetJob.payload.objective.id =
+    'obj-article-cannot-ground-paid-conversion';
+  const articleAssetEvidence =
+    articleAssetJob.payload.evidenceSnapshot.sourceEvidence.find(
+      (item) => item.observationId === 'obs-delivery-booking'
+    );
+  articleAssetEvidence.kind = 'article';
+  articleAssetEvidence.title =
+    'How to book a paid consultation';
+  articleAssetEvidence.summary =
+    'This article explains how readers schedule and pay for a consultation.';
+  articleAssetEvidence.url =
+    'https://example.com/delivery-map/blog/how-to-book-a-paid-consultation';
+  const articleAssetJobFile = join(tmp, 'article-asset-job.json');
+  writeFileSync(
+    articleAssetJobFile,
+    `${JSON.stringify(articleAssetJob)}\n`,
+    'utf8'
+  );
+  const articleAsset = await runJob(articleAssetJobFile, port);
+  const staleAssetJob = structuredClone(candidateFreeJob);
+  staleAssetJob.id =
+    'job-opportunity-tournament-stale-asset-smoke';
+  staleAssetJob.payload.tournamentId =
+    'opturn-stale-asset-smoke';
+  staleAssetJob.payload.objective.id =
+    'obj-stale-asset-cannot-ground-paid-conversion';
+  const staleAssetEvidence =
+    staleAssetJob.payload.evidenceSnapshot.sourceEvidence.find(
+      (item) => item.observationId === 'obs-delivery-booking'
+    );
+  staleAssetEvidence.observedAt = '2025-01-01T12:00:00Z';
+  staleAssetEvidence.current = false;
+  staleAssetEvidence.status = 'unavailable';
+  const staleAssetJobFile = join(tmp, 'stale-asset-job.json');
+  writeFileSync(
+    staleAssetJobFile,
+    `${JSON.stringify(staleAssetJob)}\n`,
+    'utf8'
+  );
+  const staleAsset = await runJob(staleAssetJobFile, port);
+  const nonInboundOwnedAssetJob = structuredClone(candidateFreeJob);
+  nonInboundOwnedAssetJob.id =
+    'job-opportunity-tournament-owned-asset-non-inbound-smoke';
+  nonInboundOwnedAssetJob.payload.tournamentId =
+    'opturn-owned-asset-non-inbound-smoke';
+  nonInboundOwnedAssetJob.payload.objective.id =
+    'obj-owned-asset-cannot-replace-warm-target';
+  nonInboundOwnedAssetJob.payload.evidenceSnapshot.candidates = [{
+    id: 'candidate:forged-owned-inbound-asset',
+    kind: 'owned_inbound_asset',
+    displayLabel: 'Forged owned asset',
+    publicUrl: 'https://example.com/delivery-map/book',
+    providers: ['approved_source_observation'],
+    evidenceRefs: ['observation:obs-delivery-booking'],
+    identityResolved: true
+  }];
+  const nonInboundOwnedAssetJobFile = join(
+    tmp,
+    'owned-asset-non-inbound-job.json'
+  );
+  writeFileSync(
+    nonInboundOwnedAssetJobFile,
+    `${JSON.stringify(nonInboundOwnedAssetJob)}\n`,
+    'utf8'
+  );
+  const nonInboundOwnedAsset = await runJob(
+    nonInboundOwnedAssetJobFile,
+    port
+  );
+  const mismatchedOwnedAssetJob = structuredClone(candidateFreeJob);
+  mismatchedOwnedAssetJob.id =
+    'job-opportunity-tournament-owned-asset-origin-mismatch-smoke';
+  mismatchedOwnedAssetJob.payload.tournamentId =
+    'opturn-owned-asset-origin-mismatch-smoke';
+  const mismatchedAssetEvidence =
+    mismatchedOwnedAssetJob.payload.evidenceSnapshot.sourceEvidence.find(
+      (item) => item.observationId === 'obs-delivery-booking'
+    );
+  mismatchedAssetEvidence.url =
+    'https://unapproved.example.net/borrowed-booking-page';
+  const mismatchedOwnedAssetJobFile = join(
+    tmp,
+    'owned-asset-origin-mismatch-job.json'
+  );
+  writeFileSync(
+    mismatchedOwnedAssetJobFile,
+    `${JSON.stringify(mismatchedOwnedAssetJob)}\n`,
+    'utf8'
+  );
+  const mismatchedOwnedAsset = await runJob(
+    mismatchedOwnedAssetJobFile,
+    port
+  );
+  const sharedBookingHostJob = structuredClone(candidateFreeJob);
+  sharedBookingHostJob.id =
+    'job-opportunity-tournament-shared-booking-host-smoke';
+  sharedBookingHostJob.payload.tournamentId =
+    'opturn-shared-booking-host-smoke';
+  delete sharedBookingHostJob.payload.evidenceSnapshot.profile.identity.website;
+  sharedBookingHostJob.payload.evidenceSnapshot.profile.identity.bookingUrl =
+    'https://calendly.com/casey-founder/home-visit';
+  const sharedBookingSource =
+    sharedBookingHostJob.payload.evidenceSnapshot.sources.find(
+      (item) => item.id === 'src-delivery-map'
+    );
+  sharedBookingSource.url =
+    'https://calendly.com/another-practice/home-visit';
+  const sharedBookingEvidence =
+    sharedBookingHostJob.payload.evidenceSnapshot.sourceEvidence.find(
+      (item) => item.observationId === 'obs-delivery-booking'
+    );
+  sharedBookingEvidence.url =
+    'https://calendly.com/another-practice/home-visit';
+  const sharedBookingHostJobFile = join(
+    tmp,
+    'shared-booking-host-job.json'
+  );
+  writeFileSync(
+    sharedBookingHostJobFile,
+    `${JSON.stringify(sharedBookingHostJob)}\n`,
+    'utf8'
+  );
+  const sharedBookingHost = await runJob(
+    sharedBookingHostJobFile,
+    port
+  );
+  const queryScopedBookingJob = structuredClone(candidateFreeJob);
+  queryScopedBookingJob.id =
+    'job-opportunity-tournament-query-booking-tenant-smoke';
+  queryScopedBookingJob.payload.tournamentId =
+    'opturn-query-booking-tenant-smoke';
+  delete queryScopedBookingJob.payload.evidenceSnapshot.profile.identity.website;
+  queryScopedBookingJob.payload.evidenceSnapshot.profile.identity.bookingUrl =
+    'https://app.acuityscheduling.com/schedule.php?owner=casey';
+  const queryScopedBookingSource =
+    queryScopedBookingJob.payload.evidenceSnapshot.sources.find(
+      (item) => item.id === 'src-delivery-map'
+    );
+  queryScopedBookingSource.url =
+    'https://app.acuityscheduling.com/schedule.php?owner=casey';
+  const queryScopedBookingEvidence =
+    queryScopedBookingJob.payload.evidenceSnapshot.sourceEvidence.find(
+      (item) => item.observationId === 'obs-delivery-booking'
+    );
+  queryScopedBookingEvidence.url =
+    'https://app.acuityscheduling.com/schedule.php?owner=another-practice';
+  const queryScopedBookingJobFile = join(
+    tmp,
+    'query-booking-tenant-job.json'
+  );
+  writeFileSync(
+    queryScopedBookingJobFile,
+    `${JSON.stringify(queryScopedBookingJob)}\n`,
+    'utf8'
+  );
+  const queryScopedBooking = await runJob(
+    queryScopedBookingJobFile,
+    port
+  );
+  const providerFailureJob = structuredClone(candidateFreeJob);
+  providerFailureJob.id =
+    'job-opportunity-tournament-provider-failure-smoke';
+  providerFailureJob.payload.tournamentId =
+    'opturn-provider-failure-smoke';
+  providerFailureJob.payload.objective.id =
+    'obj-provider-failure-fail-forward';
+  const providerFailureJobFile = join(
+    tmp,
+    'provider-failure-job.json'
+  );
+  writeFileSync(
+    providerFailureJobFile,
+    `${JSON.stringify(providerFailureJob)}\n`,
+    'utf8'
+  );
+  const providerFailure = await runJob(
+    providerFailureJobFile,
+    port
+  );
+  const budgetRouteFailureJob = structuredClone(candidateFreeJob);
+  budgetRouteFailureJob.id =
+    'job-opportunity-tournament-budget-route-failure-smoke';
+  budgetRouteFailureJob.payload.tournamentId =
+    'opturn-budget-route-failure-smoke';
+  budgetRouteFailureJob.payload.objective.id =
+    'obj-budget-route-failure-fail-forward';
+  const budgetRouteFailureJobFile = join(
+    tmp,
+    'budget-route-failure-job.json'
+  );
+  writeFileSync(
+    budgetRouteFailureJobFile,
+    `${JSON.stringify(budgetRouteFailureJob)}\n`,
+    'utf8'
+  );
+  const budgetRouteFailure = await runJob(
+    budgetRouteFailureJobFile,
+    port
+  );
+  const budgetFailureJob = structuredClone(candidateFreeJob);
+  budgetFailureJob.id =
+    'job-opportunity-tournament-budget-failure-smoke';
+  budgetFailureJob.payload.tournamentId =
+    'opturn-budget-failure-smoke';
+  budgetFailureJob.payload.objective.id =
+    'obj-budget-failure-fail-forward';
+  budgetFailureJob.payload.budget.maxLLMSpendMicros = 10_000;
+  const budgetFailureJobFile = join(
+    tmp,
+    'budget-failure-job.json'
+  );
+  writeFileSync(
+    budgetFailureJobFile,
+    `${JSON.stringify(budgetFailureJob)}\n`,
+    'utf8'
+  );
+  const budgetFailure = await runJob(
+    budgetFailureJobFile,
+    port
+  );
   const contextJob = structuredClone(job);
   contextJob.id = 'job-opportunity-tournament-persisted-context-smoke';
   contextJob.payload.tournamentId = 'opturn-persisted-context-smoke';
@@ -1963,7 +2371,8 @@ try {
     sourceId: 'src-delivery-map',
     kind: 'service-page',
     title: 'United Healthcare lactation consultations',
-    summary: 'The practice accepts United Healthcare for eligible in-home lactation consultations and provides an existing booking path.',
+    summary: 'The practice accepts United Healthcare, bills the plan for eligible reimbursable in-home lactation consultations, and provides an existing booking path.',
+    url: 'https://example.com/delivery-map/lactation-consultant-home-visit',
     observedAt: '2026-07-25T12:00:00Z',
     confidence: 'high',
     candidate: {
@@ -1984,6 +2393,49 @@ try {
     'utf8'
   );
   const patientInbound = await runJob(patientInboundJobFile, port);
+  const destinationOnlyInboundJob = structuredClone(patientInboundJob);
+  destinationOnlyInboundJob.id =
+    'job-opportunity-tournament-destination-only-inbound-smoke';
+  destinationOnlyInboundJob.payload.tournamentId =
+    'opturn-destination-only-inbound-smoke';
+  destinationOnlyInboundJob.payload.objective.id =
+    'obj-destination-only-inbound';
+  const destinationOnlyInboundJobFile = join(
+    tmp,
+    'destination-only-inbound-job.json'
+  );
+  writeFileSync(
+    destinationOnlyInboundJobFile,
+    `${JSON.stringify(destinationOnlyInboundJob)}\n`,
+    'utf8'
+  );
+  const destinationOnlyInbound = await runJob(
+    destinationOnlyInboundJobFile,
+    port
+  );
+  const patientInboundWithoutOwnedAssetJob =
+    structuredClone(patientInboundJob);
+  patientInboundWithoutOwnedAssetJob.id =
+    'job-opportunity-tournament-patient-inbound-no-owned-asset-smoke';
+  patientInboundWithoutOwnedAssetJob.payload.tournamentId =
+    'opturn-patient-inbound-no-owned-asset-smoke';
+  patientInboundWithoutOwnedAssetJob.payload.evidenceSnapshot.profile
+    .identity.website = 'https://owner.example.net';
+  delete patientInboundWithoutOwnedAssetJob.payload.evidenceSnapshot
+    .profile.identity.bookingUrl;
+  const patientInboundWithoutOwnedAssetJobFile = join(
+    tmp,
+    'patient-inbound-no-owned-asset-job.json'
+  );
+  writeFileSync(
+    patientInboundWithoutOwnedAssetJobFile,
+    `${JSON.stringify(patientInboundWithoutOwnedAssetJob)}\n`,
+    'utf8'
+  );
+  const patientInboundWithoutOwnedAsset = await runJob(
+    patientInboundWithoutOwnedAssetJobFile,
+    port
+  );
   const uhcOperationsOnlyJob = structuredClone(patientInboundJob);
   uhcOperationsOnlyJob.id =
     'job-opportunity-tournament-uhc-operations-only-smoke';
@@ -1991,6 +2443,8 @@ try {
     'opturn-uhc-operations-only-smoke';
   uhcOperationsOnlyJob.payload.objective.id =
     'obj-uhc-eligibility-scheduling-no-revenue';
+  uhcOperationsOnlyJob.payload.objective.outcome =
+    'Generate one new paid in-home lactation consultation booking.';
   const uhcOperationsOnlyJobFile = join(
     tmp,
     'uhc-operations-only-job.json'
@@ -2079,7 +2533,7 @@ try {
     { env: { OPENROUTER_API_KEY: '' } }
   );
 
-  if (openRouterCalls.length !== 30) {
+  if (openRouterCalls.length !== 43) {
     throw new Error(`expected one OpenRouter call per tournament run, got ${openRouterCalls.length}`);
   }
   if (unexpectedRequests.length !== 0) {
@@ -2110,13 +2564,15 @@ try {
   ];
   for (const [inputIndex, input] of openRouterInputs.entries()) {
     const serializedEvidence = JSON.stringify(input.evidenceCatalog || []);
+    const isPersistedContextInput =
+      input.objective?.id === 'obj-persisted-context-family-bundles';
     if (!serializedEvidence.includes('source:src-delivery-map') ||
         !serializedEvidence.includes('observation:obs-delivery-proof')) {
-      if (inputIndex !== 3) {
+      if (!isPersistedContextInput) {
         throw new Error(`approved source evidence was not retained: ${serializedEvidence}`);
       }
     }
-    if (inputIndex === 3 &&
+    if (isPersistedContextInput &&
         (!serializedEvidence.includes('source:src-context-safe') ||
          !serializedEvidence.includes('observation:obs-context-candidate'))) {
       throw new Error(`approved source evidence was not retained: ${serializedEvidence}`);
@@ -2163,7 +2619,7 @@ try {
       throw new Error(`generator prompt lost the nested family-bundle contract: ${JSON.stringify(input.responseSchema)}`);
     }
   }
-  for (const call of openRouterCalls) {
+  for (const [callIndex, call] of openRouterCalls.entries()) {
     if (call.max_tokens !== 8000) {
       throw new Error(`expected bounded 8000-token completion, got ${call.max_tokens}`);
     }
@@ -2172,7 +2628,7 @@ try {
     const responseDefinitions = responseSchema.$defs || {};
     if (responseFormat.type !== 'json_schema' ||
         responseFormat.json_schema?.name !==
-          'profile_scribe_opportunity_tournament_v3' ||
+          'profile_scribe_opportunity_tournament_v4' ||
         responseFormat.json_schema?.strict !== true ||
         responseSchema.additionalProperties !== false ||
         responseSchema.properties?.familyA?.properties?.d?.properties
@@ -2184,8 +2640,18 @@ try {
         responseDefinitions.revenuePath?.properties?.vm?.minimum !== 1 ||
         responseDefinitions.offerItem?.properties?.l?.description
           ?.includes('explicitly paid') !== true ||
+        !responseDefinitions.offerItem?.properties?.l?.pattern ||
         responseDefinitions.actionItem?.properties?.l?.description
           ?.includes('paid booking') !== true ||
+        !responseDefinitions.actionItem?.properties?.l?.pattern ||
+        !responseDefinitions.revenuePath?.properties
+          ?.incrementalIncomeOutcome?.pattern ||
+        !responseDefinitions.revenuePath?.properties?.conversionAction
+          ?.pattern ||
+        !responseDefinitions.revenuePath?.properties
+          ?.observableRevenueOutcome?.pattern ||
+        !responseDefinitions.revenuePath?.properties?.attributionSignal
+          ?.pattern ||
         responseDefinitions.evidenceRef?.enum?.length < 1 ||
         responseDefinitions.evidenceRef?.enum?.some((id) =>
           /^source:/i.test(id)
@@ -2193,9 +2659,14 @@ try {
       throw new Error(`expected strict tournament JSON-schema response mode, got ${JSON.stringify(responseFormat)}`);
     }
     const maxPrice = call.provider?.max_price || {};
+    const expectedRequestPrice =
+      openRouterInputs[callIndex]?.objective?.id ===
+        'obj-budget-failure-fail-forward'
+        ? 0.01
+        : 0.12;
     if (maxPrice.prompt !== 2 ||
         maxPrice.completion !== 8 ||
-        maxPrice.request !== 0.12 ||
+        maxPrice.request !== expectedRequestPrice ||
         call.provider?.require_parameters !== true) {
       throw new Error(`expected conservative OpenRouter max_price routing caps, got ${JSON.stringify(maxPrice)}`);
     }
@@ -2227,6 +2698,9 @@ try {
     const metadata = receipt.metadata || {};
     for (const key of ['hypotheses', 'candidates', 'winner', 'runnerUp', 'searchSpace', 'gate', 'usage']) {
       if (!(key in metadata)) throw new Error(`expected direct metadata.${key}`);
+    }
+    if (metadata.nextExperiment != null) {
+      throw new Error(`completed tournament retained a fallback experiment: ${JSON.stringify(metadata.nextExperiment)}`);
     }
     if (metadata.searchSpace?.theoreticalCount !== 65536 ||
         metadata.searchSpace?.expandedCount !== 10000 ||
@@ -2301,7 +2775,7 @@ try {
         'Founder-led professional service businesses',
         'One warm referral introduction',
         'Prepare one paid workflow-audit offer and booking request for a warm introduction',
-        'Determine whether the review-gated client delivery workflow supports acting',
+        'Determine whether Paid client-delivery diagnostic booking supports acting on the Workflow audit motion',
         'Stop after one unanswered review-gated attempt'
       ],
       [
@@ -2309,15 +2783,15 @@ try {
         'Small agency operations leaders',
         'One permissioned professional-network introduction request',
         'Prepare one paid implementation-diagnostic proposal and permissioned contract request',
-        'Determine whether the observed handoff bottlenecks support acting',
+        'Determine whether Paid client-delivery diagnostic booking supports acting on the Implementation diagnostic motion',
         'Request human review before any follow-up'
       ],
       [
         'A paid proof-backed pilot',
         'Independent consultants with repeatable delivery',
-        'One inbound paid-offer discovery path',
+        'One organic-search inbound discovery path to the paid-offer checkout',
         'Prepare one paid pilot offer and inbound checkout request',
-        'Determine whether one prioritized operating change supports acting',
+        'Determine whether Paid client-delivery diagnostic booking supports acting on the Pilot plan motion',
         'Record the outcome before selecting another strategy'
       ],
       [
@@ -2325,7 +2799,7 @@ try {
         'Boutique service founders improving client workflows',
         'One existing-customer referral path',
         'Prepare one paid operating-system review offer and existing-customer referral booking request',
-        'Determine whether the workflow identifies handoff bottlenecks before acting',
+        'Determine whether Paid client-delivery diagnostic booking supports acting on the Operating review motion',
         'Use one permissioned clarification only'
       ]
     ];
@@ -2404,8 +2878,8 @@ try {
         metadata.usage?.withinBudget !== true) {
       throw new Error(`expected exact bounded usage metadata: ${JSON.stringify(metadata.usage)}`);
     }
-    if (!Array.isArray(metadata.candidates) || metadata.candidates.length !== 3) {
-      throw new Error(`expected exact timeline, source, and model candidates: ${JSON.stringify(metadata.candidates)}`);
+    if (!Array.isArray(metadata.candidates) || metadata.candidates.length !== 4) {
+      throw new Error(`expected exact timeline, source, model, and owned-inbound candidates: ${JSON.stringify(metadata.candidates)}`);
     }
     if (metadata.candidates.some((candidate) =>
       candidate.id === 'candidate-queued-person' ||
@@ -2475,22 +2949,186 @@ try {
     }
   }
 
-  if (candidateFree.status !== 'skipped' ||
-      candidateFree.metadata?.candidates?.length !== 0 ||
-      candidateFree.metadata?.winner !== null ||
-      candidateFree.metadata?.runnerUp !== null ||
-      candidateFree.metadata?.gate?.decision !== 'needs_more_approved_evidence' ||
+  const candidateFreeAsset = candidateFree.metadata?.candidates?.find(
+    (candidate) => candidate.selected === true
+  );
+  if (candidateFree.status !== 'completed' ||
+      candidateFree.metadata?.candidates?.length !== 1 ||
+      candidateFreeAsset?.kind !== 'owned_inbound_asset' ||
+      !candidateFreeAsset?.publicUrl ||
+      !candidateFreeAsset?.evidenceRefs?.every((ref) =>
+        /^observation:/i.test(ref)
+      ) ||
+      candidateFree.metadata?.winner?.candidateId !==
+        candidateFreeAsset?.id ||
+      candidateFree.metadata?.winner?.revenuePath?.acquisitionMode !==
+        'inbound' ||
+      !/approved owned inbound execution asset/i.test(
+        candidateFree.metadata?.winner?.why || ''
+      ) ||
+      candidateFree.metadata?.gate?.decision !== 'human_review' ||
       candidateFree.metadata?.gate?.requiresReview !== true ||
       candidateFree.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
       candidateFree.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
       candidateFree.metadata?.usage?.calls !== 1 ||
       candidateFree.metadata?.searchSpace?.expandedCount !== 128) {
-    throw new Error(`candidate-free run did not stop at the grounded-candidate gate: ${JSON.stringify(candidateFree)}`);
+    throw new Error(`candidate-free inbound run did not select its approved owned asset: ${JSON.stringify(candidateFree)}`);
   }
   if (candidateFree.metadata?.usage?.providerMaxPrice?.prompt !== 2 ||
       candidateFree.metadata?.usage?.providerMaxPrice?.completion !== 8 ||
       candidateFree.metadata?.usage?.providerMaxPrice?.request !== 0.12) {
     throw new Error(`candidate-free receipt lost provider price ceilings: ${JSON.stringify(candidateFree.metadata?.usage)}`);
+  }
+  for (const [label, result] of [
+    ['free or negated conversion asset', freeAsset],
+    ['negated paid or reimbursable asset', negatedPaidAsset],
+    ['informational article asset', articleAsset],
+    ['stale or unavailable conversion asset', staleAsset]
+  ]) {
+    const sideEffects = result.metadata?.gate?.sideEffects || {};
+    if (result.status !== 'skipped' ||
+        result.metadata?.candidates?.length !== 0 ||
+        result.metadata?.winner !== null ||
+        result.metadata?.nextExperiment?.contractVersion !==
+          'revenue_evidence_experiment_v1' ||
+        result.metadata?.nextExperiment?.asset !== null ||
+        !/\b1\s+rerun\b/i.test(
+          result.metadata?.nextExperiment?.stopCondition || ''
+        ) ||
+        result.metadata?.usage?.calls !== 1 ||
+        sideEffects.pdlCalls !== 0 ||
+        sideEffects.outreachAttempts !== 0 ||
+        sideEffects.publishAttempts !== 0 ||
+        sideEffects.providerWrites !== 0) {
+      throw new Error(
+        `${label} grounded an inbound paid-conversion path: ${JSON.stringify(result)}`
+      );
+    }
+  }
+  if (nonInboundOwnedAsset.status !== 'skipped' ||
+      nonInboundOwnedAsset.metadata?.candidates?.length !== 0 ||
+      nonInboundOwnedAsset.metadata?.winner !== null ||
+      nonInboundOwnedAsset.metadata?.runnerUp !== null ||
+      nonInboundOwnedAsset.metadata?.nextExperiment?.contractVersion !==
+        'revenue_evidence_experiment_v1' ||
+      !nonInboundOwnedAsset.metadata?.nextExperiment?.action ||
+      !nonInboundOwnedAsset.metadata?.nextExperiment?.successSignal ||
+      !/\b1\s+rerun\b/i.test(
+        nonInboundOwnedAsset.metadata?.nextExperiment?.stopCondition || ''
+      ) ||
+      nonInboundOwnedAsset.metadata?.nextExperiment?.requiresReview !==
+        true ||
+      nonInboundOwnedAsset.metadata?.nextExperiment?.rerunPolicy
+        ?.maxReruns !== 1 ||
+      nonInboundOwnedAsset.metadata?.gate?.decision !==
+        'needs_more_approved_evidence' ||
+      nonInboundOwnedAsset.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
+      nonInboundOwnedAsset.metadata?.gate?.sideEffects?.outreachAttempts !==
+        0 ||
+      nonInboundOwnedAsset.metadata?.usage?.calls !== 1) {
+    throw new Error(`owned inbound asset replaced a named warm-referral target: ${JSON.stringify(nonInboundOwnedAsset)}`);
+  }
+  if (mismatchedOwnedAsset.status !== 'skipped' ||
+      mismatchedOwnedAsset.metadata?.candidates?.length !== 0 ||
+      mismatchedOwnedAsset.metadata?.winner !== null ||
+      mismatchedOwnedAsset.metadata?.nextExperiment?.contractVersion !==
+        'revenue_evidence_experiment_v1' ||
+      mismatchedOwnedAsset.metadata?.nextExperiment?.asset !== null ||
+      mismatchedOwnedAsset.metadata?.gate?.decision !==
+        'needs_more_approved_evidence' ||
+      mismatchedOwnedAsset.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      mismatchedOwnedAsset.metadata?.usage?.calls !== 1) {
+    throw new Error(`cross-origin page was promoted as an approved owned inbound asset: ${JSON.stringify(mismatchedOwnedAsset)}`);
+  }
+  if (sharedBookingHost.status !== 'skipped' ||
+      sharedBookingHost.metadata?.winner !== null ||
+      sharedBookingHost.metadata?.nextExperiment?.contractVersion !==
+        'revenue_evidence_experiment_v1' ||
+      sharedBookingHost.metadata?.nextExperiment?.asset !== null ||
+      sharedBookingHost.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      sharedBookingHost.metadata?.usage?.calls !== 1) {
+    throw new Error(`another tenant on a shared booking host was treated as owner-controlled: ${JSON.stringify(sharedBookingHost)}`);
+  }
+  if (queryScopedBooking.status !== 'skipped' ||
+      queryScopedBooking.metadata?.winner !== null ||
+      queryScopedBooking.metadata?.nextExperiment?.asset !== null ||
+      queryScopedBooking.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      queryScopedBooking.metadata?.usage?.calls !== 1) {
+    throw new Error(`another query-selected booking tenant was treated as owner-controlled: ${JSON.stringify(queryScopedBooking)}`);
+  }
+  if (providerFailure.status !== 'skipped' ||
+      providerFailure.metadata?.winner !== null ||
+      providerFailure.metadata?.nextExperiment?.contractVersion !==
+        'revenue_evidence_experiment_v1' ||
+      providerFailure.metadata?.nextExperiment?.kind !==
+        'strategy_generation_provider_recovery' ||
+      providerFailure.metadata?.nextExperiment?.asset !== null ||
+      providerFailure.metadata?.nextExperiment?.evidenceRefs?.length !== 0 ||
+      !providerFailure.metadata?.nextExperiment?.missingEvidence?.includes(
+        'usable_strategy_generation'
+      ) ||
+      !/provider.*structured-output/is.test(
+        providerFailure.metadata?.nextExperiment?.action || ''
+      ) ||
+      !/provider.*structured-output/is.test(
+        providerFailure.metadata?.nextExperiment?.rerunPolicy?.trigger || ''
+      ) ||
+      !/1 provider-recovery retry/i.test(
+        providerFailure.metadata?.nextExperiment?.stopCondition || ''
+      ) ||
+      providerFailure.metadata?.nextExperiment?.rerunPolicy?.maxReruns !==
+        1 ||
+      providerFailure.metadata?.llm?.strategyGeneratorJudge?.status !==
+        'failed' ||
+      providerFailure.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
+      providerFailure.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
+      providerFailure.metadata?.gate?.sideEffects?.publishAttempts !== 0 ||
+      providerFailure.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      providerFailure.metadata?.usage?.calls !== 1) {
+    throw new Error(`metered provider failure returned a dead end: ${JSON.stringify(providerFailure)}`);
+  }
+  if (budgetFailure.status !== 'skipped' ||
+      budgetFailure.metadata?.winner !== null ||
+      budgetFailure.metadata?.nextExperiment?.contractVersion !==
+        'revenue_evidence_experiment_v1' ||
+      budgetFailure.metadata?.nextExperiment?.kind !==
+        'strategy_generation_budget_recovery' ||
+      budgetFailure.metadata?.nextExperiment?.asset !== null ||
+      budgetFailure.metadata?.nextExperiment?.evidenceRefs?.length !== 0 ||
+      !budgetFailure.metadata?.nextExperiment?.missingEvidence?.includes(
+        'within_budget_strategy_generation'
+      ) ||
+      !/do not raise.*budget.*model\/provider route/is.test(
+        budgetFailure.metadata?.nextExperiment?.action || ''
+      ) ||
+      !/model\/provider route.*existing.*caps/is.test(
+        budgetFailure.metadata?.nextExperiment?.rerunPolicy?.trigger || ''
+      ) ||
+      !/1 budget-compatible retry/i.test(
+        budgetFailure.metadata?.nextExperiment?.stopCondition || ''
+      ) ||
+      budgetFailure.metadata?.nextExperiment?.rerunPolicy?.maxReruns !== 1 ||
+      budgetFailure.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
+      budgetFailure.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
+      budgetFailure.metadata?.gate?.sideEffects?.publishAttempts !== 0 ||
+      budgetFailure.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      budgetFailure.metadata?.usage?.calls !== 1) {
+    throw new Error(`metered budget failure returned the wrong recovery experiment: ${JSON.stringify(budgetFailure)}`);
+  }
+  if (budgetRouteFailure.status !== 'skipped' ||
+      budgetRouteFailure.metadata?.winner !== null ||
+      budgetRouteFailure.metadata?.nextExperiment?.kind !==
+        'strategy_generation_budget_recovery' ||
+      !budgetRouteFailure.metadata?.nextExperiment?.missingEvidence?.includes(
+        'within_budget_strategy_generation'
+      ) ||
+      budgetRouteFailure.metadata?.nextExperiment?.asset !== null ||
+      budgetRouteFailure.metadata?.nextExperiment?.rerunPolicy?.maxReruns !==
+        1 ||
+      budgetRouteFailure.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
+      budgetRouteFailure.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      budgetRouteFailure.metadata?.usage?.calls !== 1) {
+    throw new Error(`request-price routing failure was mislabeled as provider health: ${JSON.stringify(budgetRouteFailure)}`);
   }
   if (contextResult.status !== 'completed' ||
       contextResult.metadata?.candidates?.length !== 1 ||
@@ -2592,10 +3230,16 @@ try {
       incompleteFamily.metadata?.usage?.calls !== 1) {
     throw new Error(`incomplete family gate used a stale v1 explanation: ${JSON.stringify(incompleteFamily)}`);
   }
-  if (unrelatedCandidate.status !== 'skipped' ||
-      unrelatedCandidate.metadata?.candidates?.length !== 0 ||
-      unrelatedCandidate.metadata?.winner !== null ||
-      unrelatedCandidate.metadata?.gate?.decision !== 'needs_more_approved_evidence' ||
+  if (unrelatedCandidate.status !== 'completed' ||
+      unrelatedCandidate.metadata?.candidates?.length !== 1 ||
+      unrelatedCandidate.metadata?.candidates?.[0]?.kind !==
+        'owned_inbound_asset' ||
+      unrelatedCandidate.metadata?.candidates?.some((candidate) =>
+        /proof-only person/i.test(candidate.displayLabel || '')
+      ) ||
+      unrelatedCandidate.metadata?.winner?.candidateId !==
+        unrelatedCandidate.metadata?.candidates?.[0]?.id ||
+      unrelatedCandidate.metadata?.gate?.decision !== 'human_review' ||
       unrelatedCandidate.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
       unrelatedCandidate.metadata?.usage?.calls !== 1) {
     throw new Error(`proof-only candidate was incorrectly attached to an unrelated buyer strategy: ${JSON.stringify(unrelatedCandidate)}`);
@@ -2627,15 +3271,27 @@ try {
       )) {
     throw new Error(`seed fallback overrode an explicit candidate: ${JSON.stringify(explicitCandidatePrecedence)}`);
   }
-  for (const [label, result] of [
-    ['profile owner organization', ownerOrganization],
-    ['proof-only organization', proofOnlyOrganization],
-    ['generic capitalized phrase', genericOrganization]
+  for (const [label, forbiddenLabel, result] of [
+    ['profile owner organization', 'Owner Services Co', ownerOrganization],
+    ['proof-only organization', 'Proof Only Co', proofOnlyOrganization],
+    ['generic capitalized phrase', 'Digital Health Network', genericOrganization]
   ]) {
-    if (result.status !== 'skipped' ||
-        result.metadata?.candidates?.length !== 0 ||
-        result.metadata?.winner !== null ||
-        result.metadata?.gate?.decision !== 'needs_more_approved_evidence' ||
+    const candidates = result.metadata?.candidates || [];
+    const stoppedWithoutTarget =
+      result.status === 'skipped' &&
+      candidates.length === 0 &&
+      result.metadata?.winner === null &&
+      result.metadata?.gate?.decision === 'needs_more_approved_evidence';
+    const usedOwnedInboundAsset =
+      result.status === 'completed' &&
+      candidates.length === 1 &&
+      candidates[0]?.kind === 'owned_inbound_asset' &&
+      result.metadata?.winner?.candidateId === candidates[0]?.id &&
+      result.metadata?.gate?.decision === 'human_review';
+    if ((!stoppedWithoutTarget && !usedOwnedInboundAsset) ||
+        candidates.some((candidate) =>
+          candidate.displayLabel === forbiddenLabel
+        ) ||
         result.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
         result.metadata?.usage?.calls !== 1) {
       throw new Error(`${label} was incorrectly promoted as a candidate: ${JSON.stringify(result)}`);
@@ -2686,7 +3342,20 @@ try {
       unknownFamily.metadata?.usage?.calls !== 1) {
     throw new Error(`undeclared family became a compatibility wildcard: ${JSON.stringify(unknownFamily)}`);
   }
-  if (familyEvidenceMismatch.status !== 'skipped' ||
+  const familyEvidenceMismatchSafeOutcome =
+    (
+      familyEvidenceMismatch.status === 'skipped' &&
+      familyEvidenceMismatch.metadata?.winner === null
+    ) ||
+    (
+      familyEvidenceMismatch.status === 'completed' &&
+      familyEvidenceMismatch.metadata?.candidates?.find(
+        (candidate) =>
+          candidate.id ===
+            familyEvidenceMismatch.metadata?.winner?.candidateId
+      )?.kind === 'owned_inbound_asset'
+    );
+  if (!familyEvidenceMismatchSafeOutcome ||
       familyEvidenceMismatch.metadata?.searchSpace?.familyEvidenceMismatchSeedCount !== 2 ||
       familyEvidenceMismatch.metadata?.searchSpace?.invalidFamilySeedCount < 2 ||
       familyEvidenceMismatch.metadata?.hypotheses?.some((hypothesis) =>
@@ -2714,10 +3383,25 @@ try {
       proofMotionConflict.metadata?.usage?.calls !== 1) {
     throw new Error(`proof-only cross-motion strategy survived the independent motion gate: ${JSON.stringify(proofMotionConflict)}`);
   }
-  if (companyKindBinding.status !== 'skipped' ||
-      companyKindBinding.metadata?.candidates?.length !== 0 ||
-      companyKindBinding.metadata?.winner !== null ||
-      companyKindBinding.metadata?.gate?.decision !== 'needs_more_approved_evidence' ||
+  const companyKindCandidates =
+    companyKindBinding.metadata?.candidates || [];
+  const companyKindStopped =
+    companyKindBinding.status === 'skipped' &&
+    companyKindCandidates.length === 0 &&
+    companyKindBinding.metadata?.winner === null &&
+    companyKindBinding.metadata?.gate?.decision ===
+      'needs_more_approved_evidence';
+  const companyKindUsedOwnedAsset =
+    companyKindBinding.status === 'completed' &&
+    companyKindCandidates.length === 1 &&
+    companyKindCandidates[0]?.kind === 'owned_inbound_asset' &&
+    companyKindBinding.metadata?.winner?.candidateId ===
+      companyKindCandidates[0]?.id &&
+    companyKindBinding.metadata?.gate?.decision === 'human_review';
+  if ((!companyKindStopped && !companyKindUsedOwnedAsset) ||
+      companyKindCandidates.some((candidate) =>
+        candidate.displayLabel === 'United Healthcare'
+      ) ||
       companyKindBinding.metadata?.usage?.calls !== 1) {
     throw new Error(`company-kind organization bound to a buyer that did not name it: ${JSON.stringify(companyKindBinding)}`);
   }
@@ -2729,10 +3413,26 @@ try {
       staleUrgency.metadata?.usage?.calls !== 1) {
     throw new Error(`historical urgency survived direct timing validation: ${JSON.stringify(staleUrgency)}`);
   }
-  if (organizationBinding.status !== 'skipped' ||
-      organizationBinding.metadata?.candidates?.length !== 0 ||
-      organizationBinding.metadata?.winner !== null ||
-      organizationBinding.metadata?.gate?.decision !== 'needs_more_approved_evidence' ||
+  const organizationBindingCandidates =
+    organizationBinding.metadata?.candidates || [];
+  const organizationBindingStopped =
+    organizationBinding.status === 'skipped' &&
+    organizationBindingCandidates.length === 0 &&
+    organizationBinding.metadata?.winner === null &&
+    organizationBinding.metadata?.gate?.decision ===
+      'needs_more_approved_evidence';
+  const organizationBindingUsedOwnedAsset =
+    organizationBinding.status === 'completed' &&
+    organizationBindingCandidates.length === 1 &&
+    organizationBindingCandidates[0]?.kind === 'owned_inbound_asset' &&
+    organizationBinding.metadata?.winner?.candidateId ===
+      organizationBindingCandidates[0]?.id &&
+    organizationBinding.metadata?.gate?.decision === 'human_review';
+  if ((!organizationBindingStopped &&
+       !organizationBindingUsedOwnedAsset) ||
+      organizationBindingCandidates.some((candidate) =>
+        candidate.displayLabel === 'United Healthcare'
+      ) ||
       organizationBinding.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
       organizationBinding.metadata?.usage?.calls !== 1) {
     throw new Error(`named organization spelling bound to a buyer segment that did not name it: ${JSON.stringify(organizationBinding)}`);
@@ -2763,18 +3463,67 @@ try {
         )
       ) ||
       patientInbound.metadata?.winner?.candidateId == null ||
-      !/evidence anchor/i.test(patientInbound.metadata?.winner?.why || '') ||
+      !/approved owned inbound execution asset/i.test(
+        patientInbound.metadata?.winner?.why || ''
+      ) ||
       /(?:for|with) United Healthcare/i.test(
         `${patientInbound.metadata?.winner?.action || ''} ${patientInbound.metadata?.winner?.title || ''}`
       ) ||
       !patientInbound.metadata?.candidates?.some(
         (candidate) =>
           candidate.id === 'candidate-source-person-uhc' &&
-          candidate.kind === 'organization'
+          candidate.kind === 'organization' &&
+          candidate.selected === false
+      ) ||
+      !patientInbound.metadata?.candidates?.some(
+        (candidate) =>
+          candidate.id === patientInbound.metadata?.winner?.candidateId &&
+          candidate.kind === 'owned_inbound_asset' &&
+          candidate.publicUrl ===
+            'https://example.com/delivery-map/lactation-consultant-home-visit' &&
+          candidate.selected === true
       ) ||
       patientInbound.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
       patientInbound.metadata?.usage?.calls !== 1) {
     throw new Error(`legitimate patient-inbound insurance-context strategy was blocked or rewritten as insurer outreach: ${JSON.stringify(patientInbound)}`);
+  }
+  if (destinationOnlyInbound.status !== 'skipped' ||
+      destinationOnlyInbound.metadata?.winner !== null ||
+      destinationOnlyInbound.metadata?.searchSpace?.eligibleCount !== 0 ||
+      destinationOnlyInbound.metadata?.searchSpace
+        ?.revenueRejectionReasons?.invalid_acquisition_mode < 1 ||
+      destinationOnlyInbound.metadata?.nextExperiment?.contractVersion !==
+        'revenue_evidence_experiment_v1' ||
+      destinationOnlyInbound.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
+      destinationOnlyInbound.metadata?.gate?.sideEffects
+        ?.outreachAttempts !== 0 ||
+      destinationOnlyInbound.metadata?.gate?.sideEffects?.publishAttempts !==
+        0 ||
+      destinationOnlyInbound.metadata?.gate?.sideEffects?.providerWrites !==
+        0 ||
+      destinationOnlyInbound.metadata?.usage?.calls !== 1) {
+    throw new Error(
+      `an inbound destination passed without a separate discovery mechanism: ${JSON.stringify(destinationOnlyInbound)}`
+    );
+  }
+  if (patientInboundWithoutOwnedAsset.status !== 'skipped' ||
+      patientInboundWithoutOwnedAsset.metadata?.winner !== null ||
+      patientInboundWithoutOwnedAsset.metadata?.candidates?.some(
+        (candidate) => candidate.selected === true
+      ) ||
+      patientInboundWithoutOwnedAsset.metadata?.candidates?.some(
+        (candidate) =>
+          candidate.displayLabel === 'United Healthcare' &&
+          candidate.selected === true
+      ) ||
+      patientInboundWithoutOwnedAsset.metadata?.nextExperiment
+        ?.contractVersion !== 'revenue_evidence_experiment_v1' ||
+      patientInboundWithoutOwnedAsset.metadata?.nextExperiment?.asset !==
+        null ||
+      patientInboundWithoutOwnedAsset.metadata?.gate?.sideEffects
+        ?.providerWrites !== 0 ||
+      patientInboundWithoutOwnedAsset.metadata?.usage?.calls !== 1) {
+    throw new Error(`patient-inbound payer context won without a profile-controlled conversion asset: ${JSON.stringify(patientInboundWithoutOwnedAsset)}`);
   }
   if (uhcOperationsOnly.status !== 'skipped' ||
       uhcOperationsOnly.metadata?.searchSpace?.eligibleCount !== 0 ||
@@ -2794,6 +3543,14 @@ try {
       uhcOperationsOnly.metadata?.hypotheses?.length !== 0 ||
       uhcOperationsOnly.metadata?.winner !== null ||
       uhcOperationsOnly.metadata?.runnerUp !== null ||
+      uhcOperationsOnly.metadata?.nextExperiment?.contractVersion !==
+        'revenue_evidence_experiment_v1' ||
+      uhcOperationsOnly.metadata?.nextExperiment?.kind !==
+        'inbound_revenue_evidence' ||
+      uhcOperationsOnly.metadata?.nextExperiment?.asset?.publicUrl !==
+        'https://example.com/delivery-map/lactation-consultant-home-visit' ||
+      uhcOperationsOnly.metadata?.nextExperiment?.rerunPolicy?.maxReruns !==
+        1 ||
       uhcOperationsOnly.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
       uhcOperationsOnly.metadata?.usage?.calls !== 1) {
     throw new Error(`UHC eligibility/scheduling operations won without incremental demand and paid conversion: ${JSON.stringify(uhcOperationsOnly)}`);

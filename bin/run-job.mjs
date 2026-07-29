@@ -535,6 +535,7 @@ async function runOpportunityTournamentJob(job, options) {
         candidates: [],
         winner: null,
         runnerUp: null,
+        nextExperiment: null,
         searchSpace: {
           maxHypotheses: Math.min(10000, numberOr(object(payload.budget).maxHypotheses, 10000)),
           expandedCount: 0,
@@ -581,6 +582,7 @@ async function runOpportunityTournamentJob(job, options) {
         candidates: [],
         winner: null,
         runnerUp: null,
+        nextExperiment: null,
         searchSpace: {
           maxHypotheses: Math.min(10000, numberOr(object(payload.budget).maxHypotheses, 10000)),
           expandedCount: 0,
@@ -698,6 +700,7 @@ async function runOpportunityTournamentJob(job, options) {
       candidates: arrayOfObjects(tournament.candidates),
       winner: tournament.winner || null,
       runnerUp: tournament.runnerUp || null,
+      nextExperiment: tournament.nextExperiment || null,
       searchSpace: object(tournament.searchSpace),
       gate: object(tournament.gate),
       usage: object(tournament.usage),
@@ -715,8 +718,20 @@ async function runOpportunityTournamentJob(job, options) {
             name: 'expand_and_judge_strategy_space',
             status: object(tournament.searchSpace).expandedCount > 0 ? 'completed' : 'skipped'
           },
-          { name: 'select_singular_recommendation', status: completed ? 'completed' : 'skipped' },
-          { name: 'human_review_gate', status: completed ? 'waiting_for_review' : 'skipped' }
+          {
+            name: 'select_singular_recommendation',
+            status: completed ? 'completed' : 'skipped'
+          },
+          {
+            name: 'select_revenue_evidence_experiment',
+            status: tournament.nextExperiment ? 'completed' : 'skipped'
+          },
+          {
+            name: 'human_review_gate',
+            status: completed || tournament.nextExperiment
+              ? 'waiting_for_review'
+              : 'skipped'
+          }
         ],
         notes: [
           'research_only',

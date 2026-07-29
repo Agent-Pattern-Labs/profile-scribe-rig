@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { isIP } from 'net';
 
-export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v3';
+export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v4';
 
 const MAX_HYPOTHESES = 10_000;
 const MAX_FINALISTS = 20;
@@ -11,6 +11,8 @@ const DAY_MILLISECONDS = 24 * 60 * 60 * 1000;
 const MAX_TIMING_VERIFICATION_OBSERVATION_AGE_MS =
   45 * DAY_MILLISECONDS;
 const MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS = DAY_MILLISECONDS;
+const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
+  90 * DAY_MILLISECONDS;
 // OpenRouter prompt/completion ceilings are USD per million tokens. Request is
 // the maximum total USD price for this single generation. Callers may tighten,
 // but never loosen, these tournament-specific caps.
@@ -69,6 +71,8 @@ const SEED_CONTRACT_VERSION = 'revenue_family_bundle_v1';
 export const REVENUE_PATH_CONTRACT_VERSION =
   'incremental_revenue_v1';
 export const REVENUE_GATE_VERSION = 'incremental_income_v1';
+export const REVENUE_EVIDENCE_EXPERIMENT_CONTRACT =
+  'revenue_evidence_experiment_v1';
 const REVENUE_MECHANISMS = new Set([
   'paid_booking',
   'direct_sale',
@@ -93,6 +97,8 @@ const ATTRIBUTION_METHODS = new Set([
   'crm_source',
   'referral_code'
 ]);
+const OWNED_INBOUND_ASSET_KIND = 'owned_inbound_asset';
+const SYNTHESIZED_OWNED_INBOUND_ASSETS = new WeakSet();
 
 // Patterns run against comparable() text: lowercase ASCII words separated by
 // one space. Keep this vocabulary stable because the control plane mirrors it
@@ -230,6 +236,7 @@ export async function runOpportunityTournament({
     candidates: [],
     winner: null,
     runnerUp: null,
+    nextExperiment: null,
     searchSpace: emptySearchSpace(budget),
     gate: researchOnlyGate('redefine_objective', 'The win objective needs clarification.'),
     usage: emptyUsage(model, budget),
@@ -242,6 +249,14 @@ export async function runOpportunityTournament({
       sideEffects: zeroSideEffects()
     }
   };
+  const nextExperimentFor = (missingEvidence) =>
+    revenueEvidenceExperiment({
+      objective,
+      evidenceCatalog,
+      evidenceHash,
+      missingEvidence,
+      referenceTime: timestamp
+    });
 
   const objectiveIssue = objectiveValidationIssue(objective);
   if (objectiveIssue) {
@@ -311,6 +326,8 @@ export async function runOpportunityTournament({
       }
     });
   } catch (error) {
+    const missingStrategyEvidence =
+      strategyGenerationFailureMissingEvidence(error);
     const providerMetadata = openRouterMetadata({
       model,
       status: 'failed',
@@ -322,6 +339,9 @@ export async function runOpportunityTournament({
       status: 'skipped',
       summary: 'The strategy generator did not return a usable tournament seed set.',
       ...base,
+      nextExperiment: nextExperimentFor([
+        missingStrategyEvidence
+      ]),
       llm: { strategyGeneratorJudge: providerMetadata },
       usage: aggregateUsage([providerMetadata], budget),
       gate: researchOnlyGate(
@@ -344,6 +364,9 @@ export async function runOpportunityTournament({
       status: 'skipped',
       summary: 'The strategy-generation call exceeded the tournament LLM budget; no recommendation was selected.',
       ...base,
+      nextExperiment: nextExperimentFor([
+        'within_budget_strategy_generation'
+      ]),
       llm: { strategyGeneratorJudge: providerMetadata },
       usage,
       gate: researchOnlyGate(
@@ -368,6 +391,9 @@ export async function runOpportunityTournament({
         ? 'The strategy generator returned no source-backed timing trigger; urgency was not inferred.'
         : `The strategy generator returned no grounded ${missingDimension} seeds.`,
       ...base,
+      nextExperiment: nextExperimentFor([
+        `missing_${missingDimension}`
+      ]),
       llm: { strategyGeneratorJudge: providerMetadata },
       usage,
       searchSpace: {
@@ -399,6 +425,9 @@ export async function runOpportunityTournament({
       status: 'skipped',
       summary: 'The strategy generator returned fewer than two complete, source-anchored strategy families.',
       ...base,
+      nextExperiment: nextExperimentFor([
+        'second_grounded_strategy_family'
+      ]),
       llm: { strategyGeneratorJudge: providerMetadata },
       usage,
       searchSpace: {
@@ -474,6 +503,10 @@ export async function runOpportunityTournament({
       summary: 'The tournament retained fewer than two grounded strategies.',
       ...base,
       hypotheses: initialHypotheses.map(publicHypothesis),
+      nextExperiment: nextExperimentFor([
+        ...Object.keys(expanded.revenueRejectionReasons),
+        'second_grounded_finalist'
+      ]),
       searchSpace: searchSpaceFor(initialHypotheses),
       llm: { strategyGeneratorJudge: providerMetadata },
       usage,
@@ -487,7 +520,7 @@ export async function runOpportunityTournament({
     payload.profileScribePublicBaseURL,
     payload.publicBaseUrl
   );
-  const primaryCandidateValues = [
+  const externallyGroundedCandidateValues = [
     ...collectStructuredCandidates(
       payload,
       context,
@@ -498,6 +531,11 @@ export async function runOpportunityTournament({
       evidenceCatalog
     )
   ];
+  const ownedInboundAssetValues = synthesizeOwnedInboundAssetCandidates(
+    initialHypotheses,
+    evidenceCatalog,
+    timestamp
+  );
   const ownerIdentity = ownerCandidateIdentity(
     job,
     payload,
@@ -505,7 +543,7 @@ export async function runOpportunityTournament({
     profileScribePublicBaseURL
   );
   const primaryCandidates = normalizeCandidates(
-    primaryCandidateValues,
+    externallyGroundedCandidateValues,
     initialHypotheses,
     evidenceCatalog,
     timestamp,
@@ -513,32 +551,43 @@ export async function runOpportunityTournament({
     ownerIdentity
   );
   const hasActionablePrimaryCandidate = primaryCandidates.some(
-    (candidate) => candidate.identityResolved === true
+    (candidate) => initialHypotheses.some((hypothesis) =>
+      candidateActionableForHypothesis(
+        candidate,
+        hypothesis,
+        evidenceCatalog
+      )
+    )
   );
   const candidateValues = hasActionablePrimaryCandidate
-    ? primaryCandidateValues
+    ? [
+        ...externallyGroundedCandidateValues,
+        ...ownedInboundAssetValues
+      ]
     : [
-        ...primaryCandidateValues,
+        ...externallyGroundedCandidateValues,
         ...normalizeSeedMentionedOrganizationCandidates(
           seedSet,
           evidenceCatalog
-        )
+        ),
+        ...ownedInboundAssetValues
       ];
-  const provisionalCandidates = hasActionablePrimaryCandidate
-    ? primaryCandidates
-    : normalizeCandidates(
-        candidateValues,
-        initialHypotheses,
-        evidenceCatalog,
-        timestamp,
-        profileScribePublicBaseURL,
-        ownerIdentity
-      );
+  const provisionalCandidates = normalizeCandidates(
+    candidateValues,
+    initialHypotheses,
+    evidenceCatalog,
+    timestamp,
+    profileScribePublicBaseURL,
+    ownerIdentity
+  );
   const actionableHypotheses = initialHypotheses
     .filter((hypothesis) =>
       provisionalCandidates.some((candidate) =>
-        candidate.identityResolved === true &&
-        candidateEvidenceGroundsHypothesis(candidate, hypothesis)
+        candidateActionableForHypothesis(
+          candidate,
+          hypothesis,
+          evidenceCatalog
+        )
       )
     )
     .sort(compareHypotheses);
@@ -546,18 +595,26 @@ export async function runOpportunityTournament({
   if (!winningHypothesis) {
     return {
       status: 'skipped',
-      summary: 'No named, source-backed candidate grounded a retained strategy.',
+      summary: 'No source-backed revenue target grounded a retained strategy.',
       ...base,
       hypotheses: initialHypotheses.map(publicHypothesis),
       candidates: provisionalCandidates,
+      nextExperiment: nextExperimentFor([
+        ...Object.keys(expanded.revenueRejectionReasons),
+        initialHypotheses.some((hypothesis) =>
+          hypothesis.revenuePath?.acquisitionMode === 'inbound'
+        )
+          ? 'approved_inbound_asset'
+          : 'named_revenue_target'
+      ]),
       searchSpace: searchSpaceFor(initialHypotheses),
       llm: { strategyGeneratorJudge: providerMetadata },
       usage,
       gate: researchOnlyGate(
         'needs_more_approved_evidence',
-        'The strategy field was explored, but completing the result requires a named person, organization, or internal profile whose approved evidence grounds the buyer segment and offer or proof.',
+        'The strategy field was explored, but completing the result requires either a named person or organization for an external acquisition path, or an approved public offer/booking asset for an inbound paid-conversion path.',
         {
-          question: 'Which approved source can ground a specific person, organization, or internal ProfileScribe profile for this opportunity?'
+          question: 'Which approved source grounds either a specific outside revenue target or a public inbound offer/booking page with a measurable paid conversion?'
         }
       )
     };
@@ -579,6 +636,9 @@ export async function runOpportunityTournament({
       ...base,
       hypotheses: initialHypotheses.map(publicHypothesis),
       candidates: provisionalCandidates,
+      nextExperiment: nextExperimentFor([
+        'family_diverse_revenue_path'
+      ]),
       searchSpace: searchSpaceFor(initialHypotheses),
       llm: { strategyGeneratorJudge: providerMetadata },
       usage,
@@ -611,6 +671,9 @@ export async function runOpportunityTournament({
       summary: 'The best candidate-grounded strategy had no distinct runner-up.',
       ...base,
       hypotheses: publicHypotheses,
+      nextExperiment: nextExperimentFor([
+        'distinct_runner_up'
+      ]),
       searchSpace,
       llm: { strategyGeneratorJudge: providerMetadata },
       usage,
@@ -640,18 +703,25 @@ export async function runOpportunityTournament({
   if (!selected.winner) {
     return {
       status: 'skipped',
-      summary: 'No named, source-backed candidate grounded the best actionable strategy.',
+      summary: 'No source-backed revenue target grounded the best actionable strategy.',
       ...base,
       hypotheses: publicHypotheses,
       candidates: selected.candidates,
+      nextExperiment: nextExperimentFor([
+        initialHypotheses.some((hypothesis) =>
+          hypothesis.revenuePath?.acquisitionMode === 'inbound'
+        )
+          ? 'approved_inbound_asset'
+          : 'named_revenue_target'
+      ]),
       searchSpace,
       llm: { strategyGeneratorJudge: providerMetadata },
       usage,
       gate: researchOnlyGate(
         'needs_more_approved_evidence',
-        'The strategy field was explored, but completing the result requires a named person, organization, or internal profile whose approved evidence grounds the rank-one buyer segment and offer or proof.',
+        'The strategy field was explored, but completing the result requires either a named outside target or an approved public inbound offer/booking asset whose evidence grounds the rank-one buyer segment and paid offer or proof.',
         {
-          question: 'Which approved source can ground a specific person, organization, or internal ProfileScribe profile for this opportunity?'
+          question: 'Which approved source grounds either a specific outside revenue target or a public inbound offer/booking page with a measurable paid conversion?'
         }
       )
     };
@@ -677,6 +747,18 @@ export async function runOpportunityTournament({
       }
     )
   };
+}
+
+function strategyGenerationFailureMissingEvidence(error) {
+  const message = comparable(
+    `${error?.message || ''} ${error?.body || ''} ${error || ''}`
+  );
+  if (/\b(?:max price|price cap|request price|within budget|budget cap|affordable route|no (?:model|provider|route).{0,40}(?:price|budget)|(?:price|budget).{0,40}no (?:model|provider|route))\b/.test(
+    message
+  )) {
+    return 'within_budget_strategy_generation';
+  }
+  return 'usable_strategy_generation';
 }
 
 function publicHypothesis(hypothesis) {
@@ -714,12 +796,30 @@ export function buildEvidenceCatalog(payload, context = {}) {
     asObject(snapshot.timelineBrief).recentPosts,
     asObject(context.timelineBrief).recentPosts
   );
+  const profileControlledURLs = profileDeclaredControlledURLs(profile);
   const approvedSourceIDs = new Set(
     sources
       .map(asObject)
       .filter(sourceIsResearchApproved)
       .map((source) => firstText(source.id, source.sourceId))
       .filter(Boolean)
+  );
+  const approvedSourcesByID = new Map(
+    sources
+      .map(asObject)
+      .filter(sourceIsResearchApproved)
+      .map((source) => [
+        firstText(source.id, source.sourceId),
+        {
+          url: safePublicURL(firstText(source.url, source.sourceUrl)),
+          label: firstText(source.label, source.title, source.url),
+          profileControlled: profileControlsSource(
+            source,
+            profileControlledURLs
+          )
+        }
+      ])
+      .filter(([sourceID]) => Boolean(sourceID))
   );
   const persistedEvidenceSourceIDs = new Set(
     [...sourceEvidence, ...sourceExtracts]
@@ -811,8 +911,15 @@ export function buildEvidenceCatalog(payload, context = {}) {
       confidence: normalizeConfidence(raw.confidence, raw.trustLevel),
       approvedSourceObservation:
         asObject(origin).approvedSourceObservation === true ? true : undefined,
+      approvedSourceUrl: safePublicURL(
+        asObject(origin).approvedSourceUrl
+      ),
+      approvedSourceLabel: firstText(
+        asObject(origin).approvedSourceLabel
+      ),
+      profileControlledSource:
+        asObject(origin).profileControlledSource === true ? true : undefined,
       aliases: compactStrings([
-        sourceID ? `source:${sourceID}` : '',
         url
       ])
     }));
@@ -916,6 +1023,7 @@ export function buildEvidenceCatalog(payload, context = {}) {
     const value = asObject(evidence);
     const sourceID = firstText(value.sourceId, value.sourceID);
     if (!sourceID || !approvedSourceIDs.has(sourceID)) continue;
+    const approvedSource = asObject(approvedSourcesByID.get(sourceID));
     append({
       ...value,
       id: firstText(
@@ -927,7 +1035,10 @@ export function buildEvidenceCatalog(payload, context = {}) {
       label: firstText(value.title, value.sourceLabel, value.label),
       summary: firstText(value.summary, value.description)
     }, 'source_evidence', undefined, {
-      approvedSourceObservation: true
+      approvedSourceObservation: true,
+      approvedSourceUrl: approvedSource.url,
+      approvedSourceLabel: approvedSource.label,
+      profileControlledSource: approvedSource.profileControlled === true
     });
   }
   for (const extract of sourceExtracts.slice(0, 24)) {
@@ -1268,6 +1379,7 @@ When an exact named organization is the intended target buyer, begin that buyerS
 Keep every strategy family coherent end to end. Never mix a buyer, offer, channel, action, timing trigger, proof point, or follow-up from different business motions.
 Every family must trace one actual buyer and explicitly paid offer through inbound, warm, existing-customer, partner, or otherwise permissioned acquisition to an observable paid conversion and durable attribution record. A conversation, inquiry, eligibility check, scheduled consultation, profile change, post, impression, workflow improvement, or completed research task is not incremental income.
 Operations, administration, visibility, content, research, and workflow improvements may appear only as auxiliary supportingBottleneck context. The singular action must itself advance permissioned acquisition or paid conversion, align with revenuePath.conversionAction, and must never merely perform the supporting bottleneck.
+For inbound acquisition, name one explicit discovery or demand origin such as organic/local search, an owned opted-in audience, earned media/directory discovery, a marketplace, a community, social distribution, or agent-mediated discovery, and separately name the offer, service, landing, booking, or checkout destination. A website or booking page by itself is not an acquisition channel.
 Construct each family's revenuePath first. Then derive that family's paid offer, buyer, channel, action, timing, proof, and follow-up items from the same revenue path.
 Return exactly two complete top-level family bundles named familyA and familyB. Family A is the strongest grounded path; family B is the strongest coherent alternative. They may use distinct tactics within the same business motion when the evidence does not support two different motions.
 Prefer an inbound paid-conversion path for familyA when approved evidence can ground it. Use warm referral, partner channel, existing-customer, or permissioned-outreach paths when inbound is ungrounded or semantically weaker; never invent inbound demand or an inbound asset.
@@ -1361,7 +1473,7 @@ Return only JSON.`;
         'Every actions item l and revenuePath conversionAction must each literally name its inbound, warm referral, permissioned, existing-customer, or partner acquisition path and a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot commitment. Reject operations-only verification, scheduling, administration, content, profile, workflow, research, and optimization actions as the recommendation even when supportingBottleneck records them.',
         'Every observableRevenueOutcome must literally name a durable paid booking, paid claim, payment receipt, signed contract/agreement, deposit received, paid invoice, checkout/order/purchase/sale, subscription, retainer, recorded revenue/income, or reimbursement received.',
         'Every attributionSignal must literally name source, referral, UTM, campaign, origin, channel, code, or CRM and the booking/payment/invoice/contract/checkout/order/claim/CRM/referral record that stores it.',
-        'Acquisition must be inbound, warm referral, explicitly permissioned outreach, existing-customer, or partner-channel. Reject cold outreach, purchased lists, scraping, bulk contact, and spray-and-pray.',
+        'Acquisition must be inbound, warm referral, explicitly permissioned outreach, existing-customer, or partner-channel. An inbound channel must name one explicit discovery/demand origin and a separate conversion destination; a service page, website, booking page, or checkout alone is not acquisition. Reject cold outreach, purchased lists, scraping, bulk contact, and spray-and-pray.',
         'Attribution must connect the paid outcome to the acquisition source through a booking, payment, invoice/contract, checkout/order, claim, CRM-source, or referral-code record.',
         'Buyer segments may be plausible inferences but must cite evidence supporting the fit.',
         'Return both familyA and familyB. Do not omit either complete bundle.',
@@ -1428,6 +1540,20 @@ Return only JSON.`;
 }
 
 function tournamentStructuredResponseFormat(evidenceCatalog) {
+  const paidOfferPattern =
+    '(?:[Pp]aid|[Bb]illable|[Rr]eimburs(?:able|ed|ement)|[Ff]ee|[Pp]riced?|[Pp]urchase|[Ss]ale|[Cc]ontract|[Rr]etainer|[Ss]ubscription|[Dd]eposit|[Ii]nvoice)';
+  const acquisitionPattern =
+    '(?:[Ii]nbound|[Ww]arm (?:referral|introduction)|[Pp]ermission(?:ed)?|[Ee]xisting[- ]customer|[Pp]artner (?:channel|referral|introduction))';
+  const paidCommitmentPattern =
+    '(?:[Pp]aid|[Pp]ayment|[Pp]urchase|[Ss]ale|[Ss]igned (?:contract|agreement)|[Dd]eposit|[Ii]nvoice|[Oo]rder|[Cc]heckout|[Ss]ubscription|[Rr]etainer|[Rr]eimburs(?:able|ed|ement))';
+  const acquisitionAndPaidPattern =
+    `(?:${acquisitionPattern}.*${paidCommitmentPattern}|${paidCommitmentPattern}.*${acquisitionPattern})`;
+  const incrementalPaidPattern =
+    `(?:(?:[Nn]ew|[Aa]dditional|[Ii]ncremental|[Ii]ncrease[ds]?|[Aa]dded|[Ff]irst).*${paidCommitmentPattern}|${paidCommitmentPattern}.*(?:[Nn]ew|[Aa]dditional|[Ii]ncremental|[Ii]ncrease[ds]?|[Aa]dded|[Ff]irst))`;
+  const observableRevenuePattern =
+    '(?:[Pp]aid (?:booking|claim|invoice|order|sale)|[Pp]ayment receipt|[Ss]igned (?:contract|agreement)|[Dd]eposit received|[Cc]heckout|[Pp]urchase|[Ss]ubscription|[Rr]etainer|[Rr]ecorded (?:revenue|income)|[Rr]eimbursement received)';
+  const attributionRecordPattern =
+    '(?:(?:[Bb]ooking|[Pp]ayment|[Ii]nvoice|[Cc]ontract|[Cc]heckout|[Oo]rder|[Cc]laim|CRM|[Rr]eferral) (?:record|field|code).*(?:[Ss]ource|[Rr]eferral|UTM|[Cc]ampaign|[Oo]rigin|[Cc]hannel|[Cc]ode|CRM)|(?:[Ss]ource|[Rr]eferral|UTM|[Cc]ampaign|[Oo]rigin|[Cc]hannel|[Cc]ode|CRM).*(?:[Bb]ooking|[Pp]ayment|[Ii]nvoice|[Cc]ontract|[Cc]heckout|[Oo]rder|[Cc]laim|CRM|[Rr]eferral) (?:record|field|code))';
   const evidenceIDs = compactStrings(
     asArray(evidenceCatalog).map((item) => asObject(item).id)
   )
@@ -1467,7 +1593,11 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
     required: Object.keys(scoreProperties),
     additionalProperties: false
   };
-  const item = (labelDescription, timing = false) => {
+  const item = (
+    labelDescription,
+    timing = false,
+    labelPattern = ''
+  ) => {
     const properties = {
       id: {
         type: 'string',
@@ -1478,7 +1608,8 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
         type: 'string',
         minLength: 1,
         maxLength: 180,
-        description: labelDescription
+        description: labelDescription,
+        ...(labelPattern ? { pattern: labelPattern } : {})
       },
       e: { $ref: '#/$defs/evidenceRefs' },
       ...(timing
@@ -1568,7 +1699,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
   return {
     type: 'json_schema',
     json_schema: {
-      name: 'profile_scribe_opportunity_tournament_v3',
+      name: 'profile_scribe_opportunity_tournament_v4',
       strict: true,
       schema: {
         type: 'object',
@@ -1604,16 +1735,20 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
           evidenceRefs,
           scores,
           offerItem: item(
-            'An explicitly paid, billable, reimbursable, subscription, retainer, sale, paid-pilot, or contract offer grounded in cited evidence.'
+            'An explicitly paid, billable, reimbursable, subscription, retainer, sale, paid-pilot, or contract offer grounded in cited evidence.',
+            false,
+            paidOfferPattern
           ),
           buyerItem: item(
             'One actual payer/customer or payer-linked beneficiary segment for this revenue path.'
           ),
           channelItem: item(
-            'One bounded inbound, warm-referral, permissioned, existing-customer, or partner channel, using that acquisition vocabulary literally.'
+            'One bounded inbound, warm-referral, permissioned, existing-customer, or partner channel, using that acquisition vocabulary literally. Inbound must name one discovery/demand origin and a separate offer, service, landing, booking, or checkout destination.'
           ),
           actionItem: item(
-            'One singular action that literally names the acquisition path and advances a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot.'
+            'One singular action that literally names the acquisition path and advances a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot.',
+            false,
+            acquisitionAndPaidPattern
           ),
           timingItem: item(
             'One observed timing trigger or a review-first verification of timing; never claim unsupported urgency.',
@@ -1643,6 +1778,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
                 type: 'string',
                 minLength: 1,
                 maxLength: 320,
+                pattern: incrementalPaidPattern,
                 description:
                   'A specific outcome using new, additional, or incremental plus paid, revenue, income, sale, contract, booking, order, reimbursement, retainer, or subscription language.'
               },
@@ -1654,6 +1790,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
                 type: 'string',
                 minLength: 1,
                 maxLength: 320,
+                pattern: acquisitionAndPaidPattern,
                 description:
                   'A singular action that literally names the acquisition mode and advances a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot.'
               },
@@ -1661,6 +1798,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
                 type: 'string',
                 minLength: 1,
                 maxLength: 320,
+                pattern: observableRevenuePattern,
                 description:
                   'A durable paid booking, paid claim, payment receipt, signed contract/agreement, deposit received, paid invoice, checkout/order/purchase/sale, subscription, retainer, recorded revenue/income, or reimbursement received.'
               },
@@ -1672,6 +1810,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
                 type: 'string',
                 minLength: 1,
                 maxLength: 320,
+                pattern: attributionRecordPattern,
                 description:
                   'The booking/payment/invoice/contract/checkout/order/claim/CRM/referral record and its source, referral, UTM, campaign, origin, channel, code, or CRM field.'
               },
@@ -1915,8 +2054,22 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
       const expectedValueMicros = nonNegativeInteger(
         seed.vm ?? seed.expectedValueMicros
       );
+      // A revenue path summarizes the family's offer-to-payment contract. Its
+      // evidence is therefore the canonical union of the same family's
+      // revenue-bearing dimensions, rather than a second model-authored copy
+      // that can accidentally omit one otherwise-valid anchor.
+      const revenuePathEvidenceRefs = name === 'revenuePaths'
+        ? compactStrings([
+            ...evidenceRefs,
+            ...familyIds.flatMap((familyID) =>
+              asArray(strategyFamilies.get(familyID)?.evidenceRefs)
+            )
+          ])
+            .filter((ref) => evidenceByID.has(ref))
+            .slice(0, MAX_EVIDENCE_ITEMS)
+        : evidenceRefs;
       const revenuePath = name === 'revenuePaths'
-        ? normalizeRevenuePathSeed(seed, evidenceRefs)
+        ? normalizeRevenuePathSeed(seed, revenuePathEvidenceRefs)
         : undefined;
       out[name].push({
         id: normalizeSeedID(firstText(seed.id, `${name}-${index + 1}`), name, label),
@@ -2430,13 +2583,18 @@ function selectWinner({
   const runnerHypothesis = hypotheses[1];
   const selectedCandidate = candidates
     .filter((candidate) =>
-      candidate.identityResolved === true &&
-      candidateEvidenceGroundsHypothesis(
+      candidateActionableForHypothesis(
         candidate,
-        winnerHypothesis
+        winnerHypothesis,
+        evidenceCatalog
       )
     )
-    .sort((left, right) => right.score.total - left.score.total || left.id.localeCompare(right.id))[0];
+    .sort((left, right) =>
+      selectionAnchorPriority(left, winnerHypothesis) -
+        selectionAnchorPriority(right, winnerHypothesis) ||
+      right.score.total - left.score.total ||
+      left.id.localeCompare(right.id)
+    )[0];
   const normalizedCandidates = candidates.map((candidate) => ({
     ...candidate,
     hypothesisId: selectedCandidate && candidate.id === selectedCandidate.id
@@ -2470,6 +2628,13 @@ function selectWinner({
   return { winner, runnerUp, candidates: normalizedCandidates };
 }
 
+function selectionAnchorPriority(candidate, hypothesis) {
+  if (firstText(hypothesis?.revenuePath?.acquisitionMode) === 'inbound') {
+    return ownedInboundAssetCandidate(candidate) ? 0 : 1;
+  }
+  return ownedInboundAssetCandidate(candidate) ? 2 : 0;
+}
+
 function recommendationFor({
   objective,
   hypothesis,
@@ -2485,10 +2650,15 @@ function recommendationFor({
     hypothesis.buyerSegment,
     'buyerSegment'
   );
+  const candidateIsOwnedInboundAsset =
+    ownedInboundAssetCandidate(candidate);
   const candidateIsContextAnchor =
-    organizationCandidateRequiresBuyerMatch(candidate) &&
-    buyerMotions.includes('patient_inbound') &&
-    !buyerMotions.includes('payer_network');
+    candidateIsOwnedInboundAsset ||
+    (
+      organizationCandidateRequiresBuyerMatch(candidate) &&
+      buyerMotions.includes('patient_inbound') &&
+      !buyerMotions.includes('payer_network')
+    );
   const candidateCopyLabel = candidateIsContextAnchor ? '' : candidateLabel;
   const timingLabel = firstText(tuple?.timingTriggers?.label);
   const timingSupport = firstText(tuple?.timingTriggers?.supportPhrase);
@@ -2538,7 +2708,7 @@ function recommendationFor({
     `Observable proof: ${hypothesis.revenuePath.observableRevenueOutcome} ` +
     `Attribution: ${hypothesis.revenuePath.attributionSignal}.`;
   const why = candidateLabel
-    ? `${revenueWhy} ${candidateLabel} is the exact named ${candidateIsContextAnchor ? 'evidence anchor' : 'candidate'} attached to this strategy. ${grounding} It led ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations on objective fit, evidence strength, buyer authority, timing, incremental expected value, effort, cost, risk, and uncertainty.`
+    ? `${revenueWhy} ${candidateLabel} is the ${candidateIsOwnedInboundAsset ? 'approved owned inbound execution asset' : candidateIsContextAnchor ? 'exact named evidence anchor' : 'exact named candidate'} attached to this strategy. ${grounding} It led ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations on objective fit, evidence strength, buyer authority, timing, incremental expected value, effort, cost, risk, and uncertainty.`
     : `${revenueWhy} ${grounding} This was one of ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations.`;
   const whyOverRunnerUp = runnerUp
     ? comparisonReason(hypothesis, runnerUp)
@@ -3034,6 +3204,88 @@ function sourceIsResearchApproved(source) {
   );
 }
 
+function profileDeclaredControlledURLs(profileValue) {
+  const profile = asObject(profileValue);
+  const identity = asObject(profile.identity);
+  const declarations = [
+    ['website', identity.website],
+    ['booking', identity.bookingUrl],
+    ['booking', identity.bookingURL],
+    ['website', profile.website],
+    ['booking', profile.bookingUrl],
+    ['booking', profile.bookingURL]
+  ];
+  const seen = new Set();
+  return declarations
+    .map(([kind, value]) => ({
+      kind,
+      url: safePublicURL(value)
+    }))
+    .filter(({ kind, url }) => {
+      const key = `${kind}:${url}`;
+      if (!url || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function profileControlsSource(sourceValue, controlledURLs) {
+  const sourceURL = safePublicURL(firstText(
+    asObject(sourceValue).url,
+    asObject(sourceValue).sourceUrl
+  ));
+  if (!sourceURL) return false;
+  try {
+    const source = new URL(sourceURL);
+    const sourceHost = source.hostname.toLowerCase().replace(/^www\./, '');
+    const sourcePath = source.pathname.replace(/\/+$/, '') || '/';
+    return asArray(controlledURLs).some((controlledValue) => {
+      try {
+        const declaration = asObject(controlledValue);
+        const controlled = new URL(declaration.url);
+        const controlledHost = controlled.hostname
+          .toLowerCase()
+          .replace(/^www\./, '');
+        if (controlled.protocol !== source.protocol ||
+            controlledHost !== sourceHost ||
+            controlled.port !== source.port) {
+          return false;
+        }
+        if (declaration.kind === 'booking') {
+          if (!urlContainsDeclaredQuery(source, controlled)) return false;
+        }
+        const controlledPath = controlled.pathname.replace(/\/+$/, '') || '/';
+        if (declaration.kind === 'website' && controlledPath === '/') {
+          return true;
+        }
+        return sourcePath === controlledPath ||
+          sourcePath.startsWith(`${controlledPath}/`);
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
+function urlContainsDeclaredQuery(candidate, declaration) {
+  const declaredKeys = [
+    ...new Set([...declaration.searchParams.keys()])
+  ];
+  for (const key of declaredKeys) {
+    const declaredValues = declaration.searchParams.getAll(key).sort();
+    const candidateValues = candidate.searchParams.getAll(key).sort();
+    if (declaredValues.length !== candidateValues.length ||
+        declaredValues.some(
+          (value, index) => value !== candidateValues[index]
+        )) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function concreteCandidateLabel(value) {
   const label = firstText(value);
   const normalized = comparable(label);
@@ -3327,6 +3579,379 @@ function structuredEvidenceRef(evidence) {
   );
 }
 
+function revenueEvidenceExperiment({
+  objective,
+  evidenceCatalog,
+  evidenceHash,
+  missingEvidence,
+  referenceTime
+}) {
+  const evidenceByID = evidenceIndex(evidenceCatalog);
+  const missing = compactStrings(missingEvidence)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .slice(0, 8);
+  const technicalRecovery = strategyGenerationRecoveryExperiment({
+    objective,
+    evidenceHash,
+    missingEvidence: missing
+  });
+  if (technicalRecovery) return technicalRecovery;
+  const objectiveText = compactStrings([
+    objective?.outcome,
+    objective?.successMetric
+  ]).join(' ');
+  const asset = asArray(evidenceCatalog)
+    .map(asObject)
+    .filter((evidence) =>
+      approvedOwnedAssetEvidence(evidence, evidenceByID) &&
+      inboundAssetEvidenceSupportsPaidConversion(
+        evidence,
+        referenceTime
+      ) &&
+      textOverlap(
+        objectiveText,
+        `${evidence.approvedSourceLabel || ''} ${evidence.label || ''} ${evidence.summary || ''} ${evidence.url || ''}`
+      ) > 0
+    )
+    .sort((left, right) => {
+      const relevanceDifference =
+        textOverlap(
+          objectiveText,
+          `${right.approvedSourceLabel || ''} ${right.label || ''} ${right.summary || ''} ${right.url || ''}`
+        ) -
+        textOverlap(
+          objectiveText,
+          `${left.approvedSourceLabel || ''} ${left.label || ''} ${left.summary || ''} ${left.url || ''}`
+        );
+      const readinessDifference =
+        inboundAssetConversionReadiness(right) -
+        inboundAssetConversionReadiness(left);
+      return relevanceDifference ||
+        readinessDifference ||
+        evidenceQuality(right) - evidenceQuality(left) ||
+        firstText(left.id).localeCompare(firstText(right.id));
+    })[0];
+  const assetLabel = truncate(firstText(asset?.label), 180);
+  const assetURL = safePublicURL(asset?.url);
+  const evidenceRefs = asset?.id ? [asset.id] : [];
+  const kind = asset
+    ? 'inbound_revenue_evidence'
+    : 'revenue_path_grounding';
+  const title = asset
+    ? `Test one attributable inbound discovery-to-paid-conversion path through ${assetLabel}`
+    : 'Ground one attributable paid offer before rerunning';
+  const action = asset
+    ? `Review ${assetLabel} as the conversion destination for one 14-day test. Approve exactly one separate inbound discovery source—organic/local search, an owned opted-in audience, earned directory or media discovery, a marketplace/community, social distribution, or agent-mediated discovery—then route only that source to the destination with one source or UTM value in the resulting revenue record. Require one explicit paid booking, payment, purchase, signed contract, or reimbursed-claim outcome; then rerun once after the first result or the 14-day window.`
+    : 'Approve one public source observation that states the buyer, paid offer, one inbound discovery or permissioned acquisition source, the separate conversion destination, the paid conversion event, and the booking, payment, contract, order, or claim field that records attribution; then rerun once.';
+  const successSignal =
+    'One new paid booking, payment, order, signed contract, or reimbursed claim with a stored source, referral, campaign, channel, or UTM value.';
+  const stopCondition =
+    asset
+      ? 'Stop after 1 attributable paid outcome or 14 calendar days from launch, followed by at most 1 rerun informed by the result; do not expand volume automatically.'
+      : 'Stop after 1 evidence approval and 1 rerun; do not launch or expand an external test automatically.';
+  return {
+    contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
+    id: `experiment-${stableHash({
+      kind,
+      evidenceHash,
+      missing,
+      asset: asset?.id
+    }).slice(0, 24)}`,
+    kind,
+    title: truncate(title, 240),
+    action: truncate(action, 700),
+    missingEvidence: missing.length > 0
+      ? missing
+      : ['attributable_paid_conversion'],
+    paidOutcome: truncate(
+      observableRevenueText(objective?.successMetric)
+        ? firstText(objective?.successMetric)
+        : successSignal,
+      360
+    ),
+    successSignal,
+    stopCondition,
+    asset: asset
+      ? {
+          label: assetLabel,
+          publicUrl: assetURL
+        }
+      : null,
+    evidenceRefs,
+    requiresReview: true,
+    rerunPolicy: {
+      maxReruns: 1,
+      trigger:
+        'Rerun only after approved evidence changes or the paid outcome is recorded.'
+    }
+  };
+}
+
+function strategyGenerationRecoveryExperiment({
+  objective,
+  evidenceHash,
+  missingEvidence
+}) {
+  const missing = compactStrings(missingEvidence);
+  const providerFailure = missing.includes('usable_strategy_generation');
+  const budgetFailure = missing.includes('within_budget_strategy_generation');
+  if (!providerFailure && !budgetFailure) return null;
+  const successSignal =
+    'One new paid booking, payment, order, signed contract, or reimbursed claim with a stored source, referral, campaign, channel, or UTM value.';
+  const kind = providerFailure
+    ? 'strategy_generation_provider_recovery'
+    : 'strategy_generation_budget_recovery';
+  const title = providerFailure
+    ? 'Retry strategy generation once after provider recovery'
+    : 'Retry strategy generation once on a budget-compatible route';
+  const action = providerFailure
+    ? 'Preserve the approved evidence snapshot and make no business or provider-side changes. After the model provider is healthy and strict structured-output support is verified, retry the same bounded tournament exactly once.'
+    : 'Preserve the approved evidence snapshot and do not raise the user budget. Select a model/provider route whose maximum request price fits the existing tournament budget, then retry the same bounded tournament exactly once.';
+  const stopCondition = providerFailure
+    ? 'Stop after 1 provider-recovery retry; if structured strategy generation fails again, surface the technical failure and do not spend again automatically.'
+    : 'Stop after 1 budget-compatible retry; if it exceeds or cannot satisfy the existing cap, surface the budget failure and do not spend again automatically.';
+  const trigger = providerFailure
+    ? 'Rerun once only after provider health and strict structured-output support are verified; new business evidence is not required.'
+    : 'Rerun once only after a model/provider route is verified to fit the existing request-price and total-spend caps.';
+  return {
+    contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
+    id: `experiment-${stableHash({
+      kind,
+      evidenceHash,
+      missing
+    }).slice(0, 24)}`,
+    kind,
+    title,
+    action,
+    missingEvidence: missing,
+    paidOutcome: truncate(
+      observableRevenueText(objective?.successMetric)
+        ? firstText(objective?.successMetric)
+        : successSignal,
+      360
+    ),
+    successSignal,
+    stopCondition,
+    asset: null,
+    evidenceRefs: [],
+    requiresReview: true,
+    rerunPolicy: {
+      maxReruns: 1,
+      trigger
+    }
+  };
+}
+
+function inboundAssetConversionReadiness(evidenceValue) {
+  const evidence = asObject(evidenceValue);
+  const text = comparable(
+    `${evidence.label || ''} ${evidence.summary || ''} ${evidence.url || ''}`
+  );
+  let score = 0;
+  if (/\b(?:book|booking|checkout|order|buy|purchase|appointment|request)\b/.test(text)) {
+    score += 4;
+  }
+  if (/\b(?:service|consultation|home visit|session|package|shop)\b/.test(text)) {
+    score += 2;
+  }
+  if (/\b(?:paid|billable|price|fee|reimbursable)\b/.test(text)) {
+    score += 2;
+  }
+  if (/\b(?:initiative|program overview|article|blog|news)\b/.test(text)) {
+    score -= 2;
+  }
+  return score;
+}
+
+function inboundAssetEvidenceSupportsPaidConversion(
+  evidenceValue,
+  referenceTime
+) {
+  const evidence = asObject(evidenceValue);
+  if (evidence.current === false ||
+      /\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|not accepting|sold out|unavailable|withdrawn)\b/i.test(
+        firstText(evidence.status)
+      )) {
+    return false;
+  }
+  const referenceDate = new Date(referenceTime);
+  const observedDate = new Date(firstText(evidence.observedAt));
+  if (!Number.isFinite(referenceDate.getTime()) ||
+      !Number.isFinite(observedDate.getTime())) {
+    return false;
+  }
+  const age = referenceDate.getTime() - observedDate.getTime();
+  if (age < -MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS ||
+      age > MAX_INBOUND_ASSET_OBSERVATION_AGE_MS) {
+    return false;
+  }
+  const rawEndDate = firstText(evidence.endDate);
+  if (rawEndDate) {
+    const endDate = new Date(rawEndDate);
+    if (!Number.isFinite(endDate.getTime()) ||
+        endDate.getTime() < referenceDate.getTime()) {
+      return false;
+    }
+  }
+  const text = comparable(
+    `${evidence.label || ''} ${evidence.summary || ''} ${evidence.url || ''}`
+  );
+  const informationalPage =
+    /\b(?:article|blog|news|guide|how to)\b/.test(text) ||
+    /\b(?:article|blog-post|news-item)\b/.test(
+      comparable(firstText(evidence.type))
+    );
+  const embeddedConversion =
+    /\b(?:embedded|on this page|below)\b.{0,50}\b(?:booking form|checkout|order form|payment form|book now button)\b/.test(
+      text
+    ) ||
+    /\b(?:booking form|checkout|order form|payment form|book now button)\b.{0,50}\b(?:embedded|on this page|below)\b/.test(
+      text
+    );
+  if (informationalPage && !embeddedConversion) {
+    return false;
+  }
+  if (/\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|no longer (?:available|offered|accepting|bookable)|not (?:available|accepting|bookable)|sold out|unavailable|withdrawn)\b/.test(
+    text
+  ) ||
+      /\b(?:no|not|without)\s+(?:a\s+)?(?:paid|billable|bookable|purchasable|reimbursable) (?:offer|service|consultation|session|booking|option)\b/.test(
+        text
+      ) ||
+      /\b(?:is|are|was|were)\s+not\s+(?:paid|billable|reimbursable|reimbursed|covered)\b/.test(
+        text
+      ) ||
+      /\b(?:payment|insurance payment|reimbursement)\s+(?:is\s+)?not\s+required\b/.test(
+        text
+      )) {
+    return false;
+  }
+  if (/\b(?:complimentary|free|no fee|without charge|zero cost)\b/.test(text)) {
+    return false;
+  }
+  if (/\b(?:insurance (?:is )?not accepted|not covered|no coverage|without coverage|not reimburs(?:able|ed)|no reimbursement|claim denied)\b/.test(
+    text
+  )) {
+    return false;
+  }
+  const insurancePaidContext =
+    /\b(?:covered by insurance|insurance[- ]covered|insurance (?:is )?accepted|accepts insurance|bill(?:s|ing)? insurance|insurance claim|reimburs(?:able|ed|ement)|claim payment)\b/.test(
+      text
+    );
+  const namesOffer =
+    /\b(?:audit|class|consultation|contract|diagnostic|engagement|home visit|package|pilot|product|service|session|subscription|workshop)\b/.test(
+      text
+    );
+  const namesPositiveConversion =
+    /\b(?:appointment|book|booking|book now|buy|checkout|contact|order|pay|payment|purchase|request|schedule|sign up|subscribe)\b/.test(
+      text
+    );
+  const namesPaidMechanism = insurancePaidContext ||
+    /\b(?:billable|contract|cost|deposit|fee|invoice|order|paid|pay|payment|price|purchase|retainer|sale|subscription)\b/.test(
+      text
+    ) ||
+    /\$\s*\d/.test(
+      `${evidence.label || ''} ${evidence.summary || ''}`
+    );
+  return namesOffer && namesPositiveConversion && namesPaidMechanism;
+}
+
+function synthesizeOwnedInboundAssetCandidates(
+  hypotheses,
+  evidenceCatalog,
+  referenceTime
+) {
+  const evidenceByID = evidenceIndex(evidenceCatalog);
+  const values = [];
+  for (const hypothesis of asArray(hypotheses)) {
+    if (firstText(hypothesis?.revenuePath?.acquisitionMode) !== 'inbound') {
+      continue;
+    }
+    const tuple = asObject(hypothesis?._tuple);
+    const buyerRefs = strategyObservationEvidenceRefs(
+      asObject(tuple.buyerSegments).evidenceRefs
+    );
+    const channelRefs = strategyObservationEvidenceRefs(
+      asObject(tuple.channels).evidenceRefs
+    );
+    const revenuePathRefs = strategyObservationEvidenceRefs(
+      asObject(tuple.revenuePaths?.revenuePath).evidenceRefs
+    );
+    const offerOrProofRefs = strategyObservationEvidenceRefs([
+      ...asArray(asObject(tuple.offers).evidenceRefs),
+      ...asArray(asObject(tuple.proofPoints).evidenceRefs)
+    ]);
+    const assetEvidence = offerOrProofRefs
+      .map((ref) => evidenceByID.get(ref))
+      .filter((evidence) =>
+        approvedOwnedAssetEvidence(evidence, evidenceByID) &&
+        inboundAssetEvidenceSupportsPaidConversion(
+          evidence,
+          referenceTime
+        )
+      )
+      .sort((left, right) =>
+        inboundAssetConversionReadiness(right) -
+          inboundAssetConversionReadiness(left) ||
+        evidenceQuality(right) - evidenceQuality(left) ||
+        firstText(left.id).localeCompare(firstText(right.id))
+      )[0];
+    const groundedBuyerRefs = buyerRefs.filter((ref) =>
+      asObject(evidenceByID.get(ref)).approvedSourceObservation === true
+    );
+    const groundedChannelRefs = channelRefs.filter((ref) =>
+      asObject(evidenceByID.get(ref)).approvedSourceObservation === true
+    );
+    const groundedRevenuePathRefs = revenuePathRefs.filter((ref) =>
+      asObject(evidenceByID.get(ref)).approvedSourceObservation === true
+    );
+    if (!assetEvidence ||
+        groundedBuyerRefs.length === 0 ||
+        groundedChannelRefs.length === 0 ||
+        groundedRevenuePathRefs.length === 0) {
+      continue;
+    }
+    const publicUrl = safePublicURL(assetEvidence.url);
+    const evidenceRefs = compactStrings([
+      assetEvidence.id,
+      ...groundedBuyerRefs,
+      ...groundedChannelRefs,
+      ...groundedRevenuePathRefs
+    ])
+      .filter((ref) =>
+        asObject(evidenceByID.get(ref)).approvedSourceObservation === true
+      )
+      .slice(0, 12);
+    const value = {
+      id: `candidate:owned-inbound:${stableHash(
+        `${hypothesis.id}|${publicUrl}`
+      ).slice(0, 20)}`,
+      hypothesisId: hypothesis.id,
+      kind: OWNED_INBOUND_ASSET_KIND,
+      displayLabel: truncate(firstText(
+        assetEvidence.label,
+        'Owned inbound offer page'
+      ), 180),
+      role: 'Owned inbound paid-conversion asset',
+      publicUrl,
+      providers: ['approved_source_observation'],
+      evidenceRefs,
+      contactPaths: [{
+        kind: OWNED_INBOUND_ASSET_KIND,
+        available: true,
+        verified: true,
+        reference: publicUrl
+      }],
+      score: hypothesis.score,
+      exactNamedCandidate: false,
+      identityResolved: true,
+      discoveredAt: firstText(assetEvidence.observedAt)
+    };
+    SYNTHESIZED_OWNED_INBOUND_ASSETS.add(value);
+    values.push(value);
+  }
+  return values;
+}
+
 function normalizeCandidates(
   values,
   hypotheses,
@@ -3340,6 +3965,10 @@ function normalizeCandidates(
   const candidates = [];
   for (const [index, rawValue] of asArray(values).slice(0, 160).entries()) {
     const raw = asObject(rawValue);
+    if (ownedInboundAssetCandidate(raw) &&
+        !SYNTHESIZED_OWNED_INBOUND_ASSETS.has(rawValue)) {
+      continue;
+    }
     const authorSlug = firstText(raw.authorSlug, raw.profileSlug);
     const displayLabel = truncate(firstText(
       raw.displayLabel,
@@ -3361,12 +3990,20 @@ function normalizeCandidates(
       evidenceRefs
     };
     const overlappingHypotheses = hypotheses.filter((hypothesis) =>
-      candidateEvidenceGroundsHypothesis(groundingCandidate, hypothesis)
+      candidateEvidenceGroundsHypothesis(
+        groundingCandidate,
+        hypothesis,
+        evidenceByID
+      )
     );
     if (overlappingHypotheses.length === 0) continue;
     let hypothesis = hypothesisByID.get(firstText(raw.hypothesisId));
     if (!hypothesis ||
-        !candidateEvidenceGroundsHypothesis(groundingCandidate, hypothesis)) {
+        !candidateEvidenceGroundsHypothesis(
+          groundingCandidate,
+          hypothesis,
+          evidenceByID
+        )) {
       hypothesis = [...overlappingHypotheses].sort((left, right) => {
         const leftFit = textOverlap(
           `${raw.role || ''} ${raw.organization || ''} ${displayLabel}`,
@@ -3396,17 +4033,21 @@ function normalizeCandidates(
       authorSlug ? internalProfileURL(profileScribePublicBaseURL, authorSlug) : ''
     ));
     const organization = truncate(firstText(raw.organization, raw.company), 180);
-    const candidateDisplayLabel = concreteCandidateLabel(displayLabel)
+    const candidateDisplayLabel = ownedInboundAssetCandidate(raw)
       ? displayLabel
-      : organization;
+      : concreteCandidateLabel(displayLabel)
+        ? displayLabel
+        : organization;
     // Candidate kinds supplied by callers and approved-source extraction are
     // still untrusted classification hints. Normalize obvious organizations
     // here as the common output boundary so a payer brand cannot retain a
     // person-like kind and become eligible for downstream person enrichment.
     const declaredKind = firstText(raw.kind, 'public_professional');
-    const candidateKind = organizationLikeCandidateLabel(candidateDisplayLabel)
-      ? 'organization'
-      : declaredKind;
+    const candidateKind = ownedInboundAssetCandidate(raw)
+      ? OWNED_INBOUND_ASSET_KIND
+      : organizationLikeCandidateLabel(candidateDisplayLabel)
+        ? 'organization'
+        : declaredKind;
     if (!candidateIdentityIsConcrete({
       raw,
       displayLabel: candidateDisplayLabel,
@@ -3570,6 +4211,9 @@ function candidateIsProfileOwner({
   ownerIdentity
 }) {
   raw = asObject(raw);
+  if (ownedInboundAssetCandidate(raw)) {
+    return false;
+  }
   ownerIdentity = ownerIdentity || {};
   if (ownerIdentity.candidateIDs?.has(firstText(raw.id))) return true;
   if (authorSlug && ownerIdentity.slugs?.has(comparable(authorSlug))) return true;
@@ -3937,14 +4581,36 @@ function prohibitedAcquisitionText(value) {
 
 function acquisitionModeMatchesText(mode, value) {
   const text = comparable(firstText(value));
+  if (mode === 'inbound') {
+    return inboundDiscoveryDemandPathText(text);
+  }
   const patterns = {
-    inbound: /\b(inbound|service page|landing page|website|booking page|checkout)\b/i,
     warm_referral: /\b(warm|referral|introduction|existing network)\b/i,
     permissioned_outreach: /\b(permissioned|opt in|review first|approved|professional network|introduction request)\b/i,
     existing_customer: /\b(existing|current|past) (?:customer|client|patient)\b/i,
     partner_channel: /\b(partner|referral|affiliate|association|network channel)\b/i
   };
   return patterns[mode]?.test(text) === true;
+}
+
+function inboundDiscoveryDemandPathText(value) {
+  const text = comparable(firstText(value));
+  const namesDiscoveryOrigin =
+    /\b(?:agent mediated|community|content distribution|directory|earned (?:directory|media)|google business profile|local search|marketplace|map pack|nonbranded search|organic search|owned (?:audience|email|newsletter)|search engine|social distribution)\b/.test(
+      text
+    );
+  const namesDiscoveryMovement =
+    /\b(?:arrive|click|discover|discovery|find|reach|route|search|send|traffic|visit)\b/.test(
+      text
+    );
+  const namesDistinctDestination =
+    /\b(?:booking (?:flow|form|page)|checkout|contact form|landing page|offer page|order form|product page|service page|website)\b/.test(
+      text
+    );
+  return /\binbound\b/.test(text) &&
+    namesDiscoveryOrigin &&
+    namesDiscoveryMovement &&
+    namesDistinctDestination;
 }
 
 function attributionSignalText(value, method) {
@@ -4386,7 +5052,11 @@ function stringsOverlap(left, right) {
   return compactStrings(left).some((value) => rightValues.has(value));
 }
 
-function candidateEvidenceGroundsHypothesis(candidateValue, hypothesis) {
+function candidateEvidenceGroundsHypothesis(
+  candidateValue,
+  hypothesis,
+  evidenceCatalogOrIndex
+) {
   const candidate = asObject(candidateValue);
   const evidenceRefs = strategyAnchorEvidenceRefs(candidate.evidenceRefs);
   const tuple = asObject(hypothesis?._tuple);
@@ -4399,6 +5069,40 @@ function candidateEvidenceGroundsHypothesis(candidateValue, hypothesis) {
   const proofEvidence = strategyAnchorEvidenceRefs(
     asObject(tuple.proofPoints).evidenceRefs
   );
+  const channelEvidence = strategyAnchorEvidenceRefs(
+    asObject(tuple.channels).evidenceRefs
+  );
+  const revenuePathEvidence = strategyAnchorEvidenceRefs(
+    asObject(tuple.revenuePaths?.revenuePath).evidenceRefs
+  );
+  if (ownedInboundAssetCandidate(candidate)) {
+    const evidenceByID = evidenceCatalogOrIndex instanceof Map
+      ? evidenceCatalogOrIndex
+      : evidenceIndex(asArray(evidenceCatalogOrIndex));
+    const publicUrl = safePublicURL(firstText(candidate.publicUrl));
+    const assetEvidenceIsBound = Boolean(
+      publicUrl &&
+      evidenceRefs.some((ref) => {
+        const evidence = asObject(evidenceByID.get(ref));
+        return approvedOwnedAssetEvidence(evidence, evidenceByID) &&
+          comparableURL(safePublicURL(evidence.url)) ===
+            comparableURL(publicUrl) &&
+          [...offerEvidence, ...proofEvidence].includes(ref);
+      })
+    );
+    const allEvidenceIsApprovedObservation =
+      evidenceRefs.length > 0 &&
+      evidenceRefs.every((ref) =>
+        asObject(evidenceByID.get(ref)).approvedSourceObservation === true
+      );
+    return firstText(hypothesis?.revenuePath?.acquisitionMode) ===
+        'inbound' &&
+      assetEvidenceIsBound &&
+      allEvidenceIsApprovedObservation &&
+      stringsOverlap(evidenceRefs, buyerEvidence) &&
+      stringsOverlap(evidenceRefs, channelEvidence) &&
+      stringsOverlap(evidenceRefs, revenuePathEvidence);
+  }
   if (organizationCandidateRequiresBuyerMatch(candidate) &&
       !exactTextContains(
         asObject(tuple.buyerSegments).label,
@@ -4410,8 +5114,68 @@ function candidateEvidenceGroundsHypothesis(candidateValue, hypothesis) {
     stringsOverlap(evidenceRefs, [...offerEvidence, ...proofEvidence]);
 }
 
+function candidateActionableForHypothesis(
+  candidateValue,
+  hypothesis,
+  evidenceCatalogOrIndex
+) {
+  const candidate = asObject(candidateValue);
+  if (!candidateEvidenceGroundsHypothesis(
+    candidate,
+    hypothesis,
+    evidenceCatalogOrIndex
+  )) {
+    return false;
+  }
+  const acquisitionMode = firstText(
+    hypothesis?.revenuePath?.acquisitionMode
+  );
+  if (acquisitionMode === 'inbound') {
+    return ownedInboundAssetCandidate(candidate) &&
+      candidate.identityResolved === true;
+  }
+  return !ownedInboundAssetCandidate(candidate) &&
+    candidate.identityResolved === true &&
+    candidate.exactNamedCandidate === true;
+}
+
+function approvedOwnedAssetEvidence(evidenceValue, evidenceByID) {
+  const evidence = asObject(evidenceValue);
+  const publicUrl = safePublicURL(evidence.url);
+  const sourceUrl = safePublicURL(evidence.approvedSourceUrl);
+  if (evidence.approvedSourceObservation !== true ||
+      evidence.profileControlledSource !== true ||
+      !firstText(evidence.sourceId) ||
+      !publicUrl ||
+      !sourceUrl) {
+    return false;
+  }
+  try {
+    const asset = new URL(publicUrl);
+    const approved = new URL(sourceUrl);
+    const approvedPath = approved.pathname.replace(/\/+$/, '') || '/';
+    const assetPath = asset.pathname.replace(/\/+$/, '') || '/';
+    return asset.origin === approved.origin &&
+      urlContainsDeclaredQuery(asset, approved) &&
+      (
+        approvedPath === '/' ||
+        assetPath === approvedPath ||
+        assetPath.startsWith(`${approvedPath}/`)
+      );
+  } catch {
+    return false;
+  }
+}
+
+function ownedInboundAssetCandidate(candidateValue) {
+  const candidate = asObject(candidateValue);
+  return contractEnum(firstText(candidate.kind, candidate.k)) ===
+    OWNED_INBOUND_ASSET_KIND;
+}
+
 function organizationCandidateRequiresBuyerMatch(candidateValue) {
   const candidate = asObject(candidateValue);
+  if (ownedInboundAssetCandidate(candidate)) return false;
   const kind = comparable(firstText(candidate.kind, candidate.k));
   const organization = firstText(candidate.organization, candidate.company);
   const displayLabel = firstText(candidate.displayLabel, candidate.l);

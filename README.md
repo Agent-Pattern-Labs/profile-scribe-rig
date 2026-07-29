@@ -139,13 +139,31 @@ Additional managed job kinds:
   explicitly `approved` source ID may ground the tournament. One bounded,
   provider-price-capped OpenRouter call generates evidence-referenced strategy
   dimensions, semantic score inputs, and those optional exact candidates. The
-  `cheap_tournament_v3` seed contract requires each family to identify an
+  `cheap_tournament_v4` seed contract requires each family to identify an
   actual buyer, explicitly paid offer, inbound or permissioned acquisition
   path, paid conversion, observable revenue event, and durable attribution
   signal. Evidence-grounded inbound paths receive a small preference; warm,
   partner, existing-customer, and permissioned alternatives remain eligible.
   Deterministic code then expands and judges at most 10,000 tuples, retains at
   most 20 finalists, and returns one review-required winner plus a runner-up.
+  For an inbound strategy only, an approved observation of the owner's public
+  offer, service, booking, checkout, or purchase page may serve as the
+  execution asset when it is current and recently observed, positively names a
+  paid, billable, purchasable, or reimbursable offer plus a conversion action,
+  and its exact origin (including port and controlled path) matches the website
+  or booking URL declared on the profile. Free, negated, unavailable, expired,
+  inactive, or stale assets are rejected. An inbound family must also name an
+  incremental discovery/demand origin—such as organic/local search, an owned
+  opted-in audience, earned directory/media discovery, a marketplace or
+  community, social distribution, or agent-mediated discovery—and route it to
+  a separate conversion destination. A booking or service page is a
+  destination, not an acquisition mechanism. The same strategy must remain
+  grounded in a buyer, paid conversion, revenue outcome, and attribution path.
+  Approval alone does not make an insurer, hospital, directory, partner, or
+  article page owner-controlled. The owned asset is never treated as an
+  outside lead and never goes through PDL.
+  Warm-referral, permissioned-outreach, partner-channel, and existing-customer
+  strategies still require the exact named outside person or organization.
   Operations-only work, including eligibility, scheduling, workflow, profile,
   content, or research tasks, cannot be the singular opportunity even when it
   is useful supporting context. A completed finalist carries
@@ -157,19 +175,28 @@ Additional managed job kinds:
   stable deterministic rejection counts/reasons so the control plane can
   validate the gate independently.
   A completed result requires an unbroken objective → tournament → hypothesis
-  → named candidate → reviewable action chain. Candidate evidence must overlap
-  the winning buyer-segment seed plus its offer or proof evidence—not merely an
-  unrelated citation—and the winning candidate must carry a resolved exact
-  identity tuple. The internal recommendation names that candidate and one or
-  two cited evidence labels. If the original score leader has no qualifying
-  candidate, the highest-scoring candidate-grounded finalist becomes rank 1;
-  higher ungrounded finalists are dropped so the score order and distinct
-  runner-up contract remain valid. For model-extracted candidates, “resolved”
-  means the named person/organization and optional public fields passed exact
-  approved-evidence validation; it does not claim third-party verification.
-  When no such candidate exists, the job skips with
-  `needs_more_approved_evidence`; it never completes with a generic
-  strategy-only winner. Tournament context uses only persisted profile,
+  → exact outside target or approved owned inbound asset → reviewable action
+  chain. Target evidence must overlap the winning buyer-segment seed plus its
+  offer or proof evidence—not merely an unrelated citation. The internal
+  recommendation names that target and one or two cited evidence labels. If
+  the original score leader has no qualifying target, the highest-scoring
+  grounded finalist becomes rank 1; higher ungrounded finalists are dropped so
+  the score order and distinct runner-up contract remain valid. For
+  model-extracted outside candidates, “resolved” means the named
+  person/organization and optional public fields passed exact approved-evidence
+  validation; it does not claim third-party verification. If no winner can be
+  defended after the bounded model call, the job returns one
+  `revenue_evidence_experiment_v1` instead of a bare dead end. That experiment
+  names the missing evidence, one review-first action, the attributable paid
+  success signal, a numeric stop window, and the relevant-evidence trigger for
+  at most one rerun. ProfileScribe records the experiment outcome, links the
+  single rerun to its origin, preserves the objective, and supplies the outcome
+  to the next judging pass. Provider failures instead return one provider-health
+  and strict-structured-output recovery with exactly one retry; budget failures
+  preserve the evidence and existing cap and return one budget-compatible route
+  check with exactly one retry. Neither technical recovery is mislabeled as a
+  business evidence experiment. Every experiment authorizes no execution.
+  Tournament context uses only persisted profile,
   timeline, and approved crawl evidence returned by scoped read-only
   ProfileScribe tools. It never fetches a source URL directly—even when that
   source is marked approved. This job never calls People Data Labs, sends
