@@ -2,6 +2,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
 import {
   REVENUE_GATE_VERSION,
   REVENUE_PATH_CONTRACT_VERSION,
@@ -30,7 +31,7 @@ Environment:
 `;
 
 const DEFAULT_OPENROUTER_MODEL = 'deepseek/deepseek-v4-pro';
-const DEFAULT_OPENROUTER_TOURNAMENT_MODEL = 'mistralai/mistral-large-2512';
+const DEFAULT_OPENROUTER_TOURNAMENT_MODEL = 'qwen/qwen3-235b-a22b-2507';
 const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-4.8';
 const DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -654,7 +655,8 @@ async function runOpportunityTournamentJob(job, options) {
           provider: 'openrouter',
           model,
           status: 'completed',
-          openRouterUsage: completion.usage
+          openRouterUsage: completion.usage,
+          openRouterDiagnostics: completion.diagnostics
         });
         return completion;
       } catch (error) {
@@ -663,7 +665,8 @@ async function runOpportunityTournamentJob(job, options) {
           model,
           status: 'failed',
           error: openRouterFailureCode(error),
-          openRouterUsage: openRouterFailureUsage(error)
+          openRouterUsage: openRouterFailureUsage(error),
+          openRouterDiagnostics: error?.openRouterDiagnostics
         });
         throw error;
       }
@@ -2637,11 +2640,15 @@ async function callOpenRouterJSON({
   user,
   maxTokens,
   provider,
-  responseFormat
+  responseFormat,
+  plugins,
+  temperature
 }) {
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
   model = text(model) || openRouterModel();
+  const requestedTemperature = Number(temperature);
+  const requestedPlugins = arrayOfObjects(plugins);
 
   const response = await fetch(openRouterChatCompletionsURL(), {
     method: 'POST',
@@ -2653,11 +2660,18 @@ async function callOpenRouterJSON({
     },
     body: JSON.stringify({
       model,
-      temperature: 0.25,
+      temperature: Number.isFinite(requestedTemperature) &&
+        requestedTemperature >= 0 &&
+        requestedTemperature <= 2
+        ? requestedTemperature
+        : 0.25,
       max_tokens: numberOr(maxTokens, 700),
       ...(Object.keys(object(provider)).length > 0 ? { provider: object(provider) } : {}),
       ...(Object.keys(object(responseFormat)).length > 0
         ? { response_format: object(responseFormat) }
+        : {}),
+      ...(requestedPlugins.length > 0
+        ? { plugins: requestedPlugins }
         : {}),
       messages: [
         { role: 'system', content: system },
@@ -2672,24 +2686,85 @@ async function callOpenRouterJSON({
   }
   const envelope = parseJSON(body, 'OpenRouter response');
   const usage = normalizeOpenRouterUsage(envelope?.usage);
-  const content = text(envelope?.choices?.[0]?.message?.content);
+  const choice = object(envelope?.choices?.[0]);
+  const rawContent = typeof choice?.message?.content === 'string'
+    ? choice.message.content
+    : '';
+  const diagnostics = openRouterResponseDiagnostics(choice, rawContent);
+  if (envelope?.error) {
+    throw openRouterProviderError(envelope.error, usage, diagnostics);
+  }
+  if (choice?.error) {
+    throw openRouterProviderError(choice.error, usage, diagnostics);
+  }
+  const content = text(rawContent);
   if (!content) {
     const error = new Error('OpenRouter returned an empty message');
-    error.openRouterUsage = usage;
-    throw error;
+    throw attachOpenRouterResponseMetadata(error, usage, diagnostics);
   }
   let data;
   try {
     data = parseJSON(extractJSONObject(content), 'OpenRouter JSON message');
   } catch (error) {
-    error.openRouterUsage = usage;
-    throw error;
+    throw attachOpenRouterResponseMetadata(error, usage, diagnostics);
   }
   return {
     data,
     usage,
-    generationId: text(envelope?.id)
+    generationId: text(envelope?.id),
+    diagnostics
   };
+}
+
+function openRouterResponseDiagnostics(choice, rawContent) {
+  choice = object(choice);
+  rawContent = typeof rawContent === 'string' ? rawContent : '';
+  return compact({
+    finishReason: truncate(text(choice.finish_reason), 64),
+    nativeFinishReason: truncate(text(choice.native_finish_reason), 64),
+    contentByteCount: Buffer.byteLength(rawContent, 'utf8'),
+    contentSha256: createHash('sha256').update(rawContent).digest('hex')
+  });
+}
+
+function attachOpenRouterResponseMetadata(error, usage, diagnostics) {
+  error.openRouterUsage = usage;
+  error.openRouterDiagnostics = diagnostics;
+  if (openRouterDiagnosticsIndicateTruncation(diagnostics)) {
+    error.openRouterFailureCode = 'openrouter_truncated_structured_output';
+  }
+  return error;
+}
+
+function openRouterProviderError(value, usage, diagnostics) {
+  const details = object(value);
+  const error = new Error(
+    `OpenRouter generation failed: ${
+      text(details.message) || 'unknown provider error'
+    }`
+  );
+  const errorType = text(
+    object(details.metadata).error_type ?? details.error_type
+  ).toLowerCase();
+  error.openRouterFailureCode =
+    /^(?:context_length_exceeded|max_tokens_exceeded|token_limit_exceeded|string_too_long)$/.test(
+      errorType
+    )
+      ? 'openrouter_truncated_structured_output'
+      : /^[a-z][a-z0-9_]{0,63}$/.test(errorType)
+        ? `openrouter_${errorType}`
+        : 'openrouter_provider_error';
+  return attachOpenRouterResponseMetadata(error, usage, diagnostics);
+}
+
+function openRouterDiagnosticsIndicateTruncation(value) {
+  const diagnostics = object(value);
+  const reason = `${text(diagnostics.finishReason)} ${
+    text(diagnostics.nativeFinishReason)
+  }`.toLowerCase();
+  return /\b(?:length|max(?:imum)?[_ -]?(?:tokens?|output)|token[_ -]?limit)\b/.test(
+    reason
+  );
 }
 
 function normalizeOpenRouterUsage(usage) {
@@ -3436,13 +3511,18 @@ function safeOpenRouterAccountingMetadata(metadata) {
   metadata = object(metadata);
   if (text(metadata.provider).toLowerCase() !== 'openrouter') return {};
   const usage = safeOpenRouterUsageMetadata(metadata.openRouterUsage);
+  const diagnostics = safeOpenRouterResponseDiagnostics(
+    metadata.openRouterDiagnostics ?? metadata.responseDiagnostics
+  );
   return compact({
     provider: 'openrouter',
     model: truncate(metadata.model, 160),
     status: truncate(metadata.status, 64),
     rewrite: metadata.rewrite === true ? true : undefined,
     error: text(metadata.error) ? 'openrouter_call_failed' : undefined,
-    openRouterUsage: Object.keys(usage).length > 0 ? usage : undefined
+    openRouterUsage: Object.keys(usage).length > 0 ? usage : undefined,
+    responseDiagnostics:
+      Object.keys(diagnostics).length > 0 ? diagnostics : undefined
   });
 }
 
@@ -3465,11 +3545,27 @@ function safeOpenRouterUsageMetadata(value) {
   };
 }
 
+function safeOpenRouterResponseDiagnostics(value) {
+  const diagnostics = object(value);
+  const contentSha256 = text(diagnostics.contentSha256).toLowerCase();
+  return compact({
+    finishReason: truncate(diagnostics.finishReason, 64),
+    nativeFinishReason: truncate(diagnostics.nativeFinishReason, 64),
+    contentByteCount: nonNegativeInteger(diagnostics.contentByteCount),
+    contentSha256: /^[a-f0-9]{64}$/.test(contentSha256)
+      ? contentSha256
+      : undefined
+  });
+}
+
 function openRouterFailureCode(error) {
+  const explicit = text(error?.openRouterFailureCode).toLowerCase();
+  if (/^openrouter_[a-z0-9_]+$/.test(explicit)) return explicit;
   const message = String(error?.message || error || '').toLowerCase();
-  const status = message.match(/\bhttp\s+(\d{3})\b/)?.[1];
+  const status = message.match(/\bhttp\s+([45]\d{2})\b/)?.[1];
   if (status) return `openrouter_http_${status}`;
   if (message.includes('abort') || message.includes('timeout')) return 'openrouter_transport_error';
+  if (message.includes('truncated')) return 'openrouter_truncated_structured_output';
   if (message.includes('not valid json') || message.includes('json message')) return 'openrouter_invalid_response';
   if (message.includes('empty message')) return 'openrouter_empty_response';
   return 'openrouter_request_failed';
@@ -3725,6 +3821,11 @@ function numberOr(value, fallback) {
 function positiveInteger(value) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? Math.floor(number) : undefined;
+}
+
+function nonNegativeInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : undefined;
 }
 
 function finiteNumber(value) {

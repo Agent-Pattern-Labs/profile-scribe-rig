@@ -106,7 +106,7 @@ export PROFILESCRIBE_MCP_URL=https://profilescribe.com/api/mcp
 export OPENROUTER_API_KEY=sk-or-...
 export PROFILESCRIBE_RIG_OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 export PROFILESCRIBE_RIG_DRAFT_MODEL=anthropic/claude-opus-4.8
-export PROFILESCRIBE_RIG_TOURNAMENT_MODEL=deepseek/deepseek-v4-pro
+export PROFILESCRIBE_RIG_TOURNAMENT_MODEL=qwen/qwen3-235b-a22b-2507
 export PROFILESCRIBE_RIG_DRAFTER_COMMAND='your-drafter-command'
 export PROFILESCRIBE_RIG_REWRITE_COMMAND='your-rewrite-command'
 export PROFILESCRIBE_RIG_CHAT_COMMAND='your-agent-chat-command'
@@ -195,7 +195,10 @@ Additional managed job kinds:
   and strict-structured-output recovery with exactly one retry; budget failures
   preserve the evidence and existing cap and return one budget-compatible route
   check with exactly one retry. Neither technical recovery is mislabeled as a
-  business evidence experiment. Every experiment authorizes no execution.
+  business evidence experiment. Tournament generation uses a compact strict
+  schema, one semantic score per complete strategy family, deterministic
+  sampling, and response healing within the same single metered model call.
+  Every experiment authorizes no execution.
   Tournament context uses only persisted profile,
   timeline, and approved crawl evidence returned by scoped read-only
   ProfileScribe tools. It never fetches a source URL directly—even when that

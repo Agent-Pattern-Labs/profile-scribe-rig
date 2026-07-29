@@ -201,8 +201,9 @@ const SCORE_ALIASES = {
  * Runs one research-only opportunity tournament.
  *
  * completeJSON must follow run-job's OpenRouter helper contract:
- *   ({ model, system, user, maxTokens, provider }) =>
- *     { data, usage, generationId? }
+ *   ({ model, system, user, maxTokens, provider, responseFormat,
+ *      plugins, temperature }) =>
+ *     { data, usage, generationId?, diagnostics? }
  *
  * The model generates compact, grounded strategy dimensions and semantic score
  * inputs once. This module performs the Cartesian expansion, hard filtering,
@@ -320,9 +321,12 @@ export async function runOpportunityTournament({
       user: prompt.user,
       maxTokens: budget.maxOutputTokens,
       responseFormat: tournamentStructuredResponseFormat(evidenceCatalog),
+      plugins: [{ id: 'response-healing' }],
+      temperature: 0,
       provider: {
         max_price: budget.providerMaxPrice,
-        require_parameters: true
+        require_parameters: true,
+        data_collection: 'deny'
       }
     });
   } catch (error) {
@@ -332,6 +336,7 @@ export async function runOpportunityTournament({
       model,
       status: 'failed',
       usage: error?.openRouterUsage,
+      diagnostics: error?.openRouterDiagnostics,
       promptHash,
       error: openRouterFailureCode(error)
     });
@@ -356,6 +361,7 @@ export async function runOpportunityTournament({
     status: 'completed',
     usage: completion?.usage,
     generationId: completion?.generationId,
+    diagnostics: completion?.diagnostics,
     promptHash
   });
   const usage = aggregateUsage([providerMetadata], budget);
@@ -1386,8 +1392,8 @@ Prefer an inbound paid-conversion path for familyA when approved evidence can gr
 Within each family bundle, return exactly two family-specific offers, buyer segments, channels, actions, and follow-ups, plus exactly one timing trigger, one proof point, and one revenue path. Never return global dimension arrays or cross-family compatibility tags.
 Return no email, direct message, post, pitch, sales script, or other outreach copy.
 Reject spray-and-pray, bulk outreach, scraping, automated form submission, or high-volume behavior.
-Each seed should be a short structured concept. Each reason must explain a grounded inference, not assert an unobserved fact.
-Score values are semantic judgments from 0 to 1. Positive scores are better; effort, cost, risk, and uncertainty are burdens.
+Each seed should be a short structured concept.
+Judge-weight values are semantic judgments from 0 to 1. Positive scores are better; effort, cost, risk, and uncertainty are burdens.
 Return only JSON.`;
   const user = JSON.stringify({
     task: 'Generate and semantically judge the seed dimensions for one bounded opportunity tournament.',
@@ -1398,10 +1404,22 @@ Return only JSON.`;
     outputRules: {
       seedCount: `Across familyA and familyB this yields at most ${maxSeedsPerDimension} items per multi-variant dimension, two timing triggers, and two proof points.`,
       familyBundleSchema: {
-        id: 'family-a for familyA or family-b for familyB',
         l: 'short internal label for one coherent end-to-end business motion',
         m: 'one semantic motion: payer_network, patient_inbound, clinical_referral, hospital_program, employer_workplace, or organization_partnership',
         e: ['the exact union of approved non-source evidence IDs used by this family revenue path, offers, buyers, channels, actions, and proof, including at least one observation:* anchor'],
+        s: {
+          of: 'family-level objectiveFit 0..1',
+          es: 'family-level evidenceStrength 0..1',
+          ba: 'family-level buyerAuthority 0..1',
+          ti: 'family-level timing 0..1',
+          wp: 'family-level warmPath 0..1',
+          re: 'family-level reachability 0..1; contact availability alone is not strategic fit',
+          ev: 'family-level expectedValue 0..1',
+          ef: 'family-level effort 0..1 burden',
+          co: 'family-level cost 0..1 burden',
+          ri: 'family-level risk 0..1 burden',
+          un: 'family-level uncertainty 0..1 burden'
+        },
         d: {
           revenuePaths: ['exactly one revenuePathSchema object; construct this first'],
           offers: ['exactly two itemSchema objects'],
@@ -1415,30 +1433,11 @@ Return only JSON.`;
       },
       requiredDimensions: DIMENSIONS.map(([name]) => name),
       itemSchema: {
-        id: 'short stable local label',
         l: 'concise internal strategy component; never outreach copy',
         e: ['one or more exact evidenceCatalog.id values'],
-        q: 'timingTriggers only: a short exact phrase copied from cited evidence that directly proves the trigger; omit q on all other dimensions',
-        s: {
-          of: 'objectiveFit 0..1 when relevant',
-          es: 'evidenceStrength 0..1 when relevant',
-          ba: 'buyerAuthority 0..1 when relevant',
-          ti: 'timing 0..1 when relevant',
-          wp: 'warmPath 0..1 when relevant',
-          re: 'reachability 0..1 when relevant; contact availability alone is not strategic fit',
-          ev: 'expectedValue 0..1 when relevant',
-          ef: 'effort 0..1 burden',
-          co: 'cost 0..1 burden',
-          ri: 'risk 0..1 burden',
-          un: 'uncertainty 0..1 burden'
-        },
-        r: 'optional short grounded reason; omit when the label and scores suffice',
-        u: 'optional short material unknown',
-        sp: 'optional estimatedSpendMicros integer; omit rather than guess',
-        vm: 'omit; expectedValueMicros belongs on revenuePathSchema'
+        q: 'timingTriggers only: a short exact phrase copied from cited evidence that directly proves the trigger; omit q on all other dimensions'
       },
       revenuePathSchema: {
-        id: 'short stable local label',
         l: 'short label for this complete incremental-income path',
         e: ['one or more exact evidenceCatalog.id values grounding the buyer, paid offer, channel, and conversion'],
         contractVersion: 'incremental_revenue_v1',
@@ -1460,10 +1459,11 @@ Return only JSON.`;
         m: 'optional exact market/location copied from cited evidence',
         e: ['one or more exact evidenceCatalog.id values that contain the candidate name']
       },
-      w: 'Optional judge-weight object using the short score keys. Keep evidence and objective fit dominant.',
-      compactness: 'Use only the compact item keys above. Do not restate the evidence or schema and do not add prose outside JSON.',
+      w: 'One judge-weight object using the short score keys. Keep evidence and objective fit dominant.',
+      compactness: 'Use only l and e on ordinary items, add q only on timingTriggers, and use the listed revenuePath fields. Do not return local item ids, per-item scores, reasons, unknown placeholders, restated evidence, or prose outside JSON.',
       hardRules: [
         'Before returning JSON, silently audit every family against the revenuePathSchema and every rule below. Repair the family in place when any required paid, acquisition, conversion, revenue-proof, attribution, or evidence term is missing.',
+        'Score each family once as a complete end-to-end motion. Do not return per-item scores.',
         'Offers and proofPoints must cite direct evidence.',
         'Every offers item l must literally contain paid, billable, reimbursable, subscription, retainer, sale, paid pilot, or contract. Free activity and generic awareness are not offers.',
         'Each buyer segment must identify the actual payer/customer or a payer-linked beneficiary path that produces the paid outcome.',
@@ -1477,7 +1477,6 @@ Return only JSON.`;
         'Attribution must connect the paid outcome to the acquisition source through a booking, payment, invoice/contract, checkout/order, claim, CRM-source, or referral-code record.',
         'Buyer segments may be plausible inferences but must cite evidence supporting the fit.',
         'Return both familyA and familyB. Do not omit either complete bundle.',
-        'Use id family-a inside familyA and family-b inside familyB.',
         'For each family, include at least one observation:* evidence anchor in family e.',
         'Family e must contain every evidence ID used by that family revenue path, offers, buyer segments, channels, actions, and proof points. Timing and follow-up items must cite from that same revenue-bearing evidence set.',
         'Every item must cite at least one exact evidence ID that also appears in its containing family e. Different dimensions may use different family evidence IDs when that is the truthful provenance.',
@@ -1497,43 +1496,6 @@ Return only JSON.`;
         'If a named organization is the intended target buyer, start the buyerSegments label with that exact organization name and include the same organization in candidates.',
         'If evidence says a provider, credential, connection, or service is already accepted, active, or available, do not recommend applying for it as though it were missing.'
       ]
-    },
-    responseSchema: {
-      seedContract: 'revenue_family_bundle_v1',
-      familyA: {
-        id: 'family-a',
-        l: '',
-        m: '',
-        e: [],
-        d: {
-          revenuePaths: [],
-          offers: [],
-          buyerSegments: [],
-          channels: [],
-          actions: [],
-          timingTriggers: [],
-          proofPoints: [],
-          followUps: []
-        }
-      },
-      familyB: {
-        id: 'family-b',
-        l: '',
-        m: '',
-        e: [],
-        d: {
-          revenuePaths: [],
-          offers: [],
-          buyerSegments: [],
-          channels: [],
-          actions: [],
-          timingTriggers: [],
-          proofPoints: [],
-          followUps: []
-        }
-      },
-      candidates: [],
-      w: {}
     }
   });
   return { system, user };
@@ -1599,11 +1561,6 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
     labelPattern = ''
   ) => {
     const properties = {
-      id: {
-        type: 'string',
-        minLength: 1,
-        maxLength: 80
-      },
       l: {
         type: 'string',
         minLength: 1,
@@ -1622,14 +1579,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
                 'An exact phrase copied from a cited observation that supports the timing, or the exact phrase that makes a review-first timing verification relevant.'
             }
           }
-        : {}),
-      s: { $ref: '#/$defs/scores' },
-      u: {
-        type: 'string',
-        maxLength: 240,
-        description:
-          'A short material unknown; use an empty string only when no material unknown remains.'
-      }
+        : {})
     };
     return {
       type: 'object',
@@ -1644,10 +1594,9 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
     minItems: count,
     maxItems: count
   });
-  const family = (id) => ({
+  const family = () => ({
     type: 'object',
     properties: {
-      id: { type: 'string', enum: [id] },
       l: { type: 'string', minLength: 1, maxLength: 180 },
       m: {
         type: 'string',
@@ -1661,6 +1610,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
         ]
       },
       e: { $ref: '#/$defs/evidenceRefs' },
+      s: { $ref: '#/$defs/scores' },
       d: {
         type: 'object',
         properties: {
@@ -1686,7 +1636,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
         additionalProperties: false
       }
     },
-    required: ['id', 'l', 'm', 'e', 'd'],
+    required: ['l', 'm', 'e', 's', 'd'],
     additionalProperties: false
   });
   const weightProperties = Object.fromEntries(
@@ -1708,8 +1658,8 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
             type: 'string',
             enum: [SEED_CONTRACT_VERSION]
           },
-          familyA: family('family-a'),
-          familyB: family('family-b'),
+          familyA: family(),
+          familyB: family(),
           candidates: {
             type: 'array',
             items: { $ref: '#/$defs/candidate' },
@@ -1763,7 +1713,6 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
           revenuePath: {
             type: 'object',
             properties: {
-              id: { type: 'string', minLength: 1, maxLength: 80 },
               l: { type: 'string', minLength: 1, maxLength: 180 },
               e: { $ref: '#/$defs/evidenceRefs' },
               contractVersion: {
@@ -1828,7 +1777,6 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
               }
             },
             required: [
-              'id',
               'l',
               'e',
               'contractVersion',
@@ -2178,6 +2126,7 @@ function nestedStrategyFamilySeeds(familyInputs, dimension, aliases) {
   const out = [];
   for (const familyValue of asArray(familyInputs)) {
     const family = asObject(familyValue);
+    const familyScores = asObject(family.s ?? family.scores);
     const familyID = normalizeStrategyFamilyID(firstText(
       family.id,
       family.familyId,
@@ -2195,6 +2144,9 @@ function nestedStrategyFamilySeeds(familyInputs, dimension, aliases) {
       const seed = asObject(value);
       out.push({
         ...seed,
+        ...(Object.keys(asObject(seed.s ?? seed.scores)).length > 0
+          ? {}
+          : { s: familyScores }),
         id: `${familyID}-${firstText(
           seed.id,
           `${dimension}-${index + 1}`
@@ -5284,9 +5236,13 @@ function openRouterMetadata({
   status,
   usage,
   generationId,
+  diagnostics,
   promptHash,
   error
 }) {
+  const responseDiagnostics = normalizeOpenRouterResponseDiagnostics(
+    diagnostics
+  );
   return compact({
     provider: 'openrouter',
     model: firstText(model),
@@ -5295,7 +5251,27 @@ function openRouterMetadata({
     generationId: firstText(generationId),
     promptHash,
     error,
-    openRouterUsage: normalizeUsage(usage)
+    openRouterUsage: normalizeUsage(usage),
+    responseDiagnostics:
+      Object.keys(responseDiagnostics).length > 0
+        ? responseDiagnostics
+        : undefined
+  });
+}
+
+function normalizeOpenRouterResponseDiagnostics(value) {
+  const diagnostics = asObject(value);
+  const contentSha256 = firstText(diagnostics.contentSha256).toLowerCase();
+  return compact({
+    finishReason: truncate(firstText(diagnostics.finishReason), 64),
+    nativeFinishReason: truncate(
+      firstText(diagnostics.nativeFinishReason),
+      64
+    ),
+    contentByteCount: nonNegativeInteger(diagnostics.contentByteCount),
+    contentSha256: /^[a-f0-9]{64}$/.test(contentSha256)
+      ? contentSha256
+      : undefined
   });
 }
 
@@ -5623,10 +5599,13 @@ function hashInteger(value) {
 }
 
 function openRouterFailureCode(error) {
+  const explicit = firstText(error?.openRouterFailureCode).toLowerCase();
+  if (/^openrouter_[a-z0-9_]+$/.test(explicit)) return explicit;
   const message = String(error?.message || error || '').toLowerCase();
-  const status = message.match(/\bhttp\s+(\d{3})\b/)?.[1];
+  const status = message.match(/\bhttp\s+([45]\d{2})\b/)?.[1];
   if (status) return `openrouter_http_${status}`;
   if (message.includes('abort') || message.includes('timeout')) return 'openrouter_transport_error';
+  if (message.includes('truncated')) return 'openrouter_truncated_structured_output';
   if (message.includes('not valid json') || message.includes('json message')) return 'openrouter_invalid_response';
   if (message.includes('empty message')) return 'openrouter_empty_response';
   return 'openrouter_request_failed';

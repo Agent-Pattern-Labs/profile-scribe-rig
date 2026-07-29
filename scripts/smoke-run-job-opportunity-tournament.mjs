@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import { tmpdir } from 'os';
@@ -11,8 +12,15 @@ const root = resolve(new URL('..', import.meta.url).pathname);
 const tmp = mkdtempSync(join(tmpdir(), 'profilescribe-rig-opportunity-tournament-'));
 const openRouterCalls = [];
 const openRouterInputs = [];
+const openRouterResponseContents = new Map();
 const mcpCalls = [];
 const unexpectedRequests = [];
+const invalidStructuredContent =
+  '{"seedContract":"revenue_family_bundle_v1","familyA":';
+const truncatedStructuredContent =
+  '{"seedContract":"revenue_family_bundle_v1","familyA":{"l":"unfinished"';
+const choiceErrorContent =
+  '{"seedContract":"revenue_family_bundle_v1"}';
 const usage = {
   prompt_tokens: 3100,
   completion_tokens: 1250,
@@ -131,6 +139,68 @@ const server = createServer(async (request, response) => {
         message:
           'No provider route fits the max_price request budget cap.'
       }
+    }));
+    return;
+  }
+  if (input.objective?.id === 'obj-invalid-structured-output') {
+    openRouterResponseContents.set(
+      input.objective.id,
+      invalidStructuredContent
+    );
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      id: 'gen-invalid-structured-output',
+      choices: [{
+        finish_reason: 'stop',
+        native_finish_reason: 'stop',
+        message: { content: invalidStructuredContent }
+      }],
+      usage
+    }));
+    return;
+  }
+  if (input.objective?.id === 'obj-truncated-structured-output') {
+    openRouterResponseContents.set(
+      input.objective.id,
+      truncatedStructuredContent
+    );
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      id: 'gen-truncated-structured-output',
+      choices: [{
+        finish_reason: 'length',
+        native_finish_reason: 'max_tokens',
+        message: { content: truncatedStructuredContent }
+      }],
+      usage
+    }));
+    return;
+  }
+  if (input.objective?.id === 'obj-envelope-error') {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      id: 'gen-envelope-error',
+      error: { message: 'deliberate generation error in HTTP 200 envelope' },
+      choices: [],
+      usage
+    }));
+    return;
+  }
+  if (input.objective?.id === 'obj-choice-error') {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      id: 'gen-choice-error',
+      choices: [{
+        finish_reason: 'error',
+        native_finish_reason: 'provider_error',
+        message: { content: choiceErrorContent },
+        error: {
+          code: 502,
+          message: 'deliberate provider disconnect after partial output',
+          metadata: { error_type: 'provider_unavailable' }
+        }
+      }],
+      usage
     }));
     return;
   }
@@ -969,6 +1039,7 @@ const server = createServer(async (request, response) => {
   let responseSeedSet = seedSet;
   if ([
     'obj-nested-family-bundles',
+    'obj-compact-family-bundles',
     'obj-persisted-context-family-bundles',
     'obj-incomplete-family-bundles',
     'obj-forged-timing-family-bundles',
@@ -1082,6 +1153,9 @@ const server = createServer(async (request, response) => {
       candidates: structuredClone(seedSet.candidates),
       w: structuredClone(seedSet.w)
     };
+    if (input.objective?.id === 'obj-compact-family-bundles') {
+      responseSeedSet = compactFamilyBundleResponse(responseSeedSet);
+    }
   }
   if (input.objective?.id === 'obj-owned-asset-cannot-replace-warm-target') {
     for (const [index, channel] of seedSet.channels.entries()) {
@@ -1158,9 +1232,15 @@ const server = createServer(async (request, response) => {
   }
 
   response.writeHead(200, { 'Content-Type': 'application/json' });
+  const responseContent = JSON.stringify(responseSeedSet);
+  openRouterResponseContents.set(input.objective?.id, responseContent);
   response.end(JSON.stringify({
     id: `gen-tournament-${openRouterCalls.length}`,
-    choices: [{ message: { content: JSON.stringify(responseSeedSet) } }],
+    choices: [{
+      finish_reason: 'stop',
+      native_finish_reason: 'stop',
+      message: { content: responseContent }
+    }],
     usage
   }));
 });
@@ -1830,6 +1910,72 @@ try {
     providerFailureJobFile,
     port
   );
+  const invalidStructuredJob = structuredClone(candidateFreeJob);
+  invalidStructuredJob.id =
+    'job-opportunity-tournament-invalid-structured-output-smoke';
+  invalidStructuredJob.payload.tournamentId =
+    'opturn-invalid-structured-output-smoke';
+  invalidStructuredJob.payload.objective.id =
+    'obj-invalid-structured-output';
+  const invalidStructuredJobFile = join(
+    tmp,
+    'invalid-structured-output-job.json'
+  );
+  writeFileSync(
+    invalidStructuredJobFile,
+    `${JSON.stringify(invalidStructuredJob)}\n`,
+    'utf8'
+  );
+  const invalidStructured = await runJob(
+    invalidStructuredJobFile,
+    port
+  );
+  const truncatedStructuredJob = structuredClone(candidateFreeJob);
+  truncatedStructuredJob.id =
+    'job-opportunity-tournament-truncated-structured-output-smoke';
+  truncatedStructuredJob.payload.tournamentId =
+    'opturn-truncated-structured-output-smoke';
+  truncatedStructuredJob.payload.objective.id =
+    'obj-truncated-structured-output';
+  const truncatedStructuredJobFile = join(
+    tmp,
+    'truncated-structured-output-job.json'
+  );
+  writeFileSync(
+    truncatedStructuredJobFile,
+    `${JSON.stringify(truncatedStructuredJob)}\n`,
+    'utf8'
+  );
+  const truncatedStructured = await runJob(
+    truncatedStructuredJobFile,
+    port
+  );
+  const envelopeErrorJob = structuredClone(candidateFreeJob);
+  envelopeErrorJob.id =
+    'job-opportunity-tournament-envelope-error-smoke';
+  envelopeErrorJob.payload.tournamentId =
+    'opturn-envelope-error-smoke';
+  envelopeErrorJob.payload.objective.id = 'obj-envelope-error';
+  const envelopeErrorJobFile = join(tmp, 'envelope-error-job.json');
+  writeFileSync(
+    envelopeErrorJobFile,
+    `${JSON.stringify(envelopeErrorJob)}\n`,
+    'utf8'
+  );
+  const envelopeError = await runJob(envelopeErrorJobFile, port);
+  const choiceErrorJob = structuredClone(candidateFreeJob);
+  choiceErrorJob.id =
+    'job-opportunity-tournament-choice-error-smoke';
+  choiceErrorJob.payload.tournamentId =
+    'opturn-choice-error-smoke';
+  choiceErrorJob.payload.objective.id = 'obj-choice-error';
+  const choiceErrorJobFile = join(tmp, 'choice-error-job.json');
+  writeFileSync(
+    choiceErrorJobFile,
+    `${JSON.stringify(choiceErrorJob)}\n`,
+    'utf8'
+  );
+  const choiceError = await runJob(choiceErrorJobFile, port);
   const budgetRouteFailureJob = structuredClone(candidateFreeJob);
   budgetRouteFailureJob.id =
     'job-opportunity-tournament-budget-route-failure-smoke';
@@ -1893,6 +2039,20 @@ try {
     'utf8'
   );
   const nestedFamily = await runJob(nestedFamilyJobFile, port);
+  const compactFamilyJob = structuredClone(nestedFamilyJob);
+  compactFamilyJob.id =
+    'job-opportunity-tournament-compact-family-smoke';
+  compactFamilyJob.payload.tournamentId =
+    'opturn-compact-family-smoke';
+  compactFamilyJob.payload.objective.id =
+    'obj-compact-family-bundles';
+  const compactFamilyJobFile = join(tmp, 'compact-family-job.json');
+  writeFileSync(
+    compactFamilyJobFile,
+    `${JSON.stringify(compactFamilyJob)}\n`,
+    'utf8'
+  );
+  const compactFamily = await runJob(compactFamilyJobFile, port);
   const cappedNestedFamilyJob = structuredClone(nestedFamilyJob);
   cappedNestedFamilyJob.id =
     'job-opportunity-tournament-capped-nested-family-smoke';
@@ -2533,7 +2693,7 @@ try {
     { env: { OPENROUTER_API_KEY: '' } }
   );
 
-  if (openRouterCalls.length !== 43) {
+  if (openRouterCalls.length !== 48) {
     throw new Error(`expected one OpenRouter call per tournament run, got ${openRouterCalls.length}`);
   }
   if (unexpectedRequests.length !== 0) {
@@ -2590,11 +2750,15 @@ try {
     if (leakedMarker) {
       throw new Error(`non-approved source evidence leaked into generator input (${leakedMarker}): ${serializedEvidence}`);
     }
-    if (input.responseSchema?.seedContract !== 'revenue_family_bundle_v1' ||
-        !input.responseSchema?.familyA?.d ||
-        !input.responseSchema?.familyB?.d ||
-        !Array.isArray(input.responseSchema?.familyA?.d?.revenuePaths) ||
-        !Array.isArray(input.responseSchema?.familyB?.d?.revenuePaths) ||
+    const itemSchema = input.outputRules?.itemSchema || {};
+    const revenuePathSchema = input.outputRules?.revenuePathSchema || {};
+    if ('responseSchema' in input ||
+        Object.keys(itemSchema).sort().join(',') !== 'e,l,q' ||
+        !input.outputRules?.familyBundleSchema?.s?.ev ||
+        'id' in itemSchema ||
+        's' in itemSchema ||
+        'u' in itemSchema ||
+        'id' in revenuePathSchema ||
         'offers' in (input.responseSchema || {}) ||
         Object.keys(input.outputRules?.familyBundleSchema?.d || {})[0] !==
           'revenuePaths' ||
@@ -2615,13 +2779,28 @@ try {
         ) ||
         !input.outputRules?.hardRules?.some((rule) =>
           /Family e must contain every evidence ID/i.test(rule)
+        ) ||
+        !/Do not return local item ids, per-item scores/i.test(
+          input.outputRules?.compactness || ''
         )) {
-      throw new Error(`generator prompt lost the nested family-bundle contract: ${JSON.stringify(input.responseSchema)}`);
+      throw new Error(`generator prompt lost the compact nested family-bundle contract: ${JSON.stringify(input.outputRules)}`);
     }
   }
   for (const [callIndex, call] of openRouterCalls.entries()) {
     if (call.max_tokens !== 8000) {
       throw new Error(`expected bounded 8000-token completion, got ${call.max_tokens}`);
+    }
+    if (call.temperature !== 0 ||
+        call.plugins?.length !== 1 ||
+        call.plugins?.[0]?.id !== 'response-healing' ||
+        call.provider?.data_collection !== 'deny') {
+      throw new Error(
+        `expected deterministic privacy-filtered response-healed tournament generation, got ${JSON.stringify({
+          temperature: call.temperature,
+          plugins: call.plugins,
+          dataCollection: call.provider?.data_collection
+        })}`
+      );
     }
     const responseFormat = call.response_format || {};
     const responseSchema = responseFormat.json_schema?.schema || {};
@@ -2633,6 +2812,15 @@ try {
         responseSchema.additionalProperties !== false ||
         responseSchema.properties?.familyA?.properties?.d?.properties
           ?.revenuePaths?.minItems !== 1 ||
+        'id' in (responseSchema.properties?.familyA?.properties || {}) ||
+        responseSchema.properties?.familyA?.required?.includes('s') !== true ||
+        responseSchema.properties?.familyA?.properties?.s?.$ref !==
+          '#/$defs/scores' ||
+        'id' in (responseDefinitions.offerItem?.properties || {}) ||
+        's' in (responseDefinitions.offerItem?.properties || {}) ||
+        'u' in (responseDefinitions.offerItem?.properties || {}) ||
+        !responseDefinitions.scores ||
+        'id' in (responseDefinitions.revenuePath?.properties || {}) ||
         responseDefinitions.revenuePath?.properties?.contractVersion
           ?.enum?.[0] !== 'incremental_revenue_v1' ||
         responseDefinitions.revenuePath?.properties?.acquisitionMode
@@ -3087,6 +3275,100 @@ try {
       providerFailure.metadata?.usage?.calls !== 1) {
     throw new Error(`metered provider failure returned a dead end: ${JSON.stringify(providerFailure)}`);
   }
+  const invalidDiagnostics =
+    invalidStructured.metadata?.llm?.strategyGeneratorJudge
+      ?.responseDiagnostics || {};
+  const invalidContentHash = createHash('sha256')
+    .update(invalidStructuredContent)
+    .digest('hex');
+  if (invalidStructured.status !== 'skipped' ||
+      invalidStructured.metadata?.llm?.strategyGeneratorJudge?.error !==
+        'openrouter_invalid_response' ||
+      invalidStructured.metadata?.usage?.calls !== 1 ||
+      invalidStructured.metadata?.usage?.successfulCalls !== 0 ||
+      invalidStructured.metadata?.usage?.promptTokens !==
+        usage.prompt_tokens ||
+      invalidStructured.metadata?.usage?.completionTokens !==
+        usage.completion_tokens ||
+      invalidDiagnostics.finishReason !== 'stop' ||
+      invalidDiagnostics.nativeFinishReason !== 'stop' ||
+      invalidDiagnostics.contentByteCount !==
+        Buffer.byteLength(invalidStructuredContent, 'utf8') ||
+      invalidDiagnostics.contentSha256 !== invalidContentHash ||
+      JSON.stringify(invalidDiagnostics).includes(invalidStructuredContent) ||
+      invalidStructured.metadata?.nextExperiment?.kind !==
+        'strategy_generation_provider_recovery' ||
+      invalidStructured.metadata?.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `HTTP-200 invalid structured content lost bounded diagnostics or accounting: ${JSON.stringify(invalidStructured)}`
+    );
+  }
+  const truncatedDiagnostics =
+    truncatedStructured.metadata?.llm?.strategyGeneratorJudge
+      ?.responseDiagnostics || {};
+  const truncatedContentHash = createHash('sha256')
+    .update(truncatedStructuredContent)
+    .digest('hex');
+  if (truncatedStructured.status !== 'skipped' ||
+      truncatedStructured.metadata?.llm?.strategyGeneratorJudge?.error !==
+        'openrouter_truncated_structured_output' ||
+      truncatedStructured.metadata?.usage?.calls !== 1 ||
+      truncatedStructured.metadata?.usage?.successfulCalls !== 0 ||
+      truncatedDiagnostics.finishReason !== 'length' ||
+      truncatedDiagnostics.nativeFinishReason !== 'max_tokens' ||
+      truncatedDiagnostics.contentByteCount !==
+        Buffer.byteLength(truncatedStructuredContent, 'utf8') ||
+      truncatedDiagnostics.contentSha256 !== truncatedContentHash ||
+      truncatedStructured.metadata?.nextExperiment?.kind !==
+        'strategy_generation_provider_recovery' ||
+      truncatedStructured.metadata?.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `truncated structured content was not distinguished safely: ${JSON.stringify(truncatedStructured)}`
+    );
+  }
+  const envelopeDiagnostics =
+    envelopeError.metadata?.llm?.strategyGeneratorJudge
+      ?.responseDiagnostics || {};
+  if (envelopeError.status !== 'skipped' ||
+      envelopeError.metadata?.llm?.strategyGeneratorJudge?.error !==
+        'openrouter_provider_error' ||
+      envelopeError.metadata?.usage?.calls !== 1 ||
+      envelopeError.metadata?.usage?.promptTokens !== usage.prompt_tokens ||
+      envelopeDiagnostics.contentByteCount !== 0 ||
+      envelopeDiagnostics.contentSha256 !==
+        createHash('sha256').update('').digest('hex') ||
+      envelopeError.metadata?.nextExperiment?.kind !==
+        'strategy_generation_provider_recovery' ||
+      envelopeError.metadata?.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `HTTP-200 OpenRouter error envelope was not handled safely: ${JSON.stringify(envelopeError)}`
+    );
+  }
+  const choiceDiagnostics =
+    choiceError.metadata?.llm?.strategyGeneratorJudge
+      ?.responseDiagnostics || {};
+  const choiceContentHash = createHash('sha256')
+    .update(choiceErrorContent)
+    .digest('hex');
+  if (choiceError.status !== 'skipped' ||
+      choiceError.metadata?.llm?.strategyGeneratorJudge?.error !==
+        'openrouter_provider_unavailable' ||
+      choiceError.metadata?.usage?.calls !== 1 ||
+      choiceError.metadata?.usage?.successfulCalls !== 0 ||
+      choiceError.metadata?.usage?.promptTokens !== usage.prompt_tokens ||
+      choiceDiagnostics.finishReason !== 'error' ||
+      choiceDiagnostics.nativeFinishReason !== 'provider_error' ||
+      choiceDiagnostics.contentByteCount !==
+        Buffer.byteLength(choiceErrorContent, 'utf8') ||
+      choiceDiagnostics.contentSha256 !== choiceContentHash ||
+      JSON.stringify(choiceDiagnostics).includes(choiceErrorContent) ||
+      choiceError.metadata?.nextExperiment?.kind !==
+        'strategy_generation_provider_recovery' ||
+      choiceError.metadata?.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `HTTP-200 OpenRouter choice error was not handled safely: ${JSON.stringify(choiceError)}`
+    );
+  }
   if (budgetFailure.status !== 'skipped' ||
       budgetFailure.metadata?.winner !== null ||
       budgetFailure.metadata?.nextExperiment?.contractVersion !==
@@ -3196,6 +3478,33 @@ try {
       nestedFamily.metadata?.gate?.decision !== 'human_review' ||
       nestedFamily.metadata?.gate?.sideEffects?.providerWrites !== 0) {
     throw new Error(`nested family bundles did not produce a complete family-diverse tournament: ${JSON.stringify(nestedFamily)}`);
+  }
+  if (compactFamily.status !== 'completed' ||
+      compactFamily.metadata?.searchSpace?.seedContract !==
+        'revenue_family_bundle_v1' ||
+      compactFamily.metadata?.searchSpace?.declaredStrategyFamilyCount !== 2 ||
+      compactFamily.metadata?.searchSpace?.completeStrategyFamilyCount !== 2 ||
+      compactFamily.metadata?.searchSpace?.modelCalls !== 1 ||
+      compactFamily.metadata?.hypotheses?.length !== 20 ||
+      !compactFamily.metadata?.winner ||
+      compactFamily.metadata?.hypotheses?.some((hypothesis) => {
+        const familyID =
+          hypothesis.provenance?.strategyFamilyId;
+        const expectedBuyerAuthority =
+          familyID === 'family-a'
+            ? 0.77
+            : familyID === 'family-b'
+              ? 0.67
+              : null;
+        return expectedBuyerAuthority === null ||
+          hypothesis.score?.buyerAuthority !== expectedBuyerAuthority;
+      }) ||
+      compactFamily.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
+      compactFamily.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
+      compactFamily.metadata?.gate?.sideEffects?.publishAttempts !== 0 ||
+      compactFamily.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
+      compactFamily.metadata?.usage?.calls !== 1) {
+    throw new Error(`compact family-scored bundles did not preserve semantic judgment and zero side effects: ${JSON.stringify(compactFamily)}`);
   }
   if (cappedNestedFamily.status !== 'completed' ||
       cappedNestedFamily.metadata?.searchSpace?.theoreticalCount !== 8192 ||
@@ -3641,6 +3950,75 @@ try {
 } finally {
   server.close();
   rmSync(tmp, { recursive: true, force: true });
+}
+
+function compactFamilyBundleResponse(value) {
+  const compactItem = (item, timing = false) => ({
+    l: item.l,
+    e: structuredClone(item.e),
+    ...(timing ? { q: item.q } : {})
+  });
+  const compactRevenuePath = (item) => ({
+    l: item.l,
+    e: structuredClone(item.e),
+    contractVersion: item.contractVersion,
+    revenueMechanism: item.revenueMechanism,
+    incrementalIncomeOutcome: item.incrementalIncomeOutcome,
+    acquisitionMode: item.acquisitionMode,
+    conversionAction: item.conversionAction,
+    observableRevenueOutcome: item.observableRevenueOutcome,
+    attributionMethod: item.attributionMethod,
+    attributionSignal: item.attributionSignal,
+    supportingBottleneck:
+      typeof item.supportingBottleneck === 'string'
+        ? item.supportingBottleneck
+        : '',
+    vm: item.vm
+  });
+  const compactFamily = (family, index) => ({
+    l: family.l,
+    m: family.m,
+    e: structuredClone(family.e),
+    s: {
+      of: index === 0 ? 0.91 : 0.81,
+      es: index === 0 ? 0.89 : 0.79,
+      ba: index === 0 ? 0.77 : 0.67,
+      ti: index === 0 ? 0.69 : 0.59,
+      wp: index === 0 ? 0.73 : 0.63,
+      re: index === 0 ? 0.71 : 0.61,
+      ev: index === 0 ? 0.87 : 0.77,
+      ef: index === 0 ? 0.29 : 0.39,
+      co: index === 0 ? 0.19 : 0.29,
+      ri: index === 0 ? 0.21 : 0.31,
+      un: index === 0 ? 0.33 : 0.43
+    },
+    d: {
+      revenuePaths: family.d.revenuePaths.map(compactRevenuePath),
+      offers: family.d.offers.map((item) => compactItem(item)),
+      buyerSegments: family.d.buyerSegments.map((item) => compactItem(item)),
+      channels: family.d.channels.map((item) => compactItem(item)),
+      actions: family.d.actions.map((item) => compactItem(item)),
+      timingTriggers: family.d.timingTriggers.map(
+        (item) => compactItem(item, true)
+      ),
+      proofPoints: family.d.proofPoints.map((item) => compactItem(item)),
+      followUps: family.d.followUps.map((item) => compactItem(item))
+    }
+  });
+  return {
+    seedContract: value.seedContract,
+    familyA: compactFamily(value.familyA, 0),
+    familyB: compactFamily(value.familyB, 1),
+    candidates: (value.candidates || []).map((candidate) => ({
+      k: candidate.k,
+      l: candidate.l,
+      o: candidate.o || '',
+      r: candidate.r || '',
+      m: candidate.m || '',
+      e: structuredClone(candidate.e)
+    })),
+    w: structuredClone(value.w)
+  };
 }
 
 function runJob(
