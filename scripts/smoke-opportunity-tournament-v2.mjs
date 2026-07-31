@@ -724,10 +724,18 @@ async function verifyLengthFinishedStructuredRepair() {
         request.provider?.max_price?.prompt !== 0.4 ||
         request.provider?.max_price?.completion !== 1.6
       ) ||
-      repairSchema?.properties?.familyA?.properties?.d?.properties
+      repairSchema?.properties?.familyA?.$ref !== '#/$defs/family' ||
+      repairSchema?.properties?.familyB?.$ref !== '#/$defs/family' ||
+      repairSchema?.$defs?.family?.properties?.d?.properties
         ?.o?.minItems !== 1 ||
-      repairSchema?.properties?.familyA?.properties?.d?.properties
+      repairSchema?.$defs?.family?.properties?.d?.properties
         ?.o?.maxItems !== 1 ||
+      repairSchema?.$defs?.family?.properties?.s?.$ref !==
+        '#/$defs/scores' ||
+      repairSchema?.properties?.candidates?.maxItems !== 8 ||
+      !('w' in (repairSchema?.properties || {})) ||
+      JSON.stringify(repairSchema).includes('"pattern"') ||
+      JSON.stringify(repairSchema).includes('"description"') ||
       'previousResponse' in repairInput ||
       repairUser.includes('PRIOR_RESPONSE_CANARY_') ||
       repairUser.includes('PRIOR_RESPONSE_PADDING_') ||
@@ -1249,6 +1257,10 @@ async function verifyMaximumTournamentSpendCeiling() {
   );
   const initialBytes = Buffer.byteLength(serializedInitial, 'utf8');
   const repairBytes = Buffer.byteLength(serializedRepair, 'utf8');
+  const initialSchema = JSON.stringify(
+    requests[0]?.responseFormat?.json_schema?.schema || {}
+  );
+  const initialSchemaBytes = Buffer.byteLength(initialSchema, 'utf8');
   const initialCeiling = providerCallSpendCeilingMicros(
     requests[0],
     budget
@@ -1278,6 +1290,11 @@ async function verifyMaximumTournamentSpendCeiling() {
       repairTrace.repairPromptTokenCanary?.requestBodyByteCount !==
         repairBytes ||
       repairTrace.repairPromptTokenCanary?.withinCeiling !== true ||
+      initialSchemaBytes > 8_000 ||
+      initialBytes > 90_000 ||
+      repairBytes > 90_000 ||
+      initialSchema.includes('"pattern"') ||
+      initialSchema.includes('"description"') ||
       initialCeiling + repairCeiling > 400_000) {
     throw new Error(
       `maximum legal tournament did not fit the exact two-call hard ceiling: ${JSON.stringify({
@@ -1286,6 +1303,7 @@ async function verifyMaximumTournamentSpendCeiling() {
         requestCount: requests.length,
         initialBytes,
         repairBytes,
+        initialSchemaBytes,
         initialCeiling,
         repairCeiling,
         totalCeiling: initialCeiling + repairCeiling,

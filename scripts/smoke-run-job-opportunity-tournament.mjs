@@ -276,6 +276,9 @@ const server = createServer(async (request, response) => {
     id === 'observation:obs-org-binding' ||
     id === 'observation:obs-patient-inbound'
   );
+  const compactProviderContractRef = evidenceIDs.find(
+    (id) => id === 'observation:obs-compact-provider-contract'
+  );
   const promotableCandidateRef = evidenceIDs.find(
     (id) => id === 'observation:obs-promotable-candidate'
   );
@@ -1210,7 +1213,9 @@ const server = createServer(async (request, response) => {
       w: structuredClone(seedSet.w)
     };
     if (input.objective?.id === 'obj-compact-family-bundles') {
-      responseSeedSet = compactFamilyBundleResponse(responseSeedSet);
+      responseSeedSet = strictCompactFamilyBundleResponse(
+        compactProviderContractRef
+      );
     }
   }
   if (input.objective?.id === 'obj-owned-asset-cannot-replace-warm-target') {
@@ -2148,6 +2153,17 @@ try {
     'opturn-compact-family-smoke';
   compactFamilyJob.payload.objective.id =
     'obj-compact-family-bundles';
+  compactFamilyJob.payload.evidenceSnapshot.sourceEvidence.push({
+    observationId: 'obs-compact-provider-contract',
+    sourceId: 'src-delivery-map',
+    kind: 'service-page',
+    title: 'Paid client-delivery diagnostic booking page',
+    summary:
+      'Professional-service businesses discover the paid client-delivery diagnostic through organic search, arrive at the booking page, book and pay for one diagnostic, and the booking record source field stores the organic-search UTM campaign.',
+    url: 'https://example.com/delivery-map/book',
+    observedAt: '2026-07-29T12:00:00Z',
+    confidence: 'high'
+  });
   const compactFamilyJobFile = join(tmp, 'compact-family-job.json');
   writeFileSync(
     compactFamilyJobFile,
@@ -2915,24 +2931,33 @@ try {
     const responseFormat = call.response_format || {};
     const responseSchema = responseFormat.json_schema?.schema || {};
     const responseDefinitions = responseSchema.$defs || {};
+    const responseFamily = responseDefinitions.family || {};
+    const responseFamilyDimensions =
+      responseFamily.properties?.d?.properties || {};
+    const serializedResponseSchema = JSON.stringify(responseSchema);
     if (responseFormat.type !== 'json_schema' ||
         responseFormat.json_schema?.name !==
-          'profile_scribe_opportunity_tournament_v4' ||
+          'opportunity_tournament_compact_v1' ||
         responseFormat.json_schema?.strict !== true ||
         responseSchema.additionalProperties !== false ||
         responseSchema.properties?.seedContract?.enum?.[0] !==
           'revenue_family_bundle_v2' ||
         responseSchema.required?.includes('evidenceExperiment') !== true ||
-        responseSchema.properties?.evidenceExperiment?.required
+        responseSchema.properties?.evidenceExperiment?.$ref !==
+          '#/$defs/evidenceExperiment' ||
+        responseDefinitions.evidenceExperiment?.required
           ?.includes('u') !== true ||
-        responseSchema.properties?.familyA?.properties?.d?.properties
-          ?.r?.minItems !== 1 ||
-        responseSchema.properties?.familyA?.properties?.d?.properties
-          ?.o?.minItems !== 2 ||
-        'id' in (responseSchema.properties?.familyA?.properties || {}) ||
-        responseSchema.properties?.familyA?.required?.includes('s') !== true ||
-        responseSchema.properties?.familyA?.properties?.s?.$ref !==
+        responseSchema.properties?.familyA?.$ref !== '#/$defs/family' ||
+        responseSchema.properties?.familyB?.$ref !== '#/$defs/family' ||
+        responseFamilyDimensions.r?.minItems !== 1 ||
+        responseFamilyDimensions.r?.maxItems !== 1 ||
+        responseFamilyDimensions.o?.minItems !== 1 ||
+        responseFamilyDimensions.o?.maxItems !== 1 ||
+        'id' in (responseFamily.properties || {}) ||
+        responseFamily.required?.includes('s') !== true ||
+        responseFamily.properties?.s?.$ref !==
           '#/$defs/scores' ||
+        responseSchema.properties?.candidates?.maxItems !== 8 ||
         'id' in (responseDefinitions.offerItem?.properties || {}) ||
         's' in (responseDefinitions.offerItem?.properties || {}) ||
         'u' in (responseDefinitions.offerItem?.properties || {}) ||
@@ -2940,9 +2965,9 @@ try {
         'id' in (responseDefinitions.revenuePath?.properties || {}) ||
         responseDefinitions.revenuePath?.properties?.v
           ?.enum?.[0] !== 'incremental_revenue_v2' ||
-        responseSchema.properties?.familyA?.properties?.m?.enum
+        responseFamily.properties?.m?.enum
           ?.includes('inbound') !== true ||
-        responseSchema.properties?.familyA?.properties?.m?.enum
+        responseFamily.properties?.m?.enum
           ?.includes('patient_inbound') === true ||
         !responseDefinitions.revenuePath?.properties?.g ||
         responseDefinitions.revenuePath?.required?.includes('g') !== true ||
@@ -2954,17 +2979,9 @@ try {
           ?.enum?.includes('platform_or_marketplace_record') !== true ||
         responseDefinitions.revenuePath?.properties?.a
           ?.enum?.includes('inbound') !== true ||
-        responseDefinitions.revenuePath?.properties?.vm?.minimum !== 1 ||
-        responseDefinitions.offerItem?.properties?.l?.description
-          ?.includes('explicitly paid') !== true ||
-        !responseDefinitions.offerItem?.properties?.l?.pattern ||
-        responseDefinitions.actionItem?.properties?.l?.description
-          ?.includes('paid booking') !== true ||
-        !responseDefinitions.actionItem?.properties?.l?.pattern ||
-        !responseDefinitions.revenuePath?.properties?.io?.pattern ||
-        !responseDefinitions.revenuePath?.properties?.c?.pattern ||
-        !responseDefinitions.revenuePath?.properties?.o?.pattern ||
-        !responseDefinitions.revenuePath?.properties?.ats?.pattern ||
+        serializedResponseSchema.includes('"pattern"') ||
+        serializedResponseSchema.includes('"description"') ||
+        Buffer.byteLength(serializedResponseSchema, 'utf8') > 10_000 ||
         responseDefinitions.compactEvidenceRefs?.maxItems !== 2 ||
         responseDefinitions.evidenceRef?.enum?.length < 1 ||
         responseDefinitions.evidenceRef?.enum?.some((id) =>
@@ -3462,6 +3479,8 @@ try {
   if (invalidStructured.status !== 'skipped' ||
       invalidStructured.metadata?.llm?.strategyGeneratorJudge?.error !==
         'openrouter_invalid_response' ||
+      invalidStructured.metadata?.llm?.strategyGeneratorJudge?.generationId !==
+        'gen-invalid-structured-output' ||
       invalidStructured.metadata?.usage?.calls !== 1 ||
       invalidStructured.metadata?.usage?.successfulCalls !== 0 ||
       invalidStructured.metadata?.usage?.promptTokens !==
@@ -3490,6 +3509,8 @@ try {
   if (truncatedStructured.status !== 'skipped' ||
       truncatedStructured.metadata?.llm?.strategyGeneratorJudge?.error !==
         'openrouter_truncated_structured_output' ||
+      truncatedStructured.metadata?.llm?.strategyGeneratorJudge?.generationId !==
+        'gen-truncated-structured-output' ||
       truncatedStructured.metadata?.usage?.calls !== 1 ||
       truncatedStructured.metadata?.usage?.successfulCalls !== 0 ||
       truncatedDiagnostics.finishReason !== 'length' ||
@@ -3514,6 +3535,8 @@ try {
       parseableLength.metadata?.winner !== null ||
       parseableLength.metadata?.llm?.strategyGeneratorJudge?.error !==
         'openrouter_truncated_structured_output' ||
+      parseableLength.metadata?.llm?.strategyGeneratorJudge?.generationId !==
+        'gen-parseable-length-output' ||
       parseableLength.metadata?.usage?.calls !== 1 ||
       parseableLength.metadata?.usage?.successfulCalls !== 0 ||
       parseableLengthDiagnostics.finishReason !== 'length' ||
@@ -3535,6 +3558,8 @@ try {
   if (envelopeError.status !== 'skipped' ||
       envelopeError.metadata?.llm?.strategyGeneratorJudge?.error !==
         'openrouter_provider_error' ||
+      envelopeError.metadata?.llm?.strategyGeneratorJudge?.generationId !==
+        'gen-envelope-error' ||
       envelopeError.metadata?.usage?.calls !== 1 ||
       envelopeError.metadata?.usage?.promptTokens !== usage.prompt_tokens ||
       envelopeDiagnostics.contentByteCount !== 0 ||
@@ -3556,6 +3581,8 @@ try {
   if (choiceError.status !== 'skipped' ||
       choiceError.metadata?.llm?.strategyGeneratorJudge?.error !==
         'openrouter_provider_unavailable' ||
+      choiceError.metadata?.llm?.strategyGeneratorJudge?.generationId !==
+        'gen-choice-error' ||
       choiceError.metadata?.usage?.calls !== 1 ||
       choiceError.metadata?.usage?.successfulCalls !== 0 ||
       choiceError.metadata?.usage?.promptTokens !== usage.prompt_tokens ||
@@ -3564,6 +3591,8 @@ try {
       choiceDiagnostics.contentByteCount !==
         Buffer.byteLength(choiceErrorContent, 'utf8') ||
       choiceDiagnostics.contentSha256 !== choiceContentHash ||
+      choiceDiagnostics.providerErrorType !== 'provider_unavailable' ||
+      choiceDiagnostics.providerErrorCode !== '502' ||
       JSON.stringify(choiceDiagnostics).includes(choiceErrorContent) ||
       choiceError.metadata?.nextExperiment?.kind !==
         'strategy_generation_provider_recovery' ||
@@ -3690,11 +3719,16 @@ try {
   }
   if (compactFamily.status !== 'completed' ||
       compactFamily.metadata?.searchSpace?.seedContract !==
-        'revenue_family_bundle_v1' ||
+        'revenue_family_bundle_v2' ||
+      compactFamily.metadata?.searchSpace?.generatorContract !==
+        'opportunity_tournament_compact_v1' ||
+      compactFamily.metadata?.llm?.strategyGeneratorJudge
+        ?.generatorContract !==
+        'opportunity_tournament_compact_v1' ||
       compactFamily.metadata?.searchSpace?.declaredStrategyFamilyCount !== 2 ||
       compactFamily.metadata?.searchSpace?.completeStrategyFamilyCount !== 2 ||
       compactFamily.metadata?.searchSpace?.modelCalls !== 1 ||
-      compactFamily.metadata?.hypotheses?.length !== 20 ||
+      compactFamily.metadata?.hypotheses?.length !== 2 ||
       !compactFamily.metadata?.winner ||
       compactFamily.metadata?.hypotheses?.some((hypothesis) => {
         const familyID =
@@ -4173,72 +4207,122 @@ try {
   rmSync(tmp, { recursive: true, force: true });
 }
 
-function compactFamilyBundleResponse(value) {
-  const compactItem = (item, timing = false) => ({
-    l: item.l,
-    e: structuredClone(item.e),
-    ...(timing ? { q: item.q } : {})
+function strictCompactFamilyBundleResponse(evidenceRef) {
+  const scores = (offset) => ({
+    of: 0.91 - offset,
+    es: 0.89 - offset,
+    ba: 0.77 - offset,
+    ti: 0.69 - offset,
+    wp: 0.73 - offset,
+    re: 0.71 - offset,
+    ev: 0.87 - offset,
+    ef: 0.29 + offset,
+    co: 0.19 + offset,
+    ri: 0.21 + offset,
+    un: 0.33 + offset
   });
-  const compactRevenuePath = (item) => ({
-    l: item.l,
-    e: structuredClone(item.e),
-    contractVersion: item.contractVersion,
-    revenueMechanism: item.revenueMechanism,
-    incrementalIncomeOutcome: item.incrementalIncomeOutcome,
-    acquisitionMode: item.acquisitionMode,
-    conversionAction: item.conversionAction,
-    observableRevenueOutcome: item.observableRevenueOutcome,
-    attributionMethod: item.attributionMethod,
-    attributionSignal: item.attributionSignal,
-    supportingBottleneck:
-      typeof item.supportingBottleneck === 'string'
-        ? item.supportingBottleneck
-        : '',
-    vm: item.vm
-  });
-  const compactFamily = (family, index) => ({
-    l: family.l,
-    m: family.m,
-    e: structuredClone(family.e),
-    s: {
-      of: index === 0 ? 0.91 : 0.81,
-      es: index === 0 ? 0.89 : 0.79,
-      ba: index === 0 ? 0.77 : 0.67,
-      ti: index === 0 ? 0.69 : 0.59,
-      wp: index === 0 ? 0.73 : 0.63,
-      re: index === 0 ? 0.71 : 0.61,
-      ev: index === 0 ? 0.87 : 0.77,
-      ef: index === 0 ? 0.29 : 0.39,
-      co: index === 0 ? 0.19 : 0.29,
-      ri: index === 0 ? 0.21 : 0.31,
-      un: index === 0 ? 0.33 : 0.43
-    },
+  const item = (label) => ({ l: label, e: [evidenceRef] });
+  const family = (label, offset, searchAngle) => ({
+    l: label,
+    m: 'inbound',
+    e: [evidenceRef],
+    s: scores(offset),
     d: {
-      revenuePaths: family.d.revenuePaths.map(compactRevenuePath),
-      offers: family.d.offers.map((item) => compactItem(item)),
-      buyerSegments: family.d.buyerSegments.map((item) => compactItem(item)),
-      channels: family.d.channels.map((item) => compactItem(item)),
-      actions: family.d.actions.map((item) => compactItem(item)),
-      timingTriggers: family.d.timingTriggers.map(
-        (item) => compactItem(item, true)
-      ),
-      proofPoints: family.d.proofPoints.map((item) => compactItem(item)),
-      followUps: family.d.followUps.map((item) => compactItem(item))
+      r: [{
+        l:
+          `One new paid client-delivery diagnostic booking through ${searchAngle}`,
+        e: [evidenceRef],
+        v: 'incremental_revenue_v2',
+        rm: 'paid_booking',
+        io:
+          'One new paid client-delivery diagnostic booking adds incremental gross income',
+        a: 'inbound',
+        c:
+          `Use ${searchAngle} inbound discovery to the paid client-delivery diagnostic booking page and complete one paid booking`,
+        o: 'One paid booking recorded',
+        atm: 'booking_record',
+        ats:
+          'Booking record source field stores the organic-search UTM campaign',
+        g: {
+          b: [evidenceRef],
+          o: [evidenceRef],
+          a: [evidenceRef],
+          d: {
+            l: 'Paid client-delivery diagnostic booking page',
+            e: [evidenceRef]
+          },
+          c: [evidenceRef],
+          t: [evidenceRef]
+        },
+        sb: '',
+        vm: 250000
+      }],
+      o: [item('A paid client-delivery diagnostic')],
+      b: [item('Professional-service businesses')],
+      c: [item(
+        `${searchAngle} inbound discovery routes professional-service businesses to the paid diagnostic booking page`
+      )],
+      a: [item(
+        `Use ${searchAngle} inbound discovery to the paid diagnostic booking page and complete one paid booking`
+      )],
+      t: [{
+        l: 'Check whether organic search still reaches the paid diagnostic booking page',
+        e: [evidenceRef],
+        q: 'organic search'
+      }],
+      p: [item(
+        'Professional-service businesses can discover, book, and pay for the diagnostic'
+      )],
+      f: [item(
+        'Review the attributed paid booking before considering another step'
+      )]
     }
   });
   return {
-    seedContract: value.seedContract,
-    familyA: compactFamily(value.familyA, 0),
-    familyB: compactFamily(value.familyB, 1),
-    candidates: (value.candidates || []).map((candidate) => ({
-      k: candidate.k,
-      l: candidate.l,
-      o: candidate.o || '',
-      r: candidate.r || '',
-      m: candidate.m || '',
-      e: structuredClone(candidate.e)
-    })),
-    w: structuredClone(value.w)
+    seedContract: 'revenue_family_bundle_v2',
+    familyA: family(
+      'Organic-search paid diagnostic path',
+      0,
+      'organic-search'
+    ),
+    familyB: family(
+      'Nonbranded-search paid diagnostic path',
+      0.1,
+      'nonbranded organic-search'
+    ),
+    evidenceExperiment: {
+      l: 'Measure paid diagnostic bookings from organic search',
+      k:
+        'The current paid diagnostic booking page records an organic-search source field.',
+      b: 'Professional-service businesses',
+      o: 'A paid client-delivery diagnostic',
+      a: 'organic search',
+      d: 'Paid client-delivery diagnostic booking page',
+      c: 'One paid booking recorded',
+      t:
+        'Booking record source field stores the organic-search UTM campaign',
+      x:
+        'Review first: for 14 days or 25 qualified visits, measure organic-search discovery to the paid diagnostic booking page and count attributed paid bookings.',
+      s: 'One paid booking attributed to organic search',
+      days: 14,
+      n: 25,
+      u: 'qualified visits',
+      e: [evidenceRef]
+    },
+    candidates: [],
+    w: {
+      of: 0.22,
+      es: 0.18,
+      ba: 0.12,
+      ti: 0.1,
+      wp: 0.08,
+      re: 0.04,
+      ev: 0.14,
+      ef: 0.03,
+      co: 0.02,
+      ri: 0.04,
+      un: 0.03
+    }
   };
 }
 

@@ -2707,28 +2707,49 @@ async function callOpenRouterJSON({
     : '';
   const diagnostics = openRouterResponseDiagnostics(choice, rawContent);
   if (envelope?.error) {
-    throw openRouterProviderError(envelope.error, usage, diagnostics);
+    throw openRouterProviderError(
+      envelope.error,
+      usage,
+      diagnostics,
+      envelope?.id
+    );
   }
   if (choice?.error) {
-    throw openRouterProviderError(choice.error, usage, diagnostics);
+    throw openRouterProviderError(
+      choice.error,
+      usage,
+      diagnostics,
+      envelope?.id
+    );
   }
   if (openRouterDiagnosticsIndicateTruncation(diagnostics)) {
     throw attachOpenRouterResponseMetadata(
       new Error('OpenRouter ended structured output at its token limit'),
       usage,
-      diagnostics
+      diagnostics,
+      envelope?.id
     );
   }
   const content = text(rawContent);
   if (!content) {
     const error = new Error('OpenRouter returned an empty message');
-    throw attachOpenRouterResponseMetadata(error, usage, diagnostics);
+    throw attachOpenRouterResponseMetadata(
+      error,
+      usage,
+      diagnostics,
+      envelope?.id
+    );
   }
   let data;
   try {
     data = parseJSON(extractJSONObject(content), 'OpenRouter JSON message');
   } catch (error) {
-    throw attachOpenRouterResponseMetadata(error, usage, diagnostics);
+    throw attachOpenRouterResponseMetadata(
+      error,
+      usage,
+      diagnostics,
+      envelope?.id
+    );
   }
   return {
     data,
@@ -2749,16 +2770,30 @@ function openRouterResponseDiagnostics(choice, rawContent) {
   });
 }
 
-function attachOpenRouterResponseMetadata(error, usage, diagnostics) {
+function attachOpenRouterResponseMetadata(
+  error,
+  usage,
+  diagnostics,
+  generationId
+) {
   error.openRouterUsage = usage;
   error.openRouterDiagnostics = diagnostics;
+  const safeGenerationId = text(generationId);
+  if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(safeGenerationId)) {
+    error.openRouterGenerationId = safeGenerationId;
+  }
   if (openRouterDiagnosticsIndicateTruncation(diagnostics)) {
     error.openRouterFailureCode = 'openrouter_truncated_structured_output';
   }
   return error;
 }
 
-function openRouterProviderError(value, usage, diagnostics) {
+function openRouterProviderError(
+  value,
+  usage,
+  diagnostics,
+  generationId
+) {
   const details = object(value);
   const error = new Error(
     `OpenRouter generation failed: ${
@@ -2768,6 +2803,21 @@ function openRouterProviderError(value, usage, diagnostics) {
   const errorType = text(
     object(details.metadata).error_type ?? details.error_type
   ).toLowerCase();
+  const rawErrorCode = (
+    typeof details.code === 'number' ||
+    typeof details.code === 'string'
+      ? String(details.code).trim()
+      : ''
+  ).toLowerCase();
+  const safeDiagnostics = {
+    ...object(diagnostics),
+    ...(/^[a-z][a-z0-9_]{0,63}$/.test(errorType)
+      ? { providerErrorType: errorType }
+      : {}),
+    ...(/^[a-z0-9][a-z0-9_.:-]{0,63}$/.test(rawErrorCode)
+      ? { providerErrorCode: rawErrorCode }
+      : {})
+  };
   error.openRouterFailureCode =
     /^(?:context_length_exceeded|max_tokens_exceeded|token_limit_exceeded|string_too_long)$/.test(
       errorType
@@ -2776,7 +2826,12 @@ function openRouterProviderError(value, usage, diagnostics) {
       : /^[a-z][a-z0-9_]{0,63}$/.test(errorType)
         ? `openrouter_${errorType}`
         : 'openrouter_provider_error';
-  return attachOpenRouterResponseMetadata(error, usage, diagnostics);
+  return attachOpenRouterResponseMetadata(
+    error,
+    usage,
+    safeDiagnostics,
+    generationId
+  );
 }
 
 function openRouterDiagnosticsIndicateTruncation(value) {

@@ -64,14 +64,21 @@ The `opportunity_tournament` worker path is separate from post composition:
    identity-resolved for the tournament chain; this denotes a resolved
    evidence tuple, not People Data Labs or another provider's verification.
 3. One bounded OpenRouter call, routed with prompt/completion/request price
-   ceilings, returns two `revenue_family_bundle_v2` acquisition-mode families,
-   compact strategy dimensions, semantic score inputs, explicit evidence
-   bindings for buyer/offer/acquisition/destination/conversion/attribution, and
-   one evidence-specific fallback experiment. When `maxLLMCalls: 2` is
+   ceilings, uses `opportunity_tournament_compact_v1` to return the strongest
+   two `revenue_family_bundle_v2` acquisition-mode families. Each family
+   contains one canonical revenue path, compact strategy dimensions, semantic
+   score inputs, and explicit evidence bindings for
+   buyer/offer/acquisition/destination/conversion/attribution; the response also
+   includes one evidence-specific fallback experiment. Shared provider-schema
+   definitions own structural constraints only. Local deterministic validators
+   remain authoritative for revenue semantics, current evidence, attribution,
+   numeric bounds, and evidence containment. When `maxLLMCalls: 2` is
    explicitly budgeted and the first response fails only the deterministic
    family-shape gate, one additional price-capped call may replace the full
    structured response. Both calls share the same hard spend cap and evidence
-   boundary.
+   boundary. Length-finished output remains incomplete; safe generation IDs
+   and provider error type/code diagnostics are retained without persisting
+   partial content.
 4. Deterministic code expands at most 10,000 combinations, requires each
    family's declared acquisition mode to match its
    `incremental_revenue_v2` path, verifies every grounding binding against the

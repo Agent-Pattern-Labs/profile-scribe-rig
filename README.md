@@ -220,9 +220,19 @@ Additional managed job kinds:
   seven business-only fields. An incomplete response that cannot use or
   survive its explicitly budgeted repair returns
   `strategy_generation_shape_recovery`; it is not mislabeled as missing market
-  evidence. Tournament generation uses a compact strict schema, one semantic
-  score per complete strategy family, deterministic sampling, and response
-  healing within at most two metered model calls under the same hard budget.
+  evidence. Tournament generation uses the versioned
+  `opportunity_tournament_compact_v1` strict provider contract. The model
+  considers multiple grounded acquisition-to-payment paths internally and
+  returns one canonical path for each of the strongest two complete strategy
+  families. Shared schema definitions keep the provider grammar bounded;
+  deterministic code still validates paid-offer language, current evidence,
+  acquisition, conversion, attribution, numeric bounds, and evidence
+  containment before ranking anything. Receipts retain the generator-contract
+  identifier plus safe generation IDs and provider error type/code diagnostics
+  for incomplete responses. Response healing never converts a length-finished
+  response into a valid result. The workflow uses one semantic score per
+  complete strategy family, deterministic sampling, and at most two metered
+  model calls under the same hard budget.
   Every experiment authorizes no execution.
   Tournament context uses only persisted profile,
   timeline, and approved crawl evidence returned by scoped read-only
