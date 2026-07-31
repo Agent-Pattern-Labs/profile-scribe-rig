@@ -1208,6 +1208,7 @@ const server = createServer(async (request, response) => {
       };
     }
     responseSeedSet = {
+      seedContract: 'revenue_family_bundle_v1',
       familyA: {
         id: 'family-a',
         l: 'Patient inbound family with a cross-motion evidence trap',
@@ -2771,7 +2772,9 @@ try {
           'revenuePaths' ||
         input.outputRules?.familyBundleSchema?.m == null ||
         input.outputRules?.revenuePathSchema?.contractVersion !==
-          'incremental_revenue_v1' ||
+          'incremental_revenue_v2' ||
+        !input.outputRules?.revenuePathSchema?.g?.d?.l ||
+        !input.outputRules?.evidenceExperimentSchema?.u ||
         !input.outputRules?.hardRules?.some((rule) =>
           /Every item belongs only to its containing family bundle/i.test(rule)
         ) ||
@@ -2817,6 +2820,11 @@ try {
           'profile_scribe_opportunity_tournament_v4' ||
         responseFormat.json_schema?.strict !== true ||
         responseSchema.additionalProperties !== false ||
+        responseSchema.properties?.seedContract?.enum?.[0] !==
+          'revenue_family_bundle_v2' ||
+        responseSchema.required?.includes('evidenceExperiment') !== true ||
+        responseSchema.properties?.evidenceExperiment?.required
+          ?.includes('u') !== true ||
         responseSchema.properties?.familyA?.properties?.d?.properties
           ?.revenuePaths?.minItems !== 1 ||
         'id' in (responseSchema.properties?.familyA?.properties || {}) ||
@@ -2829,7 +2837,19 @@ try {
         !responseDefinitions.scores ||
         'id' in (responseDefinitions.revenuePath?.properties || {}) ||
         responseDefinitions.revenuePath?.properties?.contractVersion
-          ?.enum?.[0] !== 'incremental_revenue_v1' ||
+          ?.enum?.[0] !== 'incremental_revenue_v2' ||
+        responseSchema.properties?.familyA?.properties?.m?.enum
+          ?.includes('inbound') !== true ||
+        responseSchema.properties?.familyA?.properties?.m?.enum
+          ?.includes('patient_inbound') === true ||
+        !responseDefinitions.revenuePath?.properties?.g ||
+        responseDefinitions.revenuePath?.required?.includes('g') !== true ||
+        responseDefinitions.revenuePath?.properties?.revenueMechanism
+          ?.enum?.includes('license_or_royalty') !== true ||
+        responseDefinitions.revenuePath?.properties?.revenueMechanism
+          ?.enum?.includes('compensated_role') !== true ||
+        responseDefinitions.revenuePath?.properties?.attributionMethod
+          ?.enum?.includes('platform_or_marketplace_record') !== true ||
         responseDefinitions.revenuePath?.properties?.acquisitionMode
           ?.enum?.includes('inbound') !== true ||
         responseDefinitions.revenuePath?.properties?.vm?.minimum !== 1 ||
@@ -3877,7 +3897,7 @@ try {
       !/\b14\s+calendar\s+days\b/i.test(
         uhcOperationsOnly.metadata?.nextExperiment?.stopCondition || ''
       ) ||
-      !/organic\/local search/i.test(
+      !/organic search/i.test(
         uhcOperationsOnly.metadata?.nextExperiment?.action || ''
       ) ||
       uhcOperationsOnly.metadata?.nextExperiment?.rerunPolicy?.maxReruns !==
@@ -3931,9 +3951,9 @@ try {
       nonResearch.metadata?.gate?.decision !== 'block' ||
       nonResearch.metadata?.gate?.requiresReview !== true ||
       nonResearch.metadata?.searchSpace?.revenueGate !==
-        'incremental_income_v1' ||
+        'incremental_income_v2' ||
       nonResearch.metadata?.searchSpace?.revenuePathContract !==
-        'incremental_revenue_v1' ||
+        'incremental_revenue_v2' ||
       nonResearch.metadata?.searchSpace?.revenueRejectedCount !== 0 ||
       nonResearch.metadata?.gate?.sideEffects?.pdlCalls !== 0 ||
       nonResearch.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
@@ -3948,9 +3968,9 @@ try {
         result.metadata?.searchSpace?.modelCalls !== 0 ||
         result.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
         result.metadata?.searchSpace?.revenueGate !==
-          'incremental_income_v1' ||
+          'incremental_income_v2' ||
         result.metadata?.searchSpace?.revenuePathContract !==
-          'incremental_revenue_v1' ||
+          'incremental_revenue_v2' ||
         result.metadata?.searchSpace?.revenueRejectedCount !== 0 ||
         Object.keys(
           result.metadata?.searchSpace?.revenueRejectionReasons || {}

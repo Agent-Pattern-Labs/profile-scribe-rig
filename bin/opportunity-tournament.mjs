@@ -66,11 +66,16 @@ const POSITIVE_SCORE_FIELDS = [
 
 const BURDEN_SCORE_FIELDS = ['effort', 'cost', 'risk', 'uncertainty'];
 
-const COHERENCE_GATE_VERSION = 'strategy_family_motion_v2';
-const SEED_CONTRACT_VERSION = 'revenue_family_bundle_v1';
-export const REVENUE_PATH_CONTRACT_VERSION =
+const COHERENCE_GATE_VERSION = 'acquisition_mode_family_v3';
+const LEGACY_COHERENCE_GATE_VERSION = 'strategy_family_motion_v2';
+const LEGACY_SEED_CONTRACT_VERSION = 'revenue_family_bundle_v1';
+const SEED_CONTRACT_VERSION = 'revenue_family_bundle_v2';
+const LEGACY_REVENUE_PATH_CONTRACT_VERSION =
   'incremental_revenue_v1';
-export const REVENUE_GATE_VERSION = 'incremental_income_v1';
+export const REVENUE_PATH_CONTRACT_VERSION =
+  'incremental_revenue_v2';
+export const REVENUE_GATE_VERSION = 'incremental_income_v2';
+const LEGACY_REVENUE_GATE_VERSION = 'incremental_income_v1';
 export const REVENUE_EVIDENCE_EXPERIMENT_CONTRACT =
   'revenue_evidence_experiment_v1';
 const REVENUE_MECHANISMS = new Set([
@@ -79,7 +84,12 @@ const REVENUE_MECHANISMS = new Set([
   'signed_contract',
   'paid_pilot',
   'subscription_or_retainer',
-  'insurance_reimbursement'
+  'insurance_reimbursement',
+  'license_or_royalty',
+  'commission_or_referral',
+  'sponsorship',
+  'platform_payout',
+  'compensated_role'
 ]);
 const ACQUISITION_MODES = new Set([
   'inbound',
@@ -95,7 +105,11 @@ const ATTRIBUTION_METHODS = new Set([
   'checkout_or_order',
   'claim_record',
   'crm_source',
-  'referral_code'
+  'referral_code',
+  'license_or_royalty_record',
+  'affiliate_or_commission_record',
+  'platform_or_marketplace_record',
+  'employment_compensation_record'
 ]);
 const OWNED_INBOUND_ASSET_KIND = 'owned_inbound_asset';
 const SYNTHESIZED_OWNED_INBOUND_ASSETS = new WeakSet();
@@ -225,7 +239,7 @@ export async function runOpportunityTournament({
   const objective = normalizeObjective(payload.objective, payload);
   const budget = normalizeBudget(payload.budget);
   const constraints = normalizeConstraints(objective, payload);
-  const evidenceCatalog = buildEvidenceCatalog(payload, context);
+  const evidenceCatalog = buildEvidenceCatalog(payload, context, now);
   const evidenceHash = stableHash(evidenceCatalog);
   const timestamp = validDate(now).toISOString();
   const base = {
@@ -250,13 +264,15 @@ export async function runOpportunityTournament({
       sideEffects: zeroSideEffects()
     }
   };
+  let generatedEvidenceExperiment = null;
   const nextExperimentFor = (missingEvidence) =>
     revenueEvidenceExperiment({
       objective,
       evidenceCatalog,
       evidenceHash,
       missingEvidence,
-      referenceTime: timestamp
+      referenceTime: timestamp,
+      generatedExperiment: generatedEvidenceExperiment
     });
 
   const objectiveIssue = objectiveValidationIssue(objective);
@@ -288,9 +304,17 @@ export async function runOpportunityTournament({
       status: 'skipped',
       summary: 'No approved professional evidence was available for a grounded opportunity tournament.',
       ...base,
+      nextExperiment: nextExperimentFor([
+        'buyer',
+        'paid_offer',
+        'acquisition_mechanism',
+        'conversion_destination',
+        'paid_conversion',
+        'attribution_signal'
+      ]),
       gate: researchOnlyGate(
-        'block',
-        'No approved professional evidence was available; generating a recommendation would be ungrounded.'
+        'needs_more_approved_evidence',
+        'No professional facts or public offer were available, so the bounded next step is to document one attributable paid path for review.'
       )
     };
   }
@@ -387,6 +411,36 @@ export async function runOpportunityTournament({
     evidenceCatalog,
     timestamp
   );
+  if (seedSet.seedContract === 'invalid') {
+    return {
+      status: 'skipped',
+      summary:
+        'The strategy generator returned an unsupported seed contract; no legacy or upgraded interpretation was assumed.',
+      ...base,
+      nextExperiment: nextExperimentFor([
+        'usable_strategy_generation'
+      ]),
+      llm: { strategyGeneratorJudge: providerMetadata },
+      usage,
+      searchSpace: {
+        ...base.searchSpace,
+        seedContract: seedSet.seedContract,
+        declaredStrategyFamilyCount:
+          seedSet.declaredStrategyFamilyCount,
+        strategyFamilyCount: seedSet.strategyFamilies.length
+      },
+      gate: researchOnlyGate(
+        'block',
+        'The structured strategy response did not declare a supported seed contract.'
+      )
+    };
+  }
+  const searchContracts = searchContractsForSeedSet(seedSet);
+  generatedEvidenceExperiment = normalizeGeneratedEvidenceExperiment(
+    completion?.data?.evidenceExperiment,
+    evidenceCatalog,
+    timestamp
+  );
   const missingDimension = DIMENSIONS.find(([name]) => seedSet[name].length === 0)?.[0];
   if (missingDimension) {
     const unsupportedTiming = missingDimension === 'timingTriggers' &&
@@ -416,7 +470,9 @@ export async function runOpportunityTournament({
         invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
         unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
         timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
-        coherenceGate: COHERENCE_GATE_VERSION
+        coherenceGate: searchContracts.coherenceGate,
+        revenueGate: searchContracts.revenueGate,
+        revenuePathContract: searchContracts.revenuePathContract
       },
       gate: researchOnlyGate(
         'block',
@@ -450,7 +506,9 @@ export async function runOpportunityTournament({
         invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
         unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
         timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
-        coherenceGate: COHERENCE_GATE_VERSION
+        coherenceGate: searchContracts.coherenceGate,
+        revenueGate: searchContracts.revenueGate,
+        revenuePathContract: searchContracts.revenuePathContract
       },
       gate: researchOnlyGate(
         'needs_more_approved_evidence',
@@ -481,8 +539,8 @@ export async function runOpportunityTournament({
     incompatibleCount: expanded.incompatibleCount,
     motionConflictCount: expanded.motionConflictCount,
     motionConflictDimensions: expanded.motionConflictDimensions,
-    revenueGate: REVENUE_GATE_VERSION,
-    revenuePathContract: REVENUE_PATH_CONTRACT_VERSION,
+    revenueGate: searchContracts.revenueGate,
+    revenuePathContract: searchContracts.revenuePathContract,
     revenueRejectedCount: expanded.revenueRejectedCount,
     revenueRejectionReasons: expanded.revenueRejectionReasons,
     retainedCount: retainedHypotheses.length,
@@ -498,7 +556,7 @@ export async function runOpportunityTournament({
     invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
     unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
     timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
-    coherenceGate: COHERENCE_GATE_VERSION,
+    coherenceGate: searchContracts.coherenceGate,
     deterministic: true,
     modelCalls: 1,
     judgeWeights: expanded.weights
@@ -776,7 +834,11 @@ function publicHypothesis(hypothesis) {
   return value;
 }
 
-export function buildEvidenceCatalog(payload, context = {}) {
+export function buildEvidenceCatalog(
+  payload,
+  context = {},
+  referenceTime = new Date()
+) {
   payload = asObject(payload);
   context = asObject(context);
   const snapshot = asObject(payload.evidenceSnapshot);
@@ -1025,7 +1087,7 @@ export function buildEvidenceCatalog(payload, context = {}) {
       confidence: firstText(value.trustLevel, value.confidence)
     }, 'approved_source');
   }
-  for (const evidence of sourceEvidence.slice(0, 64)) {
+  for (const evidence of sourceEvidence.slice(0, 160)) {
     const value = asObject(evidence);
     const sourceID = firstText(value.sourceId, value.sourceID);
     if (!sourceID || !approvedSourceIDs.has(sourceID)) continue;
@@ -1074,6 +1136,18 @@ export function buildEvidenceCatalog(payload, context = {}) {
     ),
     catalog
   );
+  const catalogByID = evidenceIndex(catalog);
+  const ownerControlledPaidAssetIDs = new Set(
+    catalog
+      .filter((evidence) =>
+        approvedOwnedAssetEvidence(evidence, catalogByID) &&
+        inboundAssetEvidenceSupportsPaidConversion(
+          evidence,
+          referenceTime
+        )
+      )
+      .map((evidence) => evidence.id)
+  );
   return catalog
     .sort((left, right) => {
       const leftPriority = candidateEvidencePriority.get(left.id);
@@ -1082,6 +1156,13 @@ export function buildEvidenceCatalog(payload, context = {}) {
         if (leftPriority === undefined) return 1;
         if (rightPriority === undefined) return -1;
         if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      }
+      const leftPaidAsset =
+        ownerControlledPaidAssetIDs.has(left.id) ? 1 : 0;
+      const rightPaidAsset =
+        ownerControlledPaidAssetIDs.has(right.id) ? 1 : 0;
+      if (leftPaidAsset !== rightPaidAsset) {
+        return rightPaidAsset - leftPaidAsset;
       }
       return evidenceQuality(right) - evidenceQuality(left) || left.id.localeCompare(right.id);
     })
@@ -1150,7 +1231,11 @@ export function expandAndJudge({
       filteredCount += 1;
       continue;
     }
-    const revenueValidation = validateRevenuePath(tuple);
+    const revenueValidation = validateRevenuePath(
+      tuple,
+      evidenceByID,
+      timestamp
+    );
     if (!revenueValidation.valid) {
       revenueRejectedCount += 1;
       for (const reason of revenueValidation.reasons) {
@@ -1382,14 +1467,16 @@ Do not recommend applying for, enrolling in, or creating a capability when the e
 Use only exact evidence IDs from evidenceCatalog. Unknown evidence IDs will be discarded.
 You may optionally extract a compact named person or organization candidate only when its exact name appears verbatim in the cited evidence. Do not return contact details or URLs; return no candidate rather than infer or complete an identity.
 When an exact named organization is the intended target buyer, begin that buyerSegments label with the exact organization name and return the same organization in candidates.
-Keep every strategy family coherent end to end. Never mix a buyer, offer, channel, action, timing trigger, proof point, or follow-up from different business motions.
+Keep every strategy family coherent end to end. Its family m is one acquisition mode, and its buyer, offer, channel, action, timing trigger, proof point, follow-up, and revenue path must all belong to that same acquisition-to-payment route.
 Every family must trace one actual buyer and explicitly paid offer through inbound, warm, existing-customer, partner, or otherwise permissioned acquisition to an observable paid conversion and durable attribution record. A conversation, inquiry, eligibility check, scheduled consultation, profile change, post, impression, workflow improvement, or completed research task is not incremental income.
 Operations, administration, visibility, content, research, and workflow improvements may appear only as auxiliary supportingBottleneck context. The singular action must itself advance permissioned acquisition or paid conversion, align with revenuePath.conversionAction, and must never merely perform the supporting bottleneck.
-For inbound acquisition, name one explicit discovery or demand origin such as organic/local search, an owned opted-in audience, earned media/directory discovery, a marketplace, a community, social distribution, or agent-mediated discovery, and separately name the offer, service, landing, booking, or checkout destination. A website or booking page by itself is not an acquisition channel.
+For inbound acquisition, name one explicit discovery or demand origin such as organic/local search, an app store, a comparison/search listing, an owned opted-in audience, earned media/directory discovery, a marketplace, a community, social distribution, platform discovery, or agent-mediated discovery, and separately name the offer, pricing, signup, demo, application, licensing, sponsorship-inquiry, storefront, product, service, landing, booking, download, marketplace-listing, or checkout destination. A destination by itself is not an acquisition channel.
 Construct each family's revenuePath first. Then derive that family's paid offer, buyer, channel, action, timing, proof, and follow-up items from the same revenue path.
+For every revenue path, explicitly bind the buyer, paid offer, acquisition mechanism, conversion destination, paid conversion, and attribution signal to the exact approved evidence records that support each element. If approved evidence does not support one element, do not disguise the gap by attaching an unrelated evidence ID.
 Return exactly two complete top-level family bundles named familyA and familyB. Family A is the strongest grounded path; family B is the strongest coherent alternative. They may use distinct tactics within the same business motion when the evidence does not support two different motions.
 Prefer an inbound paid-conversion path for familyA when approved evidence can ground it. Use warm referral, partner channel, existing-customer, or permissioned-outreach paths when inbound is ungrounded or semantically weaker; never invent inbound demand or an inbound asset.
 Within each family bundle, return exactly two family-specific offers, buyer segments, channels, actions, and follow-ups, plus exactly one timing trigger, one proof point, and one revenue path. Never return global dimension arrays or cross-family compatibility tags.
+Also return one evidenceExperiment as a fallback for human review. It must name a known fact or owned asset from the evidence, one buyer, one paid offer, one singular acquisition mechanism that is not the conversion destination, one paid conversion, one durable attribution signal, and a numeric time and sample stop. Write its title, action, and success signal for the profile owner, never as internal source-approval or observation-processing instructions. The experiment is only a recommendation; do not claim it was launched.
 Return no email, direct message, post, pitch, sales script, or other outreach copy.
 Reject spray-and-pray, bulk outreach, scraping, automated form submission, or high-volume behavior.
 Each seed should be a short structured concept.
@@ -1404,8 +1491,8 @@ Return only JSON.`;
     outputRules: {
       seedCount: `Across familyA and familyB this yields at most ${maxSeedsPerDimension} items per multi-variant dimension, two timing triggers, and two proof points.`,
       familyBundleSchema: {
-        l: 'short internal label for one coherent end-to-end business motion',
-        m: 'one semantic motion: payer_network, patient_inbound, clinical_referral, hospital_program, employer_workplace, or organization_partnership',
+        l: 'short internal label for one coherent end-to-end acquisition-to-revenue path',
+        m: `the family's acquisition mode: ${[...ACQUISITION_MODES].join(', ')}`,
         e: ['the exact union of approved non-source evidence IDs used by this family revenue path, offers, buyers, channels, actions, and proof, including at least one observation:* anchor'],
         s: {
           of: 'family-level objectiveFit 0..1',
@@ -1440,16 +1527,43 @@ Return only JSON.`;
       revenuePathSchema: {
         l: 'short label for this complete incremental-income path',
         e: ['one or more exact evidenceCatalog.id values grounding the buyer, paid offer, channel, and conversion'],
-        contractVersion: 'incremental_revenue_v1',
-        revenueMechanism: 'paid_booking, direct_sale, signed_contract, paid_pilot, subscription_or_retainer, or insurance_reimbursement',
+        contractVersion: 'incremental_revenue_v2',
+        revenueMechanism: `${[...REVENUE_MECHANISMS].join(', ')}`,
         incrementalIncomeOutcome: 'specific new gross-income outcome, explicitly using new, additional, or incremental and paid/revenue/income language',
         acquisitionMode: 'inbound, warm_referral, permissioned_outreach, existing_customer, or partner_channel',
         conversionAction: 'one singular action that advances acquisition or a paid commitment; it must align with the family action and cannot be an operations-only task',
         observableRevenueOutcome: 'durable paid event such as a payment, signed contract, paid booking, order, invoice, paid claim, subscription, or retainer',
-        attributionMethod: 'booking_record, payment_receipt, invoice_or_contract, checkout_or_order, claim_record, crm_source, or referral_code',
+        attributionMethod: `${[...ATTRIBUTION_METHODS].join(', ')}`,
         attributionSignal: 'specific durable field or record connecting the paid outcome to this acquisition source',
+        g: {
+          b: ['exact evidence IDs supporting the buyer'],
+          o: ['exact evidence IDs supporting the paid offer'],
+          a: ['exact evidence IDs supporting the acquisition mechanism'],
+          d: {
+            l: 'one named pricing, signup, demo, application, licensing, sponsorship-inquiry, storefront, product, service, landing, booking, download, marketplace-listing, or checkout destination, distinct from the acquisition mechanism',
+            e: ['exact evidence IDs supporting that destination']
+          },
+          c: ['exact evidence IDs supporting the paid conversion and observable outcome'],
+          t: ['exact evidence IDs supporting the attribution signal']
+        },
         supportingBottleneck: 'optional auxiliary operational constraint; never the recommended action or outcome',
         vm: 'required positive conservative expectedValueMicros integer for incremental gross income; uncertainty remains explicit in scores'
+      },
+      evidenceExperimentSchema: {
+        l: 'user-readable title naming the known offer or asset',
+        k: 'one concise known fact copied or closely paraphrased from cited evidence',
+        b: 'one evidence-grounded buyer',
+        o: 'one evidence-grounded paid offer',
+        a: 'one singular acquisition mechanism to test',
+        d: 'one evidence-grounded conversion destination, distinct from a',
+        c: 'one paid conversion event',
+        t: 'one durable attribution field or record connecting c to a',
+        x: 'one review-first action describing only this bounded test',
+        s: 'one user-readable paid success signal',
+        days: 'integer from 7 through 30',
+        n: 'integer sample stop from 5 through 100',
+        u: 'plain-language sample unit such as qualified visits, referred buyers, checkout sessions, or reviewed opportunities',
+        e: ['exact evidence IDs grounding k, b, o, and d']
       },
       candidateSchema: {
         k: 'person or organization only',
@@ -1465,25 +1579,26 @@ Return only JSON.`;
         'Before returning JSON, silently audit every family against the revenuePathSchema and every rule below. Repair the family in place when any required paid, acquisition, conversion, revenue-proof, attribution, or evidence term is missing.',
         'Score each family once as a complete end-to-end motion. Do not return per-item scores.',
         'Offers and proofPoints must cite direct evidence.',
-        'Every offers item l must literally contain paid, billable, reimbursable, subscription, retainer, sale, paid pilot, or contract. Free activity and generic awareness are not offers.',
+        'Every offers item l must literally contain paid, billable, reimbursable, subscription, retainer, sale, paid pilot, contract, license, royalty, commission, referral fee, sponsorship, platform payout, compensated role, salary, or wage. Free activity and generic awareness are not offers.',
         'Each buyer segment must identify the actual payer/customer or a payer-linked beneficiary path that produces the paid outcome.',
-        'Every family must include exactly one incremental_revenue_v1 revenuePaths item with all revenuePathSchema fields except optional supportingBottleneck.',
+        'Every family must include exactly one incremental_revenue_v2 revenuePaths item with all revenuePathSchema fields except optional supportingBottleneck.',
+        'Family m must exactly equal its revenuePath acquisitionMode. The family wrapper is organized by acquisition economics, never by profession or industry.',
         'Every revenue path must cite evidence shared with its buyer, offer, channel, and action or proof, and must include a positive conservative vm.',
+        'Every revenue path g must explicitly bind buyer, paid offer, acquisition, destination, paid conversion/outcome, and attribution to exact approved evidence IDs. The destination label must name a pricing, signup, demo, application, licensing, sponsorship-inquiry, storefront, product, service, landing, booking, download, marketplace-listing, checkout, order, contract, or proposal path, and it must not be the acquisition mechanism.',
+        'Do not cite an evidence record for a g element unless that record actually supports the element. An owned page may support the buyer, offer, destination, and paid conversion, but cannot by itself prove organic search, referral, social, directory, partner, or other acquisition demand unless the evidence says so. A proposed tracking field is not proof that attribution already exists.',
         'A qualified inquiry, eligibility check, coverage verification, scheduled consultation, completed workflow, post, impression, or conversation is not a revenue outcome unless the path also specifies the downstream paid conversion and durable attribution signal.',
-        'Every actions item l and revenuePath conversionAction must each literally name its inbound, warm referral, permissioned, existing-customer, or partner acquisition path and a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot commitment. Reject operations-only verification, scheduling, administration, content, profile, workflow, research, and optimization actions as the recommendation even when supportingBottleneck records them.',
-        'Every observableRevenueOutcome must literally name a durable paid booking, paid claim, payment receipt, signed contract/agreement, deposit received, paid invoice, checkout/order/purchase/sale, subscription, retainer, recorded revenue/income, or reimbursement received.',
-        'Every attributionSignal must literally name source, referral, UTM, campaign, origin, channel, code, or CRM and the booking/payment/invoice/contract/checkout/order/claim/CRM/referral record that stores it.',
+        'Every actions item l and revenuePath conversionAction must each literally name its inbound, warm referral, permissioned, existing-customer, or partner acquisition path and a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, paid pilot, license/royalty, commission/referral fee, sponsorship, platform payout, or compensated-role commitment. Reject operations-only verification, scheduling, administration, content, profile, workflow, research, and optimization actions as the recommendation even when supportingBottleneck records them.',
+        'Every observableRevenueOutcome must literally name a durable paid booking, paid claim, payment receipt, signed contract/agreement, deposit received, paid invoice, checkout/order/purchase/sale, subscription, retainer, recorded revenue/income, reimbursement received, license payment, royalty statement/payment, commission/referral-fee record, sponsorship contract/payment, platform payout, or employment compensation record.',
+        'Every attributionSignal must literally name source, referral, UTM, campaign, origin, channel, code, or CRM and the booking/payment/invoice/contract/checkout/order/claim/CRM/referral/license/royalty/affiliate/commission/platform/marketplace/employment/compensation record that stores it.',
         'Acquisition must be inbound, warm referral, explicitly permissioned outreach, existing-customer, or partner-channel. An inbound channel must name one explicit discovery/demand origin and a separate conversion destination; a service page, website, booking page, or checkout alone is not acquisition. Reject cold outreach, purchased lists, scraping, bulk contact, and spray-and-pray.',
-        'Attribution must connect the paid outcome to the acquisition source through a booking, payment, invoice/contract, checkout/order, claim, CRM-source, or referral-code record.',
+        'Attribution must connect the paid outcome to the acquisition source through a booking, payment, invoice/contract, checkout/order, claim, CRM-source, referral-code, license/royalty, affiliate/commission, platform/marketplace, or employment-compensation record.',
         'Buyer segments may be plausible inferences but must cite evidence supporting the fit.',
         'Return both familyA and familyB. Do not omit either complete bundle.',
         'For each family, include at least one observation:* evidence anchor in family e.',
         'Family e must contain every evidence ID used by that family revenue path, offers, buyer segments, channels, actions, and proof points. Timing and follow-up items must cite from that same revenue-bearing evidence set.',
         'Every item must cite at least one exact evidence ID that also appears in its containing family e. Different dimensions may use different family evidence IDs when that is the truthful provenance.',
         'Every item belongs only to its containing family bundle. Do not add f, familyIds, wildcards, or cross-family reuse.',
-        'A retained family must describe one coherent motion. Do not combine insurance-network, hospital-program, employer, clinical-referral, content-conversion, or other distinct motions in one family.',
-        'Make each buyerSegments label explicitly name exactly one motion. For patient inbound use prospective or eligible patients, parents, mothers, families, caregivers, or members; do not describe the payer as the buyer.',
-        'Every other item in a family must either use that same motion vocabulary or remain motion-neutral. Never mention a second motion merely as an example.',
+        'A retained family must use exactly one acquisition mode from discovery through paid outcome. Channel and action must state that mode explicitly; other dimensions may remain acquisition-neutral but must never name a conflicting mode.',
         'Channels and actions must remain singular, bounded, and review-first.',
         'Every timing trigger must include q copied exactly from its cited evidence and q must directly support the claimed timing. A crawl timestamp alone is not a business trigger.',
         'The evidence id that contains q must be an observation:* source-evidence record so the control plane can verify the phrase against the approved stored observation.',
@@ -1494,7 +1609,11 @@ Return only JSON.`;
         'Candidate names and optional details must be exact evidence text. Do not return candidate URLs or contact details. Return candidates: [] when no exact named candidate exists.',
         'A candidate evidence ID must also ground a buyerSegments seed and at least one relevant offers or proofPoints seed; do not attach a candidate using an unrelated citation.',
         'If a named organization is the intended target buyer, start the buyerSegments label with that exact organization name and include the same organization in candidates.',
-        'If evidence says a provider, credential, connection, or service is already accepted, active, or available, do not recommend applying for it as though it were missing.'
+        'If evidence says a provider, credential, connection, or service is already accepted, active, or available, do not recommend applying for it as though it were missing.',
+        'Return exactly one evidenceExperiment even when a family appears likely to win; it is ignored when a winner survives validation. Its known fact, buyer, paid offer, and destination must be supported by its cited evidence. Its acquisition mechanism is a test hypothesis, not a claim of existing demand.',
+        'The evidenceExperiment acquisition mechanism and conversion destination must be singular and different. Its action must name both, the buyer, paid offer, paid conversion, attribution record, days, and sample stop.',
+        'The evidenceExperiment title, action, and success signal must not use internal phrases such as approve source, approve observation, evidence approval, evidence ID, crawl, generator, validator, retained strategy, or missing_*.',
+        'The evidenceExperiment recommends no automatic outreach, publishing, advertising, provider write, form submission, or silent execution. It remains review-first.'
       ]
     }
   });
@@ -1503,19 +1622,19 @@ Return only JSON.`;
 
 function tournamentStructuredResponseFormat(evidenceCatalog) {
   const paidOfferPattern =
-    '(?:[Pp]aid|[Bb]illable|[Rr]eimburs(?:able|ed|ement)|[Ff]ee|[Pp]riced?|[Pp]urchase|[Ss]ale|[Cc]ontract|[Rr]etainer|[Ss]ubscription|[Dd]eposit|[Ii]nvoice)';
+    '(?:[Pp]aid|[Bb]illable|[Rr]eimburs(?:able|ed|ement)|[Ff]ee|[Pp]riced?|[Pp]urchase|[Ss]ale|[Cc]ontract|[Rr]etainer|[Ss]ubscription|[Dd]eposit|[Ii]nvoice|[Ll]icen[cs]e|[Rr]oyalty|[Cc]ommission|[Rr]eferral fee|[Ss]ponsorship|[Pp]latform payout|[Cc]ompensated|[Ss]alary|[Ww]age)';
   const acquisitionPattern =
     '(?:[Ii]nbound|[Ww]arm (?:referral|introduction)|[Pp]ermission(?:ed)?|[Ee]xisting[- ]customer|[Pp]artner (?:channel|referral|introduction))';
   const paidCommitmentPattern =
-    '(?:[Pp]aid|[Pp]ayment|[Pp]urchase|[Ss]ale|[Ss]igned (?:contract|agreement)|[Dd]eposit|[Ii]nvoice|[Oo]rder|[Cc]heckout|[Ss]ubscription|[Rr]etainer|[Rr]eimburs(?:able|ed|ement))';
+    '(?:[Pp]aid|[Pp]ayment|[Pp]urchase|[Ss]ale|[Ss]igned (?:contract|agreement)|[Dd]eposit|[Ii]nvoice|[Oo]rder|[Cc]heckout|[Ss]ubscription|[Rr]etainer|[Rr]eimburs(?:able|ed|ement)|[Ll]icen[cs]e|[Rr]oyalty|[Cc]ommission|[Rr]eferral fee|[Ss]ponsorship|[Pp]latform payout|[Cc]ompensated role|[Ss]alary|[Ww]age)';
   const acquisitionAndPaidPattern =
     `(?:${acquisitionPattern}.*${paidCommitmentPattern}|${paidCommitmentPattern}.*${acquisitionPattern})`;
   const incrementalPaidPattern =
     `(?:(?:[Nn]ew|[Aa]dditional|[Ii]ncremental|[Ii]ncrease[ds]?|[Aa]dded|[Ff]irst).*${paidCommitmentPattern}|${paidCommitmentPattern}.*(?:[Nn]ew|[Aa]dditional|[Ii]ncremental|[Ii]ncrease[ds]?|[Aa]dded|[Ff]irst))`;
   const observableRevenuePattern =
-    '(?:[Pp]aid (?:booking|claim|invoice|order|sale)|[Pp]ayment receipt|[Ss]igned (?:contract|agreement)|[Dd]eposit received|[Cc]heckout|[Pp]urchase|[Ss]ubscription|[Rr]etainer|[Rr]ecorded (?:revenue|income)|[Rr]eimbursement received)';
+    '(?:[Pp]aid (?:booking|claim|invoice|order|sale)|[Pp]ayment receipt|[Ss]igned (?:contract|agreement)|[Dd]eposit received|[Cc]heckout|[Pp]urchase|[Ss]ubscription|[Rr]etainer|[Rr]ecorded (?:revenue|income)|[Rr]eimbursement received|[Ll]icen[cs]e (?:signed|payment received)|[Rr]oyalty (?:statement|payment)|[Cc]ommission (?:recorded|paid)|[Rr]eferral fee (?:recorded|paid)|[Ss]ponsorship (?:contract signed|payment received)|[Pp]latform payout recorded|[Cc]ompensation (?:offer accepted|payment recorded)|[Ss]alary payment|[Ww]age payment)';
   const attributionRecordPattern =
-    '(?:(?:[Bb]ooking|[Pp]ayment|[Ii]nvoice|[Cc]ontract|[Cc]heckout|[Oo]rder|[Cc]laim|CRM|[Rr]eferral) (?:record|field|code).*(?:[Ss]ource|[Rr]eferral|UTM|[Cc]ampaign|[Oo]rigin|[Cc]hannel|[Cc]ode|CRM)|(?:[Ss]ource|[Rr]eferral|UTM|[Cc]ampaign|[Oo]rigin|[Cc]hannel|[Cc]ode|CRM).*(?:[Bb]ooking|[Pp]ayment|[Ii]nvoice|[Cc]ontract|[Cc]heckout|[Oo]rder|[Cc]laim|CRM|[Rr]eferral) (?:record|field|code))';
+    '(?:(?:[Bb]ooking|[Pp]ayment|[Ii]nvoice|[Cc]ontract|[Cc]heckout|[Oo]rder|[Cc]laim|CRM|[Rr]eferral|[Ll]icen[cs]e|[Rr]oyalty|[Aa]ffiliate|[Cc]ommission|[Pp]latform|[Mm]arketplace|[Ee]mployment|[Cc]ompensation) (?:record|field|code|statement).*(?:[Ss]ource|[Rr]eferral|UTM|[Cc]ampaign|[Oo]rigin|[Cc]hannel|[Cc]ode|CRM)|(?:[Ss]ource|[Rr]eferral|UTM|[Cc]ampaign|[Oo]rigin|[Cc]hannel|[Cc]ode|CRM).*(?:[Bb]ooking|[Pp]ayment|[Ii]nvoice|[Cc]ontract|[Cc]heckout|[Oo]rder|[Cc]laim|CRM|[Rr]eferral|[Ll]icen[cs]e|[Rr]oyalty|[Aa]ffiliate|[Cc]ommission|[Pp]latform|[Mm]arketplace|[Ee]mployment|[Cc]ompensation) (?:record|field|code|statement))';
   const evidenceIDs = compactStrings(
     asArray(evidenceCatalog).map((item) => asObject(item).id)
   )
@@ -1594,20 +1713,70 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
     minItems: count,
     maxItems: count
   });
+  const grounding = {
+    type: 'object',
+    properties: {
+      b: { $ref: '#/$defs/evidenceRefs' },
+      o: { $ref: '#/$defs/evidenceRefs' },
+      a: { $ref: '#/$defs/evidenceRefs' },
+      d: {
+        type: 'object',
+        properties: {
+          l: { type: 'string', minLength: 1, maxLength: 240 },
+          e: { $ref: '#/$defs/evidenceRefs' }
+        },
+        required: ['l', 'e'],
+        additionalProperties: false
+      },
+      c: { $ref: '#/$defs/evidenceRefs' },
+      t: { $ref: '#/$defs/evidenceRefs' }
+    },
+    required: ['b', 'o', 'a', 'd', 'c', 't'],
+    additionalProperties: false
+  };
+  const evidenceExperiment = {
+    type: 'object',
+    properties: {
+      l: { type: 'string', minLength: 1, maxLength: 240 },
+      k: { type: 'string', minLength: 1, maxLength: 320 },
+      b: { type: 'string', minLength: 1, maxLength: 240 },
+      o: { type: 'string', minLength: 1, maxLength: 240 },
+      a: { type: 'string', minLength: 1, maxLength: 240 },
+      d: { type: 'string', minLength: 1, maxLength: 240 },
+      c: { type: 'string', minLength: 1, maxLength: 240 },
+      t: { type: 'string', minLength: 1, maxLength: 320 },
+      x: { type: 'string', minLength: 1, maxLength: 700 },
+      s: { type: 'string', minLength: 1, maxLength: 360 },
+      days: { type: 'integer', minimum: 7, maximum: 30 },
+      n: { type: 'integer', minimum: 5, maximum: 100 },
+      u: { type: 'string', minLength: 1, maxLength: 80 },
+      e: { $ref: '#/$defs/evidenceRefs' }
+    },
+    required: [
+      'l',
+      'k',
+      'b',
+      'o',
+      'a',
+      'd',
+      'c',
+      't',
+      'x',
+      's',
+      'days',
+      'n',
+      'u',
+      'e'
+    ],
+    additionalProperties: false
+  };
   const family = () => ({
     type: 'object',
     properties: {
       l: { type: 'string', minLength: 1, maxLength: 180 },
       m: {
         type: 'string',
-        enum: [
-          'payer_network',
-          'patient_inbound',
-          'clinical_referral',
-          'hospital_program',
-          'employer_workplace',
-          'organization_partnership'
-        ]
+        enum: [...ACQUISITION_MODES]
       },
       e: { $ref: '#/$defs/evidenceRefs' },
       s: { $ref: '#/$defs/scores' },
@@ -1660,6 +1829,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
           },
           familyA: family(),
           familyB: family(),
+          evidenceExperiment,
           candidates: {
             type: 'array',
             items: { $ref: '#/$defs/candidate' },
@@ -1676,6 +1846,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
           'seedContract',
           'familyA',
           'familyB',
+          'evidenceExperiment',
           'candidates',
           'w'
         ],
@@ -1693,7 +1864,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
             'One actual payer/customer or payer-linked beneficiary segment for this revenue path.'
           ),
           channelItem: item(
-            'One bounded inbound, warm-referral, permissioned, existing-customer, or partner channel, using that acquisition vocabulary literally. Inbound must name one discovery/demand origin and a separate offer, service, landing, booking, or checkout destination.'
+            'One bounded inbound, warm-referral, permissioned, existing-customer, or partner channel, using that acquisition vocabulary literally. Inbound must name one discovery/demand origin and a separate pricing, signup, demo, application, licensing, sponsorship-inquiry, storefront, product, service, landing, booking, download, marketplace-listing, or checkout destination.'
           ),
           actionItem: item(
             'One singular action that literally names the acquisition path and advances a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot.',
@@ -1763,6 +1934,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
                 description:
                   'The booking/payment/invoice/contract/checkout/order/claim/CRM/referral record and its source, referral, UTM, campaign, origin, channel, code, or CRM field.'
               },
+              g: grounding,
               supportingBottleneck: {
                 type: 'string',
                 maxLength: 240,
@@ -1787,6 +1959,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
               'observableRevenueOutcome',
               'attributionMethod',
               'attributionSignal',
+              'g',
               'supportingBottleneck',
               'vm'
             ],
@@ -1826,9 +1999,14 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
     evidenceByID
   );
   const strategyFamilies = normalizedFamilies.families;
+  const declaredSeedContract = firstText(raw.seedContract);
   const out = {
     seedContract: hasFamilyBundleContract
-      ? SEED_CONTRACT_VERSION
+      ? declaredSeedContract === SEED_CONTRACT_VERSION
+        ? SEED_CONTRACT_VERSION
+        : declaredSeedContract === LEGACY_SEED_CONTRACT_VERSION
+          ? LEGACY_SEED_CONTRACT_VERSION
+          : 'invalid'
       : 'legacy_flat',
     declaredStrategyFamilyCount: familyInputs.length,
     strategyFamilies: [...strategyFamilies.values()],
@@ -2017,12 +2195,25 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
             .slice(0, MAX_EVIDENCE_ITEMS)
         : evidenceRefs;
       const revenuePath = name === 'revenuePaths'
-        ? normalizeRevenuePathSeed(seed, revenuePathEvidenceRefs)
+        ? normalizeRevenuePathSeed(
+            seed,
+            revenuePathEvidenceRefs
+          )
         : undefined;
+      const acquisitionModes = compactStrings(
+        familyIds.map((familyID) =>
+          strategyFamilies.get(familyID)?.acquisitionMode
+        )
+      )
+        .filter((mode) => ACQUISITION_MODES.has(mode))
+        .filter((mode, modeIndex, modes) =>
+          modes.indexOf(mode) === modeIndex
+        );
       out[name].push({
         id: normalizeSeedID(firstText(seed.id, `${name}-${index + 1}`), name, label),
         label,
         familyIds,
+        acquisitionModes,
         evidenceRefs,
         supportPhrase,
         supportEvidenceRefs,
@@ -2051,8 +2242,29 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
   return out;
 }
 
+function searchContractsForSeedSet(seedSetValue) {
+  const seedContract = firstText(asObject(seedSetValue).seedContract);
+  if (seedContract === LEGACY_SEED_CONTRACT_VERSION ||
+      seedContract === 'legacy_flat') {
+    return {
+      revenueGate: LEGACY_REVENUE_GATE_VERSION,
+      revenuePathContract: LEGACY_REVENUE_PATH_CONTRACT_VERSION,
+      coherenceGate: LEGACY_COHERENCE_GATE_VERSION
+    };
+  }
+  return {
+    revenueGate: REVENUE_GATE_VERSION,
+    revenuePathContract: REVENUE_PATH_CONTRACT_VERSION,
+    coherenceGate: COHERENCE_GATE_VERSION
+  };
+}
+
 function normalizeRevenuePathSeed(seedValue, evidenceRefs) {
   const seed = asObject(seedValue);
+  const grounding = normalizeRevenuePathGrounding(
+    seed.g ?? seed.grounding,
+    evidenceRefs
+  );
   return compact({
     contractVersion: firstText(
       seed.contractVersion,
@@ -2094,6 +2306,7 @@ function normalizeRevenuePathSeed(seedValue, evidenceRefs) {
       seed.attributionSignal,
       seed.ats
     ), 320),
+    _grounding: grounding,
     supportingBottleneck: truncate(firstText(
       seed.supportingBottleneck,
       seed.sb,
@@ -2101,6 +2314,46 @@ function normalizeRevenuePathSeed(seedValue, evidenceRefs) {
     ), 240),
     evidenceRefs: compactStrings(evidenceRefs)
   });
+}
+
+function normalizeRevenuePathGrounding(value, allowedEvidenceRefs) {
+  const raw = asObject(value);
+  const allowed = new Set(compactStrings(allowedEvidenceRefs));
+  const refs = (...values) => compactStrings(
+    values.flatMap((item) => asArray(item))
+  )
+    .filter((ref) => allowed.has(ref))
+    .filter((ref, index, items) => items.indexOf(ref) === index)
+    .slice(0, 12);
+  const destination = asObject(raw.d ?? raw.conversionDestination);
+  const grounding = {
+    buyerEvidenceRefs: refs(raw.b, raw.buyerEvidenceRefs),
+    paidOfferEvidenceRefs: refs(raw.o, raw.paidOfferEvidenceRefs),
+    acquisitionEvidenceRefs: refs(raw.a, raw.acquisitionEvidenceRefs),
+    conversionDestination: truncate(firstText(
+      destination.l,
+      destination.label,
+      raw.conversionDestinationLabel
+    ), 240),
+    conversionDestinationEvidenceRefs: refs(
+      destination.e,
+      destination.evidenceRefs,
+      raw.conversionDestinationEvidenceRefs
+    ),
+    paidConversionEvidenceRefs: refs(
+      raw.c,
+      raw.paidConversionEvidenceRefs
+    ),
+    attributionEvidenceRefs: refs(
+      raw.t,
+      raw.attributionEvidenceRefs
+    )
+  };
+  return Object.values(grounding).some((item) =>
+    Array.isArray(item) ? item.length > 0 : Boolean(item)
+  )
+    ? grounding
+    : undefined;
 }
 
 function contractEnum(value) {
@@ -2206,6 +2459,39 @@ function normalizedFamilyBuyerObservationEvidenceRefs(
     .map(asObject)
     .filter((seed) => asArray(seed.familyIds).includes(familyID));
   if (buyerSeeds.length === 0) return [];
+  if (firstText(asObject(seedSet).seedContract) ===
+      SEED_CONTRACT_VERSION) {
+    const family = asArray(asObject(seedSet).strategyFamilies)
+      .map(asObject)
+      .find((item) => item.id === familyID);
+    if (!ACQUISITION_MODES.has(
+      firstText(family?.acquisitionMode)
+    )) {
+      return [];
+    }
+    const refs = [];
+    for (const seed of buyerSeeds) {
+      const supportedRefs = strategyObservationEvidenceRefs(
+        seed.evidenceRefs
+      ).filter((ref) => {
+        const evidence = asObject(evidenceByID.get(ref));
+        if (evidence.approvedSourceObservation !== true) return false;
+        return textOverlap(
+          seed.label,
+          compactStrings([
+            evidence.label,
+            evidence.summary
+          ]).join(' ')
+        ) > 0;
+      });
+      if (supportedRefs.length === 0) return [];
+      refs.push(...supportedRefs);
+    }
+    return compactStrings(refs)
+      .filter((ref, index, values) =>
+        values.indexOf(ref) === index
+      );
+  }
   let buyerMotion = '';
   const refs = [];
   for (const seed of buyerSeeds) {
@@ -2290,7 +2576,12 @@ function normalizeStrategyFamilies(values, evidenceByID) {
     const family = {
       id,
       label: truncate(firstText(raw.l, raw.label, raw.name, id), 120),
-      evidenceRefs
+      evidenceRefs,
+      acquisitionMode: ACQUISITION_MODES.has(
+        contractEnum(firstText(raw.m, raw.acquisitionMode))
+      )
+        ? contractEnum(firstText(raw.m, raw.acquisitionMode))
+        : ''
     };
     const existing = families.get(id);
     if (existing) {
@@ -2598,15 +2889,21 @@ function recommendationFor({
 }) {
   const tuple = hypothesis._tuple;
   const candidateLabel = truncate(firstText(candidate?.displayLabel), 180);
-  const buyerMotions = strategyMotions(
-    hypothesis.buyerSegment,
-    'buyerSegment'
-  );
+  const isV2 =
+    firstText(hypothesis?.revenuePath?.contractVersion) ===
+      REVENUE_PATH_CONTRACT_VERSION;
+  const buyerMotions = isV2
+    ? acquisitionModesFromText(hypothesis.buyerSegment)
+    : strategyMotions(
+        hypothesis.buyerSegment,
+        'buyerSegment'
+      );
   const candidateIsOwnedInboundAsset =
     ownedInboundAssetCandidate(candidate);
   const candidateIsContextAnchor =
     candidateIsOwnedInboundAsset ||
     (
+      !isV2 &&
       organizationCandidateRequiresBuyerMatch(candidate) &&
       buyerMotions.includes('patient_inbound') &&
       !buyerMotions.includes('payer_network')
@@ -2665,14 +2962,21 @@ function recommendationFor({
   const whyOverRunnerUp = runnerUp
     ? comparisonReason(hypothesis, runnerUp)
     : '';
-  const recommendationMotionSignatures = compactStrings([
+  const recommendationSignatureTexts = [
     title,
     action,
     why,
     whyNow,
     whyOverRunnerUp,
     uncertainty
-  ].flatMap((value) => strategyMotions(value))).sort();
+  ];
+  const recommendationMotionSignatures = compactStrings(
+    recommendationSignatureTexts.flatMap((value) =>
+      isV2
+        ? acquisitionModesFromText(value)
+        : strategyMotions(value)
+    )
+  ).sort();
   const hypothesisMotionSignatures = compactStrings(
     asObject(hypothesis.provenance).motionSignatures
   ).sort();
@@ -3531,12 +3835,281 @@ function structuredEvidenceRef(evidence) {
   );
 }
 
+function normalizeGeneratedEvidenceExperiment(
+  value,
+  evidenceCatalog,
+  referenceTime
+) {
+  const raw = asObject(value);
+  const evidenceByID = evidenceIndex(evidenceCatalog);
+  const evidenceRefs = compactStrings([
+    ...asArray(raw.e),
+    ...asArray(raw.evidenceRefs)
+  ])
+    .map((ref) => evidenceByID.get(ref)?.id)
+    .filter(Boolean)
+    .filter((ref, index, refs) => refs.indexOf(ref) === index)
+    .slice(0, 12);
+  const title = truncate(firstText(raw.l, raw.title), 240);
+  const knownFact = truncate(firstText(raw.k, raw.knownFact), 320);
+  const buyer = truncate(firstText(raw.b, raw.buyer), 240);
+  const paidOffer = truncate(firstText(raw.o, raw.paidOffer), 240);
+  const acquisitionMechanism = truncate(firstText(
+    raw.a,
+    raw.acquisitionMechanism
+  ), 240);
+  const conversionDestination = truncate(firstText(
+    raw.d,
+    raw.conversionDestination
+  ), 240);
+  const paidConversion = truncate(firstText(
+    raw.c,
+    raw.paidConversion
+  ), 240);
+  const attributionSignal = truncate(firstText(
+    raw.t,
+    raw.attributionSignal
+  ), 320);
+  const action = truncate(firstText(raw.x, raw.action), 700);
+  const successSignal = truncate(firstText(
+    raw.s,
+    raw.successSignal
+  ), 360);
+  const durationDays =
+    positiveInteger(raw.days) ||
+    positiveInteger(raw.durationDays);
+  const sampleLimit =
+    positiveInteger(raw.n) ||
+    positiveInteger(raw.sampleLimit);
+  const sampleUnit = truncate(firstText(
+    raw.u,
+    raw.sampleUnit
+  ), 80);
+  if (evidenceRefs.length === 0 ||
+      !title ||
+      !knownFact ||
+      !buyer ||
+      !paidOffer ||
+      !acquisitionMechanism ||
+      !conversionDestination ||
+      !paidConversion ||
+      !attributionSignal ||
+      !action ||
+      !successSignal ||
+      durationDays < 7 ||
+      durationDays > 30 ||
+      sampleLimit < 5 ||
+      sampleLimit > 100 ||
+      !sampleUnit) {
+    return null;
+  }
+  const userCopy = `${title} ${action} ${successSignal}`;
+  if (/\b(?:approve source|approve observation|evidence approval|evidence id|crawl|generator|validator|retained strateg|missing[_ ])\b/i.test(
+    userCopy
+  ) ||
+      experimentActionHasExternalExecution(action) ||
+      !/\b(?:count|inspect|measure|monitor|observe|record|review|track)\b/i.test(
+        action
+      ) ||
+      !/\breview(?: first|-first)?\b/i.test(action)) {
+    return null;
+  }
+  const citedText = compactStrings(
+    evidenceRefs.map((ref) => {
+      const evidence = asObject(evidenceByID.get(ref));
+      return compactStrings([
+        evidence.label,
+        evidence.summary,
+        evidence.url
+      ]).join(' ');
+    })
+  ).join(' ');
+  if (evidenceRefs.some((ref) =>
+    !currentApprovedExperimentEvidence(
+      evidenceByID.get(ref),
+      referenceTime
+    )
+  )) {
+    return null;
+  }
+  const asset = evidenceRefs
+    .map((ref) => evidenceByID.get(ref))
+    .filter((evidence) =>
+      approvedOwnedAssetEvidence(evidence, evidenceByID) &&
+      inboundAssetEvidenceSupportsPaidConversion(
+        evidence,
+        referenceTime
+      )
+    )
+    .sort((left, right) =>
+      inboundAssetConversionReadiness(right) -
+        inboundAssetConversionReadiness(left) ||
+      evidenceQuality(right) - evidenceQuality(left)
+    )[0];
+  const assetText = compactStrings([
+    asset?.label,
+    asset?.summary,
+    asset?.url
+  ]).join(' ');
+  if (textOverlap(knownFact, citedText) <= 0 ||
+      !asset ||
+      textOverlap(buyer, assetText) <= 0 ||
+      !paidOfferText(assetText) ||
+      textOverlap(paidOffer, assetText) <= 0 ||
+      !conversionDestinationText(conversionDestination) ||
+      !conversionDestinationEvidenceText(assetText) ||
+      textOverlap(conversionDestination, assetText) <= 0 ||
+      comparable(acquisitionMechanism) ===
+        comparable(conversionDestination) ||
+      !experimentInboundAcquisitionMechanismText(
+        acquisitionMechanism
+      ) ||
+      !observableRevenueText(paidConversion) ||
+      !observableRevenueText(successSignal) ||
+      ![...ATTRIBUTION_METHODS].some((method) =>
+        attributionSignalText(attributionSignal, method)
+      ) ||
+      ![
+        buyer,
+        paidOffer,
+        acquisitionMechanism,
+        conversionDestination,
+        paidConversion,
+        attributionSignal
+      ]
+        .every((component) => textOverlap(component, action) > 0) ||
+      !action.includes(String(durationDays)) ||
+      !action.includes(String(sampleLimit))) {
+    return null;
+  }
+  return {
+    title,
+    knownFact,
+    buyer,
+    paidOffer,
+    acquisitionMechanism,
+    conversionDestination,
+    paidConversion,
+    attributionSignal,
+    action,
+    successSignal,
+    durationDays,
+    sampleLimit,
+    sampleUnit,
+    evidenceRefs,
+    asset: asset
+      ? {
+          label: truncate(firstText(asset.label), 180),
+          publicUrl: safePublicURL(asset.url)
+        }
+      : null
+  };
+}
+
+function experimentInboundAcquisitionMechanismText(value) {
+  return /\b(?:agent mediated|app store|community|comparison (?:listing|site)|directory|earned media|google business profile|job board|local search|marketplace discovery|nonbranded search|organic search|platform discovery|search engine|search listing)\b/i.test(
+    firstText(value)
+  );
+}
+
+function experimentActionHasExternalExecution(value) {
+  const text = firstText(value);
+  const pattern =
+    /\b(?:send|email|call|message|share|invite|outreach|publish|publishing|post|posting|advertis(?:e|ing)|ads?|newsletter distribution|social distribution|content distribution|submit(?:ting)? forms?|form submission|provider writes?)\b/gi;
+  for (const match of text.matchAll(pattern)) {
+    const before = text.slice(0, match.index);
+    const segmentStart = Math.max(
+      before.lastIndexOf('.'),
+      before.lastIndexOf(';'),
+      before.lastIndexOf('\n')
+    ) + 1;
+    const prefix = before.slice(segmentStart);
+    const suffix = text.slice(
+      match.index + match[0].length,
+      match.index + match[0].length + 50
+    );
+    const negatedBefore =
+      /\b(?:no|not|never|without|do not|does not|must not|cannot|can't|will not)\b[^.;]*$/i.test(
+        prefix
+      ) &&
+      !/\b(?:but|then|however|except)\b[^.;]*$/i.test(prefix);
+    const negatedAfter =
+      /^\s+(?:is|are|was|were|will be|remain)\s+not\s+(?:authorized|allowed|permitted)\b/i.test(
+        suffix
+      );
+    if (!negatedBefore && !negatedAfter) return true;
+  }
+  return false;
+}
+
+function currentApprovedExperimentEvidence(
+  evidenceValue,
+  referenceTime
+) {
+  const evidence = asObject(evidenceValue);
+  if (evidence.approvedSourceObservation !== true ||
+      evidence.current === false ||
+      /\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|not accepting|sold out|unavailable|withdrawn)\b/i.test(
+        firstText(evidence.status)
+      )) {
+    return false;
+  }
+  const referenceDate = new Date(referenceTime);
+  const observedDate = new Date(firstText(evidence.observedAt));
+  if (!Number.isFinite(referenceDate.getTime()) ||
+      !Number.isFinite(observedDate.getTime())) {
+    return false;
+  }
+  const age = referenceDate.getTime() - observedDate.getTime();
+  if (age < -MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS ||
+      age > MAX_INBOUND_ASSET_OBSERVATION_AGE_MS) {
+    return false;
+  }
+  const rawEndDate = firstText(evidence.endDate);
+  if (rawEndDate) {
+    const endDate = new Date(rawEndDate);
+    if (!Number.isFinite(endDate.getTime()) ||
+        endDate.getTime() < referenceDate.getTime()) {
+      return false;
+    }
+  }
+  const rawText = compactStrings([
+    evidence.label,
+    evidence.summary,
+    evidence.url
+  ]).join(' ');
+  const text = comparable(rawText);
+  if (!text ||
+      /\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|no longer (?:available|offered|accepting|bookable)|not (?:available|accepting|bookable)|sold out|unavailable|withdrawn)\b/.test(
+        text
+      ) ||
+      /\b(?:no|not|without)\s+(?:a\s+)?(?:paid|billable|bookable|purchasable|reimbursable) (?:offer|service|consultation|session|booking|option|plan|contract|role)\b/.test(
+        text
+      ) ||
+      /\b(?:is|are|was|were)\s+not\s+(?:paid|billable|reimbursable|reimbursed|covered|compensated)\b/.test(
+        text
+      )) {
+    return false;
+  }
+  const namesFreeOption =
+    /\b(?:complimentary|free trial|freemium|free|no fee|without charge|zero cost)\b/.test(
+      text
+    );
+  const namesPaidAlternative =
+    /\b(?:paid (?:plan|tier|subscription|option|version|license)|pricing|price|starts at|subscription fee|license fee|purchase|checkout)\b/.test(
+      text
+    ) ||
+    /\$\s*\d/.test(rawText);
+  return !namesFreeOption || namesPaidAlternative;
+}
+
 function revenueEvidenceExperiment({
   objective,
   evidenceCatalog,
   evidenceHash,
   missingEvidence,
-  referenceTime
+  referenceTime,
+  generatedExperiment
 }) {
   const evidenceByID = evidenceIndex(evidenceCatalog);
   const missing = compactStrings(missingEvidence)
@@ -3548,6 +4121,45 @@ function revenueEvidenceExperiment({
     missingEvidence: missing
   });
   if (technicalRecovery) return technicalRecovery;
+  const userReadableMissingEvidence =
+    humanizeMissingRevenueEvidence(missing);
+  if (generatedExperiment &&
+      generatedExperimentMatchesFailureContext(
+        generatedExperiment,
+        objective,
+        missing
+      )) {
+    const kind = generatedExperiment.asset
+      ? 'inbound_revenue_evidence'
+      : 'revenue_path_grounding';
+    return {
+      contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
+      id: `experiment-${stableHash({
+        kind,
+        evidenceHash,
+        missing,
+        generatedExperiment
+      }).slice(0, 24)}`,
+      kind,
+      title: generatedExperiment.title,
+      action: generatedExperiment.action,
+      missingEvidence: userReadableMissingEvidence.length > 0
+        ? userReadableMissingEvidence
+        : ['an attributable paid conversion'],
+      paidOutcome: generatedExperiment.paidConversion,
+      successSignal: generatedExperiment.successSignal,
+      stopCondition:
+        `Stop after ${generatedExperiment.sampleLimit} ${generatedExperiment.sampleUnit} or ${generatedExperiment.durationDays} calendar days, whichever comes first, followed by at most 1 rerun informed by the recorded result; do not expand volume automatically.`,
+      asset: generatedExperiment.asset,
+      evidenceRefs: generatedExperiment.evidenceRefs,
+      requiresReview: true,
+      rerunPolicy: {
+        maxReruns: 1,
+        trigger:
+          'Rerun only after the bounded test records its result or the named business facts materially change.'
+      }
+    };
+  }
   const objectiveText = compactStrings([
     objective?.outcome,
     objective?.successMetric
@@ -3559,11 +4171,7 @@ function revenueEvidenceExperiment({
       inboundAssetEvidenceSupportsPaidConversion(
         evidence,
         referenceTime
-      ) &&
-      textOverlap(
-        objectiveText,
-        `${evidence.approvedSourceLabel || ''} ${evidence.label || ''} ${evidence.summary || ''} ${evidence.url || ''}`
-      ) > 0
+      )
     )
     .sort((left, right) => {
       const relevanceDifference =
@@ -3583,24 +4191,49 @@ function revenueEvidenceExperiment({
         evidenceQuality(right) - evidenceQuality(left) ||
         firstText(left.id).localeCompare(firstText(right.id));
     })[0];
+  const anchor = asset || asArray(evidenceCatalog)
+    .map(asObject)
+    .filter((evidence) =>
+      evidence.approvedSourceObservation === true
+    )
+    .sort((left, right) => {
+      const relevanceDifference =
+        textOverlap(
+          objectiveText,
+          `${right.label || ''} ${right.summary || ''}`
+        ) -
+        textOverlap(
+          objectiveText,
+          `${left.label || ''} ${left.summary || ''}`
+        );
+      return relevanceDifference ||
+        evidenceQuality(right) - evidenceQuality(left) ||
+        firstText(left.id).localeCompare(firstText(right.id));
+    })[0];
   const assetLabel = truncate(firstText(asset?.label), 180);
   const assetURL = safePublicURL(asset?.url);
-  const evidenceRefs = asset?.id ? [asset.id] : [];
+  const anchorLabel = truncate(firstText(
+    anchor?.label,
+    'one paid professional offer'
+  ), 180);
+  const evidenceRefs = anchor?.id ? [anchor.id] : [];
   const kind = asset
     ? 'inbound_revenue_evidence'
     : 'revenue_path_grounding';
   const title = asset
-    ? `Test one attributable inbound discovery-to-paid-conversion path through ${assetLabel}`
-    : 'Ground one attributable paid offer before rerunning';
+    ? `Test organic-search demand for ${assetLabel}`
+    : anchor
+      ? `Define one attributable paid path for ${anchorLabel}`
+      : 'Define one attributable paid offer';
   const action = asset
-    ? `Review ${assetLabel} as the conversion destination for one 14-day test. Approve exactly one separate inbound discovery source—organic/local search, an owned opted-in audience, earned directory or media discovery, a marketplace/community, social distribution, or agent-mediated discovery—then route only that source to the destination with one source or UTM value in the resulting revenue record. Require one explicit paid booking, payment, purchase, signed contract, or reimbursed-claim outcome; then rerun once after the first result or the 14-day window.`
-    : 'Approve one public source observation that states the buyer, paid offer, one inbound discovery or permissioned acquisition source, the separate conversion destination, the paid conversion event, and the booking, payment, contract, order, or claim field that records attribution; then rerun once.';
+    ? `Review first: use organic search as the only discovery path to ${assetLabel} for a 14-day, 25-qualified-visit test. Record organic search in the booking, payment, order, contract, license, commission, platform, employment, or claim record, and count only a completed paid or reimbursed outcome. No outreach, publishing, advertising, form submission, or automatic execution is authorized.`
+    : `Review first: attach exactly 1 current public paid-offer page or 1 attributable revenue record for ${anchorLabel}. It must identify the buyer, paid offer, singular acquisition path, separate conversion destination, paid event, and the source field stored with that event. Stop after that 1 qualifying page or record, or after 14 calendar days; do not launch outreach, publishing, advertising, or provider actions.`;
   const successSignal =
-    'One new paid booking, payment, order, signed contract, or reimbursed claim with a stored source, referral, campaign, channel, or UTM value.';
+    'One new attributed revenue event—a paid booking, payment, order, signed contract, reimbursed claim, license or royalty payment, commission or referral fee, sponsorship payment, platform payout, or compensated-role payment—with a stored source, referral, campaign, channel, or UTM value.';
   const stopCondition =
     asset
-      ? 'Stop after 1 attributable paid outcome or 14 calendar days from launch, followed by at most 1 rerun informed by the result; do not expand volume automatically.'
-      : 'Stop after 1 evidence approval or 14 calendar days, followed by at most 1 rerun; do not launch or expand an external test automatically.';
+      ? 'Stop after 25 qualified visits, 1 attributable paid outcome, or 14 calendar days, whichever comes first, followed by at most 1 rerun informed by the result; do not expand volume automatically.'
+      : 'Stop after 1 current paid-offer page or attributable revenue record, or 14 calendar days, followed by at most 1 rerun; do not launch or expand an external test automatically.';
   return {
     contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
     id: `experiment-${stableHash({
@@ -3612,9 +4245,9 @@ function revenueEvidenceExperiment({
     kind,
     title: truncate(title, 240),
     action: truncate(action, 700),
-    missingEvidence: missing.length > 0
-      ? missing
-      : ['attributable_paid_conversion'],
+    missingEvidence: userReadableMissingEvidence.length > 0
+      ? userReadableMissingEvidence
+      : ['an attributable paid conversion'],
     paidOutcome: truncate(
       observableRevenueText(objective?.successMetric)
         ? firstText(objective?.successMetric)
@@ -3634,9 +4267,134 @@ function revenueEvidenceExperiment({
     rerunPolicy: {
       maxReruns: 1,
       trigger:
-        'Rerun only after approved evidence changes or the paid outcome is recorded.'
+        'Rerun only after the bounded test records its result or the named business facts materially change.'
     }
   };
+}
+
+function generatedExperimentMatchesFailureContext(
+  generatedExperimentValue,
+  objectiveValue,
+  missingEvidence
+) {
+  const experiment = asObject(generatedExperimentValue);
+  if (!experiment.asset) return false;
+  const objective = asObject(objectiveValue);
+  const objectiveText = compactStrings([
+    objective.outcome,
+    objective.successMetric
+  ]).join(' ');
+  const experimentText = compactStrings([
+    experiment.title,
+    experiment.knownFact,
+    experiment.buyer,
+    experiment.paidOffer,
+    experiment.paidConversion,
+    experiment.successSignal
+  ]).join(' ');
+  const businessGap = compactStrings(missingEvidence).some((value) =>
+    value !== 'usable_strategy_generation' &&
+    value !== 'within_budget_strategy_generation'
+  );
+  return businessGap &&
+    textOverlap(objectiveText, experimentText) > 0;
+}
+
+function humanizeMissingRevenueEvidence(values) {
+  const labels = {
+    approved_inbound_asset:
+      'a current owner-controlled paid offer or conversion page',
+    attributable_paid_conversion:
+      'an attributable paid conversion',
+    buyer:
+      'a specific buyer',
+    paid_offer:
+      'a current paid offer',
+    acquisition_mechanism:
+      'one acquisition path',
+    conversion_destination:
+      'a conversion destination separate from acquisition',
+    paid_conversion:
+      'a paid conversion event',
+    attribution_signal:
+      'a revenue record that stores acquisition source',
+    named_revenue_target:
+      'a named outside revenue target',
+    second_grounded_strategy_family:
+      'a second distinct evidence-grounded revenue path',
+    second_grounded_finalist:
+      'a second distinct evidence-grounded finalist',
+    family_diverse_revenue_path:
+      'a distinct alternate acquisition path',
+    distinct_runner_up:
+      'a distinct lower-ranked revenue path',
+    revenue_evidence_mismatch:
+      'evidence tied to the same buyer-to-payment path',
+    buyer_evidence_mismatch:
+      'evidence supporting the named buyer',
+    paid_offer_evidence_mismatch:
+      'evidence supporting the paid offer',
+    acquisition_evidence_mismatch:
+      'evidence supporting the acquisition path',
+    conversion_destination_evidence_mismatch:
+      'evidence supporting the conversion destination',
+    paid_conversion_evidence_mismatch:
+      'evidence supporting the paid conversion',
+    attribution_evidence_mismatch:
+      'evidence supporting the attribution record',
+    unsupported_buyer_evidence:
+      'clear buyer evidence',
+    unsupported_paid_offer_evidence:
+      'a current paid-offer statement',
+    unsupported_acquisition_evidence:
+      'an observed acquisition source',
+    unsupported_paid_conversion_evidence:
+      'a current paid-conversion path',
+    noncurrent_or_negative_paid_offer_evidence:
+      'current affirmative evidence for the paid offer',
+    noncurrent_or_negative_paid_conversion_evidence:
+      'current affirmative evidence for the paid conversion',
+    unsupported_attribution_evidence:
+      'an observed attribution field or record',
+    invalid_conversion_destination:
+      'a concrete conversion destination separate from acquisition',
+    invalid_acquisition_mode:
+      'one permitted acquisition path',
+    invalid_revenue_contract:
+      'a current revenue-path contract',
+    invalid_revenue_mechanism:
+      'a supported way the owner gets paid',
+    invalid_attribution_method:
+      'a supported revenue attribution record',
+    nonpositive_expected_value:
+      'a conservative positive gross-income estimate',
+    prohibited_acquisition:
+      'a permissioned or inbound acquisition path',
+    operations_only_action:
+      'one action that advances acquisition or payment',
+    action_conversion_mismatch:
+      'one action aligned with the paid conversion',
+    missing_revenue_path:
+      'a complete buyer-to-payment path',
+    missing_paid_offer:
+      'a current paid offer',
+    missing_incremental_income:
+      'an incremental-income outcome',
+    missing_paid_conversion:
+      'a paid conversion event',
+    missing_observable_revenue:
+      'an observable paid outcome',
+    missing_attribution_signal:
+      'a revenue record that stores acquisition source'
+  };
+  return compactStrings(values)
+    .map((value) => labels[value] || String(value)
+      .replace(/^(?:invalid|missing|unsupported)_/, '')
+      .replace(/_/g, ' '))
+    .filter((value, index, items) =>
+      items.indexOf(value) === index
+    )
+    .slice(0, 8);
 }
 
 function strategyGenerationRecoveryExperiment({
@@ -3649,7 +4407,7 @@ function strategyGenerationRecoveryExperiment({
   const budgetFailure = missing.includes('within_budget_strategy_generation');
   if (!providerFailure && !budgetFailure) return null;
   const successSignal =
-    'One new paid booking, payment, order, signed contract, or reimbursed claim with a stored source, referral, campaign, channel, or UTM value.';
+    'One new attributed revenue event—a paid booking, payment, order, signed contract, reimbursed claim, license or royalty payment, commission or referral fee, sponsorship payment, platform payout, or compensated-role payment—with a stored source, referral, campaign, channel, or UTM value.';
   const kind = providerFailure
     ? 'strategy_generation_provider_recovery'
     : 'strategy_generation_budget_recovery';
@@ -3700,13 +4458,13 @@ function inboundAssetConversionReadiness(evidenceValue) {
     `${evidence.label || ''} ${evidence.summary || ''} ${evidence.url || ''}`
   );
   let score = 0;
-  if (/\b(?:book|booking|checkout|order|buy|purchase|appointment|request)\b/.test(text)) {
+  if (/\b(?:apply|application|book|booking|buy|checkout|demo|download|inquiry|order|purchase|request|sign up|signup|subscribe)\b/.test(text)) {
     score += 4;
   }
-  if (/\b(?:service|consultation|home visit|session|package|shop)\b/.test(text)) {
+  if (/\b(?:service|consultation|home visit|session|package|shop|software|pricing plan|subscription|membership|license|royalty|commission|sponsorship|platform payout|compensated role)\b/.test(text)) {
     score += 2;
   }
-  if (/\b(?:paid|billable|price|fee|reimbursable)\b/.test(text)) {
+  if (/\b(?:paid|billable|price|fee|reimbursable|license|royalty|commission|referral fee|sponsorship|payout|compensated|salary|wage)\b/.test(text)) {
     score += 2;
   }
   if (/\b(?:initiative|program overview|article|blog|news)\b/.test(text)) {
@@ -3777,7 +4535,25 @@ function inboundAssetEvidenceSupportsPaidConversion(
       )) {
     return false;
   }
-  if (/\b(?:complimentary|free|no fee|without charge|zero cost)\b/.test(text)) {
+  if (/\b(?:unpaid|volunteer|no compensation|no commission|no referral fee|no sponsorship fee)\b/.test(
+    text
+  )) {
+    return false;
+  }
+  const namesFreeOption =
+    /\b(?:complimentary|free|no fee|without charge|zero cost)\b/.test(
+      text
+    );
+  const namesPaidAlternative =
+    /\b(?:paid (?:plan|tier|subscription|option|version)|pricing|price|starts at|subscription fee|purchase|checkout)\b/.test(
+      text
+    ) ||
+    /\$\s*\d/.test(`${evidence.label || ''} ${evidence.summary || ''}`);
+  if (namesFreeOption && !namesPaidAlternative) {
+    return false;
+  }
+  if (/\broyalty[ -]free\b/.test(text) &&
+      !namesPaidAlternative) {
     return false;
   }
   if (/\b(?:insurance (?:is )?not accepted|health ?care (?:is )?not accepted|no health ?care accepted|not covered|no coverage|without coverage|not reimburs(?:able|ed)|no reimbursement|claim denied)\b/.test(
@@ -3786,19 +4562,19 @@ function inboundAssetEvidenceSupportsPaidConversion(
     return false;
   }
   const insurancePaidContext =
-    /\b(?:covered by insurance|insurance[- ]covered|insurance (?:is )?accepted|accepts insurance|health ?care accepted|bill(?:s|ing)? insurance|insurance claim|reimburs(?:able|ed|ement)|claim payment)\b/.test(
+    /\b(?:covered by insurance|insurance[- ]covered|insurance (?:is )?accepted|accepts insurance|health ?care (?:is )?accepted|bill(?:s|ing)? insurance|insurance claim|reimburs(?:able|ed|ement)|claim payment)\b/.test(
       text
     );
   const namesOffer =
-    /\b(?:audit|class|consultation|contract|diagnostic|engagement|home visit|package|pilot|product|service|session|subscription|workshop)\b/.test(
+    /\b(?:app|audit|class|consultation|contract|course|demo|diagnostic|digital download|engagement|home visit|license|membership|package|pilot|pricing plan|product|professional role|service|session|software|sponsorship|subscription|workshop)\b/.test(
       text
     );
   const namesPositiveConversion =
-    /\b(?:appointment|book|booking|book now|buy|checkout|contact|order|pay|payment|purchase|request|schedule|sign up|subscribe)\b/.test(
+    /\b(?:apply|application|appointment|book|booking|book now|buy|checkout|contact|demo|download|inquiry|license|order|pay|payment|purchase|request|schedule|sign|sign up|signup|sponsorship inquiry|subscribe)\b/.test(
       text
     );
   const namesPaidMechanism = insurancePaidContext ||
-    /\b(?:billable|contract|cost|deposit|fee|invoice|order|paid|pay|payment|price|purchase|retainer|sale|subscription)\b/.test(
+    /\b(?:billable|commission|compensated|contract|cost|deposit|fee|invoice|license|order|paid|pay|payment|platform payout|price|purchase|referral fee|retainer|royalty|salary|sale|sponsorship|subscription|wage)\b/.test(
       text
     ) ||
     /\$\s*\d/.test(
@@ -4365,7 +5141,11 @@ function verificationTimingClaimMayBeQuestioned(value) {
   ]).has(comparable(value));
 }
 
-function validateRevenuePath(tuple) {
+function validateRevenuePath(
+  tuple,
+  evidenceByID = new Map(),
+  referenceTime = new Date()
+) {
   const revenueSeed = asObject(tuple?.revenuePaths);
   const revenuePath = asObject(revenueSeed.revenuePath);
   const reasons = new Set();
@@ -4377,7 +5157,12 @@ function validateRevenuePath(tuple) {
       revenuePath: {}
     };
   }
-  if (revenuePath.contractVersion !== REVENUE_PATH_CONTRACT_VERSION) {
+  const isV2 =
+    revenuePath.contractVersion === REVENUE_PATH_CONTRACT_VERSION;
+  const isLegacyV1 =
+    revenuePath.contractVersion ===
+      LEGACY_REVENUE_PATH_CONTRACT_VERSION;
+  if (!isV2 && !isLegacyV1) {
     reasons.add('invalid_revenue_contract');
   }
   if (!REVENUE_MECHANISMS.has(revenuePath.revenueMechanism)) {
@@ -4457,16 +5242,213 @@ function validateRevenuePath(tuple) {
       (!overlaps(tuple?.actions) && !overlaps(tuple?.proofPoints))) {
     reasons.add('revenue_evidence_mismatch');
   }
+  if (isV2) {
+    for (const reason of revenuePathGroundingReasons(
+      tuple,
+      revenuePath,
+      evidenceByID,
+      referenceTime
+    )) {
+      reasons.add(reason);
+    }
+  }
 
+  const {
+    _grounding: _internalGrounding,
+    ...publicRevenuePath
+  } = revenuePath;
   return {
     valid: reasons.size === 0,
     reasons: [...reasons].sort(),
-    revenuePath
+    revenuePath: publicRevenuePath
   };
 }
 
+function revenuePathGroundingReasons(
+  tuple,
+  revenuePath,
+  evidenceByID,
+  referenceTime
+) {
+  const grounding = asObject(revenuePath._grounding);
+  const groups = {
+    buyer: compactStrings(grounding.buyerEvidenceRefs),
+    paid_offer: compactStrings(grounding.paidOfferEvidenceRefs),
+    acquisition: compactStrings(grounding.acquisitionEvidenceRefs),
+    conversion_destination: compactStrings(
+      grounding.conversionDestinationEvidenceRefs
+    ),
+    paid_conversion: compactStrings(
+      grounding.paidConversionEvidenceRefs
+    ),
+    attribution: compactStrings(grounding.attributionEvidenceRefs)
+  };
+  const reasons = new Set();
+  for (const [name, refs] of Object.entries(groups)) {
+    if (refs.length === 0 ||
+        refs.some((ref) =>
+          /^source:/i.test(ref) || !evidenceByID.has(ref)
+        )) {
+      reasons.add(`missing_${name}_evidence`);
+    }
+  }
+  const dimensionRefs = (dimension) => new Set(
+    compactStrings(asObject(dimension).evidenceRefs)
+  );
+  const intersects = (refs, dimension) => {
+    const allowed = dimensionRefs(dimension);
+    return refs.some((ref) => allowed.has(ref));
+  };
+  if (groups.buyer.length > 0 &&
+      !intersects(groups.buyer, tuple?.buyerSegments)) {
+    reasons.add('buyer_evidence_mismatch');
+  }
+  if (groups.paid_offer.length > 0 &&
+      !intersects(groups.paid_offer, tuple?.offers)) {
+    reasons.add('paid_offer_evidence_mismatch');
+  }
+  if (groups.acquisition.length > 0 &&
+      !intersects(groups.acquisition, tuple?.channels)) {
+    reasons.add('acquisition_evidence_mismatch');
+  }
+  if (groups.conversion_destination.length > 0 &&
+      !groups.conversion_destination.some((ref) =>
+        [
+          tuple?.offers,
+          tuple?.channels,
+          tuple?.proofPoints
+        ].some((dimension) =>
+          dimensionRefs(dimension).has(ref)
+        )
+      )) {
+    reasons.add('conversion_destination_evidence_mismatch');
+  }
+  if (groups.paid_conversion.length > 0 &&
+      !groups.paid_conversion.some((ref) =>
+        [
+          tuple?.offers,
+          tuple?.actions,
+          tuple?.revenuePaths
+        ].some((dimension) =>
+          dimensionRefs(dimension).has(ref)
+        )
+      )) {
+    reasons.add('paid_conversion_evidence_mismatch');
+  }
+  if (groups.attribution.length > 0 &&
+      !intersects(groups.attribution, tuple?.revenuePaths)) {
+    reasons.add('attribution_evidence_mismatch');
+  }
+
+  const evidenceText = (refs) => compactStrings(
+    refs.map((ref) => {
+      const evidence = asObject(evidenceByID.get(ref));
+      return compactStrings([
+        evidence.label,
+        evidence.summary,
+        evidence.url
+      ]).join(' ');
+    })
+  ).join(' ');
+  if (groups.buyer.length > 0 &&
+      textOverlap(
+        asObject(tuple?.buyerSegments).label,
+        evidenceText(groups.buyer)
+      ) <= 0) {
+    reasons.add('unsupported_buyer_evidence');
+  }
+  if (groups.paid_offer.length > 0) {
+    const paidOfferEvidence = evidenceText(groups.paid_offer);
+    if (!paidOfferText(paidOfferEvidence) ||
+        !revenueMechanismEvidenceText(
+          revenuePath.revenueMechanism,
+          paidOfferEvidence
+        ) ||
+        textOverlap(
+          asObject(tuple?.offers).label,
+          paidOfferEvidence
+        ) <= 0) {
+      reasons.add('unsupported_paid_offer_evidence');
+    }
+    if (groups.paid_offer.some((ref) =>
+      !currentAffirmativeRevenueEvidence(
+        evidenceByID.get(ref),
+        revenuePath.revenueMechanism,
+        referenceTime,
+        'paid_offer'
+      )
+    )) {
+      reasons.add('noncurrent_or_negative_paid_offer_evidence');
+    }
+  }
+  if (groups.acquisition.length > 0 &&
+      !acquisitionEvidenceSupportsMode(
+        revenuePath.acquisitionMode,
+        evidenceText(groups.acquisition)
+      )) {
+    reasons.add('unsupported_acquisition_evidence');
+  }
+  const destination = firstText(
+    grounding.conversionDestination
+  );
+  const destinationEvidence =
+    evidenceText(groups.conversion_destination);
+  if (!destination ||
+      comparable(destination) === comparable(
+        asObject(tuple?.channels).label
+      ) ||
+      !conversionDestinationText(destination) ||
+      (
+        groups.conversion_destination.length > 0 &&
+        (
+          !conversionDestinationEvidenceText(destinationEvidence) ||
+          textOverlap(destination, destinationEvidence) <= 0 ||
+          !paidConversionEvidenceText(
+            destinationEvidence,
+            revenuePath.revenueMechanism
+          ) ||
+          groups.conversion_destination.some((ref) =>
+            !currentAffirmativeRevenueEvidence(
+              evidenceByID.get(ref),
+              revenuePath.revenueMechanism,
+              referenceTime,
+              'paid_conversion'
+            )
+          )
+        )
+      )) {
+    reasons.add('invalid_conversion_destination');
+  }
+  if (groups.paid_conversion.length > 0) {
+    if (!paidConversionEvidenceText(
+      evidenceText(groups.paid_conversion),
+      revenuePath.revenueMechanism
+    )) {
+      reasons.add('unsupported_paid_conversion_evidence');
+    }
+    if (groups.paid_conversion.some((ref) =>
+      !currentAffirmativeRevenueEvidence(
+        evidenceByID.get(ref),
+        revenuePath.revenueMechanism,
+        referenceTime,
+        'paid_conversion'
+      )
+    )) {
+      reasons.add('noncurrent_or_negative_paid_conversion_evidence');
+    }
+  }
+  if (groups.attribution.length > 0 &&
+      !attributionSignalText(
+        evidenceText(groups.attribution),
+        revenuePath.attributionMethod
+      )) {
+    reasons.add('unsupported_attribution_evidence');
+  }
+  return [...reasons];
+}
+
 function paidOfferText(value) {
-  return /\b(paid|billable|reimburs(?:able|ed|ement)|fee|priced?|purchase|sale|contract|retainer|subscription|deposit|invoice|paid pilot)\b/i.test(
+  return /\b(paid|billable|reimburs(?:able|ed|ement)|fee|priced?|purchase|sale|contract|retainer|subscription|deposit|invoice|paid pilot|licen[cs]e|royalt(?:y|ies)|commission|referral fee|sponsorship|platform payout|compensated|salary|wage|insurance (?:is )?accepted|accepts insurance|in[- ]network provider|health ?care (?:is )?accepted)\b/i.test(
     firstText(value)
   );
 }
@@ -4474,17 +5456,17 @@ function paidOfferText(value) {
 function incrementalIncomeText(value) {
   const text = firstText(value);
   return /\b(new|net new|additional|incremental|increase[ds]?|added|first)\b/i.test(text) &&
-    /\b(paid|payment|revenue|income|gross|sale|contract|booking|order|reimburs(?:ement|ed)|retainer|subscription)\b/i.test(text);
+    /\b(paid|payment|revenue|income|gross|sale|contract|booking|order|reimburs(?:ement|ed)|retainer|subscription|licen[cs]e|royalt(?:y|ies)|commission|referral fee|sponsorship|payout|compensation|salary|wage)\b/i.test(text);
 }
 
 function revenueAdvancingAction(value) {
   const text = firstText(value);
   const advancesAcquisition =
-    /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|referr(?:al|ed)|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ing|ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot)\b/i.test(
+    /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|referr(?:al|ed)|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ing|ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot|licen[cs](?:e|ing)|royalt(?:y|ies)|commission|sponsor(?:ship)?|payout|compensated|salary|wage|hire|role)\b/i.test(
       text
     );
   const namesPaidCommitment =
-    /\b(paid|payment|purchase|sale|contract|agreement|deposit|invoice|order|checkout|subscription|retainer|reimburs(?:able|ed|ement)|paid pilot)\b/i.test(
+    /\b(paid|payment|purchase|sale|contract|agreement|deposit|invoice|order|checkout|subscription|retainer|reimburs(?:able|ed|ement)|paid pilot|licen[cs]e|royalt(?:y|ies)|commission|referral fee|sponsorship|platform payout|compensated role|salary|wage)\b/i.test(
       text
     );
   const namesPermissionedDemand =
@@ -4506,7 +5488,7 @@ function operationOnlyAction(value) {
     );
   if (!namesOperations) return false;
   const namesPaidCommitment =
-    /\b(paid (?:booking|order|pilot|consultation|engagement)|payment|purchase|sale|contract|agreement|deposit|invoice|order|checkout|subscription|retainer|reimburs(?:able|ed|ement))\b/i.test(
+    /\b(paid (?:booking|order|pilot|consultation|engagement)|payment|purchase|sale|contract|agreement|deposit|invoice|order|checkout|subscription|retainer|reimburs(?:able|ed|ement)|licen[cs]e|royalt(?:y|ies)|commission|referral fee|sponsorship|platform payout|compensated role|salary|wage)\b/i.test(
       text
     );
   const namesBoundedAcquisitionStep =
@@ -4520,9 +5502,199 @@ function operationOnlyAction(value) {
 }
 
 function observableRevenueText(value) {
-  return /\b(paid (?:booking|claim|invoice|order|pilot)|payment(?: receipt)?|signed (?:contract|agreement)|contract signed|deposit received|invoice (?:issued|accepted|paid)|checkout|purchase|order|sale|subscription|retainer|revenue recorded|income recorded|reimbursement (?:received|paid)|claim paid)\b/i.test(
+  return /\b(paid (?:booking|claim|invoice|order|pilot)|payment(?: receipt)?|signed (?:contract|agreement)|contract signed|deposit received|invoice (?:issued|accepted|paid)|checkout|purchase|order|sale|subscription|retainer|revenue recorded|income recorded|reimbursement (?:received|paid)|claim paid|licen[cs]e (?:signed|payment received)|royalty (?:statement|payment)|commission (?:recorded|paid)|referral fee (?:recorded|paid)|sponsorship (?:contract signed|payment received)|platform payout recorded|compensation (?:offer accepted|payment recorded)|salary payment|wage payment)\b/i.test(
     firstText(value)
   );
+}
+
+function acquisitionEvidenceSupportsMode(mode, value) {
+  const text = comparable(firstText(value));
+  const patterns = {
+    inbound:
+      /\b(?:agent mediated|app store|community|comparison (?:listing|site)|content distribution|directory|earned (?:directory|media)|google business profile|local search|marketplace discovery|map pack|nonbranded search|organic search|owned (?:audience|email|newsletter)|platform discovery|search engine|search listing|social distribution|utm|campaign source)\b/,
+    warm_referral:
+      /\b(?:warm referral|warm introduction|referred by|referral source)\b/,
+    permissioned_outreach:
+      /\b(?:permissioned|opt in|opted in|approved introduction|approved contact)\b/,
+    existing_customer:
+      /\b(?:existing|current|past) (?:customer|client|patient)\b/,
+    partner_channel:
+      /\b(?:partner channel|partner referral|partner introduction|affiliate|association referral)\b/
+  };
+  return patterns[mode]?.test(text) === true;
+}
+
+function conversionDestinationText(value) {
+  return /\b(?:application page|booking (?:flow|form|page)|checkout|contact form|contract (?:form|page|request)|demo (?:form|page|request)|download page|invoice (?:page|payment page)|landing page|licen[cs](?:e|ing) (?:form|page|request)|marketplace listing|offer page|order form|payment form|pricing page|product page|proposal (?:form|page)|service page|sign up page|signup page|sponsorship (?:inquiry|request) (?:form|page)|storefront|subscription page)\b/i.test(
+    firstText(value)
+  );
+}
+
+function conversionDestinationEvidenceText(value) {
+  const text = firstText(value);
+  return conversionDestinationText(text) &&
+    /\b(?:book|booking|buy|checkout|contact|contract|invoice|order|pay|payment|purchase|request|schedule|sign|sign up|subscribe|apply)\b/i.test(
+      text
+    );
+}
+
+function revenueMechanismEvidenceText(mechanism, value) {
+  const text = firstText(value);
+  const patterns = {
+    paid_booking:
+      /\b(?:paid|billable|fee|price|reimburs(?:able|ed|ement)|insurance (?:is )?accepted|health ?care (?:is )?accepted)\b/i,
+    direct_sale:
+      /\b(?:paid|price|purchase|sale|order|checkout)\b/i,
+    signed_contract:
+      /\b(?:paid|fee|contract|invoice|compensation)\b/i,
+    paid_pilot:
+      /\b(?:paid pilot|pilot fee|pilot price)\b/i,
+    subscription_or_retainer:
+      /\b(?:paid|price|subscription|retainer|recurring fee)\b/i,
+    insurance_reimbursement:
+      /\b(?:insurance (?:is )?accepted|accepts insurance|health ?care (?:is )?accepted|in[- ]network provider|claim|reimburs(?:able|ed|ement))\b/i,
+    license_or_royalty:
+      /\b(?:licen[cs]e|royalt(?:y|ies))\b/i,
+    commission_or_referral:
+      /\b(?:commission|referral fee|affiliate)\b/i,
+    sponsorship:
+      /\bsponsor(?:ship)?\b/i,
+    platform_payout:
+      /\b(?:platform|marketplace) payout\b/i,
+    compensated_role:
+      /\b(?:compensated|compensation|salary|wage|payroll|paid role)\b/i
+  };
+  return patterns[mechanism]?.test(text) === true;
+}
+
+function paidConversionEvidenceText(value, mechanism) {
+  const text = firstText(value);
+  if (!paidOfferText(text) ||
+      !revenueMechanismEvidenceText(mechanism, text)) {
+    return false;
+  }
+  const patterns = {
+    paid_booking: /\b(?:book|booking|appointment|schedule|pay|claim)\b/i,
+    direct_sale: /\b(?:buy|checkout|order|purchase|sale|pay)\b/i,
+    signed_contract: /\b(?:contract|agreement|invoice|sign)\b/i,
+    paid_pilot: /\b(?:paid pilot|pilot (?:booking|contract|order))\b/i,
+    subscription_or_retainer:
+      /\b(?:subscribe|subscription|sign up|signup|retainer|payment)\b/i,
+    insurance_reimbursement:
+      /\b(?:book|booking|claim|reimburs(?:able|ed|ement)|pay)\b/i,
+    license_or_royalty:
+      /\b(?:licen[cs](?:e|ing)|royalt(?:y|ies)|sign|payment)\b/i,
+    commission_or_referral:
+      /\b(?:commission|referral fee|affiliate|payment)\b/i,
+    sponsorship:
+      /\b(?:sponsor(?:ship)?|contract|inquiry|payment)\b/i,
+    platform_payout:
+      /\b(?:platform|marketplace) payout\b/i,
+    compensated_role:
+      /\b(?:apply|compensated|compensation|hire|offer|salary|wage|payroll|role)\b/i
+  };
+  return patterns[mechanism]?.test(text) === true;
+}
+
+function currentAffirmativeRevenueEvidence(
+  evidenceValue,
+  mechanism,
+  referenceTime,
+  role
+) {
+  const evidence = asObject(evidenceValue);
+  if (evidence.approvedSourceObservation !== true ||
+      evidence.current === false ||
+      /\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|not accepting|sold out|unavailable|withdrawn)\b/i.test(
+        firstText(evidence.status)
+      )) {
+    return false;
+  }
+  const referenceDate = new Date(referenceTime);
+  const observedDate = new Date(firstText(evidence.observedAt));
+  if (!Number.isFinite(referenceDate.getTime()) ||
+      !Number.isFinite(observedDate.getTime())) {
+    return false;
+  }
+  const age = referenceDate.getTime() - observedDate.getTime();
+  if (age < -MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS ||
+      age > MAX_INBOUND_ASSET_OBSERVATION_AGE_MS) {
+    return false;
+  }
+  const rawEndDate = firstText(evidence.endDate);
+  if (rawEndDate) {
+    const endDate = new Date(rawEndDate);
+    if (!Number.isFinite(endDate.getTime()) ||
+        endDate.getTime() < referenceDate.getTime()) {
+      return false;
+    }
+  }
+  const rawText = compactStrings([
+    evidence.label,
+    evidence.summary,
+    evidence.url
+  ]).join(' ');
+  const text = comparable(rawText);
+  if (!text ||
+      /\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|no longer (?:available|offered|accepting|bookable)|not (?:available|accepting|bookable)|sold out|unavailable|withdrawn)\b/.test(
+        text
+      ) ||
+      /\b(?:no|not|without)\s+(?:a\s+)?(?:paid|billable|bookable|purchasable|reimbursable) (?:offer|service|consultation|session|booking|option|plan|contract|role)\b/.test(
+        text
+      ) ||
+      /\b(?:is|are|was|were)\s+not\s+(?:paid|billable|reimbursable|reimbursed|covered|compensated)\b/.test(
+        text
+      ) ||
+      /\b(?:payment|insurance payment|reimbursement|compensation)\s+(?:is\s+)?not\s+required\b/.test(
+        text
+      )) {
+    return false;
+  }
+  const namesFreeOption =
+    /\b(?:complimentary|free trial|freemium|free|no fee|without charge|zero cost)\b/.test(
+      text
+    );
+  const namesPaidAlternative =
+    /\b(?:paid (?:plan|tier|subscription|option|version|license)|pricing|price|starts at|subscription fee|license fee|purchase|checkout)\b/.test(
+      text
+    ) ||
+    /\$\s*\d/.test(rawText);
+  if (namesFreeOption && !namesPaidAlternative) return false;
+  if (mechanism === 'license_or_royalty' &&
+      /\broyalty[ -]free\b/.test(text) &&
+      !namesPaidAlternative) {
+    return false;
+  }
+  const negativePatterns = {
+    paid_booking:
+      /\b(?:unpaid booking|free (?:booking|consultation|session)|not billable|no booking fee)\b/,
+    direct_sale:
+      /\b(?:not for sale|no purchase|free product only)\b/,
+    signed_contract:
+      /\b(?:unpaid contract|no contract fee|no compensation)\b/,
+    paid_pilot:
+      /\b(?:unpaid pilot|free pilot|no pilot fee)\b/,
+    subscription_or_retainer:
+      /\b(?:no paid plan|no subscription fee|free plan only|free tier only)\b/,
+    insurance_reimbursement:
+      /\b(?:insurance (?:is )?not accepted|health ?care (?:is )?not accepted|no health ?care accepted|not covered|no coverage|without coverage|not reimburs(?:able|ed)|no reimbursement|claim denied)\b/,
+    license_or_royalty:
+      /\b(?:no licen[cs]e fee|free licen[cs]e only|no royalty payment)\b/,
+    commission_or_referral:
+      /\b(?:no commission|no referral fee|unpaid affiliate)\b/,
+    sponsorship:
+      /\b(?:no sponsorship fee|unpaid sponsorship|free sponsorship)\b/,
+    platform_payout:
+      /\b(?:no (?:platform|marketplace )?payout|not monetized)\b/,
+    compensated_role:
+      /\b(?:unpaid|volunteer|no compensation|no salary|no wage)\b/
+  };
+  if (negativePatterns[mechanism]?.test(text)) return false;
+  if (!revenueMechanismEvidenceText(mechanism, rawText)) return false;
+  if (role === 'paid_conversion') {
+    return paidConversionEvidenceText(rawText, mechanism);
+  }
+  return paidOfferText(rawText);
 }
 
 function prohibitedAcquisitionText(value) {
@@ -4548,7 +5720,7 @@ function acquisitionModeMatchesText(mode, value) {
 function inboundDiscoveryDemandPathText(value) {
   const text = comparable(firstText(value));
   const namesDiscoveryOrigin =
-    /\b(?:agent mediated|community|content distribution|directory|earned (?:directory|media)|google business profile|local search|marketplace|map pack|nonbranded search|organic search|owned (?:audience|email|newsletter)|search engine|social distribution)\b/.test(
+    /\b(?:agent mediated|app store|community|comparison (?:listing|site)|content distribution|directory|earned (?:directory|media)|google business profile|local search|marketplace discovery|map pack|nonbranded search|organic search|owned (?:audience|email|newsletter)|platform discovery|search engine|search listing|social distribution)\b/.test(
       text
     );
   const namesDiscoveryMovement =
@@ -4556,7 +5728,7 @@ function inboundDiscoveryDemandPathText(value) {
       text
     );
   const namesDistinctDestination =
-    /\b(?:booking (?:flow|form|page)|checkout|contact form|landing page|offer page|order form|product page|service page|website)\b/.test(
+    /\b(?:application page|booking (?:flow|form|page)|checkout|contact form|contract (?:form|page)|demo (?:form|page|request)|download page|landing page|licen[cs](?:e|ing) (?:form|page|request)|marketplace listing|offer page|order form|pricing page|product page|proposal (?:form|page)|service page|sign up page|signup page|sponsorship (?:inquiry|request) (?:form|page)|storefront|subscription page|website)\b/.test(
       text
     );
   return /\binbound\b/.test(text) &&
@@ -4577,7 +5749,15 @@ function attributionSignalText(value, method) {
     checkout_or_order: /\b(checkout|order|purchase)\b/i,
     claim_record: /\b(claim|reimbursement)\b/i,
     crm_source: /\b(crm|source field|campaign field)\b/i,
-    referral_code: /\b(referral code|code field)\b/i
+    referral_code: /\b(referral code|code field)\b/i,
+    license_or_royalty_record:
+      /\b(licen[cs]e|royalty) (?:record|field|statement|contract)\b/i,
+    affiliate_or_commission_record:
+      /\b(affiliate|commission|referral fee) (?:record|field|statement|code)\b/i,
+    platform_or_marketplace_record:
+      /\b(platform|marketplace) (?:record|field|statement|payout)\b/i,
+    employment_compensation_record:
+      /\b(employment|compensation|payroll|salary|wage) (?:record|field|statement|offer)\b/i
   };
   return patterns[method]?.test(text) === true;
 }
@@ -4602,6 +5782,12 @@ function revenueActionCategories(value) {
     payment: /\b(paid|pay(?:ment|ing)?|deposit|invoice|checkout|purchase|order|sale)\b/i,
     contract: /\b(contract|agreement|sign(?:ed)?|retainer|subscription)\b/i,
     reimbursement: /\b(claim|reimburs(?:able|ed|ement))\b/i
+    ,
+    license: /\b(licen[cs]e|royalt(?:y|ies))\b/i,
+    commission: /\b(commission|referral fee|affiliate)\b/i,
+    sponsorship: /\bsponsor(?:ship)?\b/i,
+    payout: /\b(platform|marketplace) payout\b/i,
+    compensation: /\b(compensated role|employment|salary|wage|payroll|hire)\b/i
   };
   return Object.entries(patterns)
     .filter(([, pattern]) => pattern.test(text))
@@ -4737,11 +5923,103 @@ function strategyProvenance(
     ]).join(' '), 600),
     timingVerificationRepaired:
       timingSeed.timingVerificationRepaired === true,
-    revenueContractVersion: REVENUE_PATH_CONTRACT_VERSION
+    revenueContractVersion: firstText(
+      asObject(tuple?.revenuePaths?.revenuePath).contractVersion,
+      REVENUE_PATH_CONTRACT_VERSION
+    )
   };
 }
 
 function strategyMotionSignature(tuple) {
+  if (firstText(
+    asObject(tuple?.revenuePaths?.revenuePath).contractVersion
+  ) === REVENUE_PATH_CONTRACT_VERSION) {
+    return acquisitionFamilySignature(tuple);
+  }
+  return legacyStrategyMotionSignature(tuple);
+}
+
+function acquisitionFamilySignature(tuple) {
+  const dimensionNames = {
+    offer: 'offers',
+    buyerSegment: 'buyerSegments',
+    channel: 'channels',
+    action: 'actions',
+    timingTrigger: 'timingTriggers',
+    proofPoint: 'proofPoints',
+    followUp: 'followUps',
+    revenuePath: 'revenuePaths'
+  };
+  const pathMode = contractEnum(firstText(
+    asObject(tuple?.revenuePaths?.revenuePath).acquisitionMode
+  ));
+  const dimensions = Object.fromEntries(
+    Object.entries(dimensionNames).map(([publicName, tupleName]) => [
+      publicName,
+      publicName === 'revenuePath'
+        ? pathMode ? [pathMode] : []
+        : acquisitionModesFromText(
+            asObject(tuple[tupleName]).label
+          )
+    ])
+  );
+  const conflictDimensions = Object.entries(dimensionNames)
+    .filter(([publicName, tupleName]) => {
+      const labelModes = dimensions[publicName];
+      const familyModes = compactStrings(
+        asObject(tuple[tupleName]).acquisitionModes
+      );
+      const familyMismatch = familyModes.length !== 1 ||
+        familyModes[0] !== pathMode;
+      const labelMismatch = labelModes.length > 1 ||
+        (labelModes.length === 1 && labelModes[0] !== pathMode);
+      const requiresExplicitMode =
+        publicName === 'channel' || publicName === 'action';
+      return familyMismatch ||
+        labelMismatch ||
+        (requiresExplicitMode && labelModes.length !== 1);
+    })
+    .map(([publicName]) => publicName);
+  const coherent = ACQUISITION_MODES.has(pathMode) &&
+    conflictDimensions.length === 0;
+  return {
+    coherent,
+    motionSignatures: coherent
+      ? [pathMode]
+      : compactStrings([
+          pathMode,
+          ...Object.values(dimensions).flat()
+        ]).sort(),
+    dimensions,
+    conflictDimensions
+  };
+}
+
+function acquisitionModesFromText(value) {
+  const text = comparable(firstText(value));
+  if (!text) return [];
+  const modes = [];
+  if (/\binbound\b/.test(text)) modes.push('inbound');
+  if (/\bwarm (?:referral|introduction)\b/.test(text)) {
+    modes.push('warm_referral');
+  }
+  if (/\b(?:permissioned|opt in|review first|approved) (?:outreach|introduction|request|contact|proposal|offer)\b/.test(
+    text
+  )) {
+    modes.push('permissioned_outreach');
+  }
+  if (/\b(?:existing|current|past) (?:customer|client|patient)\b/.test(
+    text
+  )) {
+    modes.push('existing_customer');
+  }
+  if (/\bpartner (?:channel|referral|introduction)\b/.test(text)) {
+    modes.push('partner_channel');
+  }
+  return [...new Set(modes)].sort();
+}
+
+function legacyStrategyMotionSignature(tuple) {
   const dimensionNames = {
     offer: 'offers',
     buyerSegment: 'buyerSegments',
@@ -4787,6 +6065,11 @@ function timingEvidenceConflictsWithStrategyMotion(
   motionSignature,
   evidenceByID
 ) {
+  if (firstText(
+    asObject(tuple?.revenuePaths?.revenuePath).contractVersion
+  ) === REVENUE_PATH_CONTRACT_VERSION) {
+    return false;
+  }
   const primaryMotion = asArray(motionSignature?.motionSignatures)[0];
   if (!primaryMotion) return true;
   const timingSeed = asObject(tuple?.timingTriggers);

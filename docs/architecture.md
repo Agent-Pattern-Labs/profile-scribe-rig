@@ -64,12 +64,16 @@ The `opportunity_tournament` worker path is separate from post composition:
    identity-resolved for the tournament chain; this denotes a resolved
    evidence tuple, not People Data Labs or another provider's verification.
 3. One bounded OpenRouter call, routed with prompt/completion/request price
-   ceilings, returns compact offers, buyer segments, channels, actions, timing
-   triggers, proof points, follow-ups, and semantic score inputs tied to exact
-   evidence references.
-4. Deterministic code expands at most 10,000 combinations, applies permission,
-   grounding, and anti-volume gates, scores every eligible tuple, and performs
-   diversity selection over a bounded top pool.
+   ceilings, returns two `revenue_family_bundle_v2` acquisition-mode families,
+   compact strategy dimensions, semantic score inputs, explicit evidence
+   bindings for buyer/offer/acquisition/destination/conversion/attribution, and
+   one evidence-specific fallback experiment. The fallback is part of the same
+   metered call, not a second generation.
+4. Deterministic code expands at most 10,000 combinations, requires each
+   family's declared acquisition mode to match its
+   `incremental_revenue_v2` path, verifies every grounding binding against the
+   evidence catalog, applies permission and anti-volume gates, scores every
+   eligible tuple, and performs diversity selection over a bounded top pool.
 5. The rig returns at most 20 attributable hypotheses, one singular winner,
    one runner-up, usage/cost accounting, and a mandatory human-review gate whose
    winning hypothesis ID matches rank 1. Completion requires a named candidate
@@ -81,7 +85,12 @@ The `opportunity_tournament` worker path is separate from post composition:
    but unactionable finalists are removed while the remaining score order is
    preserved. Completion also requires at least two finalists so the runner-up
    is distinct. Without either invariant, the one-call research run skips with
-   `needs_more_approved_evidence` and zero external side effects.
+   `needs_more_approved_evidence` and zero external side effects. The returned
+   `revenue_evidence_experiment_v1` keeps the existing control-plane shape but
+   names a known fact or owned asset, one acquisition path distinct from the
+   destination, a paid signal, and numeric time/sample stops in plain language.
+   Empty evidence also fails forward to one bounded review step rather than a
+   bare dead end.
 
 The tournament boundary permits research and recommendation only. It contains
 no People Data Labs integration, contact purchase, outreach execution,

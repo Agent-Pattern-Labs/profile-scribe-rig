@@ -139,24 +139,30 @@ Additional managed job kinds:
   explicitly `approved` source ID may ground the tournament. One bounded,
   provider-price-capped OpenRouter call generates evidence-referenced strategy
   dimensions, semantic score inputs, and those optional exact candidates. The
-  `cheap_tournament_v4` seed contract requires each family to identify an
-  actual buyer, explicitly paid offer, inbound or permissioned acquisition
-  path, paid conversion, observable revenue event, and durable attribution
-  signal. Evidence-grounded inbound paths receive a small preference; warm,
-  partner, existing-customer, and permissioned alternatives remain eligible.
+  The strict `revenue_family_bundle_v2` seed contract organizes each family by
+  one acquisition mode rather than by profession. It requires each family to
+  identify an actual buyer, explicitly paid offer, acquisition mechanism,
+  separate conversion destination, paid conversion, observable revenue event,
+  durable attribution signal, and exact evidence bindings for every part.
+  Evidence-grounded inbound paths receive a small preference; warm, partner,
+  existing-customer, and permissioned alternatives remain eligible.
   Deterministic code then expands and judges at most 10,000 tuples, retains at
   most 20 finalists, and returns one review-required winner plus a runner-up.
   For an inbound strategy only, an approved observation of the owner's public
-  offer, service, booking, checkout, or purchase page may serve as the
+  offer, pricing, signup, demo, application, licensing, sponsorship-inquiry,
+  storefront, product, service, booking, download, marketplace-listing,
+  checkout, or purchase page may serve as the
   execution asset when it is current and recently observed, positively names a
   paid, billable, purchasable, or reimbursable offer plus a conversion action,
   and its exact origin (including port and controlled path) matches the website
   or booking URL declared on the profile. Free, negated, unavailable, expired,
   inactive, or stale assets are rejected. An inbound family must also name an
   incremental discovery/demand origin—such as organic/local search, an owned
-  opted-in audience, earned directory/media discovery, a marketplace or
-  community, social distribution, or agent-mediated discovery—and route it to
-  a separate conversion destination. A booking or service page is a
+  app store, comparison/search listing, opted-in audience, earned
+  directory/media discovery, marketplace or community, platform/social
+  distribution, or agent-mediated discovery—and route it to a separate
+  conversion destination. A pricing, signup, booking, storefront, service, or
+  checkout page is a
   destination, not an acquisition mechanism. The same strategy must remain
   grounded in a buyer, paid conversion, revenue outcome, and attribution path.
   Approval alone does not make an insurer, hospital, directory, partner, or
@@ -167,11 +173,15 @@ Additional managed job kinds:
   Operations-only work, including eligibility, scheduling, workflow, profile,
   content, or research tasks, cannot be the singular opportunity even when it
   is useful supporting context. A completed finalist carries
-  `incremental_revenue_v1`, positive expected incremental gross income, and
-  evidence-linked acquisition, conversion, outcome, and attribution fields.
+  `incremental_revenue_v2`, positive expected incremental gross income, and
+  evidence-linked buyer, offer, acquisition, destination, conversion, outcome,
+  and attribution fields. In addition to bookings, sales, contracts,
+  subscriptions, and reimbursements, the v2 contract represents
+  license/royalty income, commissions/referral fees, sponsorships, platform
+  payouts, and compensated roles with matching durable attribution records.
   Direct receipt metadata includes `hypotheses`, `candidates`, `winner`,
   `runnerUp`, `searchSpace`, `gate`, and `usage` for the ProfileScribe worker.
-  `searchSpace` records `incremental_income_v1`, the revenue-path contract, and
+  `searchSpace` records `incremental_income_v2`, the revenue-path contract, and
   stable deterministic rejection counts/reasons so the control plane can
   validate the gate independently.
   A completed result requires an unbroken objective → tournament → hypothesis
@@ -187,9 +197,13 @@ Additional managed job kinds:
   validation; it does not claim third-party verification. If no winner can be
   defended after the bounded model call, the job returns one
   `revenue_evidence_experiment_v1` instead of a bare dead end. That experiment
-  names the missing evidence, one review-first action, the attributable paid
-  success signal, a numeric stop window, and the relevant-evidence trigger for
-  at most one rerun. ProfileScribe records the experiment outcome, links the
+  uses the same bounded model call to name a known fact or owned asset, one
+  buyer, paid offer, singular acquisition test, separate destination,
+  attributable paid success signal, and numeric time/sample stop in
+  user-readable language. Internal validator or source-approval jargon is not
+  exposed. When model output cannot safely ground that experiment, the rig
+  returns a conservative asset- or fact-specific review step instead of
+  inventing demand. ProfileScribe records the experiment outcome, links the
   single rerun to its origin, preserves the objective, and supplies the outcome
   to the next judging pass. Provider failures instead return one provider-health
   and strict-structured-output recovery with exactly one retry; budget failures
