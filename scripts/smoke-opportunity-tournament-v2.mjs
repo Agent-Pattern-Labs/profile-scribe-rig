@@ -193,6 +193,9 @@ await verifySaaSTimingRepair();
 await verifyNoncurrentWarmReferralRejected();
 await verifyUnsafeGeneratedExperimentRejected();
 await verifyInvalidSeedContractsRejected();
+await verifyLengthFinishedStructuredRepair();
+await verifyThrownLengthStructuredRepair();
+await verifyRepeatedLengthFinishFailsClosed();
 await verifyBettyProductionTraceRegression();
 await verifyStructuredRepairAcrossDomains();
 verifyCatalogRankingBeforeFinalCap();
@@ -392,6 +395,51 @@ function strictV2Response(domain, ref) {
   };
 }
 
+function compactV2Response(domain, ref) {
+  const verbose = strictV2Response(domain, ref);
+  const compactFamily = (family) => {
+    const revenuePath = family.d.revenuePaths[0];
+    return {
+      l: family.l,
+      m: family.m,
+      e: family.e,
+      s: family.s,
+      d: {
+        r: [{
+          l: revenuePath.l,
+          e: revenuePath.e,
+          v: revenuePath.contractVersion,
+          rm: revenuePath.revenueMechanism,
+          io: revenuePath.incrementalIncomeOutcome,
+          a: revenuePath.acquisitionMode,
+          c: revenuePath.conversionAction,
+          o: revenuePath.observableRevenueOutcome,
+          atm: revenuePath.attributionMethod,
+          ats: revenuePath.attributionSignal,
+          g: revenuePath.g,
+          sb: revenuePath.supportingBottleneck,
+          vm: revenuePath.vm
+        }],
+        o: family.d.offers.slice(0, 1),
+        b: family.d.buyerSegments.slice(0, 1),
+        c: family.d.channels.slice(0, 1),
+        a: family.d.actions.slice(0, 1),
+        t: family.d.timingTriggers,
+        p: family.d.proofPoints,
+        f: family.d.followUps.slice(0, 1)
+      }
+    };
+  };
+  return {
+    seedContract: verbose.seedContract,
+    familyA: compactFamily(verbose.familyA),
+    familyB: compactFamily(verbose.familyB),
+    evidenceExperiment: verbose.evidenceExperiment,
+    candidates: verbose.candidates,
+    w: verbose.w
+  };
+}
+
 async function verifyAcquisitionFamilyMismatch() {
   const domain = { ...domains.find((item) => item.name === 'saas') };
   const ref = `observation:obs-${domain.name}`;
@@ -587,7 +635,11 @@ async function verifyInvalidSeedContractsRejected() {
     const result = await runDomainWithResponse(
       domain,
       response,
-      `${label}-seed-contract`
+      `${label}-seed-contract`,
+      {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop'
+      }
     );
     if (result.status !== 'skipped' ||
         result.searchSpace?.seedContract !== 'invalid' ||
@@ -598,7 +650,12 @@ async function verifyInvalidSeedContractsRejected() {
           'structured_strategy_family_repair' ||
         hasBusinessExperimentField(result.nextExperiment) ||
         result.gate?.decision !==
-          'strategy_generation_incomplete') {
+          'strategy_generation_incomplete' ||
+        result.searchSpace?.structuredRepair?.initialIssue !==
+          'unsupported_seed_contract' ||
+        result.llm?.strategyGeneratorJudge?.responseDiagnostics
+          ?.finishReason !== 'stop' ||
+        result.llm?.strategyGeneratorJudge?.error) {
       throw new Error(
         `${label} family-bundle seed contract was silently upgraded: ${JSON.stringify(result)}`
       );
@@ -606,7 +663,228 @@ async function verifyInvalidSeedContractsRejected() {
   }
 }
 
-async function runDomainWithResponse(domain, response, suffix) {
+async function verifyLengthFinishedStructuredRepair() {
+  const domain = { ...domains.find((item) =>
+    item.name === 'healthcare-patient'
+  ) };
+  const ref = 'observation:obs-length-repair';
+  const initial = strictV2Response(domain, ref);
+  initial.familyA.l = 'PRIOR_RESPONSE_CANARY_' + 'x'.repeat(100_000);
+  initial.ignoredPadding = 'PRIOR_RESPONSE_PADDING_' + 'y'.repeat(100_000);
+  const repaired = compactV2Response(domain, ref);
+  const requests = [];
+  const result = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'parseable-length-repair',
+    responses: [initial, repaired],
+    diagnostics: [{
+      finishReason: 'length',
+      nativeFinishReason: 'max_tokens',
+      contentByteCount: 8000
+    }, {
+      finishReason: 'stop',
+      nativeFinishReason: 'stop'
+    }],
+    onRequest: (request) => requests.push(request)
+  });
+  const repairUser = requests[1]?.user || '';
+  const repairInput = JSON.parse(repairUser);
+  const repairSchema = requests[1]?.responseFormat?.json_schema?.schema;
+  if (requests.length !== 2 ||
+      result.status !== 'completed' ||
+      result.searchSpace?.structuredRepair?.initialIssue !==
+        'output_length_truncated' ||
+      result.searchSpace?.structuredRepair?.initialFamilyWrapperCount !== 2 ||
+      result.searchSpace?.structuredRepair?.initialValidStrategyFamilyCount !== 2 ||
+      result.searchSpace?.structuredRepair?.attempted !== true ||
+      result.searchSpace?.structuredRepair?.succeeded !== true ||
+      result.searchSpace?.familyWrapperCount !== 2 ||
+      result.searchSpace?.validStrategyFamilyCount !== 2 ||
+      result.llm?.strategyGeneratorJudge?.status !== 'incomplete' ||
+      result.llm?.strategyGeneratorJudge?.error !==
+        'openrouter_truncated_structured_output' ||
+      result.llm?.strategyFamilyRepair?.status !== 'completed' ||
+      result.usage?.calls !== 2 ||
+      result.usage?.successfulCalls !== 1 ||
+      requests[0]?.maxTokens !== 8000 ||
+      requests[1]?.maxTokens !== 4000 ||
+      repairSchema?.properties?.familyA?.properties?.d?.properties
+        ?.o?.minItems !== 1 ||
+      repairSchema?.properties?.familyA?.properties?.d?.properties
+        ?.o?.maxItems !== 1 ||
+      'previousResponse' in repairInput ||
+      repairUser.includes('PRIOR_RESPONSE_CANARY_') ||
+      repairUser.includes('PRIOR_RESPONSE_PADDING_') ||
+      Buffer.byteLength(repairUser, 'utf8') > 30_000 ||
+      result.winner == null ||
+      result.runnerUp == null) {
+    throw new Error(
+      `parseable length-finished output was not freshly repaired with the compact contract: ${JSON.stringify({ result, requests: requests.map((request) => ({ maxTokens: request.maxTokens, userBytes: Buffer.byteLength(request.user || '', 'utf8'), responseFormat: request.responseFormat })) })}`
+    );
+  }
+}
+
+async function verifyRepeatedLengthFinishFailsClosed() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  const ref = 'observation:obs-repeated-length';
+  const response = compactV2Response(domain, ref);
+  const result = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'repeated-parseable-length',
+    responses: [response, response],
+    diagnostics: [{
+      finishReason: 'length',
+      nativeFinishReason: 'max_tokens'
+    }, {
+      finishReason: 'length',
+      nativeFinishReason: 'max_tokens'
+    }]
+  });
+  if (result.status !== 'skipped' ||
+      result.winner !== null ||
+      result.runnerUp !== null ||
+      result.nextExperiment?.kind !==
+        'strategy_generation_shape_recovery' ||
+      result.nextExperiment?.missingEvidence?.[0] !==
+        'structured_strategy_family_repair' ||
+      result.searchSpace?.structuredRepair?.initialIssue !==
+        'output_length_truncated' ||
+      result.searchSpace?.structuredRepair?.finalIssue !==
+        'output_length_truncated' ||
+      result.searchSpace?.structuredRepair?.failure !==
+        'structured_repair_output_truncated' ||
+      result.searchSpace?.familyWrapperCount !== 2 ||
+      result.searchSpace?.validStrategyFamilyCount !== 2 ||
+      result.gate?.decision !== 'strategy_generation_repair_failed' ||
+      result.llm?.strategyGeneratorJudge?.status !== 'incomplete' ||
+      result.llm?.strategyFamilyRepair?.status !== 'incomplete' ||
+      result.usage?.calls !== 2 ||
+      result.usage?.successfulCalls !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `a second parseable length finish was not returned as a cause-matched terminal shape failure: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyThrownLengthStructuredRepair() {
+  const domain = { ...domains.find((item) => item.name === 'commerce') };
+  const ref = 'observation:obs-thrown-length';
+  const truncation = new Error(
+    'OpenRouter ended structured output at its token limit'
+  );
+  truncation.openRouterFailureCode =
+    'openrouter_truncated_structured_output';
+  truncation.openRouterUsage = usage;
+  truncation.openRouterDiagnostics = {
+    finishReason: 'length',
+    nativeFinishReason: 'max_tokens',
+    contentByteCount: 8000
+  };
+  const result = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'thrown-length-repair',
+    responses: [truncation, compactV2Response(domain, ref)],
+    diagnostics: [undefined, {
+      finishReason: 'stop',
+      nativeFinishReason: 'stop'
+    }]
+  });
+  if (result.status !== 'completed' ||
+      result.searchSpace?.structuredRepair?.initialIssue !==
+        'output_length_truncated' ||
+      result.searchSpace?.structuredRepair?.succeeded !== true ||
+      result.llm?.strategyGeneratorJudge?.status !== 'failed' ||
+      result.llm?.strategyGeneratorJudge?.error !==
+        'openrouter_truncated_structured_output' ||
+      result.llm?.strategyFamilyRepair?.status !== 'completed' ||
+      result.usage?.calls !== 2 ||
+      result.usage?.successfulCalls !== 1 ||
+      result.winner == null) {
+    throw new Error(
+      `a hard-rejected length response did not use the one fresh compact repair: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function runDomainRepairSequence({
+  domain,
+  ref,
+  suffix,
+  responses,
+  diagnostics,
+  onRequest = () => {}
+}) {
+  let calls = 0;
+  return runOpportunityTournament({
+    job: {
+      id: `job-${suffix}`,
+      payload: {
+        tournamentId: `tournament-${suffix}`,
+        researchOnly: true,
+        objective: {
+          outcome: `Generate one new attributed ${domain.outcome}.`,
+          successMetric: domain.outcome
+        },
+        budget: {
+          maxHypotheses: 128,
+          maxFinalists: 8,
+          maxLLMCalls: 2,
+          maxOutputTokens: 8000
+        },
+        evidenceSnapshot: {
+          profile: {
+            identity: {
+              website: `https://${domain.name}.example/`
+            }
+          },
+          sources: [{
+            id: `src-${suffix}`,
+            url: `https://${domain.name}.example/`,
+            status: 'monitoring',
+            trustLevel: 'high'
+          }],
+          sourceEvidence: [{
+            observationId: ref.replace(/^observation:/, ''),
+            sourceId: `src-${suffix}`,
+            kind: 'service-page',
+            title: domain.destination,
+            summary: domain.sourceSummary,
+            url: `https://${domain.name}.example/offer`,
+            observedAt: '2026-07-29T12:00:00Z',
+            confidence: 'high'
+          }]
+        }
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      onRequest(request);
+      const index = calls;
+      calls += 1;
+      if (responses[index] instanceof Error) {
+        throw responses[index];
+      }
+      return {
+        data: responses[index],
+        usage,
+        generationId: `gen-${suffix}-${calls}`,
+        diagnostics: diagnostics[index]
+      };
+    }
+  });
+}
+
+async function runDomainWithResponse(
+  domain,
+  response,
+  suffix,
+  diagnostics
+) {
   const website = `https://${domain.name}.example/`;
   return runOpportunityTournament({
     job: {
@@ -649,7 +927,7 @@ async function runDomainWithResponse(domain, response, suffix) {
     },
     model: 'test/v2',
     now,
-    completeJSON: async () => ({ data: response, usage })
+    completeJSON: async () => ({ data: response, usage, diagnostics })
   });
 }
 

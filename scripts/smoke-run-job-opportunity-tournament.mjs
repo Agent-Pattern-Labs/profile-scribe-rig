@@ -19,6 +19,14 @@ const invalidStructuredContent =
   '{"seedContract":"revenue_family_bundle_v1","familyA":';
 const truncatedStructuredContent =
   '{"seedContract":"revenue_family_bundle_v1","familyA":{"l":"unfinished"';
+const parseableLengthStructuredContent = JSON.stringify({
+  seedContract: 'revenue_family_bundle_v2',
+  familyA: {},
+  familyB: {},
+  evidenceExperiment: {},
+  candidates: [],
+  w: {}
+});
 const choiceErrorContent =
   '{"seedContract":"revenue_family_bundle_v1"}';
 const usage = {
@@ -195,6 +203,23 @@ const server = createServer(async (request, response) => {
         finish_reason: 'length',
         native_finish_reason: 'max_tokens',
         message: { content: truncatedStructuredContent }
+      }],
+      usage
+    }));
+    return;
+  }
+  if (input.objective?.id === 'obj-parseable-length-output') {
+    openRouterResponseContents.set(
+      input.objective.id,
+      parseableLengthStructuredContent
+    );
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      id: 'gen-parseable-length-output',
+      choices: [{
+        finish_reason: 'length',
+        native_finish_reason: 'max_tokens',
+        message: { content: parseableLengthStructuredContent }
       }],
       usage
     }));
@@ -1975,6 +2000,26 @@ try {
     truncatedStructuredJobFile,
     port
   );
+  const parseableLengthJob = structuredClone(candidateFreeJob);
+  parseableLengthJob.id =
+    'job-opportunity-tournament-parseable-length-output-smoke';
+  parseableLengthJob.payload.tournamentId =
+    'opturn-parseable-length-output-smoke';
+  parseableLengthJob.payload.objective.id =
+    'obj-parseable-length-output';
+  const parseableLengthJobFile = join(
+    tmp,
+    'parseable-length-output-job.json'
+  );
+  writeFileSync(
+    parseableLengthJobFile,
+    `${JSON.stringify(parseableLengthJob)}\n`,
+    'utf8'
+  );
+  const parseableLength = await runJob(
+    parseableLengthJobFile,
+    port
+  );
   const envelopeErrorJob = structuredClone(candidateFreeJob);
   envelopeErrorJob.id =
     'job-opportunity-tournament-envelope-error-smoke';
@@ -2725,7 +2770,7 @@ try {
     { env: { OPENROUTER_API_KEY: '' } }
   );
 
-  if (openRouterCalls.length !== 48) {
+  if (openRouterCalls.length !== 49) {
     throw new Error(`expected one OpenRouter call per tournament run, got ${openRouterCalls.length}`);
   }
   if (unexpectedRequests.length !== 0) {
@@ -2782,42 +2827,33 @@ try {
     if (leakedMarker) {
       throw new Error(`non-approved source evidence leaked into generator input (${leakedMarker}): ${serializedEvidence}`);
     }
-    const itemSchema = input.outputRules?.itemSchema || {};
-    const revenuePathSchema = input.outputRules?.revenuePathSchema || {};
+    const outputContract = input.outputContract || {};
     if ('responseSchema' in input ||
-        Object.keys(itemSchema).sort().join(',') !== 'e,l,q' ||
-        !input.outputRules?.familyBundleSchema?.s?.ev ||
-        'id' in itemSchema ||
-        's' in itemSchema ||
-        'u' in itemSchema ||
-        'id' in revenuePathSchema ||
-        'offers' in (input.responseSchema || {}) ||
-        Object.keys(input.outputRules?.familyBundleSchema?.d || {})[0] !==
-          'revenuePaths' ||
-        input.outputRules?.familyBundleSchema?.m == null ||
-        input.outputRules?.revenuePathSchema?.contractVersion !==
-          'incremental_revenue_v2' ||
-        !input.outputRules?.revenuePathSchema?.g?.d?.l ||
-        !input.outputRules?.evidenceExperimentSchema?.u ||
-        !input.outputRules?.hardRules?.some((rule) =>
-          /Every item belongs only to its containing family bundle/i.test(rule)
+        outputContract.seedContract !== 'revenue_family_bundle_v2' ||
+        !/familyA and familyB/i.test(outputContract.familyKeys || '') ||
+        !/r,o,b,c,a,t,p,f/i.test(outputContract.dimensions || '') ||
+        !/\{l,e,v,rm,io,a,c,o,atm,ats,g:/i.test(
+          outputContract.revenuePath || ''
         ) ||
-        !input.outputRules?.hardRules?.some((rule) =>
-          /operations-only/i.test(rule)
+        !/at most 2 evidence IDs per item/i.test(
+          outputContract.compactness || ''
         ) ||
-        !input.outputRules?.hardRules?.some((rule) =>
-          /Every attributionSignal must literally name/i.test(rule)
+        !input.hardRules?.some((rule) =>
+          /Each item cites only IDs in its own family/i.test(rule)
         ) ||
-        !input.outputRules?.hardRules?.some((rule) =>
-          /silently audit every family/i.test(rule)
+        !input.hardRules?.some((rule) =>
+          /Operations, research, scheduling, content, and verification/i.test(rule)
         ) ||
-        !input.outputRules?.hardRules?.some((rule) =>
-          /Family e must contain every evidence ID/i.test(rule)
+        !input.hardRules?.some((rule) =>
+          /r\.ats names its booking\/payment/i.test(rule)
         ) ||
-        !/Do not return local item ids, per-item scores/i.test(
-          input.outputRules?.compactness || ''
+        !input.hardRules?.some((rule) =>
+          /Silently audit the strict JSON once/i.test(rule)
+        ) ||
+        !input.hardRules?.some((rule) =>
+          /Family e contains every ID cited/i.test(rule)
         )) {
-      throw new Error(`generator prompt lost the compact nested family-bundle contract: ${JSON.stringify(input.outputRules)}`);
+      throw new Error(`generator prompt lost the compact nested family-bundle contract: ${JSON.stringify({ outputContract, hardRules: input.hardRules })}`);
     }
   }
   for (const [callIndex, call] of openRouterCalls.entries()) {
@@ -2850,7 +2886,9 @@ try {
         responseSchema.properties?.evidenceExperiment?.required
           ?.includes('u') !== true ||
         responseSchema.properties?.familyA?.properties?.d?.properties
-          ?.revenuePaths?.minItems !== 1 ||
+          ?.r?.minItems !== 1 ||
+        responseSchema.properties?.familyA?.properties?.d?.properties
+          ?.o?.minItems !== 2 ||
         'id' in (responseSchema.properties?.familyA?.properties || {}) ||
         responseSchema.properties?.familyA?.required?.includes('s') !== true ||
         responseSchema.properties?.familyA?.properties?.s?.$ref !==
@@ -2860,7 +2898,7 @@ try {
         'u' in (responseDefinitions.offerItem?.properties || {}) ||
         !responseDefinitions.scores ||
         'id' in (responseDefinitions.revenuePath?.properties || {}) ||
-        responseDefinitions.revenuePath?.properties?.contractVersion
+        responseDefinitions.revenuePath?.properties?.v
           ?.enum?.[0] !== 'incremental_revenue_v2' ||
         responseSchema.properties?.familyA?.properties?.m?.enum
           ?.includes('inbound') !== true ||
@@ -2868,13 +2906,13 @@ try {
           ?.includes('patient_inbound') === true ||
         !responseDefinitions.revenuePath?.properties?.g ||
         responseDefinitions.revenuePath?.required?.includes('g') !== true ||
-        responseDefinitions.revenuePath?.properties?.revenueMechanism
+        responseDefinitions.revenuePath?.properties?.rm
           ?.enum?.includes('license_or_royalty') !== true ||
-        responseDefinitions.revenuePath?.properties?.revenueMechanism
+        responseDefinitions.revenuePath?.properties?.rm
           ?.enum?.includes('compensated_role') !== true ||
-        responseDefinitions.revenuePath?.properties?.attributionMethod
+        responseDefinitions.revenuePath?.properties?.atm
           ?.enum?.includes('platform_or_marketplace_record') !== true ||
-        responseDefinitions.revenuePath?.properties?.acquisitionMode
+        responseDefinitions.revenuePath?.properties?.a
           ?.enum?.includes('inbound') !== true ||
         responseDefinitions.revenuePath?.properties?.vm?.minimum !== 1 ||
         responseDefinitions.offerItem?.properties?.l?.description
@@ -2883,14 +2921,11 @@ try {
         responseDefinitions.actionItem?.properties?.l?.description
           ?.includes('paid booking') !== true ||
         !responseDefinitions.actionItem?.properties?.l?.pattern ||
-        !responseDefinitions.revenuePath?.properties
-          ?.incrementalIncomeOutcome?.pattern ||
-        !responseDefinitions.revenuePath?.properties?.conversionAction
-          ?.pattern ||
-        !responseDefinitions.revenuePath?.properties
-          ?.observableRevenueOutcome?.pattern ||
-        !responseDefinitions.revenuePath?.properties?.attributionSignal
-          ?.pattern ||
+        !responseDefinitions.revenuePath?.properties?.io?.pattern ||
+        !responseDefinitions.revenuePath?.properties?.c?.pattern ||
+        !responseDefinitions.revenuePath?.properties?.o?.pattern ||
+        !responseDefinitions.revenuePath?.properties?.ats?.pattern ||
+        responseDefinitions.compactEvidenceRefs?.maxItems !== 2 ||
         responseDefinitions.evidenceRef?.enum?.length < 1 ||
         responseDefinitions.evidenceRef?.enum?.some((id) =>
           /^source:/i.test(id)
@@ -3311,6 +3346,7 @@ try {
     ['provider failure', providerFailure],
     ['invalid structured response', invalidStructured],
     ['truncated structured response', truncatedStructured],
+    ['parseable length-finished response', parseableLength],
     ['provider error envelope', envelopeError],
     ['provider choice error', choiceError],
     ['reported budget failure', budgetFailure],
@@ -3402,6 +3438,31 @@ try {
       truncatedStructured.metadata?.gate?.sideEffects?.providerWrites !== 0) {
     throw new Error(
       `truncated structured content was not distinguished safely: ${JSON.stringify(truncatedStructured)}`
+    );
+  }
+  const parseableLengthDiagnostics =
+    parseableLength.metadata?.llm?.strategyGeneratorJudge
+      ?.responseDiagnostics || {};
+  const parseableLengthContentHash = createHash('sha256')
+    .update(parseableLengthStructuredContent)
+    .digest('hex');
+  if (parseableLength.status !== 'skipped' ||
+      parseableLength.metadata?.winner !== null ||
+      parseableLength.metadata?.llm?.strategyGeneratorJudge?.error !==
+        'openrouter_truncated_structured_output' ||
+      parseableLength.metadata?.usage?.calls !== 1 ||
+      parseableLength.metadata?.usage?.successfulCalls !== 0 ||
+      parseableLengthDiagnostics.finishReason !== 'length' ||
+      parseableLengthDiagnostics.nativeFinishReason !== 'max_tokens' ||
+      parseableLengthDiagnostics.contentByteCount !==
+        Buffer.byteLength(parseableLengthStructuredContent, 'utf8') ||
+      parseableLengthDiagnostics.contentSha256 !==
+        parseableLengthContentHash ||
+      parseableLength.metadata?.nextExperiment?.kind !==
+        'strategy_generation_provider_recovery' ||
+      parseableLength.metadata?.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `parseable HTTP-200 length output was incorrectly accepted: ${JSON.stringify(parseableLength)}`
     );
   }
   const envelopeDiagnostics =

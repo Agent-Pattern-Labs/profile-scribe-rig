@@ -30,15 +30,20 @@ const RESEARCH_APPROVED_SOURCE_STATUSES = new Set([
 ]);
 
 const DIMENSIONS = [
-  ['offers', ['offers', 'offerSeeds']],
-  ['buyerSegments', ['buyerSegments', 'audiences', 'buyers']],
-  ['channels', ['channels']],
-  ['actions', ['actions']],
-  ['timingTriggers', ['timingTriggers', 'triggers']],
-  ['proofPoints', ['proofPoints', 'proofAngles']],
-  ['followUps', ['followUps', 'followUpPaths']],
-  ['revenuePaths', ['revenuePaths', 'revenuePath']]
+  ['offers', ['offers', 'offerSeeds', 'o']],
+  ['buyerSegments', ['buyerSegments', 'audiences', 'buyers', 'b']],
+  ['channels', ['channels', 'c']],
+  ['actions', ['actions', 'a']],
+  ['timingTriggers', ['timingTriggers', 'triggers', 't']],
+  ['proofPoints', ['proofPoints', 'proofAngles', 'p']],
+  ['followUps', ['followUps', 'followUpPaths', 'f']],
+  ['revenuePaths', ['revenuePaths', 'revenuePath', 'r']]
 ];
+
+const INITIAL_FAMILY_VARIANT_COUNT = 2;
+const REPAIR_FAMILY_VARIANT_COUNT = 1;
+const MAX_PROMPT_EVIDENCE_ITEMS = MAX_EVIDENCE_ITEMS;
+const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 
 const DEFAULT_JUDGE_WEIGHTS = {
   objectiveFit: 0.22,
@@ -328,23 +333,30 @@ export async function runOpportunityTournament({
     };
   }
 
+  const promptEvidenceCatalog = compactPromptEvidenceCatalog(
+    evidenceCatalog
+  );
   const prompt = seedAndJudgePrompt({
     objective,
     constraints,
-    evidenceCatalog,
+    evidenceCatalog: promptEvidenceCatalog,
     priorOutcomes: normalizePriorOutcomes(payload.priorOutcomes),
     maxSeedsPerDimension: Math.min(4, MAX_SEEDS_PER_DIMENSION)
   });
   const promptHash = stableHash({ system: prompt.system, user: prompt.user });
 
   let completion;
+  let initialTruncationError = null;
   try {
     completion = await completeJSON({
       model,
       system: prompt.system,
       user: prompt.user,
       maxTokens: budget.maxOutputTokens,
-      responseFormat: tournamentStructuredResponseFormat(evidenceCatalog),
+      responseFormat: tournamentStructuredResponseFormat(
+        promptEvidenceCatalog,
+        INITIAL_FAMILY_VARIANT_COUNT
+      ),
       plugins: [{ id: 'response-healing' }],
       temperature: 0,
       provider: {
@@ -354,40 +366,61 @@ export async function runOpportunityTournament({
       }
     });
   } catch (error) {
-    const missingStrategyEvidence =
-      strategyGenerationFailureMissingEvidence(error);
-    const providerMetadata = openRouterMetadata({
-      model,
-      status: 'failed',
-      usage: error?.openRouterUsage,
-      diagnostics: error?.openRouterDiagnostics,
-      promptHash,
-      error: openRouterFailureCode(error)
-    });
-    return {
-      status: 'skipped',
-      summary: 'The strategy generator did not return a usable tournament seed set.',
-      ...base,
-      nextExperiment: nextExperimentFor([
-        missingStrategyEvidence
-      ]),
-      llm: { strategyGeneratorJudge: providerMetadata },
-      usage: aggregateUsage([providerMetadata], budget),
-      gate: researchOnlyGate(
-        'block',
-        'The bounded strategy-generation call failed; no deterministic recommendation was substituted.'
-      )
-    };
+    if (openRouterFailureCode(error) ===
+        'openrouter_truncated_structured_output' &&
+        budget.maxLLMCalls >= 2) {
+      initialTruncationError = error;
+    } else {
+      const missingStrategyEvidence =
+        strategyGenerationFailureMissingEvidence(error);
+      const providerMetadata = openRouterMetadata({
+        model,
+        status: 'failed',
+        usage: error?.openRouterUsage,
+        diagnostics: error?.openRouterDiagnostics,
+        promptHash,
+        error: openRouterFailureCode(error)
+      });
+      return {
+        status: 'skipped',
+        summary: 'The strategy generator did not return a usable tournament seed set.',
+        ...base,
+        nextExperiment: nextExperimentFor([
+          missingStrategyEvidence
+        ]),
+        llm: { strategyGeneratorJudge: providerMetadata },
+        usage: aggregateUsage([providerMetadata], budget),
+        gate: researchOnlyGate(
+          'block',
+          'The bounded strategy-generation call failed; no deterministic recommendation was substituted.'
+        )
+      };
+    }
   }
 
-  const providerMetadata = openRouterMetadata({
-    model,
-    status: 'completed',
-    usage: completion?.usage,
-    generationId: completion?.generationId,
-    diagnostics: completion?.diagnostics,
-    promptHash
-  });
+  const initialCompletionTruncated =
+    Boolean(initialTruncationError) ||
+    openRouterDiagnosticsIndicateTruncation(completion?.diagnostics);
+  const providerMetadata = initialTruncationError
+    ? openRouterMetadata({
+        model,
+        status: 'failed',
+        usage: initialTruncationError?.openRouterUsage,
+        diagnostics: initialTruncationError?.openRouterDiagnostics,
+        promptHash,
+        error: 'openrouter_truncated_structured_output'
+      })
+    : openRouterMetadata({
+        model,
+        status: initialCompletionTruncated ? 'incomplete' : 'completed',
+        usage: completion?.usage,
+        generationId: completion?.generationId,
+        diagnostics: completion?.diagnostics,
+        promptHash,
+        error: initialCompletionTruncated
+          ? 'openrouter_truncated_structured_output'
+          : undefined
+      });
   const providerMetadataEntries = [providerMetadata];
   const llmTrace = {
     strategyGeneratorJudge: providerMetadata
@@ -420,12 +453,23 @@ export async function runOpportunityTournament({
     evidenceCatalog,
     timestamp
   );
-  const initialShapeIssue = structuredSeedSetShapeIssue(seedSet);
+  const initialShapeIssue = initialCompletionTruncated
+    ? structuredOutputLengthIssue(
+        initialTruncationError?.openRouterDiagnostics ??
+          completion?.diagnostics
+      )
+    : structuredSeedSetShapeIssue(seedSet);
+  let terminalStructuredIssue = initialShapeIssue;
   const structuredRepair = {
     authorized: budget.maxLLMCalls >= 2,
     attempted: false,
     succeeded: false,
-    initialIssue: initialShapeIssue?.code || ''
+    initialIssue: initialShapeIssue?.code || '',
+    initialSeedContract: firstText(seedSet.seedContract),
+    initialFamilyWrapperCount:
+      nonNegativeInteger(seedSet.familyWrapperCount) || 0,
+    initialValidStrategyFamilyCount:
+      nonNegativeInteger(seedSet.validStrategyFamilyCount) || 0
   };
   if (initialShapeIssue && structuredRepair.authorized) {
     const remainingSpendMicros = remainingRepairSpendMicros(
@@ -436,7 +480,6 @@ export async function runOpportunityTournament({
       structuredRepair.attempted = true;
       const repairPrompt = seedAndJudgeRepairPrompt({
         originalPrompt: prompt,
-        previousResponse: completion?.data,
         issue: initialShapeIssue
       });
       const repairPromptHash = stableHash({
@@ -449,9 +492,15 @@ export async function runOpportunityTournament({
           model,
           system: repairPrompt.system,
           user: repairPrompt.user,
-          maxTokens: budget.maxOutputTokens,
+          maxTokens: Math.min(
+            budget.maxOutputTokens,
+            MAX_REPAIR_OUTPUT_TOKENS
+          ),
           responseFormat:
-            tournamentStructuredResponseFormat(evidenceCatalog),
+            tournamentStructuredResponseFormat(
+              promptEvidenceCatalog,
+              REPAIR_FAMILY_VARIANT_COUNT
+            ),
           plugins: [{ id: 'response-healing' }],
           temperature: 0,
           provider: {
@@ -467,27 +516,35 @@ export async function runOpportunityTournament({
           }
         });
       } catch (error) {
+        const repairFailureCode = openRouterFailureCode(error);
+        const repairWasTruncated = repairFailureCode ===
+          'openrouter_truncated_structured_output';
         const repairMetadata = openRouterMetadata({
           model,
           status: 'failed',
           usage: error?.openRouterUsage,
           diagnostics: error?.openRouterDiagnostics,
           promptHash: repairPromptHash,
-          error: openRouterFailureCode(error)
+          error: repairFailureCode
         });
         providerMetadataEntries.push(repairMetadata);
         llmTrace.strategyFamilyRepair = repairMetadata;
         usage = aggregateUsage(providerMetadataEntries, budget);
-        structuredRepair.finalIssue = initialShapeIssue.code;
-        structuredRepair.failure =
-          'structured_repair_provider_failure';
+        structuredRepair.finalIssue = repairWasTruncated
+          ? 'output_length_truncated'
+          : initialShapeIssue.code;
+        structuredRepair.failure = repairWasTruncated
+          ? 'structured_repair_output_truncated'
+          : 'structured_repair_provider_failure';
         return {
           status: 'skipped',
           summary:
             'The bounded strategy-family repair call failed, so the tournament did not substitute a market-evidence explanation.',
           ...base,
           nextExperiment: nextExperimentFor([
-            'usable_strategy_generation'
+            repairWasTruncated
+              ? 'structured_strategy_family_repair'
+              : 'usable_strategy_generation'
           ]),
           llm: llmTrace,
           usage,
@@ -503,13 +560,22 @@ export async function runOpportunityTournament({
           )
         };
       }
+      const repairCompletionTruncated =
+        openRouterDiagnosticsIndicateTruncation(
+          repairCompletion?.diagnostics
+        );
       const repairMetadata = openRouterMetadata({
         model,
-        status: 'completed',
+        status: repairCompletionTruncated
+          ? 'incomplete'
+          : 'completed',
         usage: repairCompletion?.usage,
         generationId: repairCompletion?.generationId,
         diagnostics: repairCompletion?.diagnostics,
-        promptHash: repairPromptHash
+        promptHash: repairPromptHash,
+        error: repairCompletionTruncated
+          ? 'openrouter_truncated_structured_output'
+          : undefined
       });
       providerMetadataEntries.push(repairMetadata);
       llmTrace.strategyFamilyRepair = repairMetadata;
@@ -552,13 +618,45 @@ export async function runOpportunityTournament({
           evidenceCatalog,
           timestamp
         );
-      const repairedIssue = structuredSeedSetShapeIssue(seedSet);
+      const repairedIssue = repairCompletionTruncated
+        ? structuredOutputLengthIssue(repairCompletion?.diagnostics)
+        : structuredSeedSetShapeIssue(seedSet);
       structuredRepair.succeeded = !repairedIssue;
       structuredRepair.finalIssue = repairedIssue?.code || '';
+      terminalStructuredIssue = repairedIssue;
     } else {
       structuredRepair.failure = 'repair_budget_unavailable';
       structuredRepair.finalIssue = initialShapeIssue.code;
     }
+  }
+  if (terminalStructuredIssue?.code === 'output_length_truncated') {
+    structuredRepair.failure = structuredRepair.failure ||
+      (structuredRepair.attempted
+        ? 'structured_repair_output_truncated'
+        : 'structured_output_truncated');
+    return {
+      status: 'skipped',
+      summary:
+        'The bounded AI response ended at its output limit, so no healed or partial comparison was treated as complete.',
+      ...base,
+      nextExperiment: nextExperimentFor([
+        'structured_strategy_family_repair'
+      ]),
+      llm: llmTrace,
+      usage,
+      searchSpace: {
+        ...base.searchSpace,
+        ...seedSetShapeSearchTrace(seedSet),
+        modelCalls: usage.calls,
+        structuredRepair
+      },
+      gate: researchOnlyGate(
+        structuredRepair.attempted
+          ? 'strategy_generation_repair_failed'
+          : 'strategy_generation_incomplete',
+        'The AI output hit its length limit. New market evidence is not required; another automatic model call is not authorized.'
+      )
+    };
   }
   if (seedSet.seedContract === 'invalid') {
     return {
@@ -576,6 +674,8 @@ export async function runOpportunityTournament({
         seedContract: seedSet.seedContract,
         declaredStrategyFamilyCount:
           seedSet.declaredStrategyFamilyCount,
+        familyWrapperCount: seedSet.familyWrapperCount,
+        validStrategyFamilyCount: seedSet.validStrategyFamilyCount,
         strategyFamilyCount: seedSet.strategyFamilies.length,
         modelCalls: usage.calls,
         structuredRepair
@@ -610,6 +710,8 @@ export async function runOpportunityTournament({
         dimensionCounts: dimensionCounts(seedSet),
         seedContract: seedSet.seedContract,
         declaredStrategyFamilyCount: seedSet.declaredStrategyFamilyCount,
+        familyWrapperCount: seedSet.familyWrapperCount,
+        validStrategyFamilyCount: seedSet.validStrategyFamilyCount,
         strategyFamilyCount: seedSet.strategyFamilies.length,
         completeStrategyFamilyCount: seedSet.completeStrategyFamilyCount,
         incompleteStrategyFamilyCount: seedSet.incompleteStrategyFamilyCount,
@@ -652,6 +754,8 @@ export async function runOpportunityTournament({
         dimensionCounts: dimensionCounts(seedSet),
         seedContract: seedSet.seedContract,
         declaredStrategyFamilyCount: seedSet.declaredStrategyFamilyCount,
+        familyWrapperCount: seedSet.familyWrapperCount,
+        validStrategyFamilyCount: seedSet.validStrategyFamilyCount,
         strategyFamilyCount: seedSet.strategyFamilies.length,
         completeStrategyFamilyCount: seedSet.completeStrategyFamilyCount,
         incompleteStrategyFamilyCount: seedSet.incompleteStrategyFamilyCount,
@@ -704,6 +808,8 @@ export async function runOpportunityTournament({
     dimensionCounts: dimensionCounts(seedSet),
     seedContract: seedSet.seedContract,
     declaredStrategyFamilyCount: seedSet.declaredStrategyFamilyCount,
+    familyWrapperCount: seedSet.familyWrapperCount,
+    validStrategyFamilyCount: seedSet.validStrategyFamilyCount,
     strategyFamilyCount: seedSet.strategyFamilies.length,
     completeStrategyFamilyCount: seedSet.completeStrategyFamilyCount,
     incompleteStrategyFamilyCount: seedSet.incompleteStrategyFamilyCount,
@@ -1631,6 +1737,35 @@ function objectiveValidationIssue(objective) {
   return null;
 }
 
+function compactPromptEvidenceCatalog(value) {
+  return asArray(value)
+    .slice(0, MAX_PROMPT_EVIDENCE_ITEMS)
+    .map((itemValue) => {
+      const item = asObject(itemValue);
+      return compact({
+        id: firstText(item.id),
+        type: firstText(item.type),
+        label: firstText(item.label),
+        summary: firstText(item.summary),
+        url: firstText(item.url),
+        sourceId: firstText(item.sourceId),
+        observedAt: firstText(item.observedAt),
+        publishedAt: firstText(item.publishedAt),
+        startDate: firstText(item.startDate),
+        endDate: firstText(item.endDate),
+        current: typeof item.current === 'boolean'
+          ? item.current
+          : undefined,
+        status: firstText(item.status),
+        approvedSourceObservation:
+          item.approvedSourceObservation === true ? true : undefined,
+        profileControlledSource:
+          item.profileControlledSource === true ? true : undefined,
+        revenueAssetRole: firstText(item.revenueAssetRole)
+      });
+    });
+}
+
 function seedAndJudgePrompt({
   objective,
   constraints,
@@ -1665,147 +1800,78 @@ Each seed should be a short structured concept.
 Judge-weight values are semantic judgments from 0 to 1. Positive scores are better; effort, cost, risk, and uncertainty are burdens.
 Return only JSON.`;
   const user = JSON.stringify({
-    task: 'Generate and semantically judge the seed dimensions for one bounded opportunity tournament.',
+    task: 'Return two grounded revenue strategy families and one review-first fallback experiment.',
     objective,
     constraints,
     evidenceCatalog,
     priorOutcomes,
-    outputRules: {
-      seedCount: `Across familyA and familyB this yields at most ${maxSeedsPerDimension} items per multi-variant dimension, two timing triggers, and two proof points.`,
-      familyBundleSchema: {
-        l: 'short internal label for one coherent end-to-end acquisition-to-revenue path',
-        m: `the family's acquisition mode: ${[...ACQUISITION_MODES].join(', ')}`,
-        e: ['the exact union of approved non-source evidence IDs used by this family revenue path, offers, buyers, channels, actions, and proof, including at least one observation:* anchor'],
-        s: {
-          of: 'family-level objectiveFit 0..1',
-          es: 'family-level evidenceStrength 0..1',
-          ba: 'family-level buyerAuthority 0..1',
-          ti: 'family-level timing 0..1',
-          wp: 'family-level warmPath 0..1',
-          re: 'family-level reachability 0..1; contact availability alone is not strategic fit',
-          ev: 'family-level expectedValue 0..1',
-          ef: 'family-level effort 0..1 burden',
-          co: 'family-level cost 0..1 burden',
-          ri: 'family-level risk 0..1 burden',
-          un: 'family-level uncertainty 0..1 burden'
-        },
-        d: {
-          revenuePaths: ['exactly one revenuePathSchema object; construct this first'],
-          offers: ['exactly two itemSchema objects'],
-          buyerSegments: ['exactly two itemSchema objects'],
-          channels: ['exactly two itemSchema objects'],
-          actions: ['exactly two itemSchema objects'],
-          timingTriggers: ['exactly one itemSchema object with q'],
-          proofPoints: ['exactly one itemSchema object'],
-          followUps: ['exactly two itemSchema objects']
-        }
-      },
-      requiredDimensions: DIMENSIONS.map(([name]) => name),
-      itemSchema: {
-        l: 'concise internal strategy component; never outreach copy',
-        e: ['one or more exact evidenceCatalog.id values'],
-        q: 'timingTriggers only: a short exact phrase copied from cited evidence that directly proves the trigger; omit q on all other dimensions'
-      },
-      revenuePathSchema: {
-        l: 'short label for this complete incremental-income path',
-        e: ['one or more exact evidenceCatalog.id values grounding the buyer, paid offer, channel, and conversion'],
-        contractVersion: 'incremental_revenue_v2',
-        revenueMechanism: `${[...REVENUE_MECHANISMS].join(', ')}`,
-        incrementalIncomeOutcome: 'specific new gross-income outcome, explicitly using new, additional, or incremental and paid/revenue/income language',
-        acquisitionMode: 'inbound, warm_referral, permissioned_outreach, existing_customer, or partner_channel',
-        conversionAction: 'one singular action that advances acquisition or a paid commitment; it must align with the family action and cannot be an operations-only task',
-        observableRevenueOutcome: 'durable paid event such as a payment, signed contract, paid booking, order, invoice, paid claim, subscription, or retainer',
-        attributionMethod: `${[...ATTRIBUTION_METHODS].join(', ')}`,
-        attributionSignal: 'specific durable field or record connecting the paid outcome to this acquisition source',
-        g: {
-          b: ['exact evidence IDs supporting the buyer'],
-          o: ['exact evidence IDs supporting the paid offer'],
-          a: ['exact evidence IDs supporting the acquisition mechanism'],
-          d: {
-            l: 'one named pricing, signup, demo, application, licensing, sponsorship-inquiry, storefront, product, service, landing, booking, download, marketplace-listing, or checkout destination, distinct from the acquisition mechanism',
-            e: ['exact evidence IDs supporting that destination']
-          },
-          c: ['exact evidence IDs supporting the paid conversion and observable outcome'],
-          t: ['exact evidence IDs supporting the attribution signal']
-        },
-        supportingBottleneck: 'optional auxiliary operational constraint; never the recommended action or outcome',
-        vm: 'required positive conservative expectedValueMicros integer for incremental gross income; uncertainty remains explicit in scores'
-      },
-      evidenceExperimentSchema: {
-        l: 'user-readable title naming the known offer or asset',
-        k: 'one concise known fact copied or closely paraphrased from cited evidence',
-        b: 'one evidence-grounded buyer',
-        o: 'one evidence-grounded paid offer',
-        a: 'one singular acquisition mechanism to test',
-        d: 'one evidence-grounded conversion destination, distinct from a',
-        c: 'one paid conversion event',
-        t: 'one durable attribution field or record connecting c to a',
-        x: 'one review-first action describing only this bounded test',
-        s: 'one user-readable paid success signal',
-        days: 'integer from 7 through 30',
-        n: 'integer sample stop from 5 through 100',
-        u: 'plain-language sample unit such as qualified visits, referred buyers, checkout sessions, or reviewed opportunities',
-        e: ['exact evidence IDs grounding k, b, o, and d']
-      },
-      candidateSchema: {
-        k: 'person or organization only',
-        l: 'exact named person or organization copied from cited evidence',
-        o: 'optional exact organization copied from cited evidence',
-        r: 'optional exact role copied from cited evidence',
-        m: 'optional exact market/location copied from cited evidence',
-        e: ['one or more exact evidenceCatalog.id values that contain the candidate name']
-      },
-      w: 'One judge-weight object using the short score keys. Keep evidence and objective fit dominant.',
-      compactness: 'Use only l and e on ordinary items, add q only on timingTriggers, and use the listed revenuePath fields. Do not return local item ids, per-item scores, reasons, unknown placeholders, restated evidence, or prose outside JSON.',
-      hardRules: [
-        'Before returning JSON, silently audit every family against the revenuePathSchema and every rule below. Repair the family in place when any required paid, acquisition, conversion, revenue-proof, attribution, or evidence term is missing.',
-        'Score each family once as a complete end-to-end motion. Do not return per-item scores.',
-        'Offers and proofPoints must cite direct evidence.',
-        'Every offers item l must literally contain paid, billable, reimbursable, subscription, retainer, sale, paid pilot, contract, license, royalty, commission, referral fee, sponsorship, platform payout, compensated role, salary, or wage. Free activity and generic awareness are not offers.',
-        'Each buyer segment must identify the actual payer/customer or a payer-linked beneficiary path that produces the paid outcome.',
-        'Every family must include exactly one incremental_revenue_v2 revenuePaths item with all revenuePathSchema fields except optional supportingBottleneck.',
-        'Family m must exactly equal its revenuePath acquisitionMode. The family wrapper is organized by acquisition economics, never by profession or industry.',
-        'Every revenue path must cite evidence shared with its buyer, offer, channel, and action or proof, and must include a positive conservative vm.',
-        'Every revenue path g must explicitly bind buyer, paid offer, acquisition, destination, paid conversion/outcome, and attribution to exact approved evidence IDs. The destination label must name a pricing, signup, demo, application, licensing, sponsorship-inquiry, storefront, product, service, landing, booking, download, marketplace-listing, checkout, order, contract, or proposal path, and it must not be the acquisition mechanism.',
-        'Do not cite an evidence record for a g element unless that record actually supports the element. An owned page may support the buyer, offer, destination, and paid conversion, but cannot by itself prove organic search, referral, social, directory, partner, or other acquisition demand unless the evidence says so. A proposed tracking field is not proof that attribution already exists.',
-        'A qualified inquiry, eligibility check, coverage verification, scheduled consultation, completed workflow, post, impression, or conversation is not a revenue outcome unless the path also specifies the downstream paid conversion and durable attribution signal.',
-        'Every actions item l and revenuePath conversionAction must each literally name its inbound, warm referral, permissioned, existing-customer, or partner acquisition path and a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, paid pilot, license/royalty, commission/referral fee, sponsorship, platform payout, or compensated-role commitment. Reject operations-only verification, scheduling, administration, content, profile, workflow, research, and optimization actions as the recommendation even when supportingBottleneck records them.',
-        'Every observableRevenueOutcome must literally name a durable paid booking, paid claim, payment receipt, signed contract/agreement, deposit received, paid invoice, checkout/order/purchase/sale, subscription, retainer, recorded revenue/income, reimbursement received, license payment, royalty statement/payment, commission/referral-fee record, sponsorship contract/payment, platform payout, or employment compensation record.',
-        'Every attributionSignal must literally name source, referral, UTM, campaign, origin, channel, code, or CRM and the booking/payment/invoice/contract/checkout/order/claim/CRM/referral/license/royalty/affiliate/commission/platform/marketplace/employment/compensation record that stores it.',
-        'Acquisition must be inbound, warm referral, explicitly permissioned outreach, existing-customer, or partner-channel. An inbound channel must name one explicit discovery/demand origin and a separate conversion destination; a service page, website, booking page, or checkout alone is not acquisition. Reject cold outreach, purchased lists, scraping, bulk contact, and spray-and-pray.',
-        'Attribution must connect the paid outcome to the acquisition source through a booking, payment, invoice/contract, checkout/order, claim, CRM-source, referral-code, license/royalty, affiliate/commission, platform/marketplace, or employment-compensation record.',
-        'Buyer segments may be plausible inferences but must cite evidence supporting the fit.',
-        'Return both familyA and familyB. Do not omit either complete bundle.',
-        'For each family, include at least one observation:* evidence anchor in family e.',
-        'Family e must contain every evidence ID used by that family revenue path, offers, buyer segments, channels, actions, and proof points. Timing and follow-up items must cite from that same revenue-bearing evidence set.',
-        'Every item must cite at least one exact evidence ID that also appears in its containing family e. Different dimensions may use different family evidence IDs when that is the truthful provenance.',
-        'Every item belongs only to its containing family bundle. Do not add f, familyIds, wildcards, or cross-family reuse.',
-        'A retained family must use exactly one acquisition mode from discovery through paid outcome. Channel and action must state that mode explicitly; other dimensions may remain acquisition-neutral but must never name a conflicting mode.',
-        'Channels and actions must remain singular, bounded, and review-first.',
-        'Every timing trigger must include q copied exactly from its cited evidence and q must directly support the claimed timing. A crawl timestamp alone is not a business trigger.',
-        'The evidence id that contains q must be an observation:* source-evidence record so the control plane can verify the phrase against the approved stored observation.',
-        'If timing is not directly observed, phrase the timing trigger as a review-first verification step beginning with Verify, Confirm, Check, Research, or Determine, and cite the exact evidence phrase that makes that verification relevant.',
-        'Do not name an enrollment window, recertification period, planning cycle, deadline, quarter, month, or year unless that exact timing appears in q.',
-        'Follow-ups must remain low-volume and permissioned.',
-        'Return at most 8 candidates. A candidate must be a named person or organization copied exactly from approved evidence, never a generic buyer segment.',
-        'Candidate names and optional details must be exact evidence text. Do not return candidate URLs or contact details. Return candidates: [] when no exact named candidate exists.',
-        'A candidate evidence ID must also ground a buyerSegments seed and at least one relevant offers or proofPoints seed; do not attach a candidate using an unrelated citation.',
-        'If a named organization is the intended target buyer, start the buyerSegments label with that exact organization name and include the same organization in candidates.',
-        'If evidence says a provider, credential, connection, or service is already accepted, active, or available, do not recommend applying for it as though it were missing.',
-        'Return exactly one evidenceExperiment even when a family appears likely to win; it is ignored when a winner survives validation. Its known fact, buyer, paid offer, and destination must be supported by its cited evidence. Its acquisition mechanism is a test hypothesis, not a claim of existing demand.',
-        'If evidenceCatalog contains current_owner_paid_conversion_asset, the evidenceExperiment must use the strongest objective-relevant asset. Never substitute informational_only evidence and never ask for a paid-offer page that already exists.',
-        'The evidenceExperiment acquisition mechanism and conversion destination must be singular and different. Its action must name both, the buyer, paid offer, paid conversion, attribution record, days, and sample stop.',
-        'The evidenceExperiment title, action, and success signal must not use internal phrases such as approve source, approve observation, evidence approval, evidence ID, crawl, generator, validator, retained strategy, or missing_*.',
-        'The evidenceExperiment recommends no automatic outreach, publishing, advertising, provider write, form submission, or silent execution. It remains review-first.'
-      ]
-    }
+    outputContract: compactTournamentOutputContract(
+      INITIAL_FAMILY_VARIANT_COUNT,
+      maxSeedsPerDimension
+    ),
+    hardRules: compactTournamentHardRules()
   });
   return { system, user };
 }
 
+function compactTournamentOutputContract(
+  variantCount,
+  maxSeedsPerDimension = variantCount * 2
+) {
+  return {
+    seedContract: SEED_CONTRACT_VERSION,
+    familyKeys: 'familyA and familyB each use {l,m,e,s,d}',
+    familyMode: [...ACQUISITION_MODES],
+    familyScores:
+      's uses of,es,ba,ti,wp,re,ev,ef,co,ri,un; every value is 0..1',
+    dimensions:
+      `d uses only {r,o,b,c,a,t,p,f}: r=1 revenue path; ` +
+      `o,b,c,a,f=${variantCount} each; t,p=1 each; across both ` +
+      `families no multi-variant dimension exceeds ${maxSeedsPerDimension}`,
+    item: '{l,e}; timing t item is {l,e,q}; e contains exact evidence IDs',
+    revenuePath:
+      '{l,e,v,rm,io,a,c,o,atm,ats,g:{b,o,a,d:{l,e},c,t},sb,vm}; ' +
+      `v=${REVENUE_PATH_CONTRACT_VERSION}; rm is a revenue mechanism; ` +
+      'io is incremental paid outcome; a is acquisition mode; c is conversion action; ' +
+      'o is observable paid outcome; atm is attribution method; ats is attribution record; ' +
+      'g binds buyer/offer/acquisition/destination/conversion/attribution evidence; ' +
+      'sb is optional support only; vm is positive expected gross-income micros',
+    revenueMechanisms: [...REVENUE_MECHANISMS],
+    attributionMethods: [...ATTRIBUTION_METHODS],
+    evidenceExperiment:
+      '{l,k,b,o,a,d,c,t,x,s,days,n,u,e}: title, known fact, buyer, paid offer, ' +
+      'acquisition, distinct destination, paid conversion, attribution record, review-first action, ' +
+      'success signal, 7..30 days, 5..100 sample stop, sample unit, evidence IDs',
+    candidates:
+      'candidates uses zero to eight {k,l,o,r,m,e} exact named people/organizations only',
+    weights: 'w uses the same eleven score keys',
+    compactness:
+      'Use the exact short keys above, concise strings, at most 2 evidence IDs per item, and no prose outside JSON.'
+  };
+}
+
+function compactTournamentHardRules() {
+  return [
+    'Return exactly two complete, coherent families; construct each r revenue path first and derive every dimension from it.',
+    'Family m equals r.a. Each family uses one acquisition mode end to end and includes at least one observation:* ID in family e.',
+    'Family e contains every ID cited by its items. Each item cites only IDs in its own family e.',
+    'Use only evidenceCatalog IDs. Never use a source:* row as the sole evidence anchor.',
+    'Buyer, current explicitly paid/reimbursable offer, destination, paid conversion, and attribution must be evidence-grounded; never invent demand or an outside target.',
+    'Acquisition is inbound, warm referral, permissioned outreach, existing customer, or partner channel. Inbound names discovery separately from destination.',
+    'Action and r.c name the acquisition mode and a paid commitment. Operations, research, scheduling, content, and verification may only appear in sb.',
+    'r.o names a durable paid event. r.ats names its booking/payment/invoice/contract/order/claim/CRM/referral record and source/referral/UTM/campaign/channel field.',
+    'Timing q is exact cited observation text. If timing is unknown, t.l begins Verify/Confirm/Check/Research/Determine without inventing urgency.',
+    'If current_owner_paid_conversion_asset exists, evidenceExperiment uses the strongest relevant one and tests missing acquisition or attribution; never request another offer page.',
+    'informational_only may support expertise but cannot be the offer, destination, paid conversion, or experiment anchor.',
+    'evidenceExperiment is singular, bounded, review-first, names buyer/offer/acquisition/destination/paid conversion/attribution/days/sample stop, and performs no external action.',
+    'No outreach copy, publishing, ads, form submission, scraping, bulk contact, or provider write.',
+    'Candidates are exact names copied from cited evidence; otherwise return [].',
+    'Silently audit the strict JSON once, then return it immediately without explanation or repeated alternatives.'
+  ];
+}
+
 function seedAndJudgeRepairPrompt({
   originalPrompt,
-  previousResponse,
   issue
 }) {
   let originalTask = {};
@@ -1814,25 +1880,48 @@ function seedAndJudgeRepairPrompt({
   } catch {
     originalTask = {};
   }
-  const system = `${firstText(originalPrompt?.system)}
-
-This is the one authorized structured-family repair pass. The previous response failed the deterministic family-shape gate described in repairIssue. Return a complete replacement response, not a patch. Preserve only claims that remain grounded in evidenceCatalog, repair both family bundles against the same schema, and independently re-audit evidenceExperiment. Do not copy an informational article title into the experiment when a current_owner_paid_conversion_asset is available. Do not reinterpret this response-shape failure as missing customer evidence.`;
+  const system = `You are ProfileScribe's bounded structured-output repair strategist.
+Generate a fresh compact replacement from the supplied objective and evidence. Do not reconstruct, quote, or continue the prior response.
+Return exactly two complete source-grounded incremental-income families plus one review-first evidence experiment. This is research only: no outreach, publishing, advertising, form submission, or provider write.
+Use exact evidence IDs only. Prefer current_owner_paid_conversion_asset for an inbound paid offer/destination; informational_only is never an offer anchor.
+An acquisition mechanism is distinct from its conversion destination. A valid path ends in a durable paid event with an attribution record.
+Return only the strict compact JSON once.`;
   const user = JSON.stringify({
-    ...originalTask,
     task:
-      'Repair the previous structured tournament response into two complete, independently grounded comparison families and one valid fallback experiment.',
+      'Freshly regenerate two compact complete comparison families; do not continue prior output.',
+    objective: originalTask.objective,
+    constraints: originalTask.constraints,
+    evidenceCatalog: originalTask.evidenceCatalog,
+    priorOutcomes: originalTask.priorOutcomes,
     repairIssue: issue,
-    previousResponse,
-    repairRules: [
-      'Return the entire strict response contract again.',
-      'Both familyA and familyB must be structurally complete after normalization.',
-      'Every family dimension must cite evidence contained by that family.',
-      'Use current_owner_paid_conversion_asset for the evidenceExperiment when one exists.',
-      'Never use informational_only evidence as the paid offer, conversion destination, paid conversion, or experiment title anchor.',
-      'If acquisition or attribution is only a hypothesis, keep it in evidenceExperiment and do not disguise it as observed family evidence.'
-    ]
+    outputContract: compactTournamentOutputContract(
+      REPAIR_FAMILY_VARIANT_COUNT
+    ),
+    hardRules: compactTournamentHardRules()
   });
   return { system, user };
+}
+
+function openRouterDiagnosticsIndicateTruncation(value) {
+  const diagnostics = asObject(value);
+  const reason = `${firstText(diagnostics.finishReason)} ${
+    firstText(diagnostics.nativeFinishReason)
+  }`.toLowerCase();
+  return /\b(?:length|max(?:imum)?[_ -]?(?:tokens?|output)|token[_ -]?limit)\b/.test(
+    reason
+  );
+}
+
+function structuredOutputLengthIssue(value) {
+  const diagnostics = asObject(value);
+  return {
+    code: 'output_length_truncated',
+    finishReason: truncate(firstText(diagnostics.finishReason), 64),
+    nativeFinishReason: truncate(
+      firstText(diagnostics.nativeFinishReason),
+      64
+    )
+  };
 }
 
 function structuredSeedSetShapeIssue(seedSetValue) {
@@ -1883,6 +1972,10 @@ function seedSetShapeSearchTrace(seedSetValue) {
     seedContract: firstText(seedSet.seedContract),
     declaredStrategyFamilyCount:
       nonNegativeInteger(seedSet.declaredStrategyFamilyCount) || 0,
+    familyWrapperCount:
+      nonNegativeInteger(seedSet.familyWrapperCount) || 0,
+    validStrategyFamilyCount:
+      nonNegativeInteger(seedSet.validStrategyFamilyCount) || 0,
     strategyFamilyCount: asArray(seedSet.strategyFamilies).length,
     completeStrategyFamilyCount:
       nonNegativeInteger(seedSet.completeStrategyFamilyCount) || 0,
@@ -1924,7 +2017,10 @@ function remainingRepairSpendMicros(budgetValue, usageValue) {
   );
 }
 
-function tournamentStructuredResponseFormat(evidenceCatalog) {
+function tournamentStructuredResponseFormat(
+  evidenceCatalog,
+  familyVariantCount = INITIAL_FAMILY_VARIANT_COUNT
+) {
   const paidOfferPattern =
     '(?:[Pp]aid|[Bb]illable|[Rr]eimburs(?:able|ed|ement)|[Ff]ee|[Pp]riced?|[Pp]urchase|[Ss]ale|[Cc]ontract|[Rr]etainer|[Ss]ubscription|[Dd]eposit|[Ii]nvoice|[Ll]icen[cs]e|[Rr]oyalty|[Cc]ommission|[Rr]eferral fee|[Ss]ponsorship|[Pp]latform payout|[Cc]ompensated|[Ss]alary|[Ww]age)';
   const acquisitionPattern =
@@ -1955,6 +2051,12 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
     items: { $ref: '#/$defs/evidenceRef' },
     minItems: 1,
     maxItems: 12
+  };
+  const compactEvidenceRefs = {
+    type: 'array',
+    items: { $ref: '#/$defs/evidenceRef' },
+    minItems: 1,
+    maxItems: 2
   };
   const scoreProperties = Object.fromEntries([
     'of',
@@ -1987,17 +2089,17 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
       l: {
         type: 'string',
         minLength: 1,
-        maxLength: 180,
+        maxLength: 160,
         description: labelDescription,
         ...(labelPattern ? { pattern: labelPattern } : {})
       },
-      e: { $ref: '#/$defs/evidenceRefs' },
+      e: { $ref: '#/$defs/compactEvidenceRefs' },
       ...(timing
         ? {
             q: {
               type: 'string',
               minLength: 1,
-              maxLength: 180,
+              maxLength: 160,
               description:
                 'An exact phrase copied from a cited observation that supports the timing, or the exact phrase that makes a review-first timing verification relevant.'
             }
@@ -2020,20 +2122,20 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
   const grounding = {
     type: 'object',
     properties: {
-      b: { $ref: '#/$defs/evidenceRefs' },
-      o: { $ref: '#/$defs/evidenceRefs' },
-      a: { $ref: '#/$defs/evidenceRefs' },
+      b: { $ref: '#/$defs/compactEvidenceRefs' },
+      o: { $ref: '#/$defs/compactEvidenceRefs' },
+      a: { $ref: '#/$defs/compactEvidenceRefs' },
       d: {
         type: 'object',
         properties: {
-          l: { type: 'string', minLength: 1, maxLength: 240 },
-          e: { $ref: '#/$defs/evidenceRefs' }
+          l: { type: 'string', minLength: 1, maxLength: 180 },
+          e: { $ref: '#/$defs/compactEvidenceRefs' }
         },
         required: ['l', 'e'],
         additionalProperties: false
       },
-      c: { $ref: '#/$defs/evidenceRefs' },
-      t: { $ref: '#/$defs/evidenceRefs' }
+      c: { $ref: '#/$defs/compactEvidenceRefs' },
+      t: { $ref: '#/$defs/compactEvidenceRefs' }
     },
     required: ['b', 'o', 'a', 'd', 'c', 't'],
     additionalProperties: false
@@ -2041,20 +2143,20 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
   const evidenceExperiment = {
     type: 'object',
     properties: {
-      l: { type: 'string', minLength: 1, maxLength: 240 },
-      k: { type: 'string', minLength: 1, maxLength: 320 },
-      b: { type: 'string', minLength: 1, maxLength: 240 },
-      o: { type: 'string', minLength: 1, maxLength: 240 },
-      a: { type: 'string', minLength: 1, maxLength: 240 },
-      d: { type: 'string', minLength: 1, maxLength: 240 },
-      c: { type: 'string', minLength: 1, maxLength: 240 },
-      t: { type: 'string', minLength: 1, maxLength: 320 },
-      x: { type: 'string', minLength: 1, maxLength: 700 },
-      s: { type: 'string', minLength: 1, maxLength: 360 },
+      l: { type: 'string', minLength: 1, maxLength: 180 },
+      k: { type: 'string', minLength: 1, maxLength: 240 },
+      b: { type: 'string', minLength: 1, maxLength: 180 },
+      o: { type: 'string', minLength: 1, maxLength: 180 },
+      a: { type: 'string', minLength: 1, maxLength: 160 },
+      d: { type: 'string', minLength: 1, maxLength: 180 },
+      c: { type: 'string', minLength: 1, maxLength: 180 },
+      t: { type: 'string', minLength: 1, maxLength: 240 },
+      x: { type: 'string', minLength: 1, maxLength: 500 },
+      s: { type: 'string', minLength: 1, maxLength: 240 },
       days: { type: 'integer', minimum: 7, maximum: 30 },
       n: { type: 'integer', minimum: 5, maximum: 100 },
       u: { type: 'string', minLength: 1, maxLength: 80 },
-      e: { $ref: '#/$defs/evidenceRefs' }
+      e: { $ref: '#/$defs/compactEvidenceRefs' }
     },
     required: [
       'l',
@@ -2077,7 +2179,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
   const family = () => ({
     type: 'object',
     properties: {
-      l: { type: 'string', minLength: 1, maxLength: 180 },
+      l: { type: 'string', minLength: 1, maxLength: 160 },
       m: {
         type: 'string',
         enum: [...ACQUISITION_MODES]
@@ -2087,25 +2189,16 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
       d: {
         type: 'object',
         properties: {
-          revenuePaths: exactItems('#/$defs/revenuePath', 1),
-          offers: exactItems('#/$defs/offerItem', 2),
-          buyerSegments: exactItems('#/$defs/buyerItem', 2),
-          channels: exactItems('#/$defs/channelItem', 2),
-          actions: exactItems('#/$defs/actionItem', 2),
-          timingTriggers: exactItems('#/$defs/timingItem', 1),
-          proofPoints: exactItems('#/$defs/proofItem', 1),
-          followUps: exactItems('#/$defs/followUpItem', 2)
+          r: exactItems('#/$defs/revenuePath', 1),
+          o: exactItems('#/$defs/offerItem', familyVariantCount),
+          b: exactItems('#/$defs/buyerItem', familyVariantCount),
+          c: exactItems('#/$defs/channelItem', familyVariantCount),
+          a: exactItems('#/$defs/actionItem', familyVariantCount),
+          t: exactItems('#/$defs/timingItem', 1),
+          p: exactItems('#/$defs/proofItem', 1),
+          f: exactItems('#/$defs/followUpItem', familyVariantCount)
         },
-        required: [
-          'revenuePaths',
-          'offers',
-          'buyerSegments',
-          'channels',
-          'actions',
-          'timingTriggers',
-          'proofPoints',
-          'followUps'
-        ],
+        required: ['r', 'o', 'b', 'c', 'a', 't', 'p', 'f'],
         additionalProperties: false
       }
     },
@@ -2158,6 +2251,7 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
         $defs: {
           evidenceRef,
           evidenceRefs,
+          compactEvidenceRefs,
           scores,
           offerItem: item(
             'An explicitly paid, billable, reimbursable, subscription, retainer, sale, paid-pilot, or contract offer grounded in cited evidence.',
@@ -2188,62 +2282,62 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
           revenuePath: {
             type: 'object',
             properties: {
-              l: { type: 'string', minLength: 1, maxLength: 180 },
+              l: { type: 'string', minLength: 1, maxLength: 160 },
               e: { $ref: '#/$defs/evidenceRefs' },
-              contractVersion: {
+              v: {
                 type: 'string',
                 enum: [REVENUE_PATH_CONTRACT_VERSION]
               },
-              revenueMechanism: {
+              rm: {
                 type: 'string',
                 enum: [...REVENUE_MECHANISMS]
               },
-              incrementalIncomeOutcome: {
+              io: {
                 type: 'string',
                 minLength: 1,
-                maxLength: 320,
+                maxLength: 220,
                 pattern: incrementalPaidPattern,
                 description:
-                  'A specific outcome using new, additional, or incremental plus paid, revenue, income, sale, contract, booking, order, reimbursement, retainer, or subscription language.'
+                  'New or incremental income plus the paid event.'
               },
-              acquisitionMode: {
+              a: {
                 type: 'string',
                 enum: [...ACQUISITION_MODES]
               },
-              conversionAction: {
+              c: {
                 type: 'string',
                 minLength: 1,
-                maxLength: 320,
+                maxLength: 240,
                 pattern: acquisitionAndPaidPattern,
                 description:
-                  'A singular action that literally names the acquisition mode and advances a paid booking, payment, purchase, order, signed contract, deposit, invoice, subscription, retainer, reimbursable claim, or paid pilot.'
+                  'Singular acquisition action advancing a paid commitment.'
               },
-              observableRevenueOutcome: {
+              o: {
                 type: 'string',
                 minLength: 1,
-                maxLength: 320,
+                maxLength: 180,
                 pattern: observableRevenuePattern,
                 description:
-                  'A durable paid booking, paid claim, payment receipt, signed contract/agreement, deposit received, paid invoice, checkout/order/purchase/sale, subscription, retainer, recorded revenue/income, or reimbursement received.'
+                  'Durable observable paid event.'
               },
-              attributionMethod: {
+              atm: {
                 type: 'string',
                 enum: [...ATTRIBUTION_METHODS]
               },
-              attributionSignal: {
+              ats: {
                 type: 'string',
                 minLength: 1,
-                maxLength: 320,
+                maxLength: 220,
                 pattern: attributionRecordPattern,
                 description:
-                  'The booking/payment/invoice/contract/checkout/order/claim/CRM/referral record and its source, referral, UTM, campaign, origin, channel, code, or CRM field.'
+                  'Revenue record plus its acquisition-source field.'
               },
               g: grounding,
-              supportingBottleneck: {
+              sb: {
                 type: 'string',
-                maxLength: 240,
+                maxLength: 160,
                 description:
-                  'Optional operational support only. Use an empty string when none; never repeat the primary action.'
+                  'Optional support only; empty when none.'
               },
               vm: {
                 type: 'integer',
@@ -2255,16 +2349,16 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
             required: [
               'l',
               'e',
-              'contractVersion',
-              'revenueMechanism',
-              'incrementalIncomeOutcome',
-              'acquisitionMode',
-              'conversionAction',
-              'observableRevenueOutcome',
-              'attributionMethod',
-              'attributionSignal',
+              'v',
+              'rm',
+              'io',
+              'a',
+              'c',
+              'o',
+              'atm',
+              'ats',
               'g',
-              'supportingBottleneck',
+              'sb',
               'vm'
             ],
             additionalProperties: false
@@ -2276,11 +2370,11 @@ function tournamentStructuredResponseFormat(evidenceCatalog) {
                 type: 'string',
                 enum: ['person', 'organization']
               },
-              l: { type: 'string', minLength: 1, maxLength: 180 },
-              o: { type: 'string', maxLength: 180 },
-              r: { type: 'string', maxLength: 180 },
-              m: { type: 'string', maxLength: 180 },
-              e: { $ref: '#/$defs/evidenceRefs' }
+              l: { type: 'string', minLength: 1, maxLength: 160 },
+              o: { type: 'string', maxLength: 160 },
+              r: { type: 'string', maxLength: 160 },
+              m: { type: 'string', maxLength: 160 },
+              e: { $ref: '#/$defs/compactEvidenceRefs' }
             },
             required: ['k', 'l', 'o', 'r', 'm', 'e'],
             additionalProperties: false
@@ -2295,6 +2389,9 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
   const raw = asObject(value);
   const evidenceByID = evidenceIndex(evidenceCatalog);
   const familyInputs = strategyFamilyInputs(raw);
+  const familyWrapperCount = ['familyA', 'familyB']
+    .filter((key) => Object.prototype.hasOwnProperty.call(raw, key))
+    .length;
   const hasFamilyBundleContract =
     Object.keys(asObject(raw.familyA)).length > 0 &&
     Object.keys(asObject(raw.familyB)).length > 0;
@@ -2313,6 +2410,8 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
           : 'invalid'
       : 'legacy_flat',
     declaredStrategyFamilyCount: familyInputs.length,
+    familyWrapperCount,
+    validStrategyFamilyCount: strategyFamilies.size,
     strategyFamilies: [...strategyFamilies.values()],
     strategyFamilyCollisionCount: normalizedFamilies.collisionCount,
     familyEvidenceMismatchSeedCount: 0,
@@ -7173,6 +7272,8 @@ function emptySearchSpace(budget) {
     dimensionCounts: {},
     seedContract: '',
     declaredStrategyFamilyCount: 0,
+    familyWrapperCount: 0,
+    validStrategyFamilyCount: 0,
     strategyFamilyCount: 0,
     completeStrategyFamilyCount: 0,
     incompleteStrategyFamilyCount: 0,

@@ -2709,6 +2709,13 @@ async function callOpenRouterJSON({
   if (choice?.error) {
     throw openRouterProviderError(choice.error, usage, diagnostics);
   }
+  if (openRouterDiagnosticsIndicateTruncation(diagnostics)) {
+    throw attachOpenRouterResponseMetadata(
+      new Error('OpenRouter ended structured output at its token limit'),
+      usage,
+      diagnostics
+    );
+  }
   const content = text(rawContent);
   if (!content) {
     const error = new Error('OpenRouter returned an empty message');
