@@ -580,9 +580,26 @@ export async function runOpportunityTournament({
       providerMetadataEntries.push(repairMetadata);
       llmTrace.strategyFamilyRepair = repairMetadata;
       usage = aggregateUsage(providerMetadataEntries, budget);
+      completion = repairCompletion;
+      seedSet = normalizeSeedSet(
+        completion?.data,
+        evidenceCatalog,
+        timestamp
+      );
+      generatedEvidenceExperiment =
+        normalizeGeneratedEvidenceExperiment(
+          completion?.data?.evidenceExperiment,
+          evidenceCatalog,
+          timestamp
+        );
+      const repairedIssue = repairCompletionTruncated
+        ? structuredOutputLengthIssue(repairCompletion?.diagnostics)
+        : structuredSeedSetShapeIssue(seedSet);
+      structuredRepair.succeeded = !repairedIssue;
+      structuredRepair.finalIssue = repairedIssue?.code || '';
+      terminalStructuredIssue = repairedIssue;
       if (budget.hardStop &&
           usage.reportedCostMicros > budget.maxLLMSpendMicros) {
-        structuredRepair.finalIssue = initialShapeIssue.code;
         structuredRepair.failure = 'repair_budget_exceeded';
         return {
           status: 'skipped',
@@ -606,27 +623,30 @@ export async function runOpportunityTournament({
           )
         };
       }
-      completion = repairCompletion;
-      seedSet = normalizeSeedSet(
-        completion?.data,
-        evidenceCatalog,
-        timestamp
-      );
-      generatedEvidenceExperiment =
-        normalizeGeneratedEvidenceExperiment(
-          completion?.data?.evidenceExperiment,
-          evidenceCatalog,
-          timestamp
-        );
-      const repairedIssue = repairCompletionTruncated
-        ? structuredOutputLengthIssue(repairCompletion?.diagnostics)
-        : structuredSeedSetShapeIssue(seedSet);
-      structuredRepair.succeeded = !repairedIssue;
-      structuredRepair.finalIssue = repairedIssue?.code || '';
-      terminalStructuredIssue = repairedIssue;
     } else {
       structuredRepair.failure = 'repair_budget_unavailable';
       structuredRepair.finalIssue = initialShapeIssue.code;
+      return {
+        status: 'skipped',
+        summary:
+          'The initial strategy response needed a structured repair, but no authorized LLM spend remained for that repair.',
+        ...base,
+        nextExperiment: nextExperimentFor([
+          'within_budget_strategy_generation'
+        ]),
+        llm: llmTrace,
+        usage,
+        searchSpace: {
+          ...base.searchSpace,
+          ...seedSetShapeSearchTrace(seedSet),
+          modelCalls: usage.calls,
+          structuredRepair
+        },
+        gate: researchOnlyGate(
+          'block',
+          'The initial model call consumed the available LLM spend, so the required structured repair was not attempted.'
+        )
+      };
     }
   }
   if (terminalStructuredIssue?.code === 'output_length_truncated') {

@@ -195,6 +195,7 @@ await verifyUnsafeGeneratedExperimentRejected();
 await verifyInvalidSeedContractsRejected();
 await verifyLengthFinishedStructuredRepair();
 await verifyThrownLengthStructuredRepair();
+await verifyTruncatedInitialBudgetRecovery();
 await verifyRepeatedLengthFinishFailsClosed();
 await verifyBettyProductionTraceRegression();
 await verifyStructuredRepairAcrossDomains();
@@ -810,12 +811,114 @@ async function verifyThrownLengthStructuredRepair() {
   }
 }
 
+async function verifyTruncatedInitialBudgetRecovery() {
+  const domain = { ...domains.find((item) => item.name === 'commerce') };
+  const ref = 'observation:obs-truncated-budget-recovery';
+  const truncation = () => {
+    const error = new Error(
+      'OpenRouter ended structured output at its token limit'
+    );
+    error.openRouterFailureCode =
+      'openrouter_truncated_structured_output';
+    error.openRouterUsage = usage;
+    error.openRouterDiagnostics = {
+      finishReason: 'length',
+      nativeFinishReason: 'max_tokens',
+      contentByteCount: 8000
+    };
+    return error;
+  };
+
+  let noSpendCalls = 0;
+  const noSpend = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'truncated-no-repair-spend',
+    responses: [truncation()],
+    diagnostics: [undefined],
+    budgetOverrides: {
+      maxLLMSpendMicros: 4200
+    },
+    onRequest: () => {
+      noSpendCalls += 1;
+    }
+  });
+  if (noSpendCalls !== 1 ||
+      noSpend.status !== 'skipped' ||
+      noSpend.nextExperiment?.kind !==
+        'strategy_generation_budget_recovery' ||
+      noSpend.nextExperiment?.missingEvidence?.[0] !==
+        'within_budget_strategy_generation' ||
+      noSpend.searchSpace?.structuredRepair?.attempted !== false ||
+      noSpend.searchSpace?.structuredRepair?.succeeded !== false ||
+      noSpend.searchSpace?.structuredRepair?.initialIssue !==
+        'output_length_truncated' ||
+      noSpend.searchSpace?.structuredRepair?.finalIssue !==
+        'output_length_truncated' ||
+      noSpend.searchSpace?.structuredRepair?.failure !==
+        'repair_budget_unavailable' ||
+      noSpend.llm?.strategyGeneratorJudge?.status !== 'failed' ||
+      noSpend.usage?.calls !== 1 ||
+      noSpend.usage?.successfulCalls !== 0 ||
+      noSpend.gate?.decision !== 'block' ||
+      hasBusinessExperimentField(noSpend.nextExperiment)) {
+    throw new Error(
+      `a truncated call with no repair spend returned a shape recovery instead of its budget cause: ${JSON.stringify(noSpend)}`
+    );
+  }
+
+  let hardStopCalls = 0;
+  const hardStop = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'truncated-repair-budget-hard-stop',
+    responses: [truncation(), compactV2Response(domain, ref)],
+    diagnostics: [undefined, {
+      finishReason: 'stop',
+      nativeFinishReason: 'stop'
+    }],
+    budgetOverrides: {
+      maxLLMSpendMicros: 6000
+    },
+    onRequest: () => {
+      hardStopCalls += 1;
+    }
+  });
+  if (hardStopCalls !== 2 ||
+      hardStop.status !== 'skipped' ||
+      hardStop.nextExperiment?.kind !==
+        'strategy_generation_budget_recovery' ||
+      hardStop.nextExperiment?.missingEvidence?.[0] !==
+        'within_budget_strategy_generation' ||
+      hardStop.searchSpace?.structuredRepair?.attempted !== true ||
+      hardStop.searchSpace?.structuredRepair?.succeeded !== true ||
+      hardStop.searchSpace?.structuredRepair?.initialIssue !==
+        'output_length_truncated' ||
+      hardStop.searchSpace?.structuredRepair?.finalIssue !== '' ||
+      hardStop.searchSpace?.structuredRepair?.failure !==
+        'repair_budget_exceeded' ||
+      hardStop.searchSpace?.familyWrapperCount !== 2 ||
+      hardStop.searchSpace?.validStrategyFamilyCount !== 2 ||
+      hardStop.llm?.strategyGeneratorJudge?.status !== 'failed' ||
+      hardStop.llm?.strategyFamilyRepair?.status !== 'completed' ||
+      hardStop.usage?.calls !== 2 ||
+      hardStop.usage?.successfulCalls !== 1 ||
+      hardStop.usage?.withinBudget !== false ||
+      hardStop.gate?.decision !== 'block' ||
+      hasBusinessExperimentField(hardStop.nextExperiment)) {
+    throw new Error(
+      `a successful repair that exceeded the hard spend cap retained a stale shape cause: ${JSON.stringify(hardStop)}`
+    );
+  }
+}
+
 async function runDomainRepairSequence({
   domain,
   ref,
   suffix,
   responses,
   diagnostics,
+  budgetOverrides = {},
   onRequest = () => {}
 }) {
   let calls = 0;
@@ -833,7 +936,8 @@ async function runDomainRepairSequence({
           maxHypotheses: 128,
           maxFinalists: 8,
           maxLLMCalls: 2,
-          maxOutputTokens: 8000
+          maxOutputTokens: 8000,
+          ...budgetOverrides
         },
         evidenceSnapshot: {
           profile: {
