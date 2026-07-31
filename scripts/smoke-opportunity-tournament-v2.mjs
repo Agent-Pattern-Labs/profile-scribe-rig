@@ -192,6 +192,7 @@ for (const domain of domains) {
 
 await verifyAcquisitionFamilyMismatch();
 await verifyTypedAcquisitionModeAllowsNeutralLabels();
+await verifyTypedFamilyTimingFallbackPreservesBusinessGates();
 await verifySaaSTimingRepair();
 await verifyNoncurrentWarmReferralRejected();
 await verifyUnsafeGeneratedExperimentRejected();
@@ -515,6 +516,7 @@ async function verifyTypedAcquisitionModeAllowsNeutralLabels() {
   );
   if (result.status !== 'completed' ||
       result.searchSpace?.motionConflictCount !== 0 ||
+      result.searchSpace?.revenueRejectedCount !== 0 ||
       result.searchSpace?.eligibleCount < 2 ||
       result.hypotheses?.some((hypothesis) =>
         hypothesis.provenance?.motionSignatures?.length !== 1 ||
@@ -537,12 +539,101 @@ async function verifyTypedAcquisitionModeAllowsNeutralLabels() {
   );
   if (conflictResult.status !== 'skipped' ||
       conflictResult.searchSpace?.motionConflictCount < 1 ||
+      conflictResult.searchSpace?.motionConflictDimensions?.channel < 1 ||
       conflictResult.searchSpace?.eligibleCount !== 1 ||
       conflictResult.hypotheses?.some((hypothesis) =>
         hypothesis.provenance?.strategyFamilyId !== 'family-b'
       )) {
     throw new Error(
       `explicit acquisition-label conflict crossed the typed family gate: ${JSON.stringify(conflictResult)}`
+    );
+  }
+}
+
+async function verifyTypedFamilyTimingFallbackPreservesBusinessGates() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  const ref = `observation:obs-${domain.name}`;
+  const response = compactV2Response(domain, ref);
+  response.familyB.d.b[0].l =
+    'Department leaders evaluating an alternative';
+  for (const family of [response.familyA, response.familyB]) {
+    family.d.t[0].e = ['observation:not-in-approved-catalog'];
+    family.d.t[0].q = 'unsupported urgency';
+  }
+  const result = await runDomainWithResponse(
+    domain,
+    response,
+    'saas-typed-family-timing-fallback'
+  );
+  if (result.status !== 'skipped' ||
+      result.searchSpace?.completeStrategyFamilyCount !== 2 ||
+      result.searchSpace?.incompleteStrategyFamilyCount !== 0 ||
+      result.searchSpace?.familyEvidenceMismatchSeedCount !== 2 ||
+      result.searchSpace?.invalidFamilySeedCount !== 0 ||
+      result.searchSpace?.unsupportedTimingSeedCount !== 0 ||
+      result.searchSpace?.timingVerificationRepairCount !== 2 ||
+      result.searchSpace?.revenueRejectedCount < 1 ||
+      result.searchSpace?.revenueRejectionReasons
+        ?.unsupported_buyer_evidence < 1 ||
+      result.searchSpace?.eligibleCount !== 1 ||
+      result.nextExperiment?.kind !== 'inbound_revenue_evidence' ||
+      result.nextExperiment?.requiresReview !== true ||
+      result.nextExperiment?.rerunPolicy?.maxReruns !== 1 ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0 ||
+      result.hypotheses?.some((hypothesis) =>
+        hypothesis.provenance?.strategyFamilyId !== 'family-a' ||
+        hypothesis.provenance?.timingVerificationRepaired !== true ||
+        !hypothesis.provenance?.familyEvidenceRefs?.includes(
+          hypothesis.provenance?.timingEvidenceRef
+        ) ||
+        !hypothesis.provenance?.dimensions?.timingTrigger
+          ?.evidenceRefs?.includes(
+            hypothesis.provenance?.timingEvidenceRef
+          ) ||
+        !/^Determine whether the cited fact /i.test(
+          hypothesis.timingTrigger || ''
+        ) ||
+        hypothesis.score?.timing > 0.25 ||
+        hypothesis.score?.risk < 0.35 ||
+        hypothesis.score?.uncertainty < 0.75
+      )) {
+    throw new Error(
+      `typed family timing fallback bypassed a business gate: ${JSON.stringify(result)}`
+    );
+  }
+
+  const staleDomain = {
+    ...domain,
+    sourceSummary: `Previously, ${domain.sourceSummary}`
+  };
+  const staleResponse = compactV2Response(staleDomain, ref);
+  for (const family of [staleResponse.familyA, staleResponse.familyB]) {
+    family.d.t[0].e = ['observation:not-in-approved-catalog'];
+    family.d.t[0].q = 'unsupported urgency';
+  }
+  const staleResult = await runDomainWithResponse(
+    staleDomain,
+    staleResponse,
+    'saas-stale-typed-family-timing-fallback'
+  );
+  if (staleResult.status !== 'skipped' ||
+      staleResult.searchSpace?.completeStrategyFamilyCount !== 0 ||
+      staleResult.searchSpace?.incompleteStrategyFamilyCount !== 2 ||
+      staleResult.searchSpace?.familyEvidenceMismatchSeedCount !== 2 ||
+      staleResult.searchSpace?.invalidFamilySeedCount < 2 ||
+      staleResult.searchSpace?.unsupportedTimingSeedCount !== 0 ||
+      staleResult.searchSpace?.timingVerificationRepairCount !== 0 ||
+      staleResult.nextExperiment?.kind !==
+        'strategy_generation_shape_recovery' ||
+      staleResult.winner !== null ||
+      staleResult.gate?.sideEffects?.pdlCalls !== 0 ||
+      staleResult.gate?.sideEffects?.outreachAttempts !== 0 ||
+      staleResult.gate?.sideEffects?.publishAttempts !== 0 ||
+      staleResult.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `stale family evidence was repaired into a timing trigger: ${JSON.stringify(staleResult)}`
     );
   }
 }

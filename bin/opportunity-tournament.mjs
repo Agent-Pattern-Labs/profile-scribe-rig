@@ -2723,8 +2723,9 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
         out.familyEvidenceMismatchSeedCount += 1;
         if (name === 'timingTriggers' && declaredFamilyIds.length === 1) {
           const familyID = declaredFamilyIds[0];
+          const family = asObject(strategyFamilies.get(familyID));
           const familyEvidence = new Set(
-            asArray(strategyFamilies.get(familyID)?.evidenceRefs)
+            asArray(family.evidenceRefs)
           );
           const buyerGroundedFamilyObservations =
             normalizedFamilyBuyerObservationEvidenceRefs(
@@ -2733,8 +2734,23 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
               evidenceByID
             )
               .filter((ref) => familyEvidence.has(ref));
+          // A V2 timing fallback is only a low-confidence verification step.
+          // Prefer buyer-grounded evidence, but do not turn an otherwise
+          // parseable typed family into a provider-shape failure solely
+          // because its timing seed cited the wrong family ref. A current
+          // observation from that same family may ground "Determine whether"
+          // wording; the full revenue gate still rejects unsupported buyer,
+          // offer, acquisition, conversion, and attribution claims later.
+          const typedFamilyObservations =
+            out.seedContract === SEED_CONTRACT_VERSION &&
+              ACQUISITION_MODES.has(firstText(family.acquisitionMode))
+              ? strategyObservationEvidenceRefs(family.evidenceRefs)
+              : [];
           familyLocalTimingRepair = repairTimingAsVerification(
-            buyerGroundedFamilyObservations,
+            compactStrings([
+              ...buyerGroundedFamilyObservations,
+              ...typedFamilyObservations
+            ]),
             evidenceByID,
             referenceTime
           );
