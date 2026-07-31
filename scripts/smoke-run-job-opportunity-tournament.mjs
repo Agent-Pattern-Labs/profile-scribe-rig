@@ -2896,6 +2896,9 @@ try {
           /r\.ats names its booking\/payment/i.test(rule)
         ) ||
         !input.hardRules?.some((rule) =>
+          /Timing q copies an exact phrase/i.test(rule)
+        ) ||
+        !input.hardRules?.some((rule) =>
           /Silently audit the strict JSON once/i.test(rule)
         ) ||
         !input.hardRules?.some((rule) =>

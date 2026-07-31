@@ -2093,6 +2093,7 @@ function compactTournamentHardRules() {
     'Ground the buyer, current paid offer, acquisition, distinct destination, paid conversion, and attribution record; never invent demand or an outside target.',
     'Inbound names discovery separately from destination. Operations, research, scheduling, content, and verification may appear only in sb, never as the revenue action.',
     'r.ats names its booking/payment/invoice/contract/order/claim/CRM/referral record and source/referral/UTM/campaign/channel field.',
+    'Timing q copies an exact phrase from a cited observation. If urgency is not observed, t.l begins Determine and includes that exact phrase; never invent urgency.',
     'The fallback experiment uses a current owner paid asset when present, is singular and bounded, and performs no external action.',
     'Candidate names are copied exactly from cited evidence; otherwise return [].',
     'Return no outreach copy, publishing, ads, form submission, scraping, bulk contact, provider write, or prose outside the JSON.',
