@@ -4,6 +4,8 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
 import {
+  OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION,
+  OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT,
   REVENUE_GATE_VERSION,
   REVENUE_PATH_CONTRACT_VERSION,
   runOpportunityTournament,
@@ -528,11 +530,16 @@ async function runAgentAvatarChatJob(job, options) {
 async function runOpportunityTournamentJob(job, options) {
   const payload = object(job.payload);
   const tournamentId = firstNonEmpty(payload.tournamentId, job.id);
+  const algorithmVersion = firstNonEmpty(
+    payload.algorithmVersion,
+    OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION
+  );
   const model = openRouterTournamentModel();
   if (options.dryRun) {
     return {
       ...skipped(job, 'dry run: opportunity tournament would perform research and return one reviewable recommendation', {
         tournamentId,
+        algorithmVersion,
         hypotheses: [],
         candidates: [],
         winner: null,
@@ -540,6 +547,7 @@ async function runOpportunityTournamentJob(job, options) {
         nextExperiment: null,
         searchSpace: {
           maxHypotheses: Math.min(10000, numberOr(object(payload.budget).maxHypotheses, 10000)),
+          generatorContract: OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT,
           expandedCount: 0,
           deterministic: true,
           modelCalls: 0,
@@ -580,6 +588,7 @@ async function runOpportunityTournamentJob(job, options) {
     return {
       ...skipped(job, 'Opportunity tournament requires OPENROUTER_API_KEY; no deterministic recommendation was substituted.', {
         tournamentId,
+        algorithmVersion,
         hypotheses: [],
         candidates: [],
         winner: null,
@@ -587,6 +596,7 @@ async function runOpportunityTournamentJob(job, options) {
         nextExperiment: null,
         searchSpace: {
           maxHypotheses: Math.min(10000, numberOr(object(payload.budget).maxHypotheses, 10000)),
+          generatorContract: OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT,
           expandedCount: 0,
           deterministic: true,
           modelCalls: 0,

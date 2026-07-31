@@ -4246,6 +4246,9 @@ try {
     ['missing-key', missingKey]
   ]) {
     if (result.status !== 'skipped' ||
+        result.metadata?.algorithmVersion !== 'cheap_tournament_v4' ||
+        result.metadata?.searchSpace?.generatorContract !==
+          'opportunity_tournament_compact_v1' ||
         result.metadata?.searchSpace?.modelCalls !== 0 ||
         result.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
         result.metadata?.searchSpace?.revenueGate !==

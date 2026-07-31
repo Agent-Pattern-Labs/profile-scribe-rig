@@ -2,8 +2,10 @@ import { createHash } from 'crypto';
 import { isIP } from 'net';
 
 export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v4';
-const TOURNAMENT_GENERATOR_CONTRACT =
+export const OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT =
   'opportunity_tournament_compact_v1';
+const TOURNAMENT_GENERATOR_CONTRACT =
+  OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT;
 
 const MAX_HYPOTHESES = 10_000;
 const MAX_FINALISTS = 20;
