@@ -2,7 +2,9 @@
 
 import {
   buildEvidenceCatalog,
-  runOpportunityTournament
+  providerCallSpendCeilingMicros,
+  runOpportunityTournament,
+  serializeOpenRouterJSONRequestBody
 } from '../bin/opportunity-tournament.mjs';
 
 const now = new Date('2026-07-30T12:00:00Z');
@@ -195,7 +197,8 @@ await verifyUnsafeGeneratedExperimentRejected();
 await verifyInvalidSeedContractsRejected();
 await verifyLengthFinishedStructuredRepair();
 await verifyThrownLengthStructuredRepair();
-await verifyTruncatedInitialBudgetRecovery();
+await verifyProviderSpendBudgetRecovery();
+await verifyMaximumTournamentSpendCeiling();
 await verifyRepeatedLengthFinishFailsClosed();
 await verifyBettyProductionTraceRegression();
 await verifyStructuredRepairAcrossDomains();
@@ -708,8 +711,19 @@ async function verifyLengthFinishedStructuredRepair() {
       result.llm?.strategyFamilyRepair?.status !== 'completed' ||
       result.usage?.calls !== 2 ||
       result.usage?.successfulCalls !== 1 ||
+      result.usage?.maxLLMSpendMicros !== 400_000 ||
       requests[0]?.maxTokens !== 8000 ||
       requests[1]?.maxTokens !== 4000 ||
+      requests.some((request) =>
+        request.model !== 'test/v2' ||
+        request.temperature !== 0 ||
+        JSON.stringify(request.provider?.order) !== '["openai"]' ||
+        JSON.stringify(request.provider?.only) !== '["openai"]' ||
+        request.provider?.allow_fallbacks !== false ||
+        request.provider?.require_parameters !== true ||
+        request.provider?.max_price?.prompt !== 0.4 ||
+        request.provider?.max_price?.completion !== 1.6
+      ) ||
       repairSchema?.properties?.familyA?.properties?.d?.properties
         ?.o?.minItems !== 1 ||
       repairSchema?.properties?.familyA?.properties?.d?.properties
@@ -811,30 +825,16 @@ async function verifyThrownLengthStructuredRepair() {
   }
 }
 
-async function verifyTruncatedInitialBudgetRecovery() {
+async function verifyProviderSpendBudgetRecovery() {
   const domain = { ...domains.find((item) => item.name === 'commerce') };
-  const ref = 'observation:obs-truncated-budget-recovery';
-  const truncation = () => {
-    const error = new Error(
-      'OpenRouter ended structured output at its token limit'
-    );
-    error.openRouterFailureCode =
-      'openrouter_truncated_structured_output';
-    error.openRouterUsage = usage;
-    error.openRouterDiagnostics = {
-      finishReason: 'length',
-      nativeFinishReason: 'max_tokens',
-      contentByteCount: 8000
-    };
-    return error;
-  };
+  const ref = 'observation:obs-provider-budget-recovery';
 
   let noSpendCalls = 0;
   const noSpend = await runDomainRepairSequence({
     domain,
     ref,
-    suffix: 'truncated-no-repair-spend',
-    responses: [truncation()],
+    suffix: 'initial-call-budget-preflight',
+    responses: [compactV2Response(domain, ref)],
     diagnostics: [undefined],
     budgetOverrides: {
       maxLLMSpendMicros: 4200
@@ -843,23 +843,20 @@ async function verifyTruncatedInitialBudgetRecovery() {
       noSpendCalls += 1;
     }
   });
-  if (noSpendCalls !== 1 ||
+  if (noSpendCalls !== 0 ||
       noSpend.status !== 'skipped' ||
       noSpend.nextExperiment?.kind !==
         'strategy_generation_budget_recovery' ||
       noSpend.nextExperiment?.missingEvidence?.[0] !==
         'within_budget_strategy_generation' ||
-      noSpend.searchSpace?.structuredRepair?.attempted !== false ||
-      noSpend.searchSpace?.structuredRepair?.succeeded !== false ||
-      noSpend.searchSpace?.structuredRepair?.initialIssue !==
-        'output_length_truncated' ||
-      noSpend.searchSpace?.structuredRepair?.finalIssue !==
-        'output_length_truncated' ||
-      noSpend.searchSpace?.structuredRepair?.failure !==
-        'repair_budget_unavailable' ||
-      noSpend.llm?.strategyGeneratorJudge?.status !== 'failed' ||
-      noSpend.usage?.calls !== 1 ||
+      noSpend.searchSpace?.providerSpendPreflight?.authorized !== false ||
+      noSpend.searchSpace?.providerSpendPreflight
+        ?.callSpendCeilingMicros <= 4200 ||
+      noSpend.searchSpace?.modelCalls !== 0 ||
+      Object.keys(noSpend.llm || {}).length !== 0 ||
+      noSpend.usage?.calls !== 0 ||
       noSpend.usage?.successfulCalls !== 0 ||
+      noSpend.usage?.costReporting !== 'complete' ||
       noSpend.gate?.decision !== 'block' ||
       hasBusinessExperimentField(noSpend.nextExperiment)) {
     throw new Error(
@@ -867,47 +864,433 @@ async function verifyTruncatedInitialBudgetRecovery() {
     );
   }
 
-  let hardStopCalls = 0;
-  const hardStop = await runDomainRepairSequence({
+  const invalidProviderCosts = [
+    { label: 'omitted', include: false },
+    { label: 'string', include: true, value: '0.0042' },
+    { label: 'negative', include: true, value: -1 },
+    { label: 'null', include: true, value: null },
+    { label: 'nan', include: true, value: Number.NaN },
+    { label: 'infinity', include: true, value: Number.POSITIVE_INFINITY }
+  ];
+  for (const invalidCost of invalidProviderCosts) {
+    const incomplete = compactV2Response(domain, ref);
+    incomplete.seedContract = 'unsupported_seed_contract';
+    const initialUsage = { ...usage };
+    if (invalidCost.include) {
+      initialUsage.cost = invalidCost.value;
+    } else {
+      delete initialUsage.cost;
+    }
+    let unreportedCalls = 0;
+    const unreported = await runDomainRepairSequence({
+      domain,
+      ref,
+      suffix:
+        `invalid-${invalidCost.label}-usage-repair-budget-hard-stop`,
+      responses: [incomplete, compactV2Response(domain, ref)],
+      diagnostics: [{ finishReason: 'stop' }, { finishReason: 'stop' }],
+      usages: [initialUsage, usage],
+      budgetOverrides: {
+        // This authorizes the initial call, but not a repair after its full
+        // conservative ceiling is reserved for invalid cost accounting.
+        maxLLMSpendMicros: 250_000
+      },
+      onRequest: () => {
+        unreportedCalls += 1;
+      }
+    });
+    if (unreportedCalls !== 1 ||
+        unreported.status !== 'skipped' ||
+        unreported.nextExperiment?.kind !==
+          'strategy_generation_budget_recovery' ||
+        unreported.nextExperiment?.missingEvidence?.[0] !==
+          'within_budget_strategy_generation' ||
+        unreported.searchSpace?.structuredRepair?.attempted !== false ||
+        unreported.searchSpace?.structuredRepair?.succeeded !== false ||
+        unreported.searchSpace?.structuredRepair?.initialIssue !==
+          'unsupported_seed_contract' ||
+        unreported.searchSpace?.structuredRepair?.failure !==
+          'repair_budget_unavailable' ||
+        unreported.searchSpace?.structuredRepair
+          ?.initialCallSpendCeilingMicros <= 0 ||
+        unreported.searchSpace?.structuredRepair
+          ?.initialFixedRequestFeeCeilingMicros !== 120_000 ||
+        unreported.searchSpace?.structuredRepair
+          ?.repairCallSpendCeilingMicros <=
+            unreported.searchSpace?.structuredRepair
+              ?.remainingSpendMicros ||
+        unreported.llm?.strategyGeneratorJudge?.status !== 'completed' ||
+        unreported.llm?.strategyFamilyRepair !== undefined ||
+        unreported.usage?.calls !== 1 ||
+        unreported.usage?.successfulCalls !== 1 ||
+        unreported.usage?.costReporting !== 'unavailable' ||
+        unreported.gate?.decision !== 'block' ||
+        hasBusinessExperimentField(unreported.nextExperiment)) {
+      throw new Error(
+        `${invalidCost.label} provider cost was not conservatively reserved before repair: ${JSON.stringify(unreported)}`
+      );
+    }
+  }
+
+  const incompleteZeroCost = compactV2Response(domain, ref);
+  incompleteZeroCost.seedContract = 'unsupported_seed_contract';
+  let zeroCostCalls = 0;
+  const validZeroCost = await runDomainRepairSequence({
     domain,
     ref,
-    suffix: 'truncated-repair-budget-hard-stop',
-    responses: [truncation(), compactV2Response(domain, ref)],
-    diagnostics: [undefined, {
-      finishReason: 'stop',
-      nativeFinishReason: 'stop'
-    }],
+    suffix: 'valid-zero-cost-allows-bounded-repair',
+    responses: [incompleteZeroCost, compactV2Response(domain, ref)],
+    diagnostics: [{ finishReason: 'stop' }, { finishReason: 'stop' }],
+    usages: [{ ...usage, cost: 0 }, { ...usage, cost: 0 }],
     budgetOverrides: {
-      maxLLMSpendMicros: 6000
+      maxLLMSpendMicros: 250_000
     },
     onRequest: () => {
-      hardStopCalls += 1;
+      zeroCostCalls += 1;
     }
   });
-  if (hardStopCalls !== 2 ||
-      hardStop.status !== 'skipped' ||
-      hardStop.nextExperiment?.kind !==
-        'strategy_generation_budget_recovery' ||
-      hardStop.nextExperiment?.missingEvidence?.[0] !==
-        'within_budget_strategy_generation' ||
-      hardStop.searchSpace?.structuredRepair?.attempted !== true ||
-      hardStop.searchSpace?.structuredRepair?.succeeded !== true ||
-      hardStop.searchSpace?.structuredRepair?.initialIssue !==
-        'output_length_truncated' ||
-      hardStop.searchSpace?.structuredRepair?.finalIssue !== '' ||
-      hardStop.searchSpace?.structuredRepair?.failure !==
-        'repair_budget_exceeded' ||
-      hardStop.searchSpace?.familyWrapperCount !== 2 ||
-      hardStop.searchSpace?.validStrategyFamilyCount !== 2 ||
-      hardStop.llm?.strategyGeneratorJudge?.status !== 'failed' ||
-      hardStop.llm?.strategyFamilyRepair?.status !== 'completed' ||
-      hardStop.usage?.calls !== 2 ||
-      hardStop.usage?.successfulCalls !== 1 ||
-      hardStop.usage?.withinBudget !== false ||
-      hardStop.gate?.decision !== 'block' ||
-      hasBusinessExperimentField(hardStop.nextExperiment)) {
+  if (zeroCostCalls !== 2 ||
+      validZeroCost.status !== 'completed' ||
+      validZeroCost.searchSpace?.structuredRepair?.attempted !== true ||
+      validZeroCost.searchSpace?.structuredRepair?.succeeded !== true ||
+      validZeroCost.usage?.calls !== 2 ||
+      validZeroCost.usage?.costReporting !== 'complete' ||
+      validZeroCost.usage?.reportedCostMicros !== 0) {
     throw new Error(
-      `a successful repair that exceeded the hard spend cap retained a stale shape cause: ${JSON.stringify(hardStop)}`
+      `a valid numeric zero provider cost did not authorize the bounded repair: ${JSON.stringify(validZeroCost)}`
+    );
+  }
+
+  let validSeedCanaryCalls = 0;
+  const validSeedCanaryFailure = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'valid-seed-prompt-token-canary-hard-stop',
+    responses: [compactV2Response(domain, ref)],
+    diagnostics: [{ finishReason: 'stop' }],
+    usages: [{
+      ...usage,
+      prompt_tokens: 1_000_000,
+      total_tokens: 1_000_900,
+      cost: 0
+    }],
+    budgetOverrides: {
+      maxLLMCalls: 1,
+      maxLLMSpendMicros: 400_000
+    },
+    onRequest: () => {
+      validSeedCanaryCalls += 1;
+    }
+  });
+  if (validSeedCanaryCalls !== 1 ||
+      validSeedCanaryFailure.status !== 'skipped' ||
+      validSeedCanaryFailure.winner !== null ||
+      validSeedCanaryFailure.runnerUp !== null ||
+      validSeedCanaryFailure.searchSpace?.structuredRepair?.authorized !==
+        false ||
+      validSeedCanaryFailure.searchSpace?.structuredRepair?.attempted !==
+        false ||
+      validSeedCanaryFailure.searchSpace?.structuredRepair?.succeeded !==
+        false ||
+      validSeedCanaryFailure.searchSpace?.structuredRepair?.initialIssue !==
+        '' ||
+      validSeedCanaryFailure.searchSpace?.structuredRepair?.finalIssue !==
+        '' ||
+      validSeedCanaryFailure.searchSpace?.structuredRepair?.failure !==
+        'prompt_token_ceiling_exceeded' ||
+      validSeedCanaryFailure.searchSpace?.structuredRepair
+        ?.initialPromptTokenCanary?.withinCeiling !== false ||
+      validSeedCanaryFailure.searchSpace?.structuredRepair
+        ?.initialPromptTokenCanary?.reportedPromptTokens !== 1_000_000 ||
+      validSeedCanaryFailure.nextExperiment?.kind !==
+        'strategy_generation_budget_recovery' ||
+      validSeedCanaryFailure.usage?.calls !== 1 ||
+      validSeedCanaryFailure.usage?.successfulCalls !== 1 ||
+      validSeedCanaryFailure.usage?.costReporting !== 'complete' ||
+      validSeedCanaryFailure.usage?.withinBudget !== true ||
+      validSeedCanaryFailure.gate?.decision !== 'block') {
+    throw new Error(
+      `valid strategy families bypassed the initial prompt-token canary: ${JSON.stringify(validSeedCanaryFailure)}`
+    );
+  }
+
+  const canaryIncomplete = compactV2Response(domain, ref);
+  canaryIncomplete.seedContract = 'unsupported_seed_contract';
+  let canaryCalls = 0;
+  const canaryFailure = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'prompt-token-canary-hard-stop',
+    responses: [canaryIncomplete, compactV2Response(domain, ref)],
+    diagnostics: [{ finishReason: 'stop' }, { finishReason: 'stop' }],
+    usages: [{
+      ...usage,
+      prompt_tokens: 1_000_000,
+      total_tokens: 1_000_900,
+      cost: 0
+    }, { ...usage, cost: 0 }],
+    budgetOverrides: {
+      maxLLMSpendMicros: 400_000
+    },
+    onRequest: () => {
+      canaryCalls += 1;
+    }
+  });
+  if (canaryCalls !== 1 ||
+      canaryFailure.status !== 'skipped' ||
+      canaryFailure.searchSpace?.structuredRepair?.attempted !== false ||
+      canaryFailure.searchSpace?.structuredRepair?.failure !==
+        'prompt_token_ceiling_exceeded' ||
+      canaryFailure.searchSpace?.structuredRepair
+        ?.initialPromptTokenCanary?.withinCeiling !== false ||
+      canaryFailure.searchSpace?.structuredRepair
+        ?.initialPromptTokenCanary?.reportedPromptTokens !== 1_000_000 ||
+      canaryFailure.nextExperiment?.kind !==
+        'strategy_generation_budget_recovery' ||
+      canaryFailure.usage?.calls !== 1 ||
+      canaryFailure.gate?.decision !== 'block') {
+    throw new Error(
+      `provider prompt-token ceiling drift did not block repair: ${JSON.stringify(canaryFailure)}`
+    );
+  }
+
+  const repairCanaryIncomplete = compactV2Response(domain, ref);
+  repairCanaryIncomplete.seedContract = 'unsupported_seed_contract';
+  const repairCanaryInitialUsage = { ...usage };
+  delete repairCanaryInitialUsage.cost;
+  let repairCanaryCalls = 0;
+  const repairCanaryFailure = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'repair-prompt-token-canary-hard-stop',
+    responses: [
+      repairCanaryIncomplete,
+      compactV2Response(domain, ref)
+    ],
+    diagnostics: [{ finishReason: 'stop' }, { finishReason: 'stop' }],
+    usages: [repairCanaryInitialUsage, {
+      ...usage,
+      prompt_tokens: 1_000_000,
+      total_tokens: 1_000_900,
+      cost: 0
+    }],
+    budgetOverrides: {
+      maxLLMSpendMicros: 400_000
+    },
+    onRequest: () => {
+      repairCanaryCalls += 1;
+    }
+  });
+  if (repairCanaryCalls !== 2 ||
+      repairCanaryFailure.status !== 'skipped' ||
+      repairCanaryFailure.winner !== null ||
+      repairCanaryFailure.searchSpace?.structuredRepair?.attempted !==
+        true ||
+      repairCanaryFailure.searchSpace?.structuredRepair?.succeeded !==
+        false ||
+      repairCanaryFailure.searchSpace?.structuredRepair?.failure !==
+        'repair_prompt_token_ceiling_exceeded' ||
+      repairCanaryFailure.searchSpace?.structuredRepair
+        ?.repairPromptTokenCanary?.withinCeiling !== false ||
+      repairCanaryFailure.searchSpace?.structuredRepair
+        ?.repairPromptTokenCanary?.reportedPromptTokens !== 1_000_000 ||
+      repairCanaryFailure.nextExperiment?.kind !==
+        'strategy_generation_budget_recovery' ||
+      repairCanaryFailure.usage?.calls !== 2 ||
+      repairCanaryFailure.usage?.successfulCalls !== 2 ||
+      repairCanaryFailure.usage?.costReporting !== 'partial' ||
+      repairCanaryFailure.usage?.withinBudget !== true ||
+      repairCanaryFailure.gate?.decision !== 'block') {
+    throw new Error(
+      `repair prompt-token ceiling drift did not preserve partial usage and fail closed: ${JSON.stringify(repairCanaryFailure)}`
+    );
+  }
+
+  const overBudgetIncomplete = compactV2Response(domain, ref);
+  overBudgetIncomplete.seedContract = 'unsupported_seed_contract';
+  let overBudgetCalls = 0;
+  const repairBudgetFailure = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'repair-reported-budget-precedes-canary',
+    responses: [overBudgetIncomplete, compactV2Response(domain, ref)],
+    diagnostics: [{ finishReason: 'stop' }, { finishReason: 'stop' }],
+    usages: [{ ...usage, cost: 0 }, {
+      ...usage,
+      prompt_tokens: 1_000_000,
+      total_tokens: 1_000_900,
+      cost: 0.5
+    }],
+    budgetOverrides: {
+      maxLLMSpendMicros: 400_000
+    },
+    onRequest: () => {
+      overBudgetCalls += 1;
+    }
+  });
+  if (overBudgetCalls !== 2 ||
+      repairBudgetFailure.status !== 'skipped' ||
+      repairBudgetFailure.winner !== null ||
+      repairBudgetFailure.searchSpace?.structuredRepair?.attempted !==
+        true ||
+      repairBudgetFailure.searchSpace?.structuredRepair?.succeeded !==
+        true ||
+      repairBudgetFailure.searchSpace?.structuredRepair?.failure !==
+        'repair_budget_exceeded' ||
+      repairBudgetFailure.searchSpace?.structuredRepair
+        ?.repairPromptTokenCanary?.withinCeiling !== false ||
+      repairBudgetFailure.nextExperiment?.kind !==
+        'strategy_generation_budget_recovery' ||
+      repairBudgetFailure.usage?.calls !== 2 ||
+      repairBudgetFailure.usage?.successfulCalls !== 2 ||
+      repairBudgetFailure.usage?.costReporting !== 'complete' ||
+      repairBudgetFailure.usage?.reportedCostMicros !== 500_000 ||
+      repairBudgetFailure.usage?.withinBudget !== false ||
+      repairBudgetFailure.gate?.decision !== 'block') {
+    throw new Error(
+      `reported repair spend did not take precedence over simultaneous canary drift: ${JSON.stringify(repairBudgetFailure)}`
+    );
+  }
+
+  const circularProvider = {
+    max_price: { prompt: 0.4, completion: 1.6, request: 0.12 }
+  };
+  circularProvider.circular = circularProvider;
+  const serializationFailureCeiling = providerCallSpendCeilingMicros({
+    model: 'test/v2',
+    system: 'bounded system prompt',
+    user: 'bounded user prompt',
+    maxTokens: 8_000,
+    temperature: 0,
+    provider: circularProvider
+  }, {
+    maxLLMSpendMicros: 400_000,
+    providerMaxPrice: {
+      prompt: 0.4,
+      completion: 1.6,
+      request: 0.12
+    }
+  });
+  if (serializationFailureCeiling !== 400_001) {
+    throw new Error(
+      `request serialization failure did not fail over budget: ${serializationFailureCeiling}`
+    );
+  }
+}
+
+async function verifyMaximumTournamentSpendCeiling() {
+  const domain = { ...domains.find((item) => item.name === 'commerce') };
+  const ref = 'observation:obs-max-0';
+  const sourceId = 'src-maximum-tournament';
+  const website = 'https://commerce.example/';
+  const sourceEvidence = Array.from({ length: 80 }, (_, index) => ({
+    observationId: `obs-max-${index}`,
+    sourceId,
+    kind: index === 0 ? 'service-page' : 'case-study',
+    title: index === 0
+      ? domain.destination
+      : `Evidence ${index} ${'T'.repeat(180)}`,
+    summary: index === 0
+      ? domain.sourceSummary
+      : `Current source-backed commercial case study ${index} ${
+          'S'.repeat(420)
+        }`,
+    url: index === 0
+      ? `${website}offer`
+      : `${website}case-study/${index}/${'u'.repeat(96)}`,
+    observedAt: '2026-07-29T12:00:00Z',
+    confidence: 'high'
+  }));
+  const initial = compactV2Response(domain, ref);
+  initial.seedContract = 'unsupported_seed_contract';
+  const requests = [];
+  const result = await runDomainRepairSequence({
+    domain,
+    ref,
+    suffix: 'maximum-legal-tournament-spend-ceiling',
+    responses: [initial, compactV2Response(domain, ref)],
+    diagnostics: [{ finishReason: 'stop' }, { finishReason: 'stop' }],
+    usages: [usage, usage],
+    evidenceSnapshot: {
+      profile: {
+        identity: { website }
+      },
+      sources: [{
+        id: sourceId,
+        url: website,
+        status: 'monitoring',
+        trustLevel: 'high'
+      }],
+      sourceEvidence
+    },
+    budgetOverrides: {
+      maxHypotheses: 10_000,
+      maxFinalists: 20,
+      maxLLMCalls: 2,
+      maxOutputTokens: 10_000,
+      maxLLMSpendMicros: 400_000
+    },
+    onRequest: (request) => requests.push(request)
+  });
+  const initialTask = JSON.parse(requests[0]?.user || '{}');
+  const budget = {
+    maxLLMSpendMicros: 400_000,
+    providerMaxPrice: {
+      prompt: 0.4,
+      completion: 1.6,
+      request: 0.12
+    }
+  };
+  const serializedInitial = serializeOpenRouterJSONRequestBody(
+    requests[0]
+  );
+  const serializedRepair = serializeOpenRouterJSONRequestBody(
+    requests[1]
+  );
+  const initialBytes = Buffer.byteLength(serializedInitial, 'utf8');
+  const repairBytes = Buffer.byteLength(serializedRepair, 'utf8');
+  const initialCeiling = providerCallSpendCeilingMicros(
+    requests[0],
+    budget
+  );
+  const repairCeiling = providerCallSpendCeilingMicros(
+    requests[1],
+    budget
+  );
+  const repairTrace = result.searchSpace?.structuredRepair || {};
+  if (requests.length !== 2 ||
+      result.status !== 'completed' ||
+      initialTask.evidenceCatalog?.length !== 64 ||
+      !initialTask.evidenceCatalog?.some((item) => item.id === ref) ||
+      requests[0]?.maxTokens !== 10_000 ||
+      requests[1]?.maxTokens !== 4_000 ||
+      repairTrace.initialFixedRequestFeeCeilingMicros !== 120_000 ||
+      repairTrace.repairFixedRequestFeeCeilingMicros !== 120_000 ||
+      repairTrace.initialCallSpendCeilingMicros !== initialCeiling ||
+      repairTrace.repairCallSpendCeilingMicros !== repairCeiling ||
+      repairTrace.initialPromptTokenCanary?.requestBodyByteCount !==
+        initialBytes ||
+      repairTrace.initialPromptTokenCanary?.promptTokenCeiling !==
+        initialBytes + 1_024 ||
+      repairTrace.initialPromptTokenCanary?.withinCeiling !== true ||
+      repairTrace.repairRequestBodyByteCount !== repairBytes ||
+      repairTrace.repairPromptTokenCeiling !== repairBytes + 1_024 ||
+      repairTrace.repairPromptTokenCanary?.requestBodyByteCount !==
+        repairBytes ||
+      repairTrace.repairPromptTokenCanary?.withinCeiling !== true ||
+      initialCeiling + repairCeiling > 400_000) {
+    throw new Error(
+      `maximum legal tournament did not fit the exact two-call hard ceiling: ${JSON.stringify({
+        status: result.status,
+        evidenceCount: initialTask.evidenceCatalog?.length,
+        requestCount: requests.length,
+        initialBytes,
+        repairBytes,
+        initialCeiling,
+        repairCeiling,
+        totalCeiling: initialCeiling + repairCeiling,
+        repairTrace
+      })}`
     );
   }
 }
@@ -918,6 +1301,8 @@ async function runDomainRepairSequence({
   suffix,
   responses,
   diagnostics,
+  usages,
+  evidenceSnapshot,
   budgetOverrides = {},
   onRequest = () => {}
 }) {
@@ -939,7 +1324,7 @@ async function runDomainRepairSequence({
           maxOutputTokens: 8000,
           ...budgetOverrides
         },
-        evidenceSnapshot: {
+        evidenceSnapshot: evidenceSnapshot || {
           profile: {
             identity: {
               website: `https://${domain.name}.example/`
@@ -975,7 +1360,7 @@ async function runDomainRepairSequence({
       }
       return {
         data: responses[index],
-        usage,
+        usage: usages ? usages[index] : usage,
         generationId: `gen-${suffix}-${calls}`,
         diagnostics: diagnostics[index]
       };

@@ -51,6 +51,13 @@ const server = createServer(async (request, response) => {
       : scenario === 'quality'
         ? 'The approved sources and source graph show Exit Metadata Lab through the internal posting workflow, which is concrete enough for this deliberately rejected quality test.'
         : goodBody;
+    const scenarioUsage = scenario === 'invalid_cost_string'
+      ? { ...usage, cost: '0.0042' }
+      : scenario === 'invalid_cost_negative'
+        ? { ...usage, cost: -1 }
+        : scenario === 'invalid_cost_null'
+          ? { ...usage, cost: null }
+          : usage;
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({
       choices: [{
@@ -64,7 +71,7 @@ const server = createServer(async (request, response) => {
           })
         }
       }],
-      usage
+      usage: scenarioUsage
     }));
     return;
   }
@@ -133,6 +140,24 @@ try {
     { name: 'provider_failure', status: 'skipped', usage: false, error: 'openrouter_http_500' },
     { name: 'invalid_message', status: 'skipped', usage: true, error: 'openrouter_invalid_response' },
     { name: 'quality', status: 'skipped', usage: true },
+    {
+      name: 'invalid_cost_string',
+      status: 'completed',
+      usage: true,
+      invalidCost: true
+    },
+    {
+      name: 'invalid_cost_negative',
+      status: 'completed',
+      usage: true,
+      invalidCost: true
+    },
+    {
+      name: 'invalid_cost_null',
+      status: 'completed',
+      usage: true,
+      invalidCost: true
+    },
     { name: 'pre_submit_duplicate', status: 'skipped', usage: true },
     { name: 'mcp_duplicate', status: 'skipped', usage: true },
     { name: 'mcp_failure', status: 'failed', usage: true, exitCode: 1 }
@@ -146,8 +171,24 @@ try {
     if (drafter.provider !== 'openrouter' || drafter.model !== 'test/openrouter-exit-model') {
       throw new Error(`${test.name}: missing OpenRouter drafter metadata: ${JSON.stringify(drafter)}`);
     }
-    if (test.usage && (drafter.openRouterUsage?.total_tokens !== usage.total_tokens || drafter.openRouterUsage?.cost !== usage.cost)) {
+    if (test.usage &&
+        drafter.openRouterUsage?.total_tokens !== usage.total_tokens) {
       throw new Error(`${test.name}: missing OpenRouter usage: ${JSON.stringify(drafter)}`);
+    }
+    if (test.invalidCost &&
+        Object.prototype.hasOwnProperty.call(
+          drafter.openRouterUsage || {},
+          'cost'
+        )) {
+      throw new Error(
+        `${test.name}: invalid provider cost survived normalization: ${JSON.stringify(drafter)}`
+      );
+    }
+    if (test.usage && !test.invalidCost &&
+        drafter.openRouterUsage?.cost !== usage.cost) {
+      throw new Error(
+        `${test.name}: valid provider cost was lost: ${JSON.stringify(drafter)}`
+      );
     }
     if (test.error && drafter.error !== test.error) {
       throw new Error(`${test.name}: expected safe error ${test.error}, got ${JSON.stringify(drafter)}`);

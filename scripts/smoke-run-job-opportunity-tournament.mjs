@@ -17,6 +17,8 @@ const mcpCalls = [];
 const unexpectedRequests = [];
 const invalidStructuredContent =
   '{"seedContract":"revenue_family_bundle_v1","familyA":';
+const malformedEnvelopeContent =
+  'SENSITIVE_MALFORMED_ENVELOPE_BODY_MUST_NOT_SURVIVE';
 const truncatedStructuredContent =
   '{"seedContract":"revenue_family_bundle_v1","familyA":{"l":"unfinished"';
 const parseableLengthStructuredContent = JSON.stringify({
@@ -172,6 +174,11 @@ const server = createServer(async (request, response) => {
           'No provider route fits the max_price request budget cap.'
       }
     }));
+    return;
+  }
+  if (input.objective?.id === 'obj-malformed-http-200-envelope') {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(malformedEnvelopeContent);
     return;
   }
   if (input.objective?.id === 'obj-invalid-structured-output') {
@@ -1396,7 +1403,7 @@ try {
       budget: {
         currency: 'USD',
         maxSpendMicros: 1_000_000,
-        maxLLMSpendMicros: 300_000,
+        maxLLMSpendMicros: 400_000,
         maxHypotheses: 10_000,
         maxFinalists: 20,
         maxLLMCalls: 1,
@@ -1705,7 +1712,12 @@ try {
   const jobFile = join(tmp, 'job.json');
   writeFileSync(jobFile, `${JSON.stringify(job)}\n`, 'utf8');
 
-  const first = await runJob(jobFile, port);
+  const first = await runJob(
+    jobFile,
+    port,
+    '/unexpected-mcp',
+    { env: { PROFILESCRIBE_RIG_TOURNAMENT_MODEL: '' } }
+  );
   const second = await runJob(jobFile, port);
   const candidateFreeJob = structuredClone(job);
   candidateFreeJob.id = 'job-opportunity-tournament-candidate-free-smoke';
@@ -1958,6 +1970,26 @@ try {
   );
   const providerFailure = await runJob(
     providerFailureJobFile,
+    port
+  );
+  const malformedEnvelopeJob = structuredClone(candidateFreeJob);
+  malformedEnvelopeJob.id =
+    'job-opportunity-tournament-malformed-envelope-smoke';
+  malformedEnvelopeJob.payload.tournamentId =
+    'opturn-malformed-envelope-smoke';
+  malformedEnvelopeJob.payload.objective.id =
+    'obj-malformed-http-200-envelope';
+  const malformedEnvelopeJobFile = join(
+    tmp,
+    'malformed-envelope-job.json'
+  );
+  writeFileSync(
+    malformedEnvelopeJobFile,
+    `${JSON.stringify(malformedEnvelopeJob)}\n`,
+    'utf8'
+  );
+  const malformedEnvelope = await runJob(
+    malformedEnvelopeJobFile,
     port
   );
   const invalidStructuredJob = structuredClone(candidateFreeJob);
@@ -2857,18 +2889,26 @@ try {
     }
   }
   for (const [callIndex, call] of openRouterCalls.entries()) {
+    const expectedModel = callIndex === 0
+      ? 'openai/gpt-4.1-mini'
+      : 'test/opportunity-tournament';
     if (call.max_tokens !== 8000) {
       throw new Error(`expected bounded 8000-token completion, got ${call.max_tokens}`);
     }
-    if (call.temperature !== 0 ||
+    if (call.model !== expectedModel ||
+        call.temperature !== 0 ||
         call.plugins?.length !== 1 ||
         call.plugins?.[0]?.id !== 'response-healing' ||
-        call.provider?.data_collection !== 'deny') {
+        call.provider?.data_collection !== 'deny' ||
+        JSON.stringify(call.provider?.order) !== '["openai"]' ||
+        JSON.stringify(call.provider?.only) !== '["openai"]' ||
+        call.provider?.allow_fallbacks !== false) {
       throw new Error(
-        `expected deterministic privacy-filtered response-healed tournament generation, got ${JSON.stringify({
+        `expected pinned deterministic privacy-filtered response-healed tournament generation, got ${JSON.stringify({
+          model: call.model,
           temperature: call.temperature,
           plugins: call.plugins,
-          dataCollection: call.provider?.data_collection
+          provider: call.provider
         })}`
       );
     }
@@ -2938,8 +2978,8 @@ try {
         'obj-budget-failure-fail-forward'
         ? 0.01
         : 0.12;
-    if (maxPrice.prompt !== 2 ||
-        maxPrice.completion !== 8 ||
+    if (maxPrice.prompt !== 0.4 ||
+        maxPrice.completion !== 1.6 ||
         maxPrice.request !== expectedRequestPrice ||
         call.provider?.require_parameters !== true) {
       throw new Error(`expected conservative OpenRouter max_price routing caps, got ${JSON.stringify(maxPrice)}`);
@@ -3248,8 +3288,8 @@ try {
       candidateFree.metadata?.searchSpace?.expandedCount !== 128) {
     throw new Error(`candidate-free inbound run did not select its approved owned asset: ${JSON.stringify(candidateFree)}`);
   }
-  if (candidateFree.metadata?.usage?.providerMaxPrice?.prompt !== 2 ||
-      candidateFree.metadata?.usage?.providerMaxPrice?.completion !== 8 ||
+  if (candidateFree.metadata?.usage?.providerMaxPrice?.prompt !== 0.4 ||
+      candidateFree.metadata?.usage?.providerMaxPrice?.completion !== 1.6 ||
       candidateFree.metadata?.usage?.providerMaxPrice?.request !== 0.12) {
     throw new Error(`candidate-free receipt lost provider price ceilings: ${JSON.stringify(candidateFree.metadata?.usage)}`);
   }
@@ -3389,6 +3429,30 @@ try {
       providerFailure.metadata?.usage?.calls !== 1) {
     throw new Error(`metered provider failure returned a dead end: ${JSON.stringify(providerFailure)}`);
   }
+  const malformedEnvelopeDiagnostics =
+    malformedEnvelope.metadata?.llm?.strategyGeneratorJudge
+      ?.responseDiagnostics || {};
+  const malformedEnvelopeHash = createHash('sha256')
+    .update(malformedEnvelopeContent)
+    .digest('hex');
+  if (malformedEnvelope.status !== 'skipped' ||
+      malformedEnvelope.metadata?.llm?.strategyGeneratorJudge?.error !==
+        'openrouter_invalid_response' ||
+      malformedEnvelope.metadata?.usage?.calls !== 1 ||
+      malformedEnvelope.metadata?.usage?.successfulCalls !== 0 ||
+      malformedEnvelope.metadata?.usage?.costReporting !== 'unavailable' ||
+      malformedEnvelopeDiagnostics.contentByteCount !==
+        Buffer.byteLength(malformedEnvelopeContent, 'utf8') ||
+      malformedEnvelopeDiagnostics.contentSha256 !==
+        malformedEnvelopeHash ||
+      JSON.stringify(malformedEnvelope).includes(malformedEnvelopeContent) ||
+      malformedEnvelope.metadata?.nextExperiment?.kind !==
+        'strategy_generation_provider_recovery' ||
+      malformedEnvelope.metadata?.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `malformed HTTP-200 envelope lost safe diagnostics or failed open: ${JSON.stringify(malformedEnvelope)}`
+    );
+  }
   const invalidDiagnostics =
     invalidStructured.metadata?.llm?.strategyGeneratorJudge
       ?.responseDiagnostics || {};
@@ -3519,10 +3583,10 @@ try {
       !budgetFailure.metadata?.nextExperiment?.missingEvidence?.includes(
         'within_budget_strategy_generation'
       ) ||
-      !/do not raise.*budget.*model\/provider route/is.test(
+      !/do not raise.*budget.*prompt-token.*output-token.*fixed per-request fee ceiling/is.test(
         budgetFailure.metadata?.nextExperiment?.action || ''
       ) ||
-      !/model\/provider route.*existing.*caps/is.test(
+      !/prompt-token.*output-token.*fixed per-request fee ceiling.*total LLM budget/is.test(
         budgetFailure.metadata?.nextExperiment?.rerunPolicy?.trigger || ''
       ) ||
       !/1 budget-compatible retry/i.test(
@@ -3533,7 +3597,13 @@ try {
       budgetFailure.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
       budgetFailure.metadata?.gate?.sideEffects?.publishAttempts !== 0 ||
       budgetFailure.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
-      budgetFailure.metadata?.usage?.calls !== 1) {
+      budgetFailure.metadata?.usage?.calls !== 0 ||
+      budgetFailure.metadata?.usage?.costReporting !== 'complete' ||
+      budgetFailure.metadata?.searchSpace?.modelCalls !== 0 ||
+      budgetFailure.metadata?.searchSpace?.providerSpendPreflight
+        ?.authorized !== false ||
+      budgetFailure.metadata?.searchSpace?.providerSpendPreflight
+        ?.callSpendCeilingMicros <= 10_000) {
     throw new Error(`metered budget failure returned the wrong recovery experiment: ${JSON.stringify(budgetFailure)}`);
   }
   if (budgetRouteFailure.status !== 'skipped' ||

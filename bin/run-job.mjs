@@ -6,7 +6,8 @@ import { createHash } from 'crypto';
 import {
   REVENUE_GATE_VERSION,
   REVENUE_PATH_CONTRACT_VERSION,
-  runOpportunityTournament
+  runOpportunityTournament,
+  serializeOpenRouterJSONRequestBody
 } from './opportunity-tournament.mjs';
 
 const args = process.argv.slice(2);
@@ -31,7 +32,7 @@ Environment:
 `;
 
 const DEFAULT_OPENROUTER_MODEL = 'deepseek/deepseek-v4-pro';
-const DEFAULT_OPENROUTER_TOURNAMENT_MODEL = 'qwen/qwen3-235b-a22b-2507';
+const DEFAULT_OPENROUTER_TOURNAMENT_MODEL = 'openai/gpt-4.1-mini';
 const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-4.8';
 const DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -2659,8 +2660,16 @@ async function callOpenRouterJSON({
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
   model = text(model) || openRouterModel();
-  const requestedTemperature = Number(temperature);
-  const requestedPlugins = arrayOfObjects(plugins);
+  const requestBody = serializeOpenRouterJSONRequestBody({
+    model,
+    system,
+    user,
+    maxTokens,
+    provider,
+    responseFormat,
+    plugins,
+    temperature
+  });
 
   const response = await fetch(openRouterChatCompletionsURL(), {
     method: 'POST',
@@ -2670,33 +2679,27 @@ async function callOpenRouterJSON({
       'HTTP-Referer': 'https://profilescribe.com',
       'X-Title': 'ProfileScribe Rig'
     },
-    body: JSON.stringify({
-      model,
-      temperature: Number.isFinite(requestedTemperature) &&
-        requestedTemperature >= 0 &&
-        requestedTemperature <= 2
-        ? requestedTemperature
-        : 0.25,
-      max_tokens: numberOr(maxTokens, 700),
-      ...(Object.keys(object(provider)).length > 0 ? { provider: object(provider) } : {}),
-      ...(Object.keys(object(responseFormat)).length > 0
-        ? { response_format: object(responseFormat) }
-        : {}),
-      ...(requestedPlugins.length > 0
-        ? { plugins: requestedPlugins }
-        : {}),
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user }
-      ]
-    })
+    body: requestBody
   });
 
   const body = await response.text();
   if (!response.ok) {
     throw new Error(`OpenRouter failed with HTTP ${response.status}: ${body.slice(0, 500)}`);
   }
-  const envelope = parseJSON(body, 'OpenRouter response');
+  let envelope;
+  try {
+    envelope = parseJSON(body, 'OpenRouter response');
+  } catch {
+    // Never persist the provider body: its bounded byte count and digest are
+    // sufficient to correlate malformed HTTP-200 envelopes safely.
+    const error = new Error('OpenRouter response is not valid JSON');
+    error.openRouterFailureCode = 'openrouter_invalid_response';
+    throw attachOpenRouterResponseMetadata(
+      error,
+      {},
+      openRouterResponseDiagnostics({}, body)
+    );
+  }
   const usage = normalizeOpenRouterUsage(envelope?.usage);
   const choice = object(envelope?.choices?.[0]);
   const rawContent = typeof choice?.message?.content === 'string'
@@ -2796,7 +2799,7 @@ function normalizeOpenRouterUsage(usage) {
     promptTokens: positiveInteger(usage.promptTokens),
     completionTokens: positiveInteger(usage.completionTokens),
     totalTokens: positiveInteger(usage.totalTokens),
-    cost: finiteNumber(usage.cost)
+    cost: providerCost(usage.cost)
   });
   return {
     ...normalized,
@@ -3548,6 +3551,9 @@ function safeOpenRouterAccountingMetadata(metadata) {
 function safeOpenRouterUsageMetadata(value) {
   const usage = object(value);
   const raw = object(usage.raw);
+  const costValue = Object.prototype.hasOwnProperty.call(usage, 'cost')
+    ? usage.cost
+    : raw.cost;
   const normalized = compact({
     prompt_tokens: positiveInteger(usage.prompt_tokens ?? raw.prompt_tokens),
     completion_tokens: positiveInteger(usage.completion_tokens ?? raw.completion_tokens),
@@ -3555,7 +3561,7 @@ function safeOpenRouterUsageMetadata(value) {
     promptTokens: positiveInteger(usage.promptTokens ?? raw.promptTokens),
     completionTokens: positiveInteger(usage.completionTokens ?? raw.completionTokens),
     totalTokens: positiveInteger(usage.totalTokens ?? raw.totalTokens),
-    cost: finiteNumber(usage.cost ?? raw.cost)
+    cost: providerCost(costValue)
   });
   if (Object.keys(normalized).length === 0) return {};
   return {
@@ -3850,6 +3856,14 @@ function nonNegativeInteger(value) {
 function finiteNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : undefined;
+}
+
+function providerCost(value) {
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0
+    ? value
+    : undefined;
 }
 
 function boolEnv(name) {

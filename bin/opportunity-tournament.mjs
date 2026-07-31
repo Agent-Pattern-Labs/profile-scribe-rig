@@ -14,12 +14,21 @@ const MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS = DAY_MILLISECONDS;
 const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
   90 * DAY_MILLISECONDS;
 // OpenRouter prompt/completion ceilings are USD per million tokens. Request is
-// the maximum total USD price for this single generation. Callers may tighten,
-// but never loosen, these tournament-specific caps.
+// only a ceiling on a provider's fixed per-request fee; it does not cap token
+// spend or the total price of a generation. Callers may tighten, but never
+// loosen, these tournament-specific caps.
 const MAX_PROVIDER_PRICE = {
-  prompt: 2,
-  completion: 8,
+  prompt: 0.4,
+  completion: 1.6,
   request: 0.12
+};
+const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
+const TOURNAMENT_PROVIDER_ROUTING = {
+  order: ['openai'],
+  only: ['openai'],
+  allow_fallbacks: false,
+  require_parameters: true,
+  data_collection: 'deny'
 };
 const RESEARCH_ONLY_CONSTRAINT =
   'Research and recommendation only; do not contact, message, publish, purchase ads, or submit forms.';
@@ -118,6 +127,53 @@ const ATTRIBUTION_METHODS = new Set([
 ]);
 const OWNED_INBOUND_ASSET_KIND = 'owned_inbound_asset';
 const SYNTHESIZED_OWNED_INBOUND_ASSETS = new WeakSet();
+
+export function buildOpenRouterJSONRequestBody({
+  model,
+  system,
+  user,
+  maxTokens,
+  provider,
+  responseFormat,
+  plugins,
+  temperature
+}) {
+  const requestedTemperature = Number(temperature);
+  const requestedPlugins = asArray(plugins)
+    .filter((item) =>
+      item && typeof item === 'object' && !Array.isArray(item)
+    );
+  const requestedMaxTokens = Number(maxTokens);
+  return {
+    model: firstText(model),
+    temperature: Number.isFinite(requestedTemperature) &&
+      requestedTemperature >= 0 &&
+      requestedTemperature <= 2
+      ? requestedTemperature
+      : 0.25,
+    max_tokens: Number.isFinite(requestedMaxTokens) &&
+      requestedMaxTokens > 0
+      ? requestedMaxTokens
+      : 700,
+    ...(Object.keys(asObject(provider)).length > 0
+      ? { provider: asObject(provider) }
+      : {}),
+    ...(Object.keys(asObject(responseFormat)).length > 0
+      ? { response_format: asObject(responseFormat) }
+      : {}),
+    ...(requestedPlugins.length > 0
+      ? { plugins: requestedPlugins }
+      : {}),
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user }
+    ]
+  };
+}
+
+export function serializeOpenRouterJSONRequestBody(request) {
+  return JSON.stringify(buildOpenRouterJSONRequestBody(request));
+}
 
 // Patterns run against comparable() text: lowercase ASCII words separated by
 // one space. Keep this vocabulary stable because the control plane mirrors it
@@ -344,27 +400,56 @@ export async function runOpportunityTournament({
     maxSeedsPerDimension: Math.min(4, MAX_SEEDS_PER_DIMENSION)
   });
   const promptHash = stableHash({ system: prompt.system, user: prompt.user });
+  const initialCompletionRequest = {
+    model,
+    system: prompt.system,
+    user: prompt.user,
+    maxTokens: budget.maxOutputTokens,
+    responseFormat: tournamentStructuredResponseFormat(
+      promptEvidenceCatalog,
+      INITIAL_FAMILY_VARIANT_COUNT
+    ),
+    plugins: [{ id: 'response-healing' }],
+    temperature: 0,
+    provider: {
+      ...TOURNAMENT_PROVIDER_ROUTING,
+      max_price: budget.providerMaxPrice
+    }
+  };
+  const initialProviderSpendPreflight =
+    providerCallSpendPreflight(initialCompletionRequest, budget);
+  const initialCallSpendCeilingMicros =
+    initialProviderSpendPreflight.callSpendCeilingMicros;
+  if (budget.hardStop &&
+      initialCallSpendCeilingMicros > budget.maxLLMSpendMicros) {
+    return {
+      status: 'skipped',
+      summary:
+        'The bounded strategy-generation request could exceed the tournament LLM budget, so no provider call was made.',
+      ...base,
+      nextExperiment: nextExperimentFor([
+        'within_budget_strategy_generation'
+      ]),
+      searchSpace: {
+        ...base.searchSpace,
+        modelCalls: 0,
+        providerSpendPreflight: {
+          ...initialProviderSpendPreflight,
+          authorized: false,
+          maxLLMSpendMicros: budget.maxLLMSpendMicros
+        }
+      },
+      gate: researchOnlyGate(
+        'block',
+        'The conservative prompt and output ceiling for the initial call did not fit the hard LLM budget.'
+      )
+    };
+  }
 
   let completion;
   let initialTruncationError = null;
   try {
-    completion = await completeJSON({
-      model,
-      system: prompt.system,
-      user: prompt.user,
-      maxTokens: budget.maxOutputTokens,
-      responseFormat: tournamentStructuredResponseFormat(
-        promptEvidenceCatalog,
-        INITIAL_FAMILY_VARIANT_COUNT
-      ),
-      plugins: [{ id: 'response-healing' }],
-      temperature: 0,
-      provider: {
-        max_price: budget.providerMaxPrice,
-        require_parameters: true,
-        data_collection: 'deny'
-      }
-    });
+    completion = await completeJSON(initialCompletionRequest);
   } catch (error) {
     if (openRouterFailureCode(error) ===
         'openrouter_truncated_structured_output' &&
@@ -425,6 +510,10 @@ export async function runOpportunityTournament({
   const llmTrace = {
     strategyGeneratorJudge: providerMetadata
   };
+  const initialPromptTokenCanary = providerPromptTokenCanary(
+    initialProviderSpendPreflight,
+    providerMetadata.openRouterUsage
+  );
   let usage = aggregateUsage(providerMetadataEntries, budget);
   if (budget.hardStop && usage.reportedCostMicros > budget.maxLLMSpendMicros) {
     return {
@@ -469,15 +558,45 @@ export async function runOpportunityTournament({
     initialFamilyWrapperCount:
       nonNegativeInteger(seedSet.familyWrapperCount) || 0,
     initialValidStrategyFamilyCount:
-      nonNegativeInteger(seedSet.validStrategyFamilyCount) || 0
+      nonNegativeInteger(seedSet.validStrategyFamilyCount) || 0,
+    initialCallSpendCeilingMicros,
+    initialFixedRequestFeeCeilingMicros:
+      initialProviderSpendPreflight.fixedRequestFeeCeilingMicros,
+    initialPromptTokenCanary
   };
+  if (initialPromptTokenCanary.withinCeiling === false) {
+    structuredRepair.failure = 'prompt_token_ceiling_exceeded';
+    structuredRepair.finalIssue = structuredRepair.initialIssue;
+    return {
+      status: 'skipped',
+      summary:
+        'Provider prompt-token accounting exceeded the preflight ceiling, so no recommendation was accepted and no repair call was authorized.',
+      ...base,
+      nextExperiment: nextExperimentFor([
+        'within_budget_strategy_generation'
+      ]),
+      llm: llmTrace,
+      usage,
+      searchSpace: {
+        ...base.searchSpace,
+        ...seedSetShapeSearchTrace(seedSet),
+        modelCalls: usage.calls,
+        structuredRepair
+      },
+      gate: researchOnlyGate(
+        'block',
+        'The provider prompt-token canary exceeded the exact request-byte ceiling; no generated recommendation was accepted and the remaining reservation was not reused.'
+      )
+    };
+  }
   if (initialShapeIssue && structuredRepair.authorized) {
     const remainingSpendMicros = remainingRepairSpendMicros(
       budget,
-      usage
+      usage,
+      [initialCompletionRequest]
     );
+    structuredRepair.remainingSpendMicros = remainingSpendMicros;
     if (remainingSpendMicros > 0) {
-      structuredRepair.attempted = true;
       const repairPrompt = seedAndJudgeRepairPrompt({
         originalPrompt: prompt,
         issue: initialShapeIssue
@@ -486,35 +605,75 @@ export async function runOpportunityTournament({
         system: repairPrompt.system,
         user: repairPrompt.user
       });
+      const repairCompletionRequest = {
+        model,
+        system: repairPrompt.system,
+        user: repairPrompt.user,
+        maxTokens: Math.min(
+          budget.maxOutputTokens,
+          MAX_REPAIR_OUTPUT_TOKENS
+        ),
+        responseFormat:
+          tournamentStructuredResponseFormat(
+            promptEvidenceCatalog,
+            REPAIR_FAMILY_VARIANT_COUNT
+          ),
+        plugins: [{ id: 'response-healing' }],
+        temperature: 0,
+        provider: {
+          ...TOURNAMENT_PROVIDER_ROUTING,
+          max_price: {
+            ...budget.providerMaxPrice,
+            // This only tightens a possible fixed provider fee. The explicit
+            // request spend ceiling below accounts for prompt/output tokens.
+            request: roundMoney(Math.min(
+              budget.providerMaxPrice.request,
+              remainingSpendMicros / 1_000_000
+            ))
+          }
+        }
+      };
+      const repairProviderSpendPreflight =
+        providerCallSpendPreflight(repairCompletionRequest, budget);
+      structuredRepair.repairCallSpendCeilingMicros =
+        repairProviderSpendPreflight.callSpendCeilingMicros;
+      structuredRepair.repairRequestBodyByteCount =
+        repairProviderSpendPreflight.requestBodyByteCount;
+      structuredRepair.repairPromptTokenCeiling =
+        repairProviderSpendPreflight.promptTokenCeiling;
+      structuredRepair.repairFixedRequestFeeCeilingMicros =
+        repairProviderSpendPreflight.fixedRequestFeeCeilingMicros;
+      if (budget.hardStop &&
+          structuredRepair.repairCallSpendCeilingMicros >
+            remainingSpendMicros) {
+        structuredRepair.failure = 'repair_budget_unavailable';
+        structuredRepair.finalIssue = initialShapeIssue.code;
+        return {
+          status: 'skipped',
+          summary:
+            'The initial strategy response needed a structured repair, but the bounded repair request could exceed the remaining LLM spend.',
+          ...base,
+          nextExperiment: nextExperimentFor([
+            'within_budget_strategy_generation'
+          ]),
+          llm: llmTrace,
+          usage,
+          searchSpace: {
+            ...base.searchSpace,
+            ...seedSetShapeSearchTrace(seedSet),
+            modelCalls: usage.calls,
+            structuredRepair
+          },
+          gate: researchOnlyGate(
+            'block',
+            'The conservative prompt and output ceiling for the repair did not fit the remaining hard LLM budget.'
+          )
+        };
+      }
+      structuredRepair.attempted = true;
       let repairCompletion;
       try {
-        repairCompletion = await completeJSON({
-          model,
-          system: repairPrompt.system,
-          user: repairPrompt.user,
-          maxTokens: Math.min(
-            budget.maxOutputTokens,
-            MAX_REPAIR_OUTPUT_TOKENS
-          ),
-          responseFormat:
-            tournamentStructuredResponseFormat(
-              promptEvidenceCatalog,
-              REPAIR_FAMILY_VARIANT_COUNT
-            ),
-          plugins: [{ id: 'response-healing' }],
-          temperature: 0,
-          provider: {
-            max_price: {
-              ...budget.providerMaxPrice,
-              request: roundMoney(Math.min(
-                budget.providerMaxPrice.request,
-                remainingSpendMicros / 1_000_000
-              ))
-            },
-            require_parameters: true,
-            data_collection: 'deny'
-          }
-        });
+        repairCompletion = await completeJSON(repairCompletionRequest);
       } catch (error) {
         const repairFailureCode = openRouterFailureCode(error);
         const repairWasTruncated = repairFailureCode ===
@@ -527,6 +686,11 @@ export async function runOpportunityTournament({
           promptHash: repairPromptHash,
           error: repairFailureCode
         });
+        structuredRepair.repairPromptTokenCanary =
+          providerPromptTokenCanary(
+            repairProviderSpendPreflight,
+            repairMetadata.openRouterUsage
+          );
         providerMetadataEntries.push(repairMetadata);
         llmTrace.strategyFamilyRepair = repairMetadata;
         usage = aggregateUsage(providerMetadataEntries, budget);
@@ -577,29 +741,39 @@ export async function runOpportunityTournament({
           ? 'openrouter_truncated_structured_output'
           : undefined
       });
+      structuredRepair.repairPromptTokenCanary =
+        providerPromptTokenCanary(
+          repairProviderSpendPreflight,
+          repairMetadata.openRouterUsage
+        );
       providerMetadataEntries.push(repairMetadata);
       llmTrace.strategyFamilyRepair = repairMetadata;
       usage = aggregateUsage(providerMetadataEntries, budget);
-      completion = repairCompletion;
-      seedSet = normalizeSeedSet(
-        completion?.data,
+      const repairedSeedSet = normalizeSeedSet(
+        repairCompletion?.data,
         evidenceCatalog,
         timestamp
       );
-      generatedEvidenceExperiment =
+      const repairedEvidenceExperiment =
         normalizeGeneratedEvidenceExperiment(
-          completion?.data?.evidenceExperiment,
+          repairCompletion?.data?.evidenceExperiment,
           evidenceCatalog,
           timestamp
         );
       const repairedIssue = repairCompletionTruncated
         ? structuredOutputLengthIssue(repairCompletion?.diagnostics)
-        : structuredSeedSetShapeIssue(seedSet);
-      structuredRepair.succeeded = !repairedIssue;
-      structuredRepair.finalIssue = repairedIssue?.code || '';
-      terminalStructuredIssue = repairedIssue;
+        : structuredSeedSetShapeIssue(repairedSeedSet);
       if (budget.hardStop &&
           usage.reportedCostMicros > budget.maxLLMSpendMicros) {
+        // A provider-reported hard-budget breach takes precedence over any
+        // simultaneous accounting canary drift. Preserve the repaired shape
+        // trace, but never select its recommendation.
+        completion = repairCompletion;
+        seedSet = repairedSeedSet;
+        generatedEvidenceExperiment = repairedEvidenceExperiment;
+        structuredRepair.succeeded = !repairedIssue;
+        structuredRepair.finalIssue = repairedIssue?.code || '';
+        terminalStructuredIssue = repairedIssue;
         structuredRepair.failure = 'repair_budget_exceeded';
         return {
           status: 'skipped',
@@ -623,6 +797,39 @@ export async function runOpportunityTournament({
           )
         };
       }
+      if (structuredRepair.repairPromptTokenCanary.withinCeiling ===
+          false) {
+        structuredRepair.failure =
+          'repair_prompt_token_ceiling_exceeded';
+        structuredRepair.finalIssue = initialShapeIssue.code;
+        return {
+          status: 'skipped',
+          summary:
+            'The repair response exceeded its preflight prompt-token ceiling, so it was not accepted.',
+          ...base,
+          nextExperiment: nextExperimentFor([
+            'within_budget_strategy_generation'
+          ]),
+          llm: llmTrace,
+          usage,
+          searchSpace: {
+            ...base.searchSpace,
+            ...seedSetShapeSearchTrace(seedSet),
+            modelCalls: usage.calls,
+            structuredRepair
+          },
+          gate: researchOnlyGate(
+            'block',
+            'The provider prompt-token canary exceeded the repair request-byte ceiling; no repaired recommendation was accepted.'
+          )
+        };
+      }
+      completion = repairCompletion;
+      seedSet = repairedSeedSet;
+      generatedEvidenceExperiment = repairedEvidenceExperiment;
+      structuredRepair.succeeded = !repairedIssue;
+      structuredRepair.finalIssue = repairedIssue?.code || '';
+      terminalStructuredIssue = repairedIssue;
     } else {
       structuredRepair.failure = 'repair_budget_unavailable';
       structuredRepair.finalIssue = initialShapeIssue.code;
@@ -1676,7 +1883,7 @@ function normalizeBudget(value) {
   );
   const maxLLMSpendMicros = Math.min(
     maxSpendMicros,
-    configuredLLMMicros || Math.min(maxSpendMicros, 300_000)
+    configuredLLMMicros || Math.min(maxSpendMicros, 400_000)
   );
   const requestedProviderPrice = asObject(
     raw.providerMaxPrice ?? raw.provider_max_price
@@ -2016,25 +2223,121 @@ function seedSetShapeSearchTrace(seedSetValue) {
   };
 }
 
-function remainingRepairSpendMicros(budgetValue, usageValue) {
+function remainingRepairSpendMicros(
+  budgetValue,
+  usageValue,
+  completedRequests = []
+) {
   const budget = asObject(budgetValue);
   const usage = asObject(usageValue);
   const reported = nonNegativeInteger(usage.reportedCostMicros) || 0;
+  const requests = asArray(completedRequests);
+  const conservativeCallCeiling = requests.length > 0
+    ? requests.reduce(
+        (total, request) =>
+          total + providerCallSpendCeilingMicros(request, budget),
+        0
+      )
+    : nonNegativeInteger(budget.maxLLMSpendMicros) || 0;
   const accountedSpend = usage.costReporting === 'complete'
     ? reported
-    : Math.max(
-        reported,
-        Math.round(
-          Number(asObject(budget.providerMaxPrice).request || 0) *
-            1_000_000 *
-            Math.max(1, nonNegativeInteger(usage.calls) || 0)
-        )
-      );
+    : Math.max(reported, conservativeCallCeiling);
   return Math.max(
     0,
     (nonNegativeInteger(budget.maxLLMSpendMicros) || 0) -
       accountedSpend
   );
+}
+
+function providerCallSpendPreflight(requestValue, budgetValue) {
+  const request = asObject(requestValue);
+  const budget = asObject(budgetValue);
+  const provider = asObject(request.provider);
+  const configuredPrice = asObject(budget.providerMaxPrice);
+  const requestPrice = asObject(provider.max_price);
+  const price = {
+    prompt: nonNegativeNumber(
+      requestPrice.prompt ?? configuredPrice.prompt
+    ),
+    completion: nonNegativeNumber(
+      requestPrice.completion ?? configuredPrice.completion
+    ),
+    request: nonNegativeNumber(
+      requestPrice.request ?? configuredPrice.request
+    )
+  };
+  const maxLLMSpendMicros =
+    nonNegativeInteger(budget.maxLLMSpendMicros) || 0;
+  let serializedRequest;
+  let requestByteCount;
+  try {
+    serializedRequest = serializeOpenRouterJSONRequestBody(request);
+    requestByteCount = Buffer.byteLength(serializedRequest, 'utf8');
+  } catch {
+    return {
+      serializationSucceeded: false,
+      requestBodyByteCount: 0,
+      promptTokenCeiling: 0,
+      outputTokenCeiling: nonNegativeInteger(request.maxTokens) || 0,
+      fixedRequestFeeCeilingMicros: Math.ceil(
+        price.request * 1_000_000
+      ),
+      callSpendCeilingMicros: maxLLMSpendMicros + 1
+    };
+  }
+  // GPT tokenization cannot emit more text/schema tokens than the UTF-8 bytes
+  // supplied. The fixed reserve covers chat/schema framing not represented by
+  // user-visible strings. Price-per-million USD multiplied by tokens is the
+  // same numeric unit as micro-USD.
+  const promptTokenCeiling =
+    requestByteCount + OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
+  const outputTokenCeiling =
+    nonNegativeInteger(request.maxTokens) || 0;
+  const fixedRequestFeeCeilingMicros = Math.ceil(
+    price.request * 1_000_000
+  );
+  return {
+    serializationSucceeded: true,
+    requestBodyByteCount: requestByteCount,
+    promptTokenCeiling,
+    outputTokenCeiling,
+    fixedRequestFeeCeilingMicros,
+    callSpendCeilingMicros:
+      Math.ceil(promptTokenCeiling * price.prompt) +
+      Math.ceil(outputTokenCeiling * price.completion) +
+      fixedRequestFeeCeilingMicros
+  };
+}
+
+export function providerCallSpendCeilingMicros(
+  requestValue,
+  budgetValue
+) {
+  return providerCallSpendPreflight(
+    requestValue,
+    budgetValue
+  ).callSpendCeilingMicros;
+}
+
+function providerPromptTokenCanary(preflightValue, usageValue) {
+  const preflight = asObject(preflightValue);
+  const usage = normalizeUsage(usageValue);
+  const reportedPromptTokens = nonNegativeInteger(
+    usage.prompt_tokens ?? usage.promptTokens
+  );
+  const promptTokenCeiling = nonNegativeInteger(
+    preflight.promptTokenCeiling
+  ) || 0;
+  return compact({
+    requestBodyByteCount:
+      nonNegativeInteger(preflight.requestBodyByteCount) || 0,
+    framingTokenReserve: OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
+    promptTokenCeiling,
+    reportedPromptTokens,
+    withinCeiling: reportedPromptTokens === undefined
+      ? undefined
+      : reportedPromptTokens <= promptTokenCeiling
+  });
 }
 
 function tournamentStructuredResponseFormat(
@@ -5201,7 +5504,7 @@ function strategyGenerationRecoveryExperiment({
   const action = providerFailure
     ? 'Preserve the approved evidence snapshot and make no business or provider-side changes. After the model provider is healthy and strict structured-output support is verified, retry the same bounded tournament exactly once.'
     : budgetFailure
-      ? 'Preserve the approved evidence snapshot and do not raise the user budget. Select a model/provider route whose maximum request price fits the existing tournament budget, then retry the same bounded tournament exactly once.'
+      ? 'Preserve the approved evidence snapshot and do not raise the user budget. Select a model/provider route whose conservative prompt-token, output-token, and possible fixed per-request fee ceiling fits the existing total LLM budget, then retry the same bounded tournament exactly once. The flat request-price field is a per-request routing filter, not a total call-cost cap.'
       : 'Preserve the approved evidence snapshot and make no business, outreach, publishing, or provider-side changes. Retry the same objective exactly once only after the strict response route can return two complete comparison families; new market evidence is not required.';
   const stopCondition = providerFailure
     ? 'Stop after 1 provider-recovery retry; if structured strategy generation fails again, surface the technical failure and do not spend again automatically.'
@@ -5211,7 +5514,7 @@ function strategyGenerationRecoveryExperiment({
   const trigger = providerFailure
     ? 'Rerun once only after provider health and strict structured-output support are verified; new business evidence is not required.'
     : budgetFailure
-      ? 'Rerun once only after a model/provider route is verified to fit the existing request-price and total-spend caps.'
+      ? 'Rerun once only after the conservative prompt-token, output-token, and possible fixed per-request fee ceiling is verified to fit the existing total LLM budget; the flat request-price field is a per-request routing filter, not a total call-cost cap.'
       : 'Rerun once only after strict structured-output support for two complete comparison families is verified; new business evidence is not required.';
   return {
     contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
@@ -7389,7 +7692,7 @@ function aggregateUsage(entries, budget) {
     usageEntries.map((usage) => usage.total_tokens ?? usage.totalTokens)
   );
   const costs = usageEntries
-    .map((usage) => finite(usage.cost))
+    .map((usage) => providerCost(usage.cost))
     .filter((value) => value !== null);
   const reportedCostUsd = costs.length > 0 ? sumFinite(costs) : 0;
   return {
@@ -7423,7 +7726,8 @@ function emptyUsage(model, budget) {
     totalTokens: 0,
     reportedCostUsd: 0,
     reportedCostMicros: 0,
-    costReporting: 'unavailable',
+    // No provider calls means all zero call-cost receipts are accounted for.
+    costReporting: 'complete',
     maxLLMSpendMicros: budget.maxLLMSpendMicros,
     providerMaxPrice: { ...budget.providerMaxPrice },
     withinBudget: true,
@@ -7434,6 +7738,9 @@ function emptyUsage(model, budget) {
 function normalizeUsage(value) {
   const raw = asObject(value);
   const nested = asObject(raw.raw);
+  const costValue = Object.prototype.hasOwnProperty.call(raw, 'cost')
+    ? raw.cost
+    : nested.cost;
   return compact({
     prompt_tokens: positiveInteger(raw.prompt_tokens ?? nested.prompt_tokens),
     completion_tokens: positiveInteger(raw.completion_tokens ?? nested.completion_tokens),
@@ -7441,7 +7748,7 @@ function normalizeUsage(value) {
     promptTokens: positiveInteger(raw.promptTokens ?? nested.promptTokens),
     completionTokens: positiveInteger(raw.completionTokens ?? nested.completionTokens),
     totalTokens: positiveInteger(raw.totalTokens ?? nested.totalTokens),
-    cost: finite(raw.cost ?? nested.cost)
+    cost: providerCost(costValue)
   });
 }
 
@@ -7801,6 +8108,14 @@ function finite(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function providerCost(value) {
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0
+    ? value
+    : null;
+}
+
 function positiveInteger(value) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? Math.floor(number) : undefined;
@@ -7809,6 +8124,11 @@ function positiveInteger(value) {
 function nonNegativeInteger(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : undefined;
+}
+
+function nonNegativeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : 0;
 }
 
 function average(values) {
