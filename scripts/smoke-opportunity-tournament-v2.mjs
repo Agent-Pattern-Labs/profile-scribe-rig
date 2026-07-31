@@ -12,6 +12,30 @@ const usage = {
   total_tokens: 2100,
   cost: 0.0042
 };
+const businessExperimentFieldNames = [
+  'knownFact',
+  'buyer',
+  'paidOffer',
+  'acquisitionMechanism',
+  'conversionDestination',
+  'paidConversion',
+  'attributionSignal'
+];
+
+function completeBusinessExperimentFields(experimentValue) {
+  const experiment = experimentValue || {};
+  return businessExperimentFieldNames.every((field) =>
+    typeof experiment[field] === 'string' &&
+    experiment[field].trim().length > 0
+  );
+}
+
+function hasBusinessExperimentField(experimentValue) {
+  const experiment = experimentValue || {};
+  return businessExperimentFieldNames.some((field) =>
+    Object.prototype.hasOwnProperty.call(experiment, field)
+  );
+}
 
 const domains = [
   {
@@ -108,6 +132,14 @@ for (const domain of domains) {
           'Measure paid home visits from organic search' ||
         experiment.asset?.publicUrl !==
           'https://healthcare.example/offer' ||
+        !completeBusinessExperimentFields(experiment) ||
+        experiment.knownFact !== domain.sourceSummary ||
+        experiment.buyer !== domain.buyer ||
+        experiment.paidOffer !== domain.offer ||
+        experiment.acquisitionMechanism !== 'organic search' ||
+        experiment.conversionDestination !== domain.destination ||
+        experiment.paidConversion !== domain.outcome ||
+        experiment.attributionSignal !== domain.attribution ||
         !experiment.action?.includes(domain.buyer) ||
         !experiment.action?.includes(domain.offer) ||
         !experiment.action?.includes('organic search') ||
@@ -161,6 +193,8 @@ await verifySaaSTimingRepair();
 await verifyNoncurrentWarmReferralRejected();
 await verifyUnsafeGeneratedExperimentRejected();
 await verifyInvalidSeedContractsRejected();
+await verifyBettyProductionTraceRegression();
+await verifyStructuredRepairAcrossDomains();
 verifyCatalogRankingBeforeFinalCap();
 await verifyEmptyEvidenceFailForward();
 
@@ -525,6 +559,9 @@ async function verifyUnsafeGeneratedExperimentRejected() {
   const experiment = result.nextExperiment || {};
   if (result.status !== 'skipped' ||
       experiment.title === response.evidenceExperiment.l ||
+      !completeBusinessExperimentFields(experiment) ||
+      experiment.acquisitionMechanism !== 'organic search' ||
+      experiment.knownFact !== domain.sourceSummary ||
       /\b(?:send|newsletter distribution|send the owned newsletter)\b/i.test(
         `${experiment.title} ${experiment.action}`
       )) {
@@ -555,9 +592,13 @@ async function verifyInvalidSeedContractsRejected() {
     if (result.status !== 'skipped' ||
         result.searchSpace?.seedContract !== 'invalid' ||
         result.searchSpace?.eligibleCount !== 0 ||
+        result.nextExperiment?.kind !==
+          'strategy_generation_shape_recovery' ||
         result.nextExperiment?.missingEvidence?.[0] !==
-          'usable_strategy_generation' ||
-        result.gate?.decision !== 'block') {
+          'structured_strategy_family_repair' ||
+        hasBusinessExperimentField(result.nextExperiment) ||
+        result.gate?.decision !==
+          'strategy_generation_incomplete') {
       throw new Error(
         `${label} family-bundle seed contract was silently upgraded: ${JSON.stringify(result)}`
       );
@@ -610,6 +651,361 @@ async function runDomainWithResponse(domain, response, suffix) {
     now,
     completeJSON: async () => ({ data: response, usage })
   });
+}
+
+async function verifyBettyProductionTraceRegression() {
+  const sourceID = 'src-betty-production-trace';
+  const homeRef = 'observation:obs-betty-current-home';
+  const staleArticleRef = 'observation:obs-betty-old-169';
+  const staleArticleURL =
+    'https://www.breastfeedingwithlove.com/baby-friendly-initiative-program-in-hospitals/';
+  const repeatedArticleObservations = Array.from(
+    { length: 170 },
+    (_, index) => ({
+      observationId: `obs-betty-old-${index}`,
+      sourceId: sourceID,
+      kind: 'article',
+      title: 'Baby Friendly Initiative Program in Hospitals',
+      summary:
+        'An informational article for hospital program leaders about the Baby Friendly Initiative Program in Hospitals.',
+      url: index % 2 === 0
+        ? staleArticleURL
+        : staleArticleURL.replace('www.', ''),
+      observedAt: '2026-07-02T12:00:00Z',
+      publishedAt: '2021-07-02T12:00:00Z',
+      confidence: 'high'
+    })
+  );
+  const currentHomepage = {
+    observationId: 'obs-betty-current-home',
+    sourceId: sourceID,
+    kind: 'service-page',
+    title:
+      'Book a Same-Day Home Visit — Same-day home-visit booking page',
+    summary:
+      'New parents can book a reimbursable same-day home visit from this service page. United Healthcare Accepted.',
+    url: 'https://www.breastfeedingwithlove.com/',
+    observedAt: '2026-07-29T12:00:00Z',
+    confidence: 'high',
+    current: true
+  };
+  const domain = {
+    name: 'betty-production-trace',
+    buyer: 'New parents seeking same-day lactation support',
+    offer: 'A reimbursable same-day home visit',
+    destination: 'Same-day home-visit booking page',
+    mechanism: 'insurance_reimbursement',
+    outcome: 'One paid claim recorded',
+    attributionMethod: 'claim_record',
+    attribution:
+      'Claim record source field stores the organic-search campaign',
+    sourceSummary: currentHomepage.summary
+  };
+  const response = strictV2Response(domain, homeRef);
+  response.familyB.e.push(staleArticleRef);
+  response.familyB.d.timingTriggers = [{
+    l: 'Baby Friendly Initiative Program in Hospitals',
+    e: [staleArticleRef],
+    q: 'Baby Friendly Initiative Program in Hospitals'
+  }];
+  response.evidenceExperiment = {
+    l:
+      'Test demand for Baby Friendly Initiative Program in Hospitals',
+    k:
+      currentHomepage.summary,
+    b: domain.buyer,
+    o: domain.offer,
+    a: 'organic search',
+    d: domain.destination,
+    c: domain.outcome,
+    t: domain.attribution,
+    x:
+      `Review first: for 14 days or 25 qualified visits, test organic search for ${domain.buyer} seeking ${domain.offer} through ${domain.destination}; count ${domain.outcome} and store ${domain.attribution}.`,
+    s: domain.outcome,
+    days: 14,
+    n: 25,
+    u: 'qualified visits',
+    e: [homeRef, staleArticleRef]
+  };
+  let promptEvidence = [];
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-betty-production-trace',
+      payload: {
+        tournamentId: 'tournament-betty-production-trace',
+        researchOnly: true,
+        objective: {
+          outcome: 'Generate one new attributed paid patient outcome.',
+          successMetric: 'One paid claim recorded'
+        },
+        budget: {
+          maxHypotheses: 512,
+          maxFinalists: 8,
+          maxLLMCalls: 1,
+          maxOutputTokens: 8000
+        },
+        evidenceSnapshot: {
+          profile: {
+            identity: {
+              fullName: 'Production trace owner',
+              website: 'https://breastfeedingwithlove.com/'
+            }
+          },
+          sources: [{
+            id: sourceID,
+            kind: 'website',
+            label: 'Owner professional website',
+            url: 'https://breastfeedingwithlove.com/',
+            status: 'monitoring',
+            trustLevel: 'high'
+          }],
+          sourceEvidence: [
+            ...repeatedArticleObservations,
+            currentHomepage
+          ]
+        }
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (input) => {
+      promptEvidence = JSON.parse(input.user).evidenceCatalog;
+      return { data: response, usage };
+    }
+  });
+  const experiment = result.nextExperiment || {};
+  const homeEvidence = promptEvidence.find(
+    (item) => item.id === homeRef
+  );
+  const articleEvidence = promptEvidence.filter((item) =>
+    item.url?.includes(
+      '/baby-friendly-initiative-program-in-hospitals'
+    )
+  );
+  if (result.status !== 'skipped' ||
+      result.searchSpace?.completeStrategyFamilyCount !== 1 ||
+      result.searchSpace?.incompleteStrategyFamilyCount !== 1 ||
+      result.searchSpace?.expandedCount !== 0 ||
+      !homeEvidence ||
+      homeEvidence.revenueAssetRole !==
+        'current_owner_paid_conversion_asset' ||
+      articleEvidence.length !== 1 ||
+      articleEvidence[0]?.revenueAssetRole !== 'informational_only' ||
+      experiment.kind !== 'strategy_generation_shape_recovery' ||
+      hasBusinessExperimentField(experiment) ||
+      experiment.asset !== null ||
+      result.gate?.decision !== 'strategy_generation_incomplete' ||
+      result.searchSpace?.structuredRepair?.authorized !== false ||
+      /Baby Friendly Initiative/i.test(
+        `${experiment.title} ${experiment.action} ${experiment.successSignal}`
+      ) ||
+      /\b(?:attach|approve|create|document)\b.{0,40}\bpaid[- ]offer page\b/i.test(
+        experiment.action || ''
+      ) ||
+      result.usage?.calls !== 1 ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `Betty production trace did not fail forward from the current owned paid homepage: ${JSON.stringify({ result, promptEvidence })}`
+    );
+  }
+
+  const repairedResponse = strictV2Response(domain, homeRef);
+  let repairCalls = 0;
+  const repairedResult = await runOpportunityTournament({
+    job: {
+      id: 'job-betty-production-trace-repair',
+      payload: {
+        tournamentId: 'tournament-betty-production-trace-repair',
+        researchOnly: true,
+        objective: {
+          outcome: 'Generate one new attributed paid patient outcome.',
+          successMetric: 'One paid claim recorded'
+        },
+        budget: {
+          maxHypotheses: 512,
+          maxFinalists: 8,
+          maxLLMCalls: 2,
+          maxOutputTokens: 8000
+        },
+        evidenceSnapshot: {
+          profile: {
+            identity: {
+              fullName: 'Production trace owner',
+              website: 'https://breastfeedingwithlove.com/'
+            }
+          },
+          sources: [{
+            id: sourceID,
+            kind: 'website',
+            label: 'Owner professional website',
+            url: 'https://breastfeedingwithlove.com/',
+            status: 'monitoring',
+            trustLevel: 'high'
+          }],
+          sourceEvidence: [
+            ...repeatedArticleObservations,
+            currentHomepage
+          ]
+        }
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async () => {
+      repairCalls += 1;
+      return {
+        data: repairCalls === 1 ? response : repairedResponse,
+        usage
+      };
+    }
+  });
+  const repairedExperiment = repairedResult.nextExperiment || {};
+  if (repairCalls !== 2 ||
+      repairedResult.status !== 'skipped' ||
+      repairedResult.searchSpace?.completeStrategyFamilyCount !== 2 ||
+      repairedResult.searchSpace?.incompleteStrategyFamilyCount !== 0 ||
+      repairedResult.searchSpace?.structuredRepair?.attempted !== true ||
+      repairedResult.searchSpace?.structuredRepair?.succeeded !== true ||
+      repairedResult.searchSpace?.modelCalls !== 2 ||
+      repairedResult.usage?.calls !== 2 ||
+      repairedExperiment.kind !== 'inbound_revenue_evidence' ||
+      repairedExperiment.asset?.publicUrl !==
+        'https://www.breastfeedingwithlove.com/' ||
+      !completeBusinessExperimentFields(repairedExperiment) ||
+      repairedExperiment.knownFact !== domain.sourceSummary ||
+      repairedExperiment.buyer !== domain.buyer ||
+      repairedExperiment.paidOffer !== domain.offer ||
+      repairedExperiment.acquisitionMechanism !== 'organic search' ||
+      repairedExperiment.conversionDestination !== domain.destination ||
+      repairedExperiment.paidConversion !== domain.outcome ||
+      repairedExperiment.attributionSignal !== domain.attribution ||
+      /Baby Friendly Initiative/i.test(
+        `${repairedExperiment.title} ${repairedExperiment.action} ${repairedExperiment.successSignal}`
+      ) ||
+      !repairedExperiment.action?.includes(domain.buyer) ||
+      !repairedExperiment.action?.includes(domain.offer) ||
+      !repairedExperiment.action?.includes('organic search') ||
+      !repairedExperiment.action?.includes(domain.destination) ||
+      !repairedExperiment.action?.includes(domain.attribution) ||
+      repairedResult.gate?.decision !==
+        'needs_more_approved_evidence') {
+    throw new Error(
+      `Betty structured-family repair did not yield the grounded bounded experiment: ${JSON.stringify(repairedResult)}`
+    );
+  }
+}
+
+async function verifyStructuredRepairAcrossDomains() {
+  const expectations = {
+    'healthcare-patient': 'claim record',
+    saas: 'payment receipt',
+    consulting: 'contract source',
+    'creator-license': 'license (?:contract|or royalty record)',
+    commerce: 'order'
+  };
+  for (const domain of domains.filter((item) =>
+    expectations[item.name]
+  )) {
+    const ref = `observation:obs-${domain.name}-fallback`;
+    const staleRef = `observation:obs-${domain.name}-stale-article`;
+    const website = `https://${domain.name}-fallback.example/`;
+    const repairedResponse = strictV2Response(domain, ref);
+    const incompleteResponse = structuredClone(repairedResponse);
+    incompleteResponse.familyB.e.push(staleRef);
+    incompleteResponse.familyB.d.timingTriggers = [{
+      l: 'Archived industry overview',
+      e: [staleRef],
+      q: 'Archived industry overview'
+    }];
+    incompleteResponse.evidenceExperiment.x =
+      `Review first: for 14 days or 25 qualified visits, send a newsletter and test organic search for ${domain.buyer} seeking ${domain.offer} through ${domain.destination}; count ${domain.outcome} and store ${domain.attribution}.`;
+    let calls = 0;
+    const result = await runOpportunityTournament({
+      job: {
+        id: `job-${domain.name}-owned-asset-fallback`,
+        payload: {
+          researchOnly: true,
+          objective: {
+            outcome: `Generate one new attributed ${domain.outcome}.`,
+            successMetric: domain.outcome
+          },
+          budget: {
+            maxHypotheses: 128,
+            maxLLMCalls: 2
+          },
+          evidenceSnapshot: {
+            profile: {
+              identity: { website }
+            },
+            sources: [{
+              id: `src-${domain.name}-fallback`,
+              url: website,
+              status: 'monitoring',
+              trustLevel: 'high'
+            }],
+            sourceEvidence: [{
+              observationId: `obs-${domain.name}-fallback`,
+              sourceId: `src-${domain.name}-fallback`,
+              kind: 'service-page',
+              title: domain.destination,
+              summary: domain.sourceSummary,
+              url: `${website}offer`,
+              observedAt: '2026-07-29T12:00:00Z',
+              confidence: 'high'
+            }, {
+              observationId:
+                `obs-${domain.name}-stale-article`,
+              sourceId: `src-${domain.name}-fallback`,
+              kind: 'article',
+              title: 'Archived industry overview',
+              summary:
+                'An old informational overview with no current conversion destination.',
+              url: `${website}blog/archived-industry-overview`,
+              observedAt: '2026-07-29T12:00:00Z',
+              publishedAt: '2021-01-01T00:00:00Z',
+              confidence: 'high'
+            }]
+          }
+        }
+      },
+      model: 'test/v2',
+      now,
+      completeJSON: async () => {
+        calls += 1;
+        return {
+          data: calls === 1
+            ? incompleteResponse
+            : repairedResponse,
+          usage
+        };
+      }
+    });
+    if (calls !== 2 ||
+        result.status !== 'completed' ||
+        result.nextExperiment !== null ||
+        result.searchSpace?.completeStrategyFamilyCount !== 2 ||
+        result.searchSpace?.incompleteStrategyFamilyCount !== 0 ||
+        result.searchSpace?.structuredRepair?.attempted !== true ||
+        result.searchSpace?.structuredRepair?.succeeded !== true ||
+        result.searchSpace?.modelCalls !== 2 ||
+        result.usage?.calls !== 2 ||
+        result.usage?.successfulCalls !== 2 ||
+        result.winner == null ||
+        result.runnerUp == null ||
+        !new RegExp(expectations[domain.name], 'i').test(
+          result.winner?.revenuePath?.attributionSignal || ''
+        ) ||
+        result.llm?.strategyFamilyRepair?.status !== 'completed' ||
+        result.gate?.sideEffects?.outreachAttempts !== 0 ||
+        result.gate?.sideEffects?.publishAttempts !== 0 ||
+        result.gate?.sideEffects?.providerWrites !== 0) {
+      throw new Error(
+        `${domain.name} structured-family repair was not profession-neutral: ${JSON.stringify(result)}`
+      );
+    }
+  }
 }
 
 function verifyCatalogRankingBeforeFinalCap() {
@@ -685,6 +1081,9 @@ async function verifyEmptyEvidenceFailForward() {
       result.status !== 'skipped' ||
       experiment.contractVersion !==
         'revenue_evidence_experiment_v1' ||
+      experiment.kind !== 'revenue_path_grounding' ||
+      !completeBusinessExperimentFields(experiment) ||
+      !/No current approved evidence/i.test(experiment.knownFact || '') ||
       !experiment.action?.includes(
         '1 current public paid-offer page or 1 attributable revenue record'
       ) ||

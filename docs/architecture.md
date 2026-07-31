@@ -67,8 +67,11 @@ The `opportunity_tournament` worker path is separate from post composition:
    ceilings, returns two `revenue_family_bundle_v2` acquisition-mode families,
    compact strategy dimensions, semantic score inputs, explicit evidence
    bindings for buyer/offer/acquisition/destination/conversion/attribution, and
-   one evidence-specific fallback experiment. The fallback is part of the same
-   metered call, not a second generation.
+   one evidence-specific fallback experiment. When `maxLLMCalls: 2` is
+   explicitly budgeted and the first response fails only the deterministic
+   family-shape gate, one additional price-capped call may replace the full
+   structured response. Both calls share the same hard spend cap and evidence
+   boundary.
 4. Deterministic code expands at most 10,000 combinations, requires each
    family's declared acquisition mode to match its
    `incremental_revenue_v2` path, verifies every grounding binding against the
@@ -84,11 +87,18 @@ The `opportunity_tournament` worker path is separate from post composition:
    that complete candidate grounding is promoted to rank 1; any higher-scoring
    but unactionable finalists are removed while the remaining score order is
    preserved. Completion also requires at least two finalists so the runner-up
-   is distinct. Without either invariant, the one-call research run skips with
-   `needs_more_approved_evidence` and zero external side effects. The returned
+   is distinct. Without either invariant, the bounded research run skips with
+   `needs_more_approved_evidence` and zero external side effects. A response
+   that remains structurally incomplete instead returns a cause-matched
+   `strategy_generation_shape_recovery`, never a false market-evidence gap.
+   The returned
    `revenue_evidence_experiment_v1` keeps the existing control-plane shape but
-   names a known fact or owned asset, one acquisition path distinct from the
-   destination, a paid signal, and numeric time/sample stops in plain language.
+   additively preserves `knownFact`, `buyer`, `paidOffer`,
+   `acquisitionMechanism`, `conversionDestination`, `paidConversion`, and
+   `attributionSignal`, plus numeric time/sample stops in plain language. These
+   fields are present on generated and conservative business fallbacks; they
+   are intentionally absent on provider, budget, and response-shape recovery
+   experiments so technical failure cannot masquerade as a business fact.
    Empty evidence also fails forward to one bounded review step rather than a
    bare dead end.
 

@@ -27,6 +27,30 @@ const usage = {
   total_tokens: 4350,
   cost: 0.01875
 };
+const businessExperimentFieldNames = [
+  'knownFact',
+  'buyer',
+  'paidOffer',
+  'acquisitionMechanism',
+  'conversionDestination',
+  'paidConversion',
+  'attributionSignal'
+];
+
+function hasBusinessExperimentField(experimentValue) {
+  const experiment = experimentValue || {};
+  return businessExperimentFieldNames.some((field) =>
+    Object.prototype.hasOwnProperty.call(experiment, field)
+  );
+}
+
+function completeBusinessExperimentFields(experimentValue) {
+  const experiment = experimentValue || {};
+  return businessExperimentFieldNames.every((field) =>
+    typeof experiment[field] === 'string' &&
+    experiment[field].trim().length > 0
+  );
+}
 
 const server = createServer(async (request, response) => {
   let raw = '';
@@ -3206,6 +3230,9 @@ try {
         result.metadata?.winner !== null ||
         result.metadata?.nextExperiment?.contractVersion !==
           'revenue_evidence_experiment_v1' ||
+        !completeBusinessExperimentFields(
+          result.metadata?.nextExperiment
+        ) ||
         result.metadata?.nextExperiment?.asset !== null ||
         !/\b14\s+calendar\s+days\b/i.test(
           result.metadata?.nextExperiment?.stopCondition || ''
@@ -3229,6 +3256,9 @@ try {
       nonInboundOwnedAsset.metadata?.runnerUp !== null ||
       nonInboundOwnedAsset.metadata?.nextExperiment?.contractVersion !==
         'revenue_evidence_experiment_v1' ||
+      !completeBusinessExperimentFields(
+        nonInboundOwnedAsset.metadata?.nextExperiment
+      ) ||
       !nonInboundOwnedAsset.metadata?.nextExperiment?.action ||
       !nonInboundOwnedAsset.metadata?.nextExperiment?.successSignal ||
       !/\b14\s+calendar\s+days\b/i.test(
@@ -3276,6 +3306,21 @@ try {
       queryScopedBooking.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
       queryScopedBooking.metadata?.usage?.calls !== 1) {
     throw new Error(`another query-selected booking tenant was treated as owner-controlled: ${JSON.stringify(queryScopedBooking)}`);
+  }
+  for (const [label, result] of [
+    ['provider failure', providerFailure],
+    ['invalid structured response', invalidStructured],
+    ['truncated structured response', truncatedStructured],
+    ['provider error envelope', envelopeError],
+    ['provider choice error', choiceError],
+    ['reported budget failure', budgetFailure],
+    ['request-price budget failure', budgetRouteFailure]
+  ]) {
+    if (hasBusinessExperimentField(result.metadata?.nextExperiment)) {
+      throw new Error(
+        `${label} invented business experiment fields: ${JSON.stringify(result.metadata?.nextExperiment)}`
+      );
+    }
   }
   if (providerFailure.status !== 'skipped' ||
       providerFailure.metadata?.winner !== null ||
@@ -3889,6 +3934,9 @@ try {
         'revenue_evidence_experiment_v1' ||
       uhcOperationsOnly.metadata?.nextExperiment?.kind !==
         'inbound_revenue_evidence' ||
+      !completeBusinessExperimentFields(
+        uhcOperationsOnly.metadata?.nextExperiment
+      ) ||
       uhcOperationsOnly.metadata?.nextExperiment?.asset?.publicUrl !==
         'https://example.com/delivery-map/lactation-consultant-home-visit' ||
       !uhcOperationsOnly.metadata?.nextExperiment?.evidenceRefs?.includes(

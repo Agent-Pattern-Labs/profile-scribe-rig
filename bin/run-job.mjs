@@ -718,6 +718,16 @@ async function runOpportunityTournamentJob(job, options) {
             status: object(tournament.usage).successfulCalls > 0 ? 'completed' : 'skipped'
           },
           {
+            name: 'repair_structured_strategy_families',
+            status: object(object(tournament.searchSpace).structuredRepair)
+              .attempted
+              ? object(object(tournament.searchSpace).structuredRepair)
+                .succeeded
+                ? 'completed'
+                : 'skipped'
+              : 'skipped'
+          },
+          {
             name: 'expand_and_judge_strategy_space',
             status: object(tournament.searchSpace).expandedCount > 0 ? 'completed' : 'skipped'
           },
@@ -738,7 +748,9 @@ async function runOpportunityTournamentJob(job, options) {
         ],
         notes: [
           'research_only',
-          'one_bounded_llm_call',
+          object(tournament.usage).calls > 1
+            ? 'two_bounded_llm_calls_with_shape_repair'
+            : 'one_bounded_llm_call',
           'deterministic_expansion',
           'no_pdl',
           'no_outreach',

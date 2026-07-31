@@ -388,7 +388,11 @@ export async function runOpportunityTournament({
     diagnostics: completion?.diagnostics,
     promptHash
   });
-  const usage = aggregateUsage([providerMetadata], budget);
+  const providerMetadataEntries = [providerMetadata];
+  const llmTrace = {
+    strategyGeneratorJudge: providerMetadata
+  };
+  let usage = aggregateUsage(providerMetadataEntries, budget);
   if (budget.hardStop && usage.reportedCostMicros > budget.maxLLMSpendMicros) {
     return {
       status: 'skipped',
@@ -397,7 +401,7 @@ export async function runOpportunityTournament({
       nextExperiment: nextExperimentFor([
         'within_budget_strategy_generation'
       ]),
-      llm: { strategyGeneratorJudge: providerMetadata },
+      llm: llmTrace,
       usage,
       gate: researchOnlyGate(
         'block',
@@ -406,11 +410,156 @@ export async function runOpportunityTournament({
     };
   }
 
-  const seedSet = normalizeSeedSet(
+  let seedSet = normalizeSeedSet(
     completion?.data,
     evidenceCatalog,
     timestamp
   );
+  generatedEvidenceExperiment = normalizeGeneratedEvidenceExperiment(
+    completion?.data?.evidenceExperiment,
+    evidenceCatalog,
+    timestamp
+  );
+  const initialShapeIssue = structuredSeedSetShapeIssue(seedSet);
+  const structuredRepair = {
+    authorized: budget.maxLLMCalls >= 2,
+    attempted: false,
+    succeeded: false,
+    initialIssue: initialShapeIssue?.code || ''
+  };
+  if (initialShapeIssue && structuredRepair.authorized) {
+    const remainingSpendMicros = remainingRepairSpendMicros(
+      budget,
+      usage
+    );
+    if (remainingSpendMicros > 0) {
+      structuredRepair.attempted = true;
+      const repairPrompt = seedAndJudgeRepairPrompt({
+        originalPrompt: prompt,
+        previousResponse: completion?.data,
+        issue: initialShapeIssue
+      });
+      const repairPromptHash = stableHash({
+        system: repairPrompt.system,
+        user: repairPrompt.user
+      });
+      let repairCompletion;
+      try {
+        repairCompletion = await completeJSON({
+          model,
+          system: repairPrompt.system,
+          user: repairPrompt.user,
+          maxTokens: budget.maxOutputTokens,
+          responseFormat:
+            tournamentStructuredResponseFormat(evidenceCatalog),
+          plugins: [{ id: 'response-healing' }],
+          temperature: 0,
+          provider: {
+            max_price: {
+              ...budget.providerMaxPrice,
+              request: roundMoney(Math.min(
+                budget.providerMaxPrice.request,
+                remainingSpendMicros / 1_000_000
+              ))
+            },
+            require_parameters: true,
+            data_collection: 'deny'
+          }
+        });
+      } catch (error) {
+        const repairMetadata = openRouterMetadata({
+          model,
+          status: 'failed',
+          usage: error?.openRouterUsage,
+          diagnostics: error?.openRouterDiagnostics,
+          promptHash: repairPromptHash,
+          error: openRouterFailureCode(error)
+        });
+        providerMetadataEntries.push(repairMetadata);
+        llmTrace.strategyFamilyRepair = repairMetadata;
+        usage = aggregateUsage(providerMetadataEntries, budget);
+        structuredRepair.finalIssue = initialShapeIssue.code;
+        structuredRepair.failure =
+          'structured_repair_provider_failure';
+        return {
+          status: 'skipped',
+          summary:
+            'The bounded strategy-family repair call failed, so the tournament did not substitute a market-evidence explanation.',
+          ...base,
+          nextExperiment: nextExperimentFor([
+            'usable_strategy_generation'
+          ]),
+          llm: llmTrace,
+          usage,
+          searchSpace: {
+            ...base.searchSpace,
+            ...seedSetShapeSearchTrace(seedSet),
+            modelCalls: usage.calls,
+            structuredRepair
+          },
+          gate: researchOnlyGate(
+            'strategy_generation_repair_failed',
+            'The AI returned an incomplete comparison and its one authorized structured repair call failed.'
+          )
+        };
+      }
+      const repairMetadata = openRouterMetadata({
+        model,
+        status: 'completed',
+        usage: repairCompletion?.usage,
+        generationId: repairCompletion?.generationId,
+        diagnostics: repairCompletion?.diagnostics,
+        promptHash: repairPromptHash
+      });
+      providerMetadataEntries.push(repairMetadata);
+      llmTrace.strategyFamilyRepair = repairMetadata;
+      usage = aggregateUsage(providerMetadataEntries, budget);
+      if (budget.hardStop &&
+          usage.reportedCostMicros > budget.maxLLMSpendMicros) {
+        structuredRepair.finalIssue = initialShapeIssue.code;
+        structuredRepair.failure = 'repair_budget_exceeded';
+        return {
+          status: 'skipped',
+          summary:
+            'The structured strategy repair exceeded the tournament LLM budget; no recommendation was selected.',
+          ...base,
+          nextExperiment: nextExperimentFor([
+            'within_budget_strategy_generation'
+          ]),
+          llm: llmTrace,
+          usage,
+          searchSpace: {
+            ...base.searchSpace,
+            ...seedSetShapeSearchTrace(seedSet),
+            modelCalls: usage.calls,
+            structuredRepair
+          },
+          gate: researchOnlyGate(
+            'block',
+            'Reported LLM cost exceeded the hard tournament budget during structured repair.'
+          )
+        };
+      }
+      completion = repairCompletion;
+      seedSet = normalizeSeedSet(
+        completion?.data,
+        evidenceCatalog,
+        timestamp
+      );
+      generatedEvidenceExperiment =
+        normalizeGeneratedEvidenceExperiment(
+          completion?.data?.evidenceExperiment,
+          evidenceCatalog,
+          timestamp
+        );
+      const repairedIssue = structuredSeedSetShapeIssue(seedSet);
+      structuredRepair.succeeded = !repairedIssue;
+      structuredRepair.finalIssue = repairedIssue?.code || '';
+    } else {
+      structuredRepair.failure = 'repair_budget_unavailable';
+      structuredRepair.finalIssue = initialShapeIssue.code;
+    }
+  }
   if (seedSet.seedContract === 'invalid') {
     return {
       status: 'skipped',
@@ -418,33 +567,31 @@ export async function runOpportunityTournament({
         'The strategy generator returned an unsupported seed contract; no legacy or upgraded interpretation was assumed.',
       ...base,
       nextExperiment: nextExperimentFor([
-        'usable_strategy_generation'
+        'structured_strategy_family_repair'
       ]),
-      llm: { strategyGeneratorJudge: providerMetadata },
+      llm: llmTrace,
       usage,
       searchSpace: {
         ...base.searchSpace,
         seedContract: seedSet.seedContract,
         declaredStrategyFamilyCount:
           seedSet.declaredStrategyFamilyCount,
-        strategyFamilyCount: seedSet.strategyFamilies.length
+        strategyFamilyCount: seedSet.strategyFamilies.length,
+        modelCalls: usage.calls,
+        structuredRepair
       },
       gate: researchOnlyGate(
-        'block',
-        'The structured strategy response did not declare a supported seed contract.'
+        'strategy_generation_incomplete',
+        'The AI response and any authorized bounded repair did not declare a supported seed contract.'
       )
     };
   }
   const searchContracts = searchContractsForSeedSet(seedSet);
-  generatedEvidenceExperiment = normalizeGeneratedEvidenceExperiment(
-    completion?.data?.evidenceExperiment,
-    evidenceCatalog,
-    timestamp
-  );
   const missingDimension = DIMENSIONS.find(([name]) => seedSet[name].length === 0)?.[0];
   if (missingDimension) {
     const unsupportedTiming = missingDimension === 'timingTriggers' &&
       seedSet.unsupportedTimingSeedCount > 0;
+    const finalShapeIssue = structuredSeedSetShapeIssue(seedSet);
     return {
       status: 'skipped',
       summary: unsupportedTiming
@@ -452,9 +599,11 @@ export async function runOpportunityTournament({
         : `The strategy generator returned no grounded ${missingDimension} seeds.`,
       ...base,
       nextExperiment: nextExperimentFor([
-        `missing_${missingDimension}`
+        finalShapeIssue
+          ? 'structured_strategy_family_repair'
+          : `missing_${missingDimension}`
       ]),
-      llm: { strategyGeneratorJudge: providerMetadata },
+      llm: llmTrace,
       usage,
       searchSpace: {
         ...base.searchSpace,
@@ -472,13 +621,19 @@ export async function runOpportunityTournament({
         timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
         coherenceGate: searchContracts.coherenceGate,
         revenueGate: searchContracts.revenueGate,
-        revenuePathContract: searchContracts.revenuePathContract
+        revenuePathContract: searchContracts.revenuePathContract,
+        modelCalls: usage.calls,
+        structuredRepair
       },
       gate: researchOnlyGate(
-        'block',
-        unsupportedTiming
-          ? 'No timing claim was directly supported by an exact phrase in approved evidence.'
-          : 'The structured strategy seed set was incomplete or ungrounded.'
+        finalShapeIssue
+          ? 'strategy_generation_incomplete'
+          : 'block',
+        finalShapeIssue
+          ? 'The AI response and any authorized bounded repair returned an incomplete structured strategy seed set.'
+          : unsupportedTiming
+            ? 'No timing claim was directly supported by an exact phrase in approved evidence.'
+            : 'The structured strategy seed set was incomplete or ungrounded.'
       )
     };
   }
@@ -488,9 +643,9 @@ export async function runOpportunityTournament({
       summary: 'The strategy generator returned fewer than two complete, source-anchored strategy families.',
       ...base,
       nextExperiment: nextExperimentFor([
-        'second_grounded_strategy_family'
+        'structured_strategy_family_repair'
       ]),
-      llm: { strategyGeneratorJudge: providerMetadata },
+      llm: llmTrace,
       usage,
       searchSpace: {
         ...base.searchSpace,
@@ -508,11 +663,13 @@ export async function runOpportunityTournament({
         timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
         coherenceGate: searchContracts.coherenceGate,
         revenueGate: searchContracts.revenueGate,
-        revenuePathContract: searchContracts.revenuePathContract
+        revenuePathContract: searchContracts.revenuePathContract,
+        modelCalls: usage.calls,
+        structuredRepair
       },
       gate: researchOnlyGate(
-        'needs_more_approved_evidence',
-        'A completed tournament requires two complete strategy families where every dimension cites specific family evidence and each family uses at least one approved observation.'
+        'strategy_generation_incomplete',
+        'The AI response and any authorized bounded repair did not produce two complete comparison families where every dimension cites specific family evidence and each family uses at least one approved observation.'
       )
     };
   }
@@ -558,7 +715,8 @@ export async function runOpportunityTournament({
     timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
     coherenceGate: searchContracts.coherenceGate,
     deterministic: true,
-    modelCalls: 1,
+    modelCalls: usage.calls,
+    structuredRepair,
     judgeWeights: expanded.weights
   });
   if (initialHypotheses.length < 2) {
@@ -572,7 +730,7 @@ export async function runOpportunityTournament({
         'second_grounded_finalist'
       ]),
       searchSpace: searchSpaceFor(initialHypotheses),
-      llm: { strategyGeneratorJudge: providerMetadata },
+      llm: llmTrace,
       usage,
       gate: researchOnlyGate(
         'needs_more_approved_evidence',
@@ -672,7 +830,7 @@ export async function runOpportunityTournament({
           : 'named_revenue_target'
       ]),
       searchSpace: searchSpaceFor(initialHypotheses),
-      llm: { strategyGeneratorJudge: providerMetadata },
+      llm: llmTrace,
       usage,
       gate: researchOnlyGate(
         'needs_more_approved_evidence',
@@ -704,7 +862,7 @@ export async function runOpportunityTournament({
         'family_diverse_revenue_path'
       ]),
       searchSpace: searchSpaceFor(initialHypotheses),
-      llm: { strategyGeneratorJudge: providerMetadata },
+      llm: llmTrace,
       usage,
       gate: researchOnlyGate(
         'needs_more_approved_evidence',
@@ -739,7 +897,7 @@ export async function runOpportunityTournament({
         'distinct_runner_up'
       ]),
       searchSpace,
-      llm: { strategyGeneratorJudge: providerMetadata },
+      llm: llmTrace,
       usage,
       gate: researchOnlyGate(
         'needs_more_approved_evidence',
@@ -779,7 +937,7 @@ export async function runOpportunityTournament({
           : 'named_revenue_target'
       ]),
       searchSpace,
-      llm: { strategyGeneratorJudge: providerMetadata },
+      llm: llmTrace,
       usage,
       gate: researchOnlyGate(
         'needs_more_approved_evidence',
@@ -800,7 +958,7 @@ export async function runOpportunityTournament({
     winner: selected.winner,
     runnerUp: selected.runnerUp,
     searchSpace,
-    llm: { strategyGeneratorJudge: providerMetadata },
+    llm: llmTrace,
     usage,
     gate: researchOnlyGate(
       'human_review',
@@ -971,6 +1129,7 @@ export function buildEvidenceCatalog(
       url,
       sourceId: sourceID,
       observedAt: firstText(raw.observedAt, raw.updatedAt, raw.publishedAt),
+      publishedAt: firstText(raw.publishedAt),
       startDate: firstText(raw.startDate),
       endDate: firstText(raw.endDate),
       current: typeof raw.current === 'boolean' ? raw.current : undefined,
@@ -1087,7 +1246,12 @@ export function buildEvidenceCatalog(
       confidence: firstText(value.trustLevel, value.confidence)
     }, 'approved_source');
   }
-  for (const evidence of sourceEvidence.slice(0, 160)) {
+  // A source may retain many crawl observations for the same page. Collapse
+  // those revisions before applying the bounded prompt catalog so repeated
+  // old observations cannot crowd a newer owner offer page out of the model's
+  // evidence. Canonicalization treats only the conventional www/no-www host
+  // aliases as the same host; it does not merge arbitrary subdomains.
+  for (const evidence of dedupeSourceEvidenceByCanonicalPage(sourceEvidence)) {
     const value = asObject(evidence);
     const sourceID = firstText(value.sourceId, value.sourceID);
     if (!sourceID || !approvedSourceIDs.has(sourceID)) continue;
@@ -1148,6 +1312,11 @@ export function buildEvidenceCatalog(
       )
       .map((evidence) => evidence.id)
   );
+  const informationalEvidenceIDs = new Set(
+    catalog
+      .filter((evidence) => informationalAssetEvidence(evidence))
+      .map((evidence) => evidence.id)
+  );
   return catalog
     .sort((left, right) => {
       const leftPriority = candidateEvidencePriority.get(left.id);
@@ -1166,7 +1335,15 @@ export function buildEvidenceCatalog(
       }
       return evidenceQuality(right) - evidenceQuality(left) || left.id.localeCompare(right.id);
     })
-    .slice(0, MAX_EVIDENCE_ITEMS);
+    .slice(0, MAX_EVIDENCE_ITEMS)
+    .map((evidence) => compact({
+      ...evidence,
+      revenueAssetRole: ownerControlledPaidAssetIDs.has(evidence.id)
+        ? 'current_owner_paid_conversion_asset'
+        : informationalEvidenceIDs.has(evidence.id)
+          ? 'informational_only'
+          : undefined
+    }));
 }
 
 export function expandAndJudge({
@@ -1401,7 +1578,10 @@ function normalizeBudget(value) {
     },
     maxHypotheses: clampInteger(raw.maxHypotheses, 1, MAX_HYPOTHESES, MAX_HYPOTHESES),
     maxFinalists: clampInteger(raw.maxFinalists, 2, MAX_FINALISTS, MAX_FINALISTS),
-    maxLLMCalls: clampInteger(raw.maxLLMCalls, 0, 1, 1),
+    // One initial structured generation plus, when the caller explicitly
+    // budgets it, one bounded shape-repair call. The default remains one so
+    // existing callers cannot incur a second request implicitly.
+    maxLLMCalls: clampInteger(raw.maxLLMCalls, 0, 2, 1),
     maxOutputTokens: clampInteger(raw.maxOutputTokens, 600, 10_000, 8_000),
     minimumScore: clampNumber(raw.minimumScore, 0.2, 0.9, 0.42),
     hardStop: raw.hardStop !== false
@@ -1465,6 +1645,7 @@ Never invent accomplishments, customers, affiliations, contact details, market d
 Treat experience with a past endDate as historical proof, never as a current role or affiliation.
 Do not recommend applying for, enrolling in, or creating a capability when the evidence says that capability already exists. Treat the existing capability as proof or supporting context for a paid acquisition/conversion path. Any verification of that capability belongs only in supportingBottleneck and must never be the primary action.
 Use only exact evidence IDs from evidenceCatalog. Unknown evidence IDs will be discarded.
+Treat evidenceCatalog.revenueAssetRole as a deterministic eligibility signal. A current_owner_paid_conversion_asset is a current owner-controlled paid or reimbursable offer destination and must be preferred over adjacent articles or other informational evidence. informational_only evidence may support expertise but must never ground a paid offer, conversion destination, paid conversion, or evidenceExperiment asset.
 You may optionally extract a compact named person or organization candidate only when its exact name appears verbatim in the cited evidence. Do not return contact details or URLs; return no candidate rather than infer or complete an identity.
 When an exact named organization is the intended target buyer, begin that buyerSegments label with the exact organization name and return the same organization in candidates.
 Keep every strategy family coherent end to end. Its family m is one acquisition mode, and its buyer, offer, channel, action, timing trigger, proof point, follow-up, and revenue path must all belong to that same acquisition-to-payment route.
@@ -1477,6 +1658,7 @@ Return exactly two complete top-level family bundles named familyA and familyB. 
 Prefer an inbound paid-conversion path for familyA when approved evidence can ground it. Use warm referral, partner channel, existing-customer, or permissioned-outreach paths when inbound is ungrounded or semantically weaker; never invent inbound demand or an inbound asset.
 Within each family bundle, return exactly two family-specific offers, buyer segments, channels, actions, and follow-ups, plus exactly one timing trigger, one proof point, and one revenue path. Never return global dimension arrays or cross-family compatibility tags.
 Also return one evidenceExperiment as a fallback for human review. It must name a known fact or owned asset from the evidence, one buyer, one paid offer, one singular acquisition mechanism that is not the conversion destination, one paid conversion, one durable attribution signal, and a numeric time and sample stop. Write its title, action, and success signal for the profile owner, never as internal source-approval or observation-processing instructions. The experiment is only a recommendation; do not claim it was launched.
+When any current_owner_paid_conversion_asset exists, the evidenceExperiment must cite the strongest relevant one and must test the missing acquisition or attribution evidence around that existing offer. Never ask the owner to attach, approve, create, or document another paid-offer page in that case.
 Return no email, direct message, post, pitch, sales script, or other outreach copy.
 Reject spray-and-pray, bulk outreach, scraping, automated form submission, or high-volume behavior.
 Each seed should be a short structured concept.
@@ -1611,6 +1793,7 @@ Return only JSON.`;
         'If a named organization is the intended target buyer, start the buyerSegments label with that exact organization name and include the same organization in candidates.',
         'If evidence says a provider, credential, connection, or service is already accepted, active, or available, do not recommend applying for it as though it were missing.',
         'Return exactly one evidenceExperiment even when a family appears likely to win; it is ignored when a winner survives validation. Its known fact, buyer, paid offer, and destination must be supported by its cited evidence. Its acquisition mechanism is a test hypothesis, not a claim of existing demand.',
+        'If evidenceCatalog contains current_owner_paid_conversion_asset, the evidenceExperiment must use the strongest objective-relevant asset. Never substitute informational_only evidence and never ask for a paid-offer page that already exists.',
         'The evidenceExperiment acquisition mechanism and conversion destination must be singular and different. Its action must name both, the buyer, paid offer, paid conversion, attribution record, days, and sample stop.',
         'The evidenceExperiment title, action, and success signal must not use internal phrases such as approve source, approve observation, evidence approval, evidence ID, crawl, generator, validator, retained strategy, or missing_*.',
         'The evidenceExperiment recommends no automatic outreach, publishing, advertising, provider write, form submission, or silent execution. It remains review-first.'
@@ -1618,6 +1801,127 @@ Return only JSON.`;
     }
   });
   return { system, user };
+}
+
+function seedAndJudgeRepairPrompt({
+  originalPrompt,
+  previousResponse,
+  issue
+}) {
+  let originalTask = {};
+  try {
+    originalTask = JSON.parse(firstText(originalPrompt?.user));
+  } catch {
+    originalTask = {};
+  }
+  const system = `${firstText(originalPrompt?.system)}
+
+This is the one authorized structured-family repair pass. The previous response failed the deterministic family-shape gate described in repairIssue. Return a complete replacement response, not a patch. Preserve only claims that remain grounded in evidenceCatalog, repair both family bundles against the same schema, and independently re-audit evidenceExperiment. Do not copy an informational article title into the experiment when a current_owner_paid_conversion_asset is available. Do not reinterpret this response-shape failure as missing customer evidence.`;
+  const user = JSON.stringify({
+    ...originalTask,
+    task:
+      'Repair the previous structured tournament response into two complete, independently grounded comparison families and one valid fallback experiment.',
+    repairIssue: issue,
+    previousResponse,
+    repairRules: [
+      'Return the entire strict response contract again.',
+      'Both familyA and familyB must be structurally complete after normalization.',
+      'Every family dimension must cite evidence contained by that family.',
+      'Use current_owner_paid_conversion_asset for the evidenceExperiment when one exists.',
+      'Never use informational_only evidence as the paid offer, conversion destination, paid conversion, or experiment title anchor.',
+      'If acquisition or attribution is only a hypothesis, keep it in evidenceExperiment and do not disguise it as observed family evidence.'
+    ]
+  });
+  return { system, user };
+}
+
+function structuredSeedSetShapeIssue(seedSetValue) {
+  const seedSet = asObject(seedSetValue);
+  if (seedSet.seedContract === 'invalid') {
+    return {
+      code: 'unsupported_seed_contract',
+      seedContract: firstText(seedSet.seedContract)
+    };
+  }
+  const missingDimensions = DIMENSIONS
+    .map(([name]) => name)
+    .filter((name) => asArray(seedSet[name]).length === 0);
+  if (missingDimensions.length > 0) {
+    const onlyUnsafeTimingWasRemoved =
+      missingDimensions.length === 1 &&
+      missingDimensions[0] === 'timingTriggers' &&
+      (nonNegativeInteger(seedSet.unsupportedTimingSeedCount) || 0) > 0 &&
+      (nonNegativeInteger(seedSet.completeStrategyFamilyCount) || 0) === 0;
+    if (onlyUnsafeTimingWasRemoved) {
+      return null;
+    }
+    return {
+      code: 'missing_grounded_dimensions',
+      missingDimensions,
+      completeStrategyFamilyCount:
+        nonNegativeInteger(seedSet.completeStrategyFamilyCount) || 0,
+      familyCoverage: seedSet.strategyFamilyAnchorCoverage
+    };
+  }
+  if ((nonNegativeInteger(seedSet.completeStrategyFamilyCount) || 0) < 2) {
+    return {
+      code: 'incomplete_strategy_families',
+      completeStrategyFamilyCount:
+        nonNegativeInteger(seedSet.completeStrategyFamilyCount) || 0,
+      incompleteStrategyFamilyCount:
+        nonNegativeInteger(seedSet.incompleteStrategyFamilyCount) || 0,
+      familyCoverage: seedSet.strategyFamilyAnchorCoverage
+    };
+  }
+  return null;
+}
+
+function seedSetShapeSearchTrace(seedSetValue) {
+  const seedSet = asObject(seedSetValue);
+  return {
+    dimensionCounts: dimensionCounts(seedSet),
+    seedContract: firstText(seedSet.seedContract),
+    declaredStrategyFamilyCount:
+      nonNegativeInteger(seedSet.declaredStrategyFamilyCount) || 0,
+    strategyFamilyCount: asArray(seedSet.strategyFamilies).length,
+    completeStrategyFamilyCount:
+      nonNegativeInteger(seedSet.completeStrategyFamilyCount) || 0,
+    incompleteStrategyFamilyCount:
+      nonNegativeInteger(seedSet.incompleteStrategyFamilyCount) || 0,
+    strategyFamilyAnchorCoverage:
+      asArray(seedSet.strategyFamilyAnchorCoverage),
+    strategyFamilyCollisionCount:
+      nonNegativeInteger(seedSet.strategyFamilyCollisionCount) || 0,
+    familyEvidenceMismatchSeedCount:
+      nonNegativeInteger(seedSet.familyEvidenceMismatchSeedCount) || 0,
+    invalidFamilySeedCount:
+      nonNegativeInteger(seedSet.invalidFamilySeedCount) || 0,
+    unsupportedTimingSeedCount:
+      nonNegativeInteger(seedSet.unsupportedTimingSeedCount) || 0,
+    timingVerificationRepairCount:
+      nonNegativeInteger(seedSet.timingVerificationRepairCount) || 0
+  };
+}
+
+function remainingRepairSpendMicros(budgetValue, usageValue) {
+  const budget = asObject(budgetValue);
+  const usage = asObject(usageValue);
+  const reported = nonNegativeInteger(usage.reportedCostMicros) || 0;
+  const accountedSpend = usage.costReporting === 'complete'
+    ? reported
+    : Math.max(
+        reported,
+        Math.round(
+          Number(asObject(budget.providerMaxPrice).request || 0) *
+            1_000_000 *
+            Math.max(1, nonNegativeInteger(usage.calls) || 0)
+        )
+      );
+  return Math.max(
+    0,
+    (nonNegativeInteger(budget.maxLLMSpendMicros) || 0) -
+      accountedSpend
+  );
 }
 
 function tournamentStructuredResponseFormat(evidenceCatalog) {
@@ -3383,6 +3687,14 @@ function timingEvidenceIsSafe(evidence, referenceTime) {
       observationAge > MAX_TIMING_VERIFICATION_OBSERVATION_AGE_MS) {
     return false;
   }
+  if (informationalAssetEvidence(evidence)) {
+    const publishedDate = new Date(firstText(evidence.publishedAt));
+    if (Number.isFinite(publishedDate.getTime()) &&
+        referenceDate.getTime() - publishedDate.getTime() >
+          MAX_TIMING_VERIFICATION_OBSERVATION_AGE_MS) {
+      return false;
+    }
+  }
   const rawEndDate = firstText(asObject(evidence).endDate);
   if (rawEndDate) {
     const endDate = new Date(rawEndDate);
@@ -3454,6 +3766,126 @@ function exactTextContains(haystackValue, needleValue) {
   return Boolean(needle) && ` ${haystack} `.includes(` ${needle} `);
 }
 
+function dedupeSourceEvidenceByCanonicalPage(values) {
+  const selectedByPage = new Map();
+  for (const [index, value] of asArray(values).entries()) {
+    const evidence = asObject(value);
+    const sourceID = firstText(evidence.sourceId, evidence.sourceID);
+    const pageURL = canonicalPublicPageURL(firstText(
+      evidence.url,
+      evidence.sourceUrl,
+      evidence.publicUrl
+    ));
+    const recordID = firstText(
+      evidence.observationId,
+      evidence.evidenceRef,
+      evidence.factId,
+      evidence.id
+    );
+    const key = pageURL
+      ? `${sourceID}|url:${pageURL}`
+      : `${sourceID}|record:${recordID || stableHash({
+          label: firstText(evidence.label, evidence.title),
+          summary: firstText(evidence.summary, evidence.description),
+          index
+        })}`;
+    const candidate = {
+      evidence: value,
+      index,
+      freshness: sourceEvidenceFreshness(evidence),
+      quality: rawSourceEvidenceQuality(evidence)
+    };
+    const existing = selectedByPage.get(key);
+    if (!existing ||
+        candidate.freshness > existing.freshness ||
+        (
+          candidate.freshness === existing.freshness &&
+          (
+            candidate.quality > existing.quality ||
+            (
+              candidate.quality === existing.quality &&
+              candidate.index > existing.index
+            )
+          )
+        )) {
+      selectedByPage.set(key, candidate);
+    }
+  }
+  return [...selectedByPage.values()]
+    .sort((left, right) =>
+      right.freshness - left.freshness ||
+      right.quality - left.quality ||
+      right.index - left.index
+    )
+    .map((item) => item.evidence);
+}
+
+function sourceEvidenceFreshness(value) {
+  const evidence = asObject(value);
+  for (const timestamp of compactStrings([
+    evidence.observedAt,
+    evidence.crawledAt,
+    evidence.fetchedAt,
+    evidence.updatedAt,
+    evidence.createdAt,
+    evidence.publishedAt
+  ])) {
+    const date = new Date(timestamp);
+    if (Number.isFinite(date.getTime())) return date.getTime();
+  }
+  return 0;
+}
+
+function rawSourceEvidenceQuality(value) {
+  const evidence = asObject(value);
+  let score = 0;
+  if (firstText(evidence.summary, evidence.description)) score += 4;
+  if (firstText(evidence.title, evidence.label)) score += 2;
+  if (evidence.current === true) score += 2;
+  if (evidence.current === false) score -= 4;
+  if (comparable(firstText(evidence.confidence, evidence.trustLevel)) ===
+      'high') {
+    score += 1;
+  }
+  return score;
+}
+
+function canonicalPublicPageURL(value) {
+  const raw = safePublicURL(value);
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    parsed.hostname = canonicalPublicHostname(parsed.hostname);
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    return parsed.toString().toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function canonicalPublicHostname(value) {
+  return firstText(value).toLowerCase().replace(/^www\./, '');
+}
+
+function publicURLsShareCanonicalOrigin(leftValue, rightValue) {
+  try {
+    const left = leftValue instanceof URL
+      ? leftValue
+      : new URL(safePublicURL(leftValue));
+    const right = rightValue instanceof URL
+      ? rightValue
+      : new URL(safePublicURL(rightValue));
+    return left.protocol === right.protocol &&
+      canonicalPublicHostname(left.hostname) ===
+        canonicalPublicHostname(right.hostname) &&
+      left.port === right.port;
+  } catch {
+    return false;
+  }
+}
+
 function sourceIsResearchApproved(source) {
   return RESEARCH_APPROVED_SOURCE_STATUSES.has(
     comparable(asObject(source).status)
@@ -3493,18 +3925,12 @@ function profileControlsSource(sourceValue, controlledURLs) {
   if (!sourceURL) return false;
   try {
     const source = new URL(sourceURL);
-    const sourceHost = source.hostname.toLowerCase().replace(/^www\./, '');
     const sourcePath = source.pathname.replace(/\/+$/, '') || '/';
     return asArray(controlledURLs).some((controlledValue) => {
       try {
         const declaration = asObject(controlledValue);
         const controlled = new URL(declaration.url);
-        const controlledHost = controlled.hostname
-          .toLowerCase()
-          .replace(/^www\./, '');
-        if (controlled.protocol !== source.protocol ||
-            controlledHost !== sourceHost ||
-            controlled.port !== source.port) {
+        if (!publicURLsShareCanonicalOrigin(source, controlled)) {
           return false;
         }
         if (declaration.kind === 'booking') {
@@ -3953,6 +4379,7 @@ function normalizeGeneratedEvidenceExperiment(
   ]).join(' ');
   if (textOverlap(knownFact, citedText) <= 0 ||
       !asset ||
+      textOverlap(title, assetText) <= 0 ||
       textOverlap(buyer, assetText) <= 0 ||
       !paidOfferText(assetText) ||
       textOverlap(paidOffer, assetText) <= 0 ||
@@ -4120,9 +4547,30 @@ function revenueEvidenceExperiment({
     evidenceHash,
     missingEvidence: missing
   });
+  // Technical recovery fixes provider, budget, or response-shape state. Return
+  // it before attaching business-only fields so it cannot masquerade as a
+  // sourced buyer, offer, funnel, conversion, or attribution recommendation.
   if (technicalRecovery) return technicalRecovery;
-  const userReadableMissingEvidence =
-    humanizeMissingRevenueEvidence(missing);
+  const objectiveText = compactStrings([
+    objective?.outcome,
+    objective?.successMetric
+  ]).join(' ');
+  const asset = selectCurrentOwnedPaidAsset(
+    evidenceCatalog,
+    evidenceByID,
+    objectiveText,
+    referenceTime
+  );
+  // Once a current owner-controlled paid destination is present, the bounded
+  // experiment should measure the acquisition/attribution gap around that
+  // offer. Do not tell the owner to supply the same offer page again or expose
+  // an internal family-shape failure as their business task.
+  const userReadableMissingEvidence = asset
+    ? [
+        'observed qualified demand from one named discovery path',
+        'a paid-conversion record carrying that discovery source'
+      ]
+    : humanizeMissingRevenueEvidence(missing);
   if (generatedExperiment &&
       generatedExperimentMatchesFailureContext(
         generatedExperiment,
@@ -4142,6 +4590,13 @@ function revenueEvidenceExperiment({
       }).slice(0, 24)}`,
       kind,
       title: generatedExperiment.title,
+      knownFact: generatedExperiment.knownFact,
+      buyer: generatedExperiment.buyer,
+      paidOffer: generatedExperiment.paidOffer,
+      acquisitionMechanism: generatedExperiment.acquisitionMechanism,
+      conversionDestination: generatedExperiment.conversionDestination,
+      paidConversion: generatedExperiment.paidConversion,
+      attributionSignal: generatedExperiment.attributionSignal,
       action: generatedExperiment.action,
       missingEvidence: userReadableMissingEvidence.length > 0
         ? userReadableMissingEvidence
@@ -4160,37 +4615,6 @@ function revenueEvidenceExperiment({
       }
     };
   }
-  const objectiveText = compactStrings([
-    objective?.outcome,
-    objective?.successMetric
-  ]).join(' ');
-  const asset = asArray(evidenceCatalog)
-    .map(asObject)
-    .filter((evidence) =>
-      approvedOwnedAssetEvidence(evidence, evidenceByID) &&
-      inboundAssetEvidenceSupportsPaidConversion(
-        evidence,
-        referenceTime
-      )
-    )
-    .sort((left, right) => {
-      const relevanceDifference =
-        textOverlap(
-          objectiveText,
-          `${right.approvedSourceLabel || ''} ${right.label || ''} ${right.summary || ''} ${right.url || ''}`
-        ) -
-        textOverlap(
-          objectiveText,
-          `${left.approvedSourceLabel || ''} ${left.label || ''} ${left.summary || ''} ${left.url || ''}`
-        );
-      const readinessDifference =
-        inboundAssetConversionReadiness(right) -
-        inboundAssetConversionReadiness(left);
-      return relevanceDifference ||
-        readinessDifference ||
-        evidenceQuality(right) - evidenceQuality(left) ||
-        firstText(left.id).localeCompare(firstText(right.id));
-    })[0];
   const anchor = asset || asArray(evidenceCatalog)
     .map(asObject)
     .filter((evidence) =>
@@ -4220,16 +4644,16 @@ function revenueEvidenceExperiment({
   const kind = asset
     ? 'inbound_revenue_evidence'
     : 'revenue_path_grounding';
-  const title = asset
-    ? `Test organic-search demand for ${assetLabel}`
-    : anchor
-      ? `Define one attributable paid path for ${anchorLabel}`
-      : 'Define one attributable paid offer';
-  const action = asset
-    ? `Review first: use organic search as the only discovery path to ${assetLabel} for a 14-day, 25-qualified-visit test. Record organic search in the booking, payment, order, contract, license, commission, platform, employment, or claim record, and count only a completed paid or reimbursed outcome. No outreach, publishing, advertising, form submission, or automatic execution is authorized.`
-    : `Review first: attach exactly 1 current public paid-offer page or 1 attributable revenue record for ${anchorLabel}. It must identify the buyer, paid offer, singular acquisition path, separate conversion destination, paid event, and the source field stored with that event. Stop after that 1 qualifying page or record, or after 14 calendar days; do not launch outreach, publishing, advertising, or provider actions.`;
-  const successSignal =
-    'One new attributed revenue event—a paid booking, payment, order, signed contract, reimbursed claim, license or royalty payment, commission or referral fee, sponsorship payment, platform payout, or compensated-role payment—with a stored source, referral, campaign, channel, or UTM value.';
+  const experimentPlan = asset
+    ? ownedAssetEvidenceExperimentPlan(asset)
+    : revenuePathGroundingExperimentPlan({
+        anchor,
+        anchorLabel,
+        objective
+      });
+  const title = experimentPlan.title;
+  const action = experimentPlan.action;
+  const successSignal = experimentPlan.successSignal;
   const stopCondition =
     asset
       ? 'Stop after 25 qualified visits, 1 attributable paid outcome, or 14 calendar days, whichever comes first, followed by at most 1 rerun informed by the result; do not expand volume automatically.'
@@ -4244,6 +4668,13 @@ function revenueEvidenceExperiment({
     }).slice(0, 24)}`,
     kind,
     title: truncate(title, 240),
+    knownFact: experimentPlan.knownFact,
+    buyer: experimentPlan.buyer,
+    paidOffer: experimentPlan.paidOffer,
+    acquisitionMechanism: experimentPlan.acquisitionMechanism,
+    conversionDestination: experimentPlan.conversionDestination,
+    paidConversion: experimentPlan.paidConversion,
+    attributionSignal: experimentPlan.attributionSignal,
     action: truncate(action, 700),
     missingEvidence: userReadableMissingEvidence.length > 0
       ? userReadableMissingEvidence
@@ -4251,7 +4682,7 @@ function revenueEvidenceExperiment({
     paidOutcome: truncate(
       observableRevenueText(objective?.successMetric)
         ? firstText(objective?.successMetric)
-        : successSignal,
+        : experimentPlan.paidConversion || successSignal,
       360
     ),
     successSignal,
@@ -4269,6 +4700,233 @@ function revenueEvidenceExperiment({
       trigger:
         'Rerun only after the bounded test records its result or the named business facts materially change.'
     }
+  };
+}
+
+function selectCurrentOwnedPaidAsset(
+  evidenceCatalog,
+  evidenceByID,
+  objectiveText,
+  referenceTime
+) {
+  return asArray(evidenceCatalog)
+    .map(asObject)
+    .filter((evidence) =>
+      approvedOwnedAssetEvidence(evidence, evidenceByID) &&
+      inboundAssetEvidenceSupportsPaidConversion(
+        evidence,
+        referenceTime
+      )
+    )
+    .sort((left, right) => {
+      const relevanceDifference =
+        textOverlap(
+          objectiveText,
+          `${right.approvedSourceLabel || ''} ${right.label || ''} ${right.summary || ''} ${right.url || ''}`
+        ) -
+        textOverlap(
+          objectiveText,
+          `${left.approvedSourceLabel || ''} ${left.label || ''} ${left.summary || ''} ${left.url || ''}`
+        );
+      const readinessDifference =
+        inboundAssetConversionReadiness(right) -
+        inboundAssetConversionReadiness(left);
+      return relevanceDifference ||
+        readinessDifference ||
+        evidenceQuality(right) - evidenceQuality(left) ||
+        firstText(left.id).localeCompare(firstText(right.id));
+    })[0];
+}
+
+function ownedAssetEvidenceExperimentPlan(assetValue) {
+  const asset = asObject(assetValue);
+  const label = truncate(firstText(
+    asset.label,
+    'the current paid offer'
+  ), 100);
+  const text = comparable(compactStrings([
+    asset.label,
+    asset.summary,
+    asset.url
+  ]).join(' '));
+  const outcome = ownedAssetAttributionOutcome(text);
+  const buyer = truncate(
+    `qualified buyers seeking ${label}`,
+    160
+  );
+  const paidOffer = truncate(
+    `${outcome.reimbursable ? 'the paid or reimbursable' : 'the paid'} ${label} offer`,
+    220
+  );
+  const destination = truncate(
+    `${label} conversion page`,
+    140
+  );
+  const attributionSignal =
+    `${outcome.record}'s source/origin field set to organic_search`;
+  return {
+    title: truncate(
+      `Measure ${outcome.shortOutcome} from organic search for ${label}`,
+      240
+    ),
+    knownFact: truncate(firstText(
+      asset.summary,
+      asset.label
+    ), 320),
+    buyer,
+    paidOffer,
+    acquisitionMechanism: 'organic search',
+    conversionDestination: destination,
+    paidConversion: outcome.paidConversion,
+    attributionSignal,
+    action: truncate(
+      `Review first: for 14 days or 25 qualified organic-search visits, measure whether ${buyer} discover ${paidOffer} through organic search and complete ${outcome.paidConversion} at the ${destination}. Store organic_search in the ${outcome.record}'s source/origin field and count only that paid event. No outreach, publishing, advertising, form submission, or automatic execution is authorized.`,
+      700
+    ),
+    successSignal: truncate(
+      `One ${outcome.paidConversion} by ${buyer}, with organic_search stored in the ${outcome.record}'s source/origin field.`,
+      360
+    )
+  };
+}
+
+function revenuePathGroundingExperimentPlan({
+  anchor: anchorValue,
+  anchorLabel,
+  objective: objectiveValue
+}) {
+  const anchor = asObject(anchorValue);
+  const objective = asObject(objectiveValue);
+  const knownFact = truncate(
+    firstText(
+      anchor.summary,
+      anchor.label,
+      'No current approved evidence documents a complete attributable paid path.'
+    ),
+    320
+  );
+  const paidConversion = truncate(
+    observableRevenueText(objective.successMetric)
+      ? firstText(objective.successMetric)
+      : 'one attributable paid booking, payment, order, signed contract, reimbursed claim, or compensated outcome',
+    240
+  );
+  return {
+    title: anchorValue
+      ? `Define one attributable paid path for ${anchorLabel}`
+      : 'Define one attributable paid offer',
+    knownFact,
+    buyer: truncate(
+      `one specific buyer to document for ${anchorLabel}`,
+      240
+    ),
+    paidOffer: truncate(
+      `one current paid offer to document for ${anchorLabel}`,
+      240
+    ),
+    acquisitionMechanism:
+      'one singular acquisition path documented for the paid offer',
+    conversionDestination:
+      'one separate public booking, checkout, proposal, application, or payment destination',
+    paidConversion,
+    attributionSignal:
+      'a source, referral, campaign, channel, or UTM field stored with the paid conversion record',
+    action:
+      `Review first: attach exactly 1 current public paid-offer page or 1 attributable revenue record for ${anchorLabel}. It must identify the buyer, paid offer, singular acquisition path, separate conversion destination, paid event, and the source field stored with that event. Stop after that 1 qualifying page or record, or after 14 calendar days; do not launch outreach, publishing, advertising, or provider actions.`,
+    successSignal:
+      'One new attributed revenue event—a paid booking, payment, order, signed contract, reimbursed claim, license or royalty payment, commission or referral fee, sponsorship payment, platform payout, or compensated-role payment—with a stored source, referral, campaign, channel, or UTM value.'
+  };
+}
+
+function ownedAssetAttributionOutcome(textValue) {
+  const text = comparable(textValue);
+  if (/\b(?:compensated role|employment|salary|wage)\b/.test(text)) {
+    return {
+      shortOutcome: 'compensation payments',
+      paidConversion: 'employment compensation payment',
+      record: 'employment compensation record',
+      reimbursable: false
+    };
+  }
+  if (/\b(?:license|licensing|royalty)\b/.test(text)) {
+    return {
+      shortOutcome: 'license or royalty payments',
+      paidConversion: 'license payment received',
+      record: 'license or royalty record',
+      reimbursable: false
+    };
+  }
+  if (/\b(?:commission|referral fee|affiliate)\b/.test(text)) {
+    return {
+      shortOutcome: 'commission payments',
+      paidConversion: 'commission paid',
+      record: 'commission record',
+      reimbursable: false
+    };
+  }
+  if (/\b(?:sponsorship|sponsor)\b/.test(text)) {
+    return {
+      shortOutcome: 'sponsorship payments',
+      paidConversion: 'sponsorship payment received',
+      record: 'sponsorship contract record',
+      reimbursable: false
+    };
+  }
+  if (/\b(?:platform payout|marketplace payout)\b/.test(text)) {
+    return {
+      shortOutcome: 'platform payouts',
+      paidConversion: 'platform payout recorded',
+      record: 'platform payout record',
+      reimbursable: false
+    };
+  }
+  if (/\b(?:insurance|health ?care accepted|claim|reimburs)\b/.test(text)) {
+    return {
+      shortOutcome: 'paid or reimbursed claims',
+      paidConversion: 'reimbursement received for a completed booking',
+      record: 'claim record',
+      reimbursable: true
+    };
+  }
+  if (/\b(?:appointment|book|booking|consultation|home visit|session)\b/.test(
+    text
+  )) {
+    return {
+      shortOutcome: 'paid bookings',
+      paidConversion: 'paid booking',
+      record: 'booking record',
+      reimbursable: false
+    };
+  }
+  if (/\b(?:subscription|subscribe|membership|retainer)\b/.test(text)) {
+    return {
+      shortOutcome: 'subscription payments',
+      paidConversion: 'subscription payment',
+      record: 'payment receipt',
+      reimbursable: false
+    };
+  }
+  if (/\b(?:buy|checkout|order|product|purchase|storefront)\b/.test(text)) {
+    return {
+      shortOutcome: 'paid orders',
+      paidConversion: 'paid order',
+      record: 'order record',
+      reimbursable: false
+    };
+  }
+  if (/\b(?:contract|engagement|invoice|proposal)\b/.test(text)) {
+    return {
+      shortOutcome: 'signed paid contracts',
+      paidConversion: 'signed paid contract',
+      record: 'contract record',
+      reimbursable: false
+    };
+  }
+  return {
+    shortOutcome: 'attributed payments',
+    paidConversion: 'payment receipt',
+    record: 'payment record',
+    reimbursable: false
   };
 }
 
@@ -4405,24 +5063,37 @@ function strategyGenerationRecoveryExperiment({
   const missing = compactStrings(missingEvidence);
   const providerFailure = missing.includes('usable_strategy_generation');
   const budgetFailure = missing.includes('within_budget_strategy_generation');
-  if (!providerFailure && !budgetFailure) return null;
+  const shapeFailure = missing.includes(
+    'structured_strategy_family_repair'
+  );
+  if (!providerFailure && !budgetFailure && !shapeFailure) return null;
   const successSignal =
     'One new attributed revenue event—a paid booking, payment, order, signed contract, reimbursed claim, license or royalty payment, commission or referral fee, sponsorship payment, platform payout, or compensated-role payment—with a stored source, referral, campaign, channel, or UTM value.';
   const kind = providerFailure
     ? 'strategy_generation_provider_recovery'
-    : 'strategy_generation_budget_recovery';
+    : budgetFailure
+      ? 'strategy_generation_budget_recovery'
+      : 'strategy_generation_shape_recovery';
   const title = providerFailure
     ? 'Retry strategy generation once after provider recovery'
-    : 'Retry strategy generation once on a budget-compatible route';
+    : budgetFailure
+      ? 'Retry strategy generation once on a budget-compatible route'
+      : 'Retry once for a structurally complete strategy comparison';
   const action = providerFailure
     ? 'Preserve the approved evidence snapshot and make no business or provider-side changes. After the model provider is healthy and strict structured-output support is verified, retry the same bounded tournament exactly once.'
-    : 'Preserve the approved evidence snapshot and do not raise the user budget. Select a model/provider route whose maximum request price fits the existing tournament budget, then retry the same bounded tournament exactly once.';
+    : budgetFailure
+      ? 'Preserve the approved evidence snapshot and do not raise the user budget. Select a model/provider route whose maximum request price fits the existing tournament budget, then retry the same bounded tournament exactly once.'
+      : 'Preserve the approved evidence snapshot and make no business, outreach, publishing, or provider-side changes. Retry the same objective exactly once only after the strict response route can return two complete comparison families; new market evidence is not required.';
   const stopCondition = providerFailure
     ? 'Stop after 1 provider-recovery retry; if structured strategy generation fails again, surface the technical failure and do not spend again automatically.'
-    : 'Stop after 1 budget-compatible retry; if it exceeds or cannot satisfy the existing cap, surface the budget failure and do not spend again automatically.';
+    : budgetFailure
+      ? 'Stop after 1 budget-compatible retry; if it exceeds or cannot satisfy the existing cap, surface the budget failure and do not spend again automatically.'
+      : 'Stop after 1 response-shape retry; if two complete comparison families still cannot be returned, surface the AI contract failure and do not spend again automatically.';
   const trigger = providerFailure
     ? 'Rerun once only after provider health and strict structured-output support are verified; new business evidence is not required.'
-    : 'Rerun once only after a model/provider route is verified to fit the existing request-price and total-spend caps.';
+    : budgetFailure
+      ? 'Rerun once only after a model/provider route is verified to fit the existing request-price and total-spend caps.'
+      : 'Rerun once only after strict structured-output support for two complete comparison families is verified; new business evidence is not required.';
   return {
     contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
     id: `experiment-${stableHash({
@@ -4467,10 +5138,47 @@ function inboundAssetConversionReadiness(evidenceValue) {
   if (/\b(?:paid|billable|price|fee|reimbursable|license|royalty|commission|referral fee|sponsorship|payout|compensated|salary|wage)\b/.test(text)) {
     score += 2;
   }
-  if (/\b(?:initiative|program overview|article|blog|news)\b/.test(text)) {
-    score -= 2;
+  if (informationalAssetEvidence(evidence)) {
+    score -= 12;
   }
   return score;
+}
+
+function informationalAssetEvidence(evidenceValue) {
+  const evidence = asObject(evidenceValue);
+  const type = comparable(firstText(evidence.type));
+  const label = comparable(firstText(evidence.label));
+  const summary = comparable(firstText(evidence.summary));
+  let pathname = '';
+  try {
+    pathname = new URL(safePublicURL(evidence.url)).pathname.toLowerCase();
+  } catch {
+    pathname = '';
+  }
+  const embeddedConversion =
+    /\b(?:embedded|on this page|below)\b.{0,50}\b(?:booking form|checkout|order form|payment form|book now button)\b/.test(
+      `${label} ${summary}`
+    ) ||
+    /\b(?:booking form|checkout|order form|payment form|book now button)\b.{0,50}\b(?:embedded|on this page|below)\b/.test(
+      `${label} ${summary}`
+    );
+  if (embeddedConversion) return false;
+  const informationalType =
+    /\b(?:article|blog|editorial|guide|insight|news|post|publication|resource)\b/.test(
+      type
+    );
+  const informationalPath =
+    /\/(?:19|20)\d{2}(?:\/|$)|\/(?:articles?|blog|guides?|insights?|learn|news|posts?|resources?)(?:\/|$)/.test(
+      pathname
+    );
+  const informationalTitle =
+    /\b(?:article|blog|guide|how to|overview|tips|what is|why)\b/.test(
+      label
+    ) ||
+    /\b(?:initiative|policy|program)\s+(?:in|within|across)\s+(?:businesses|companies|hospitals|institutions|organizations|schools|workplaces)\b/.test(
+      label
+    );
+  return informationalType || informationalPath || informationalTitle;
 }
 
 function inboundAssetEvidenceSupportsPaidConversion(
@@ -4506,19 +5214,7 @@ function inboundAssetEvidenceSupportsPaidConversion(
   const text = comparable(
     `${evidence.label || ''} ${evidence.summary || ''} ${evidence.url || ''}`
   );
-  const informationalPage =
-    /\b(?:article|blog|news|guide|how to)\b/.test(text) ||
-    /\b(?:article|blog-post|news-item)\b/.test(
-      comparable(firstText(evidence.type))
-    );
-  const embeddedConversion =
-    /\b(?:embedded|on this page|below)\b.{0,50}\b(?:booking form|checkout|order form|payment form|book now button)\b/.test(
-      text
-    ) ||
-    /\b(?:booking form|checkout|order form|payment form|book now button)\b.{0,50}\b(?:embedded|on this page|below)\b/.test(
-      text
-    );
-  if (informationalPage && !embeddedConversion) {
+  if (informationalAssetEvidence(evidence)) {
     return false;
   }
   if (/\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|no longer (?:available|offered|accepting|bookable)|not (?:available|accepting|bookable)|sold out|unavailable|withdrawn)\b/.test(
@@ -6390,7 +7086,7 @@ function approvedOwnedAssetEvidence(evidenceValue, evidenceByID) {
     const approved = new URL(sourceUrl);
     const approvedPath = approved.pathname.replace(/\/+$/, '') || '/';
     const assetPath = asset.pathname.replace(/\/+$/, '') || '/';
-    return asset.origin === approved.origin &&
+    return publicURLsShareCanonicalOrigin(asset, approved) &&
       urlContainsDeclaredQuery(asset, approved) &&
       (
         approvedPath === '/' ||
@@ -6843,6 +7539,7 @@ function comparableURL(value) {
   if (!raw) return '';
   try {
     const parsed = new URL(raw);
+    parsed.hostname = canonicalPublicHostname(parsed.hostname);
     parsed.hash = '';
     parsed.search = '';
     return parsed.toString().replace(/\/+$/, '').toLowerCase();

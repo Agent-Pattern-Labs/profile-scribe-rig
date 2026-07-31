@@ -138,7 +138,10 @@ Additional managed job kinds:
   profile owner. Only source records, observations, and extracts tied to an
   explicitly `approved` source ID may ground the tournament. One bounded,
   provider-price-capped OpenRouter call generates evidence-referenced strategy
-  dimensions, semantic score inputs, and those optional exact candidates. The
+  dimensions, semantic score inputs, and those optional exact candidates.
+  When the caller explicitly budgets `maxLLMCalls: 2` and that response fails
+  only the deterministic family-shape gate, one further price-capped call may
+  repair the full strict response; it cannot widen evidence or authority.
   The strict `revenue_family_bundle_v2` seed contract organizes each family by
   one acquisition mode rather than by profession. It requires each family to
   identify an actual buyer, explicitly paid offer, acquisition mechanism,
@@ -195,13 +198,17 @@ Additional managed job kinds:
   model-extracted outside candidates, “resolved” means the named
   person/organization and optional public fields passed exact approved-evidence
   validation; it does not claim third-party verification. If no winner can be
-  defended after the bounded model call, the job returns one
+  defended after the bounded generation and optional shape repair, the job returns one
   `revenue_evidence_experiment_v1` instead of a bare dead end. That experiment
   uses the same bounded model call to name a known fact or owned asset, one
   buyer, paid offer, singular acquisition test, separate destination,
   attributable paid success signal, and numeric time/sample stop in
-  user-readable language. Internal validator or source-approval jargon is not
-  exposed. When model output cannot safely ground that experiment, the rig
+  user-readable language. The existing v1 result now preserves those facts as
+  additive `knownFact`, `buyer`, `paidOffer`, `acquisitionMechanism`,
+  `conversionDestination`, `paidConversion`, and `attributionSignal` fields,
+  so the control plane does not have to reconstruct them from prose. Internal
+  validator or source-approval jargon is not exposed. When model output cannot
+  safely ground that experiment, the rig
   returns a conservative asset- or fact-specific review step instead of
   inventing demand. ProfileScribe records the experiment outcome, links the
   single rerun to its origin, preserves the objective, and supplies the outcome
@@ -209,9 +216,13 @@ Additional managed job kinds:
   and strict-structured-output recovery with exactly one retry; budget failures
   preserve the evidence and existing cap and return one budget-compatible route
   check with exactly one retry. Neither technical recovery is mislabeled as a
-  business evidence experiment. Tournament generation uses a compact strict
-  schema, one semantic score per complete strategy family, deterministic
-  sampling, and response healing within the same single metered model call.
+  business evidence experiment, and technical recoveries intentionally omit the
+  seven business-only fields. An incomplete response that cannot use or
+  survive its explicitly budgeted repair returns
+  `strategy_generation_shape_recovery`; it is not mislabeled as missing market
+  evidence. Tournament generation uses a compact strict schema, one semantic
+  score per complete strategy family, deterministic sampling, and response
+  healing within at most two metered model calls under the same hard budget.
   Every experiment authorizes no execution.
   Tournament context uses only persisted profile,
   timeline, and approved crawl evidence returned by scoped read-only
