@@ -191,6 +191,7 @@ for (const domain of domains) {
 }
 
 await verifyAcquisitionFamilyMismatch();
+await verifyTypedAcquisitionModeAllowsNeutralLabels();
 await verifySaaSTimingRepair();
 await verifyNoncurrentWarmReferralRejected();
 await verifyUnsafeGeneratedExperimentRejected();
@@ -493,6 +494,55 @@ async function verifyAcquisitionFamilyMismatch() {
       )) {
     throw new Error(
       `family.m mismatch crossed the v2 acquisition coherence gate: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyTypedAcquisitionModeAllowsNeutralLabels() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  const ref = `observation:obs-${domain.name}`;
+  const response = compactV2Response(domain, ref);
+  for (const family of [response.familyA, response.familyB]) {
+    family.d.c[0].l =
+      `Organic search routes buyers to ${domain.destination}`;
+    family.d.a[0].l =
+      `Route qualified search visitors to ${domain.destination} and complete ${domain.outcome}`;
+  }
+  const result = await runDomainWithResponse(
+    domain,
+    response,
+    'saas-neutral-acquisition-labels'
+  );
+  if (result.status !== 'completed' ||
+      result.searchSpace?.motionConflictCount !== 0 ||
+      result.searchSpace?.eligibleCount < 2 ||
+      result.hypotheses?.some((hypothesis) =>
+        hypothesis.provenance?.motionSignatures?.length !== 1 ||
+        hypothesis.provenance?.motionSignatures?.[0] !== 'inbound' ||
+        hypothesis.provenance?.motionDimensions?.channel?.length !== 0 ||
+        hypothesis.provenance?.motionDimensions?.action?.length !== 0
+      )) {
+    throw new Error(
+      `typed acquisition mode rejected neutral channel/action wording: ${JSON.stringify(result)}`
+    );
+  }
+
+  const conflictResponse = compactV2Response(domain, ref);
+  conflictResponse.familyA.d.c[0].l =
+    `Warm referral introduction routes buyers to ${domain.destination}`;
+  const conflictResult = await runDomainWithResponse(
+    domain,
+    conflictResponse,
+    'saas-conflicting-acquisition-label'
+  );
+  if (conflictResult.status !== 'skipped' ||
+      conflictResult.searchSpace?.motionConflictCount < 1 ||
+      conflictResult.searchSpace?.eligibleCount !== 1 ||
+      conflictResult.hypotheses?.some((hypothesis) =>
+        hypothesis.provenance?.strategyFamilyId !== 'family-b'
+      )) {
+    throw new Error(
+      `explicit acquisition-label conflict crossed the typed family gate: ${JSON.stringify(conflictResult)}`
     );
   }
 }

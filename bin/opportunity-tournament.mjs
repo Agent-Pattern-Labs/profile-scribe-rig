@@ -7015,13 +7015,14 @@ function acquisitionFamilySignature(tuple) {
       );
       const familyMismatch = familyModes.length !== 1 ||
         familyModes[0] !== pathMode;
+      // V2 already carries a typed family mode, and validateRevenuePath
+      // independently proves that the channel/conversion text implements it.
+      // Neutral wording is therefore not a conflict; only an explicitly
+      // classified label that disagrees with the typed mode is.
       const labelMismatch = labelModes.length > 1 ||
         (labelModes.length === 1 && labelModes[0] !== pathMode);
-      const requiresExplicitMode =
-        publicName === 'channel' || publicName === 'action';
       return familyMismatch ||
-        labelMismatch ||
-        (requiresExplicitMode && labelModes.length !== 1);
+        labelMismatch;
     })
     .map(([publicName]) => publicName);
   const coherent = ACQUISITION_MODES.has(pathMode) &&
