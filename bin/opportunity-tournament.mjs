@@ -56,7 +56,19 @@ const DIMENSIONS = [
 // deterministic gates then validate and rank those two finalists.
 const INITIAL_FAMILY_VARIANT_COUNT = 1;
 const REPAIR_FAMILY_VARIANT_COUNT = 1;
-const MAX_PROMPT_EVIDENCE_ITEMS = MAX_EVIDENCE_ITEMS;
+const MAX_PROMPT_EVIDENCE_ITEMS = 16;
+const MAX_PROMPT_PAID_ASSET_ITEMS = 4;
+const MAX_PROMPT_OBJECTIVE_EVIDENCE_ITEMS = 4;
+const MAX_PROMPT_CANDIDATE_EVIDENCE_ITEMS = 4;
+const MAX_PROMPT_REVENUE_EVIDENCE_ITEMS = 3;
+const MAX_PROMPT_ATTRIBUTION_EVIDENCE_ITEMS = 2;
+const MAX_PROMPT_RISK_EVIDENCE_ITEMS = 2;
+const MAX_PROMPT_MOTION_EVIDENCE_ITEMS = 2;
+const MAX_PROMPT_CONTEXT_EVIDENCE_ITEMS = 2;
+const MAX_PROMPT_EVIDENCE_LABEL_CHARS = 160;
+const MAX_PROMPT_EVIDENCE_SUMMARY_CHARS = 320;
+const MAX_PROMPT_EVIDENCE_URL_CHARS = 240;
+const MAX_PROVIDER_REQUEST_BODY_BYTES = 36 * 1_024;
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 
 const DEFAULT_JUDGE_WEIGHTS = {
@@ -306,6 +318,18 @@ export async function runOpportunityTournament({
   const budget = normalizeBudget(payload.budget);
   const constraints = normalizeConstraints(objective, payload);
   const evidenceCatalog = buildEvidenceCatalog(payload, context, now);
+  const promptEvidenceCatalog = compactPromptEvidenceCatalog(
+    evidenceCatalog,
+    objective,
+    now
+  );
+  const providerValidationEvidenceCatalog = promptEvidenceCatalog
+    .filter((item) => !/^source:/i.test(firstText(item.id)))
+    .map((item) => ({
+      ...item,
+      aliases: []
+    }));
+  const promptEvidenceHash = stableHash(promptEvidenceCatalog);
   const evidenceHash = stableHash(evidenceCatalog);
   const timestamp = validDate(now).toISOString();
   const base = {
@@ -318,7 +342,16 @@ export async function runOpportunityTournament({
     winner: null,
     runnerUp: null,
     nextExperiment: null,
-    searchSpace: emptySearchSpace(budget),
+    searchSpace: {
+      ...emptySearchSpace(budget),
+      evidenceCatalogCount: evidenceCatalog.length,
+      promptEvidenceCount: promptEvidenceCatalog.length,
+      promptEvidenceOmittedCount: Math.max(
+        0,
+        evidenceCatalog.length - promptEvidenceCatalog.length
+      ),
+      promptEvidenceHash
+    },
     gate: researchOnlyGate('redefine_objective', 'The win objective needs clarification.'),
     usage: emptyUsage(model, budget),
     llm: {},
@@ -394,9 +427,6 @@ export async function runOpportunityTournament({
     };
   }
 
-  const promptEvidenceCatalog = compactPromptEvidenceCatalog(
-    evidenceCatalog
-  );
   const prompt = seedAndJudgePrompt({
     objective,
     constraints,
@@ -425,6 +455,40 @@ export async function runOpportunityTournament({
     providerCallSpendPreflight(initialCompletionRequest, budget);
   const initialCallSpendCeilingMicros =
     initialProviderSpendPreflight.callSpendCeilingMicros;
+  const initialProviderEnvelopeIssue =
+    providerPromptEnvelopeIssue(initialProviderSpendPreflight);
+  if (initialProviderEnvelopeIssue) {
+    const serializationFailure =
+      initialProviderEnvelopeIssue ===
+        'provider_request_serialization';
+    return {
+      status: 'skipped',
+      summary: serializationFailure
+        ? 'The bounded strategy-generation request could not be serialized safely, so no provider call was made.'
+        : 'The bounded strategy-generation request exceeded the internal provider prompt envelope, so no provider call was made.',
+      ...base,
+      nextExperiment: nextExperimentFor([
+        initialProviderEnvelopeIssue
+      ]),
+      searchSpace: {
+        ...base.searchSpace,
+        modelCalls: 0,
+        providerPromptEnvelope: {
+          authorized: false,
+          cause: initialProviderEnvelopeIssue,
+          requestBodyByteCount:
+            initialProviderSpendPreflight.requestBodyByteCount,
+          maxRequestBodyByteCount: MAX_PROVIDER_REQUEST_BODY_BYTES
+        }
+      },
+      gate: researchOnlyGate(
+        'block',
+        serializationFailure
+          ? 'The exact structured request failed local serialization.'
+          : 'The exact structured request did not fit the bounded provider prompt envelope.'
+      )
+    };
+  }
   if (budget.hardStop &&
       initialCallSpendCeilingMicros > budget.maxLLMSpendMicros) {
     return {
@@ -541,11 +605,15 @@ export async function runOpportunityTournament({
 
   let seedSet = normalizeSeedSet(
     completion?.data,
-    evidenceCatalog,
+    providerValidationEvidenceCatalog,
     timestamp
   );
-  generatedEvidenceExperiment = normalizeGeneratedEvidenceExperiment(
-    completion?.data?.evidenceExperiment,
+  generatedEvidenceExperiment = rehydrateGeneratedExperimentAsset(
+    normalizeGeneratedEvidenceExperiment(
+      completion?.data?.evidenceExperiment,
+      providerValidationEvidenceCatalog,
+      timestamp
+    ),
     evidenceCatalog,
     timestamp
   );
@@ -650,6 +718,41 @@ export async function runOpportunityTournament({
         repairProviderSpendPreflight.promptTokenCeiling;
       structuredRepair.repairFixedRequestFeeCeilingMicros =
         repairProviderSpendPreflight.fixedRequestFeeCeilingMicros;
+      const repairProviderEnvelopeIssue =
+        providerPromptEnvelopeIssue(repairProviderSpendPreflight);
+      if (repairProviderEnvelopeIssue) {
+        const serializationFailure =
+          repairProviderEnvelopeIssue ===
+            'provider_request_serialization';
+        structuredRepair.failure = serializationFailure
+          ? 'repair_request_serialization_failed'
+          : 'repair_prompt_envelope_exceeded';
+        structuredRepair.finalIssue = initialShapeIssue.code;
+        return {
+          status: 'skipped',
+          summary: serializationFailure
+            ? 'The bounded strategy repair could not be serialized safely, so no repair call was made.'
+            : 'The bounded strategy repair exceeded the internal provider prompt envelope, so no repair call was made.',
+          ...base,
+          nextExperiment: nextExperimentFor([
+            repairProviderEnvelopeIssue
+          ]),
+          llm: llmTrace,
+          usage,
+          searchSpace: {
+            ...base.searchSpace,
+            ...seedSetShapeSearchTrace(seedSet),
+            modelCalls: usage.calls,
+            structuredRepair
+          },
+          gate: researchOnlyGate(
+            'strategy_generation_repair_failed',
+            serializationFailure
+              ? 'The one permitted repair request failed local serialization.'
+              : 'The one permitted repair request did not fit the bounded provider prompt envelope.'
+          )
+        };
+      }
       if (budget.hardStop &&
           structuredRepair.repairCallSpendCeilingMicros >
             remainingSpendMicros) {
@@ -759,12 +862,16 @@ export async function runOpportunityTournament({
       usage = aggregateUsage(providerMetadataEntries, budget);
       const repairedSeedSet = normalizeSeedSet(
         repairCompletion?.data,
-        evidenceCatalog,
+        providerValidationEvidenceCatalog,
         timestamp
       );
       const repairedEvidenceExperiment =
-        normalizeGeneratedEvidenceExperiment(
-          repairCompletion?.data?.evidenceExperiment,
+        rehydrateGeneratedExperimentAsset(
+          normalizeGeneratedEvidenceExperiment(
+            repairCompletion?.data?.evidenceExperiment,
+            providerValidationEvidenceCatalog,
+            timestamp
+          ),
           evidenceCatalog,
           timestamp
         );
@@ -1016,7 +1123,7 @@ export async function runOpportunityTournament({
   const expanded = expandAndJudge({
     objective,
     constraints,
-    evidenceCatalog,
+    evidenceCatalog: providerValidationEvidenceCatalog,
     priorOutcomes: normalizePriorOutcomes(payload.priorOutcomes),
     seedSet,
     weights: normalizeJudgeWeights(
@@ -1027,6 +1134,7 @@ export async function runOpportunityTournament({
   });
   const initialHypotheses = expanded.finalists;
   const searchSpaceFor = (retainedHypotheses) => ({
+    ...base.searchSpace,
     maxHypotheses: budget.maxHypotheses,
     generatorContract: TOURNAMENT_GENERATOR_CONTRACT,
     theoreticalCount: expanded.theoreticalCount,
@@ -1092,7 +1200,7 @@ export async function runOpportunityTournament({
     ),
     ...normalizeModelExtractedCandidates(
       completion?.data?.candidates,
-      evidenceCatalog
+      providerValidationEvidenceCatalog
     )
   ];
   const ownedInboundAssetValues = synthesizeOwnedInboundAssetCandidates(
@@ -1132,7 +1240,7 @@ export async function runOpportunityTournament({
         ...externallyGroundedCandidateValues,
         ...normalizeSeedMentionedOrganizationCandidates(
           seedSet,
-          evidenceCatalog
+          providerValidationEvidenceCatalog
         ),
         ...ownedInboundAssetValues
       ];
@@ -1423,7 +1531,7 @@ export function buildEvidenceCatalog(
       raw.topic,
       raw.headline
     );
-    const summary = truncate(
+    const summary = boundedEvidenceSummary(
       firstText(
         raw.summary,
         raw.description,
@@ -1433,7 +1541,8 @@ export function buildEvidenceCatalog(
         raw.body,
         raw.value
       ),
-      420
+      420,
+      label
     );
     const url = safePublicURL(firstText(raw.url, raw.sourceUrl, raw.publicUrl));
     const sourceID = firstText(raw.sourceId, raw.sourceID);
@@ -1466,7 +1575,11 @@ export function buildEvidenceCatalog(
     catalog.push(compact({
       id,
       type: truncate(type, 80),
-      label: truncate(label || summary, 180),
+      label: boundedEvidenceSummary(
+        label || summary,
+        180,
+        label || summary
+      ),
       summary,
       url,
       sourceId: sourceID,
@@ -1675,7 +1788,8 @@ export function buildEvidenceCatalog(
       if (leftPaidAsset !== rightPaidAsset) {
         return rightPaidAsset - leftPaidAsset;
       }
-      return evidenceQuality(right) - evidenceQuality(left) || left.id.localeCompare(right.id);
+      return evidenceQuality(right) - evidenceQuality(left) ||
+        compareStableText(left.id, right.id);
     })
     .slice(0, MAX_EVIDENCE_ITEMS)
     .map((evidence) => compact({
@@ -1843,7 +1957,7 @@ export function expandAndJudge({
     revenueRejectedCount,
     revenueRejectionReasons: Object.fromEntries(
       Object.entries(revenueRejectionReasons).sort(([left], [right]) =>
-        left.localeCompare(right)
+      compareStableText(left, right)
       )
     ),
     finalists,
@@ -1973,26 +2087,129 @@ function objectiveValidationIssue(objective) {
   return null;
 }
 
-function compactPromptEvidenceCatalog(value) {
-  return asArray(value)
-    .slice(0, MAX_PROMPT_EVIDENCE_ITEMS)
+function compactPromptEvidenceCatalog(
+  value,
+  objectiveValue = {},
+  referenceTime = new Date()
+) {
+  const catalog = asArray(value)
+    .map(asObject)
+    .filter((item) => !/^source:/i.test(firstText(item.id)));
+  const objective = asObject(objectiveValue);
+  const catalogByID = evidenceIndex(catalog);
+  const objectivePinned = compactStrings(objective.evidenceRefs)
+    .map((ref) => catalogByID.get(ref))
+    .filter(Boolean);
+  const ranked = catalog
+    .map((item, index) => ({
+      item,
+      index,
+      score: promptEvidencePriorityScore(item, objective)
+    }))
+    .sort((left, right) =>
+      right.score - left.score ||
+      promptEvidenceObservedAt(right.item) -
+        promptEvidenceObservedAt(left.item) ||
+      compareStableText(left.item.id, right.item.id) ||
+      left.index - right.index
+    )
+    .map((entry) => entry.item);
+  const paidAssets = ranked.filter((item) =>
+    firstText(item.revenueAssetRole) ===
+      'current_owner_paid_conversion_asset'
+  ).slice(0, MAX_PROMPT_PAID_ASSET_ITEMS);
+  const objectiveEvidence = ranked.slice(
+    0,
+    MAX_PROMPT_OBJECTIVE_EVIDENCE_ITEMS
+  );
+  const revenueEvidence = ranked
+    .filter(promptRevenueEvidence)
+    .slice(0, MAX_PROMPT_REVENUE_EVIDENCE_ITEMS);
+  const attributionEvidence = ranked
+    .filter((item) => promptAttributionEvidence(compactStrings([
+      item.label,
+      item.summary
+    ]).join(' ')))
+    .slice(0, MAX_PROMPT_ATTRIBUTION_EVIDENCE_ITEMS);
+  const riskEvidence = ranked
+    .filter((item) => promptRiskEvidence(item, referenceTime))
+    .slice(0, MAX_PROMPT_RISK_EVIDENCE_ITEMS);
+  const motionEvidence = ranked
+    .filter((item) => promptAcquisitionEvidence(compactStrings([
+      item.label,
+      item.summary
+    ]).join(' ')))
+    .slice(0, MAX_PROMPT_MOTION_EVIDENCE_ITEMS);
+  const candidateEvidence = ranked
+    .filter(promptNamedCandidateEvidence)
+    .slice(0, MAX_PROMPT_CANDIDATE_EVIDENCE_ITEMS);
+  const contextEvidence = ranked
+    .filter(promptContextEvidence)
+    .slice(0, MAX_PROMPT_CONTEXT_EVIDENCE_ITEMS);
+  const diverseEvidence = diversePromptEvidence(ranked);
+  const selected = [];
+  const selectedIDs = new Set();
+  // Reserve objective, revenue, candidate, and compact identity context before
+  // filling by deterministic relevance. This exact projected view is the
+  // provider-output trust boundary; the full catalog remains available only
+  // for post-validation provenance, caller evidence, and fallback selection.
+  for (const item of [
+    ...paidAssets,
+    ...objectivePinned,
+    ...objectiveEvidence,
+    ...riskEvidence,
+    ...attributionEvidence,
+    ...motionEvidence,
+    ...candidateEvidence,
+    ...revenueEvidence,
+    ...contextEvidence,
+    ...diverseEvidence,
+    ...ranked,
+    ...catalog
+  ]) {
+    const id = firstText(item.id);
+    if (!id || selectedIDs.has(id)) continue;
+    selectedIDs.add(id);
+    selected.push(item);
+    if (selected.length >= MAX_PROMPT_EVIDENCE_ITEMS) break;
+  }
+  return selected
     .map((itemValue) => {
       const item = asObject(itemValue);
       return compact({
         id: firstText(item.id),
-        type: firstText(item.type),
-        label: firstText(item.label),
-        summary: firstText(item.summary),
-        url: firstText(item.url),
-        sourceId: firstText(item.sourceId),
-        observedAt: firstText(item.observedAt),
-        publishedAt: firstText(item.publishedAt),
-        startDate: firstText(item.startDate),
-        endDate: firstText(item.endDate),
+        type: truncate(firstText(item.type), 64),
+        label: boundedEvidenceSummary(
+          firstText(item.label),
+          MAX_PROMPT_EVIDENCE_LABEL_CHARS,
+          compactStrings([
+            item.label,
+            objective.outcome,
+            objective.successMetric
+          ]).join(' ')
+        ),
+        summary: boundedEvidenceSummary(
+          firstText(item.summary),
+          MAX_PROMPT_EVIDENCE_SUMMARY_CHARS,
+          compactStrings([
+            item.label,
+            objective.outcome,
+            objective.successMetric
+          ]).join(' ')
+        ),
+        url: compactPromptEvidenceURL(item.url),
+        approvedSourceUrl:
+          compactPromptEvidenceURL(item.approvedSourceUrl),
+        sourceId: truncate(firstText(item.sourceId), 96),
+        observedAt: truncate(firstText(item.observedAt), 40),
+        publishedAt: truncate(firstText(item.publishedAt), 40),
+        startDate: truncate(firstText(item.startDate), 40),
+        endDate: truncate(firstText(item.endDate), 40),
         current: typeof item.current === 'boolean'
           ? item.current
           : undefined,
-        status: firstText(item.status),
+        status: truncate(firstText(item.status), 64),
+        confidence: truncate(firstText(item.confidence), 16),
         approvedSourceObservation:
           item.approvedSourceObservation === true ? true : undefined,
         profileControlledSource:
@@ -2000,6 +2217,301 @@ function compactPromptEvidenceCatalog(value) {
         revenueAssetRole: firstText(item.revenueAssetRole)
       });
     });
+}
+
+function promptEvidencePriorityScore(itemValue, objectiveValue) {
+  const item = asObject(itemValue);
+  const objective = asObject(objectiveValue);
+  const text = compactStrings([
+    item.label,
+    item.summary,
+    item.type
+  ]).join(' ');
+  const objectiveText = compactStrings([
+    objective.outcome,
+    objective.successMetric
+  ]).join(' ');
+  let score = evidenceQuality(item) * 4;
+  score += Math.round(textOverlap(text, objectiveText) * 160);
+  if (firstText(item.revenueAssetRole) ===
+      'current_owner_paid_conversion_asset') {
+    score += 1_000;
+  }
+  if (firstText(item.revenueAssetRole) === 'informational_only') {
+    score -= 120;
+  }
+  return score;
+}
+
+function promptRevenueEvidence(itemValue) {
+  const item = asObject(itemValue);
+  if (firstText(item.revenueAssetRole) ===
+      'current_owner_paid_conversion_asset') {
+    return true;
+  }
+  const text = comparable(compactStrings([
+    item.label,
+    item.summary
+  ]).join(' '));
+  if (/\b(?:not|never|without)\b.{0,32}\b(?:paid|payment|price|reimburs|compensat|commission|royalt|salary|wage)\b/.test(
+    text
+  )) {
+    return false;
+  }
+  return /\b(?:accepts? insurance|booking (?:form|page|record)|checkout|claim record|commission|compensated|paid|payment|pricing|purchase|reimburs|retainer|royalt|salary|service page|sign ?up|sponsorship|subscription fee|wage)\b/.test(
+    text
+  ) ||
+    /\b(?:contract|invoice|licen[cs]e|order|subscription)\b.{0,40}\b(?:paid|payment|price|purchase|reimburs|revenue|signed)\b/.test(
+      text
+    ) ||
+    /\b(?:paid|payment|price|purchase|reimburs|revenue|signed)\b.{0,40}\b(?:contract|invoice|licen[cs]e|order|subscription)\b/.test(
+      text
+    );
+}
+
+function promptAttributionEvidence(value) {
+  return /\b(?:attribut|booking record|campaign|channel field|claim record|crm|invoice record|order record|origin field|payment receipt|referral code|source field|utm)\b/i.test(
+    firstText(value)
+  );
+}
+
+function promptRiskEvidence(itemValue, referenceTime) {
+  const item = asObject(itemValue);
+  if (item.current === false ||
+      /\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|no longer available|not accepting|obsolete|outdated|superseded|unavailable|withdrawn)\b/i.test(
+        compactStrings([
+          item.status,
+          item.label,
+          item.summary
+        ]).join(' ')
+      )) {
+    return true;
+  }
+  const referenceDate = new Date(referenceTime);
+  if (!Number.isFinite(referenceDate.getTime())) return false;
+  const endDate = new Date(firstText(item.endDate));
+  if (firstText(item.endDate) &&
+      (!Number.isFinite(endDate.getTime()) ||
+       endDate.getTime() < referenceDate.getTime())) {
+    return true;
+  }
+  const publishedDate = new Date(firstText(item.publishedAt));
+  return informationalAssetEvidence(item) &&
+    Number.isFinite(publishedDate.getTime()) &&
+    referenceDate.getTime() - publishedDate.getTime() >
+      MAX_TIMING_VERIFICATION_OBSERVATION_AGE_MS;
+}
+
+function promptAcquisitionEvidence(value) {
+  const text = firstText(value);
+  return strategyMotions(text).length > 0 ||
+    /\b(?:agent mediated discovery|app store discovery|community discovery|directory (?:discovery|listing)|earned media|existing (?:customer|client|patient) (?:referral|reactivation)|local search|marketplace (?:discovery|listing)|nonbranded search|organic search|owned audience|partner(?:ship)? (?:channel|introduction|referral)|permissioned (?:introduction|outreach)|platform discovery|professional network (?:discovery|introduction)|referral (?:channel|introduction|path)|search listing|social distribution)\b/i.test(
+      text
+    );
+}
+
+function promptNamedCandidateEvidence(itemValue) {
+  const item = asObject(itemValue);
+  const type = comparable(firstText(item.type));
+  return /\b(?:company|directory|organization|person|professional record)\b/.test(
+    type
+  );
+}
+
+function promptContextEvidence(itemValue) {
+  const type = comparable(firstText(asObject(itemValue).type));
+  return /\b(?:approved source|current focus|explicit fact|profile fact|source backed timeline)\b/.test(
+    type
+  );
+}
+
+function diversePromptEvidence(values) {
+  const selected = [];
+  const seen = new Set();
+  for (const itemValue of asArray(values)) {
+    const item = asObject(itemValue);
+    const key = compactStrings([
+      item.sourceId,
+      comparable(firstText(item.type))
+    ]).join('|') || firstText(item.id);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    selected.push(item);
+  }
+  return selected;
+}
+
+function promptEvidenceObservedAt(itemValue) {
+  const timestamp = new Date(firstText(
+    asObject(itemValue).observedAt,
+    asObject(itemValue).publishedAt
+  )).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function compareStableText(leftValue, rightValue) {
+  const left = firstText(leftValue);
+  const right = firstText(rightValue);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function boundedEvidenceSummary(
+  value,
+  maxLength,
+  salientValue = ''
+) {
+  const text = firstText(value).replace(/\s+/g, ' ').trim();
+  if (!text || text.length <= maxLength) return text;
+  const separator = ' … ';
+  const salientTokens = new Set(
+    compactStrings(firstText(salientValue).match(
+      /[\p{L}\p{N}][\p{L}\p{N}-]*/gu
+    ))
+      .map(normalizeEvidenceSummaryToken)
+      .filter((token) =>
+        token.length >= 3 &&
+        !EVIDENCE_SUMMARY_SALIENT_STOP_WORDS.has(token)
+      )
+  );
+  const tokens = [...text.matchAll(/\S+/gu)].map((match) => ({
+    value: match[0],
+    start: match.index,
+    end: match.index + match[0].length
+  }));
+  if (tokens.length < 2) return '';
+
+  const weights = tokens.map((token) =>
+    evidenceSummaryTokenWeight(token.value, salientTokens)
+  );
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (weights[index] < 100) continue;
+    for (let distance = 1; distance <= 4; distance += 1) {
+      const contextWeight = 12 - (distance * 2);
+      if (index - distance >= 0) {
+        weights[index - distance] += contextWeight;
+      }
+      if (index + distance < weights.length) {
+        weights[index + distance] += contextWeight;
+      }
+    }
+  }
+
+  const candidates = [];
+  const preferredCenter =
+    Math.floor((text.length - 1) * 0.62);
+  for (let startIndex = 1;
+    startIndex < tokens.length - 1;
+    startIndex += 1) {
+    let omittedWeight = 0;
+    for (let endIndex = startIndex;
+      endIndex < tokens.length - 1;
+      endIndex += 1) {
+      omittedWeight += weights[endIndex];
+      const prefix = text.slice(0, tokens[startIndex].start).trimEnd();
+      const suffix = text.slice(tokens[endIndex].end).trimStart();
+      const outputLength =
+        prefix.length + separator.length + suffix.length;
+      if (outputLength > maxLength) continue;
+      candidates.push({
+        prefix,
+        suffix,
+        omittedWeight,
+        omittedCharacters:
+          tokens[endIndex].end - tokens[startIndex].start,
+        centerDistance: Math.abs(
+          Math.floor(
+            (
+              tokens[startIndex].start +
+              tokens[endIndex].end
+            ) / 2
+          ) - preferredCenter
+        )
+      });
+    }
+  }
+  const selected = candidates.sort((left, right) =>
+    left.omittedWeight - right.omittedWeight ||
+    left.omittedCharacters - right.omittedCharacters ||
+    left.centerDistance - right.centerDistance ||
+    compareStableText(left.prefix, right.prefix)
+  )[0];
+  if (selected) {
+    return `${selected.prefix}${separator}${selected.suffix}`;
+  }
+
+  const retained = [];
+  let retainedLength = 0;
+  for (const token of tokens) {
+    const nextLength =
+      retainedLength + (retained.length > 0 ? 1 : 0) +
+      token.value.length;
+    if (nextLength > maxLength) break;
+    retained.push(token.value);
+    retainedLength = nextLength;
+  }
+  return retained.join(' ');
+}
+
+const EVIDENCE_SUMMARY_SALIENT_STOP_WORDS = new Set([
+  'and',
+  'are',
+  'for',
+  'from',
+  'has',
+  'have',
+  'one',
+  'that',
+  'the',
+  'this',
+  'through',
+  'with'
+]);
+
+function normalizeEvidenceSummaryToken(value) {
+  return comparable(firstText(value))
+    .replace(
+      /^[^\p{L}\p{N}$]+|[^\p{L}\p{N}]+$/gu,
+      ''
+    );
+}
+
+function evidenceSummaryTokenWeight(value, salientTokens = new Set()) {
+  const token = normalizeEvidenceSummaryToken(value);
+  if (!token) return 1;
+  if (salientTokens.has(token)) return 1_000;
+  if (/\b(?:accepts?|accepted|apply|application|attribut(?:e|ed|ion)|billable|book|booking|buy|buyer|campaign|checkout|claim|client|commission|compensated|contract|conversion|customer|deposit|destination|discover(?:y|ed)|fee|income|inquiry|invoice|license|order|organic|origin|paid|pay|payment|price|pricing|purchase|receipt|referral|reimbursable|reimbursed|reimbursement|retainer|revenue|royalty|sale|schedule|search|service|signup|source|sponsorship|subscription|utm|wage)\b/.test(
+    token
+  )) {
+    return 1_000;
+  }
+  return 1;
+}
+
+function compactPromptEvidenceURL(value) {
+  const safeURL = safePublicURL(firstText(value));
+  if (!safeURL) return '';
+  try {
+    const parsed = new URL(safeURL);
+    parsed.search = '';
+    parsed.hash = '';
+    const canonical = parsed.toString();
+    if (canonical.length <= MAX_PROMPT_EVIDENCE_URL_CHARS) {
+      return canonical;
+    }
+    const origin = `${parsed.origin}/`;
+    if (origin.length > MAX_PROMPT_EVIDENCE_URL_CHARS) return '';
+    let bounded = origin;
+    for (const segment of parsed.pathname.split('/').filter(Boolean)) {
+      const next = new URL(
+        `${bounded.endsWith('/') ? bounded : `${bounded}/`}${segment}`
+      ).toString();
+      if (next.length > MAX_PROMPT_EVIDENCE_URL_CHARS) break;
+      bounded = next;
+    }
+    return bounded;
+  } catch {
+    return '';
+  }
 }
 
 function seedAndJudgePrompt({
@@ -2311,6 +2823,18 @@ function providerCallSpendPreflight(requestValue, budgetValue) {
       Math.ceil(outputTokenCeiling * price.completion) +
       fixedRequestFeeCeilingMicros
   };
+}
+
+function providerPromptEnvelopeIssue(preflightValue) {
+  const preflight = asObject(preflightValue);
+  if (preflight.serializationSucceeded !== true) {
+    return 'provider_request_serialization';
+  }
+  if ((nonNegativeInteger(preflight.requestBodyByteCount) || 0) >
+      MAX_PROVIDER_REQUEST_BODY_BYTES) {
+    return 'bounded_prompt_envelope';
+  }
+  return '';
 }
 
 export function providerCallSpendCeilingMicros(
@@ -3470,7 +3994,7 @@ function compareHypotheses(left, right) {
   return right.score.total - left.score.total ||
     right.score.evidenceStrength - left.score.evidenceStrength ||
     right.score.objectiveFit - left.score.objectiveFit ||
-    left.id.localeCompare(right.id);
+    compareStableText(left.id, right.id);
 }
 
 function hypothesisSimilarity(left, right) {
@@ -3504,7 +4028,7 @@ function selectWinner({
       selectionAnchorPriority(left, winnerHypothesis) -
         selectionAnchorPriority(right, winnerHypothesis) ||
       right.score.total - left.score.total ||
-      left.id.localeCompare(right.id)
+      compareStableText(left.id, right.id)
     )[0];
   const normalizedCandidates = candidates.map((candidate) => ({
     ...candidate,
@@ -4725,7 +5249,11 @@ function normalizeGeneratedEvidenceExperiment(
   const asset = evidenceRefs
     .map((ref) => evidenceByID.get(ref))
     .filter((evidence) =>
-      approvedOwnedAssetEvidence(evidence, evidenceByID) &&
+      firstText(asObject(evidence).revenueAssetRole) ===
+        'current_owner_paid_conversion_asset' &&
+      asObject(evidence).approvedSourceObservation === true &&
+      asObject(evidence).profileControlledSource === true &&
+      Boolean(safePublicURL(asObject(evidence).url)) &&
       inboundAssetEvidenceSupportsPaidConversion(
         evidence,
         referenceTime
@@ -4788,12 +5316,48 @@ function normalizeGeneratedEvidenceExperiment(
     sampleLimit,
     sampleUnit,
     evidenceRefs,
+    assetEvidenceRef: firstText(asset.id),
     asset: asset
       ? {
           label: truncate(firstText(asset.label), 180),
           publicUrl: safePublicURL(asset.url)
         }
       : null
+  };
+}
+
+function rehydrateGeneratedExperimentAsset(
+  experimentValue,
+  fullEvidenceCatalog,
+  referenceTime
+) {
+  const experiment = asObject(experimentValue);
+  const {
+    assetEvidenceRef,
+    ...publicExperiment
+  } = experiment;
+  if (Object.keys(experiment).length === 0 || !experiment.asset) {
+    return Object.keys(experiment).length > 0 ? publicExperiment : null;
+  }
+  const evidenceByID = evidenceIndex(fullEvidenceCatalog);
+  const asset = evidenceByID.get(firstText(assetEvidenceRef));
+  if (!asset ||
+      !compactStrings(experiment.evidenceRefs).includes(asset.id) ||
+      firstText(asObject(asset).revenueAssetRole) !==
+        'current_owner_paid_conversion_asset' ||
+      !approvedOwnedAssetEvidence(asset, evidenceByID) ||
+      !inboundAssetEvidenceSupportsPaidConversion(
+        asset,
+        referenceTime
+      )) {
+    return null;
+  }
+  return {
+    ...publicExperiment,
+    asset: {
+      label: truncate(firstText(asset.label), 180),
+      publicUrl: safePublicURL(asset.url)
+    }
   };
 }
 
@@ -4996,7 +5560,7 @@ function revenueEvidenceExperiment({
         );
       return relevanceDifference ||
         evidenceQuality(right) - evidenceQuality(left) ||
-        firstText(left.id).localeCompare(firstText(right.id));
+        compareStableText(left.id, right.id);
     })[0];
   const assetLabel = truncate(firstText(asset?.label), 180);
   const assetURL = safePublicURL(asset?.url);
@@ -5098,7 +5662,7 @@ function selectCurrentOwnedPaidAsset(
       return relevanceDifference ||
         readinessDifference ||
         evidenceQuality(right) - evidenceQuality(left) ||
-        firstText(left.id).localeCompare(firstText(right.id));
+        compareStableText(left.id, right.id);
     })[0];
 }
 
@@ -5425,49 +5989,83 @@ function strategyGenerationRecoveryExperiment({
   missingEvidence
 }) {
   const missing = compactStrings(missingEvidence);
-  const providerFailure = missing.includes('usable_strategy_generation');
-  const budgetFailure = missing.includes('within_budget_strategy_generation');
-  const shapeFailure = missing.includes(
+  const recoveryCause = [
+    'provider_request_serialization',
+    'bounded_prompt_envelope',
+    'usable_strategy_generation',
+    'within_budget_strategy_generation',
     'structured_strategy_family_repair'
-  );
-  if (!providerFailure && !budgetFailure && !shapeFailure) return null;
+  ].find((cause) => missing.includes(cause));
+  if (!recoveryCause) return null;
+  const recoveryByCause = {
+    provider_request_serialization: {
+      kind: 'strategy_generation_request_serialization_recovery',
+      title:
+        'Retry once after the local provider request can be serialized',
+      action:
+        'Preserve the approved evidence snapshot and make no business or provider-side changes. Correct and verify the local structured-request serialization path, then retry the same bounded tournament exactly once; this is a local request-construction failure, not missing market evidence.',
+      stopCondition:
+        'Stop after 1 serialization-recovery retry; if local request construction fails again, surface the technical failure and do not call the provider.',
+      trigger:
+        'Rerun once only after the exact structured provider request serializes successfully; new business evidence is not required.'
+    },
+    bounded_prompt_envelope: {
+      kind: 'strategy_generation_prompt_envelope_recovery',
+      title:
+        'Retry once after the tournament prompt fits its internal envelope',
+      action:
+        `Preserve the approved evidence snapshot and make no business or provider-side changes. Reduce the local structured request to at most ${MAX_PROVIDER_REQUEST_BODY_BYTES} serialized bytes while preserving its objective and exact evidence references, verify both initial and repair requests, then retry the same bounded tournament exactly once.`,
+      stopCondition:
+        'Stop after 1 prompt-envelope recovery retry; if the exact request still exceeds the local bound, surface the technical failure and do not call the provider.',
+      trigger:
+        'Rerun once only after the exact structured request fits the internal provider prompt envelope; new business evidence is not required.'
+    },
+    usable_strategy_generation: {
+      kind: 'strategy_generation_provider_recovery',
+      title: 'Retry strategy generation once after provider recovery',
+      action:
+        'Preserve the approved evidence snapshot and make no business or provider-side changes. After the model provider is healthy and strict structured-output support is verified, retry the same bounded tournament exactly once.',
+      stopCondition:
+        'Stop after 1 provider-recovery retry; if structured strategy generation fails again, surface the technical failure and do not spend again automatically.',
+      trigger:
+        'Rerun once only after provider health and strict structured-output support are verified; new business evidence is not required.'
+    },
+    within_budget_strategy_generation: {
+      kind: 'strategy_generation_budget_recovery',
+      title:
+        'Retry strategy generation once on a budget-compatible route',
+      action:
+        'Preserve the approved evidence snapshot and do not raise the user budget. Select a model/provider route whose conservative prompt-token, output-token, and possible fixed per-request fee ceiling fits the existing total LLM budget, then retry the same bounded tournament exactly once. The flat request-price field is a per-request routing filter, not a total call-cost cap.',
+      stopCondition:
+        'Stop after 1 budget-compatible retry; if it exceeds or cannot satisfy the existing cap, surface the budget failure and do not spend again automatically.',
+      trigger:
+        'Rerun once only after the conservative prompt-token, output-token, and possible fixed per-request fee ceiling is verified to fit the existing total LLM budget; the flat request-price field is a per-request routing filter, not a total call-cost cap.'
+    },
+    structured_strategy_family_repair: {
+      kind: 'strategy_generation_shape_recovery',
+      title:
+        'Retry once for a structurally complete strategy comparison',
+      action:
+        'Preserve the approved evidence snapshot and make no business, outreach, publishing, or provider-side changes. Retry the same objective exactly once only after the strict response route can return two complete comparison families; new market evidence is not required.',
+      stopCondition:
+        'Stop after 1 response-shape retry; if two complete comparison families still cannot be returned, surface the AI contract failure and do not spend again automatically.',
+      trigger:
+        'Rerun once only after strict structured-output support for two complete comparison families is verified; new business evidence is not required.'
+    }
+  };
+  const recovery = recoveryByCause[recoveryCause];
   const successSignal =
     'One new attributed revenue event—a paid booking, payment, order, signed contract, reimbursed claim, license or royalty payment, commission or referral fee, sponsorship payment, platform payout, or compensated-role payment—with a stored source, referral, campaign, channel, or UTM value.';
-  const kind = providerFailure
-    ? 'strategy_generation_provider_recovery'
-    : budgetFailure
-      ? 'strategy_generation_budget_recovery'
-      : 'strategy_generation_shape_recovery';
-  const title = providerFailure
-    ? 'Retry strategy generation once after provider recovery'
-    : budgetFailure
-      ? 'Retry strategy generation once on a budget-compatible route'
-      : 'Retry once for a structurally complete strategy comparison';
-  const action = providerFailure
-    ? 'Preserve the approved evidence snapshot and make no business or provider-side changes. After the model provider is healthy and strict structured-output support is verified, retry the same bounded tournament exactly once.'
-    : budgetFailure
-      ? 'Preserve the approved evidence snapshot and do not raise the user budget. Select a model/provider route whose conservative prompt-token, output-token, and possible fixed per-request fee ceiling fits the existing total LLM budget, then retry the same bounded tournament exactly once. The flat request-price field is a per-request routing filter, not a total call-cost cap.'
-      : 'Preserve the approved evidence snapshot and make no business, outreach, publishing, or provider-side changes. Retry the same objective exactly once only after the strict response route can return two complete comparison families; new market evidence is not required.';
-  const stopCondition = providerFailure
-    ? 'Stop after 1 provider-recovery retry; if structured strategy generation fails again, surface the technical failure and do not spend again automatically.'
-    : budgetFailure
-      ? 'Stop after 1 budget-compatible retry; if it exceeds or cannot satisfy the existing cap, surface the budget failure and do not spend again automatically.'
-      : 'Stop after 1 response-shape retry; if two complete comparison families still cannot be returned, surface the AI contract failure and do not spend again automatically.';
-  const trigger = providerFailure
-    ? 'Rerun once only after provider health and strict structured-output support are verified; new business evidence is not required.'
-    : budgetFailure
-      ? 'Rerun once only after the conservative prompt-token, output-token, and possible fixed per-request fee ceiling is verified to fit the existing total LLM budget; the flat request-price field is a per-request routing filter, not a total call-cost cap.'
-      : 'Rerun once only after strict structured-output support for two complete comparison families is verified; new business evidence is not required.';
   return {
     contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
     id: `experiment-${stableHash({
-      kind,
+      kind: recovery.kind,
       evidenceHash,
       missing
     }).slice(0, 24)}`,
-    kind,
-    title,
-    action,
+    kind: recovery.kind,
+    title: recovery.title,
+    action: recovery.action,
     missingEvidence: missing,
     paidOutcome: truncate(
       observableRevenueText(objective?.successMetric)
@@ -5476,13 +6074,13 @@ function strategyGenerationRecoveryExperiment({
       360
     ),
     successSignal,
-    stopCondition,
+    stopCondition: recovery.stopCondition,
     asset: null,
     evidenceRefs: [],
     requiresReview: true,
     rerunPolicy: {
       maxReruns: 1,
-      trigger
+      trigger: recovery.trigger
     }
   };
 }
@@ -5681,7 +6279,7 @@ function synthesizeOwnedInboundAssetCandidates(
         inboundAssetConversionReadiness(right) -
           inboundAssetConversionReadiness(left) ||
         evidenceQuality(right) - evidenceQuality(left) ||
-        firstText(left.id).localeCompare(firstText(right.id))
+        compareStableText(left.id, right.id)
       )[0];
     const groundedBuyerRefs = buyerRefs.filter((ref) =>
       asObject(evidenceByID.get(ref)).approvedSourceObservation === true
@@ -5880,7 +6478,10 @@ function normalizeCandidates(
     });
   }
   const combined = combineExactCandidates(candidates);
-  combined.sort((left, right) => right.score.total - left.score.total || left.id.localeCompare(right.id));
+  combined.sort((left, right) =>
+    right.score.total - left.score.total ||
+    compareStableText(left.id, right.id)
+  );
   return combined.map((candidate, index) => ({ ...candidate, rank: index + 1 }));
 }
 

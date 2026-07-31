@@ -2849,24 +2849,26 @@ try {
   ];
   for (const [inputIndex, input] of openRouterInputs.entries()) {
     const serializedEvidence = JSON.stringify(input.evidenceCatalog || []);
+    if ((input.evidenceCatalog || []).some((item) =>
+      /^source:/i.test(item.id || '')
+    )) {
+      throw new Error(
+        `non-citable source record consumed provider evidence capacity: ${serializedEvidence}`
+      );
+    }
     const isPersistedContextInput =
       input.objective?.id === 'obj-persisted-context-family-bundles';
-    if (!serializedEvidence.includes('source:src-delivery-map') ||
-        !serializedEvidence.includes('observation:obs-delivery-proof')) {
-      if (!isPersistedContextInput) {
-        throw new Error(`approved source evidence was not retained: ${serializedEvidence}`);
-      }
-    }
     if (isPersistedContextInput &&
-        (!serializedEvidence.includes('source:src-context-safe') ||
-         !serializedEvidence.includes('observation:obs-context-candidate'))) {
+        !serializedEvidence.includes(
+          'observation:obs-context-candidate'
+        )) {
       throw new Error(`approved source evidence was not retained: ${serializedEvidence}`);
     }
     if (inputIndex < 2 &&
-        ((input.evidenceCatalog || []).length !== 64 ||
+        ((input.evidenceCatalog || []).length !== 16 ||
+         !serializedEvidence.includes('observation:obs-delivery-booking') ||
          !serializedEvidence.includes('timeline:peer-post-smoke') ||
-         !serializedEvidence.includes('observation:obs-structured-person') ||
-         !serializedEvidence.includes('observation:obs-model-candidate'))) {
+         !serializedEvidence.includes('observation:obs-structured-person'))) {
       throw new Error(`candidate evidence was not protected under catalog pressure: ${serializedEvidence}`);
     }
     const leakedMarker = forbiddenEvidenceMarkers.find(
@@ -3852,11 +3854,37 @@ try {
       throw new Error(`${label} was incorrectly promoted as a candidate: ${JSON.stringify(result)}`);
     }
   }
-  if (unsupportedTiming.status !== 'skipped' ||
-      !/no source-backed timing trigger/i.test(unsupportedTiming.summary || '') ||
-      unsupportedTiming.metadata?.searchSpace?.unsupportedTimingSeedCount !== 4 ||
-      unsupportedTiming.metadata?.searchSpace?.timingVerificationRepairCount !== 0 ||
-      unsupportedTiming.metadata?.searchSpace?.eligibleCount !== 0 ||
+  const unsupportedTimingWasExposed = openRouterInputs.some((input) =>
+    input.evidenceCatalog?.some(
+      (item) => item.id === 'observation:obs-unsupported-timing'
+    )
+  );
+  const unsupportedTimingWasRejected =
+    unsupportedTimingWasExposed &&
+    unsupportedTiming.status === 'skipped' &&
+    /no source-backed timing trigger/i.test(
+      unsupportedTiming.summary || ''
+    ) &&
+    unsupportedTiming.metadata?.searchSpace
+      ?.unsupportedTimingSeedCount === 4 &&
+    unsupportedTiming.metadata?.searchSpace
+      ?.timingVerificationRepairCount === 0 &&
+    unsupportedTiming.metadata?.searchSpace?.eligibleCount === 0;
+  const unsupportedTimingWasExcluded =
+    !unsupportedTimingWasExposed &&
+    unsupportedTiming.status === 'completed' &&
+    unsupportedTiming.metadata?.searchSpace
+      ?.unsupportedTimingSeedCount === 0 &&
+    unsupportedTiming.metadata?.hypotheses?.every((hypothesis) =>
+      !hypothesis.evidenceRefs?.includes(
+        'observation:obs-unsupported-timing'
+      ) &&
+      !/\b(?:enrollment window|United Healthcare provider network)\b/i.test(
+        hypothesis.timingTrigger || ''
+      )
+    );
+  if ((!unsupportedTimingWasRejected &&
+       !unsupportedTimingWasExcluded) ||
       unsupportedTiming.metadata?.gate?.sideEffects?.outreachAttempts !== 0 ||
       unsupportedTiming.metadata?.usage?.calls !== 1) {
     throw new Error(`unsupported timing claim survived normalization: ${JSON.stringify(unsupportedTiming)}`);
@@ -3890,9 +3918,26 @@ try {
       throw new Error(`${label} was repaired into a current timing trigger: ${JSON.stringify(result)}`);
     }
   }
-  if (unknownFamily.status !== 'skipped' ||
-      unknownFamily.metadata?.searchSpace?.invalidFamilySeedCount !== 32 ||
-      unknownFamily.metadata?.searchSpace?.eligibleCount !== 0 ||
+  const unknownFamilyWasExposed = openRouterInputs.some((input) =>
+    input.evidenceCatalog?.some(
+      (item) => item.id === 'observation:obs-unknown-family'
+    )
+  );
+  const unknownFamilyWasRejected =
+    unknownFamilyWasExposed &&
+    unknownFamily.status === 'skipped' &&
+    unknownFamily.metadata?.searchSpace?.invalidFamilySeedCount === 32 &&
+    unknownFamily.metadata?.searchSpace?.eligibleCount === 0;
+  const unknownFamilyWasExcluded =
+    !unknownFamilyWasExposed &&
+    unknownFamily.status === 'completed' &&
+    unknownFamily.metadata?.searchSpace?.invalidFamilySeedCount === 0 &&
+    unknownFamily.metadata?.hypotheses?.every((hypothesis) =>
+      !hypothesis.evidenceRefs?.includes(
+        'observation:obs-unknown-family'
+      )
+    );
+  if ((!unknownFamilyWasRejected && !unknownFamilyWasExcluded) ||
       unknownFamily.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
       unknownFamily.metadata?.usage?.calls !== 1) {
     throw new Error(`undeclared family became a compatibility wildcard: ${JSON.stringify(unknownFamily)}`);
@@ -4135,10 +4180,30 @@ try {
       crossMotionTiming.metadata?.usage?.calls !== 1) {
     throw new Error(`cross-motion family timing evidence was salvaged: ${JSON.stringify(crossMotionTiming)}`);
   }
-  if (familyCollision.status !== 'skipped' ||
-      familyCollision.metadata?.searchSpace?.strategyFamilyCollisionCount !== 1 ||
-      familyCollision.metadata?.searchSpace?.strategyFamilyCount !== 0 ||
-      familyCollision.metadata?.searchSpace?.eligibleCount !== 0 ||
+  const familyCollisionWasExposed = openRouterInputs.some((input) =>
+    input.evidenceCatalog?.some(
+      (item) => item.id === 'observation:obs-family-collision'
+    )
+  );
+  const familyCollisionWasRejected =
+    familyCollisionWasExposed &&
+    familyCollision.status === 'skipped' &&
+    familyCollision.metadata?.searchSpace
+      ?.strategyFamilyCollisionCount === 1 &&
+    familyCollision.metadata?.searchSpace?.strategyFamilyCount === 0 &&
+    familyCollision.metadata?.searchSpace?.eligibleCount === 0;
+  const familyCollisionWasExcluded =
+    !familyCollisionWasExposed &&
+    familyCollision.status === 'completed' &&
+    familyCollision.metadata?.searchSpace
+      ?.strategyFamilyCollisionCount === 0 &&
+    familyCollision.metadata?.hypotheses?.every((hypothesis) =>
+      !hypothesis.evidenceRefs?.includes(
+        'observation:obs-family-collision'
+      )
+    );
+  if ((!familyCollisionWasRejected &&
+       !familyCollisionWasExcluded) ||
       familyCollision.metadata?.gate?.sideEffects?.providerWrites !== 0 ||
       familyCollision.metadata?.usage?.calls !== 1) {
     throw new Error(`normalized strategy-family collision was silently merged: ${JSON.stringify(familyCollision)}`);

@@ -201,8 +201,16 @@ await verifyLengthFinishedStructuredRepair();
 await verifyThrownLengthStructuredRepair();
 await verifyProviderSpendBudgetRecovery();
 await verifyMaximumTournamentSpendCeiling();
+await verifyPromptEnvelopeFailsLocally();
+await verifyOmittedProviderEvidenceFailsClosed();
+await verifyProviderSchemaEvidenceParity();
+await verifyQueryScopedOwnedAssetPreserved();
+await verifySummaryCompactionPreservesRevenueTokens();
+await verifyProviderProjectionOrderAndProfessionNeutrality();
+await verifyFullCatalogUnicodeCapStable();
 await verifyRepeatedLengthFinishFailsClosed();
 await verifyBettyProductionTraceRegression();
+await verifyBettyDistinctArticlePressureRegression();
 await verifyStructuredRepairAcrossDomains();
 verifyCatalogRankingBeforeFinalCap();
 await verifyEmptyEvidenceFailForward();
@@ -1332,6 +1340,10 @@ async function verifyMaximumTournamentSpendCeiling() {
   const ref = 'observation:obs-max-0';
   const sourceId = 'src-maximum-tournament';
   const website = 'https://commerce.example/';
+  const oversizedOriginURL =
+    `https://${Array.from({ length: 4 }, (_, index) =>
+      `${String.fromCharCode(97 + index)}${'x'.repeat(59)}`
+    ).join('.')}.com/offer`;
   const sourceEvidence = Array.from({ length: 80 }, (_, index) => ({
     observationId: `obs-max-${index}`,
     sourceId,
@@ -1340,12 +1352,15 @@ async function verifyMaximumTournamentSpendCeiling() {
       ? domain.destination
       : `Evidence ${index} ${'T'.repeat(180)}`,
     summary: index === 0
-      ? domain.sourceSummary
+      ? `${domain.sourceSummary} ${'S'.repeat(80)} ` +
+        'TAIL_PROOF paid checkout; attribution source field records organic-search UTM.'
       : `Current source-backed commercial case study ${index} ${
           'S'.repeat(420)
         }`,
     url: index === 0
-      ? `${website}offer`
+      ? `${website}offer?campaign=${'q'.repeat(96)}#checkout`
+      : index === 1
+        ? oversizedOriginURL
       : `${website}case-study/${index}/${'u'.repeat(96)}`,
     observedAt: '2026-07-29T12:00:00Z',
     confidence: 'high'
@@ -1382,6 +1397,37 @@ async function verifyMaximumTournamentSpendCeiling() {
     onRequest: (request) => requests.push(request)
   });
   const initialTask = JSON.parse(requests[0]?.user || '{}');
+  const repairTask = JSON.parse(requests[1]?.user || '{}');
+  const initialPromptIDs = (initialTask.evidenceCatalog || [])
+    .map((item) => item.id);
+  const repairPromptIDs = (repairTask.evidenceCatalog || [])
+    .map((item) => item.id);
+  const initialSchemaObject =
+    requests[0]?.responseFormat?.json_schema?.schema || {};
+  const repairSchemaObject =
+    requests[1]?.responseFormat?.json_schema?.schema || {};
+  const expectedSchemaEvidenceIDs = initialPromptIDs;
+  const initialSchemaEvidenceIDs =
+    initialSchemaObject.$defs?.evidenceRef?.enum || [];
+  const repairSchemaEvidenceIDs =
+    repairSchemaObject.$defs?.evidenceRef?.enum || [];
+  const boundedPromptFields = (initialTask.evidenceCatalog || [])
+    .every((item) =>
+      (item.type || '').length <= 64 &&
+      (item.label || '').length <= 160 &&
+      (item.summary || '').length <= 320 &&
+      (item.url || '').length <= 240 &&
+      (item.approvedSourceUrl || '').length <= 240 &&
+      (item.sourceId || '').length <= 96 &&
+      (item.status || '').length <= 64 &&
+      (item.confidence || '').length <= 16 &&
+      (item.observedAt || '').length <= 40 &&
+      (item.publishedAt || '').length <= 40 &&
+      (item.startDate || '').length <= 40 &&
+      (item.endDate || '').length <= 40
+    );
+  const compactPaidAsset = (initialTask.evidenceCatalog || [])
+    .find((item) => item.id === ref);
   const budget = {
     maxLLMSpendMicros: 400_000,
     providerMaxPrice: {
@@ -1399,7 +1445,7 @@ async function verifyMaximumTournamentSpendCeiling() {
   const initialBytes = Buffer.byteLength(serializedInitial, 'utf8');
   const repairBytes = Buffer.byteLength(serializedRepair, 'utf8');
   const initialSchema = JSON.stringify(
-    requests[0]?.responseFormat?.json_schema?.schema || {}
+    initialSchemaObject
   );
   const initialSchemaBytes = Buffer.byteLength(initialSchema, 'utf8');
   const initialCeiling = providerCallSpendCeilingMicros(
@@ -1413,8 +1459,28 @@ async function verifyMaximumTournamentSpendCeiling() {
   const repairTrace = result.searchSpace?.structuredRepair || {};
   if (requests.length !== 2 ||
       result.status !== 'completed' ||
-      initialTask.evidenceCatalog?.length !== 64 ||
-      !initialTask.evidenceCatalog?.some((item) => item.id === ref) ||
+      result.searchSpace?.evidenceCatalogCount !== 64 ||
+      result.searchSpace?.promptEvidenceCount !== 16 ||
+      result.searchSpace?.promptEvidenceOmittedCount !== 48 ||
+      !result.searchSpace?.promptEvidenceHash ||
+      initialTask.evidenceCatalog?.length !== 16 ||
+      repairTask.evidenceCatalog?.length !== 16 ||
+      initialPromptIDs.some((id) => /^source:/i.test(id)) ||
+      initialPromptIDs[0] !== ref ||
+      JSON.stringify(initialPromptIDs) !==
+        JSON.stringify(repairPromptIDs) ||
+      JSON.stringify(initialSchemaEvidenceIDs) !==
+        JSON.stringify(expectedSchemaEvidenceIDs) ||
+      JSON.stringify(repairSchemaEvidenceIDs) !==
+        JSON.stringify(expectedSchemaEvidenceIDs) ||
+      !boundedPromptFields ||
+      compactPaidAsset?.revenueAssetRole !==
+        'current_owner_paid_conversion_asset' ||
+      !compactPaidAsset?.summary?.includes('TAIL_PROOF') ||
+      compactPaidAsset?.url !== `${website}offer` ||
+      initialTask.evidenceCatalog?.find(
+        (item) => item.id === 'observation:obs-max-1'
+      )?.url ||
       requests[0]?.maxTokens !== 10_000 ||
       requests[1]?.maxTokens !== 4_000 ||
       repairTrace.initialFixedRequestFeeCeilingMicros !== 120_000 ||
@@ -1432,8 +1498,8 @@ async function verifyMaximumTournamentSpendCeiling() {
         repairBytes ||
       repairTrace.repairPromptTokenCanary?.withinCeiling !== true ||
       initialSchemaBytes > 8_000 ||
-      initialBytes > 90_000 ||
-      repairBytes > 90_000 ||
+      initialBytes > 36 * 1_024 ||
+      repairBytes > 36 * 1_024 ||
       initialSchema.includes('"pattern"') ||
       initialSchema.includes('"description"') ||
       initialCeiling + repairCeiling > 400_000) {
@@ -1441,6 +1507,12 @@ async function verifyMaximumTournamentSpendCeiling() {
       `maximum legal tournament did not fit the exact two-call hard ceiling: ${JSON.stringify({
         status: result.status,
         evidenceCount: initialTask.evidenceCatalog?.length,
+        initialPromptIDs,
+        repairPromptIDs,
+        initialSchemaEvidenceIDs,
+        repairSchemaEvidenceIDs,
+        compactPaidAsset,
+        searchSpace: result.searchSpace,
         requestCount: requests.length,
         initialBytes,
         repairBytes,
@@ -1449,6 +1521,1219 @@ async function verifyMaximumTournamentSpendCeiling() {
         repairCeiling,
         totalCeiling: initialCeiling + repairCeiling,
         repairTrace
+      })}`
+    );
+  }
+}
+
+async function verifyPromptEnvelopeFailsLocally() {
+  const domain = { ...domains.find((item) => item.name === 'commerce') };
+  const sourceID = 'src-local-prompt-envelope';
+  const oversizedObservationID = `obs-envelope-${'x'.repeat(48_000)}`;
+  let providerCalls = 0;
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-local-prompt-envelope',
+      payload: {
+        tournamentId: 'tournament-local-prompt-envelope',
+        researchOnly: true,
+        objective: {
+          outcome: `Generate one new attributed ${domain.outcome}.`,
+          successMetric: domain.outcome
+        },
+        budget: {
+          maxHypotheses: 128,
+          maxFinalists: 8,
+          maxLLMCalls: 2,
+          maxOutputTokens: 8_000,
+          hardStop: false
+        },
+        evidenceSnapshot: {
+          profile: {
+            identity: {
+              website: 'https://prompt-envelope.example/'
+            }
+          },
+          sources: [{
+            id: sourceID,
+            url: 'https://prompt-envelope.example/',
+            status: 'monitoring',
+            trustLevel: 'high'
+          }],
+          sourceEvidence: [{
+            observationId: oversizedObservationID,
+            sourceId: sourceID,
+            kind: 'service-page',
+            title: domain.destination,
+            summary: domain.sourceSummary,
+            url: 'https://prompt-envelope.example/offer',
+            observedAt: '2026-07-29T12:00:00Z',
+            confidence: 'high'
+          }]
+        }
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async () => {
+      providerCalls += 1;
+      return {
+        data: compactV2Response(
+          domain,
+          `observation:${oversizedObservationID}`
+        ),
+        usage
+      };
+    }
+  });
+  const experiment = result.nextExperiment || {};
+  const envelope = result.searchSpace?.providerPromptEnvelope || {};
+  const sideEffects = result.gate?.sideEffects || {};
+  if (providerCalls !== 0 ||
+      result.status !== 'skipped' ||
+      result.usage?.calls !== 0 ||
+      result.searchSpace?.modelCalls !== 0 ||
+      envelope.authorized !== false ||
+      envelope.cause !== 'bounded_prompt_envelope' ||
+      envelope.requestBodyByteCount <= 36 * 1_024 ||
+      envelope.maxRequestBodyByteCount !== 36 * 1_024 ||
+      experiment.kind !==
+        'strategy_generation_prompt_envelope_recovery' ||
+      !/internal provider prompt envelope/i.test(
+        experiment.rerunPolicy?.trigger || ''
+      ) ||
+      /provider (?:is|was) (?:unhealthy|down)/i.test(
+        `${experiment.title} ${experiment.action}`
+      ) ||
+      hasBusinessExperimentField(experiment) ||
+      result.gate?.decision !== 'block' ||
+      sideEffects.outreachAttempts !== 0 ||
+      sideEffects.publishAttempts !== 0 ||
+      sideEffects.providerWrites !== 0) {
+    throw new Error(
+      `oversized local prompt did not fail before provider spend with a cause-matched recovery: ${JSON.stringify({
+        providerCalls,
+        result
+      })}`
+    );
+  }
+}
+
+async function verifyOmittedProviderEvidenceFailsClosed() {
+  const domain = { ...domains.find((item) => item.name === 'commerce') };
+  const sourceID = 'src-omitted-provider-evidence';
+  const website = 'https://omitted-evidence.example/';
+  const candidateLabel = 'Signal Partner Company';
+  const compactHiddenRole = 'Secret Revenue Director';
+  const compactHiddenMarket = 'Secret Moon Market';
+  const sourceEvidence = Array.from({ length: 80 }, (_, index) => ({
+    observationId: `obs-omitted-provider-${index}`,
+    sourceId: sourceID,
+    kind: index === 0 ? 'service-page' : 'case-study',
+    title: index === 0
+      ? domain.destination
+      : `Commercial evidence ${index}`,
+    summary: index === 0
+      ? `${domain.sourceSummary} ${candidateLabel} is named in the approved directory.`
+      : index === 1
+        ? `${candidateLabel} is named here. ${'A'.repeat(200)} ${
+            compactHiddenRole
+          }; ${compactHiddenMarket}. ${'B'.repeat(130)} End of visible context.`
+      : `${candidateLabel} is listed as Hidden Revenue Role ${index} in Hidden Market ${index}.`,
+    url: index === 0
+      ? `${website}offer`
+      : `${website}proof/${index}`,
+    observedAt: '2026-07-29T12:00:00Z',
+    confidence: 'high'
+  }));
+  const payload = {
+    tournamentId: 'tournament-omitted-provider-evidence',
+    researchOnly: true,
+    objective: {
+      outcome: `Generate one new attributed ${domain.outcome}.`,
+      successMetric: domain.outcome
+    },
+    budget: {
+      maxHypotheses: 128,
+      maxFinalists: 8,
+      maxLLMCalls: 1,
+      maxOutputTokens: 8_000
+    },
+    evidenceSnapshot: {
+      profile: {
+        identity: { website }
+      },
+      sources: [{
+        id: sourceID,
+        url: website,
+        status: 'monitoring',
+        trustLevel: 'high'
+      }],
+      sourceEvidence
+    }
+  };
+  const localEvidence = buildEvidenceCatalog(payload, {}, now);
+  let promptIDs = [];
+  let omittedRef = '';
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-omitted-provider-evidence',
+      payload
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      promptIDs = (JSON.parse(request.user).evidenceCatalog || [])
+        .map((item) => item.id);
+      omittedRef = localEvidence
+        .map((item) => item.id)
+        .find((id) =>
+          /^observation:/i.test(id) && !promptIDs.includes(id)
+        ) || '';
+      return {
+        data: compactV2Response(domain, omittedRef),
+        usage,
+        diagnostics: { finishReason: 'stop' }
+      };
+    }
+  });
+  const experiment = result.nextExperiment || {};
+  const sideEffects = result.gate?.sideEffects || {};
+  if (localEvidence.length !== 64 ||
+      promptIDs.length !== 16 ||
+      !omittedRef ||
+      !localEvidence.some((item) => item.id === omittedRef) ||
+      promptIDs.includes(omittedRef) ||
+      result.status !== 'skipped' ||
+      result.winner !== null ||
+      result.hypotheses?.length !== 0 ||
+      result.searchSpace?.completeStrategyFamilyCount !== 0 ||
+      result.searchSpace?.modelCalls !== 1 ||
+      result.usage?.calls !== 1 ||
+      experiment.kind !== 'strategy_generation_shape_recovery' ||
+      hasBusinessExperimentField(experiment) ||
+      result.gate?.decision !== 'strategy_generation_incomplete' ||
+      sideEffects.outreachAttempts !== 0 ||
+      sideEffects.publishAttempts !== 0 ||
+      sideEffects.providerWrites !== 0) {
+    throw new Error(
+      `provider-omitted local evidence was not rejected at the normalization boundary: ${JSON.stringify({
+        localEvidenceCount: localEvidence.length,
+        promptIDs,
+        omittedRef,
+        result
+      })}`
+    );
+  }
+
+  let candidatePromptIDs = [];
+  let candidateIncludedRef = '';
+  const omittedIndex = omittedRef.match(/(\d+)$/)?.[1] || '';
+  const hiddenRole = `Hidden Revenue Role ${omittedIndex}`;
+  const hiddenMarket = `Hidden Market ${omittedIndex}`;
+  const candidateResult = await runOpportunityTournament({
+    job: {
+      id: 'job-omitted-provider-candidate-evidence',
+      payload: {
+        ...payload,
+        tournamentId:
+          'tournament-omitted-provider-candidate-evidence'
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      candidatePromptIDs = (
+        JSON.parse(request.user).evidenceCatalog || []
+      ).map((item) => item.id);
+      candidateIncludedRef = candidatePromptIDs.find((id) =>
+        /^observation:/i.test(id)
+      ) || '';
+      const response = compactV2Response(
+        domain,
+        candidateIncludedRef
+      );
+      response.familyA.d.b[0].l =
+        `${candidateLabel} home-office buying team`;
+      response.familyB.d.b[0].l =
+        `${candidateLabel} home-office buying team`;
+      response.candidates = [{
+        k: 'organization',
+        l: candidateLabel,
+        o: candidateLabel,
+        r: hiddenRole,
+        m: hiddenMarket,
+        e: [omittedRef, candidateIncludedRef]
+      }];
+      return {
+        data: response,
+        usage,
+        diagnostics: { finishReason: 'stop' }
+      };
+    }
+  });
+  const modelCandidate = candidateResult.candidates?.find(
+    (candidate) =>
+      candidate.displayLabel === candidateLabel &&
+      candidate.providers?.includes(
+        'openrouter_evidence_extraction'
+      )
+  );
+  if (!candidateIncludedRef ||
+      candidatePromptIDs.includes(omittedRef) ||
+      !modelCandidate ||
+      modelCandidate.role ||
+      modelCandidate.market ||
+      modelCandidate.evidenceRefs?.includes(omittedRef) ||
+      JSON.stringify(modelCandidate.evidenceRefs) !==
+        JSON.stringify([candidateIncludedRef])) {
+    throw new Error(
+      `provider-omitted candidate fields leaked through the full local evidence catalog: ${JSON.stringify({
+        omittedRef,
+        candidateIncludedRef,
+        candidatePromptIDs,
+        modelCandidate,
+        candidateResult
+      })}`
+    );
+  }
+
+  const compactHiddenRef =
+    'observation:obs-omitted-provider-1';
+  let compactCandidatePromptEvidence = [];
+  const compactCandidateResult = await runOpportunityTournament({
+    job: {
+      id: 'job-compact-provider-candidate-evidence',
+      payload: {
+        ...payload,
+        tournamentId:
+          'tournament-compact-provider-candidate-evidence'
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      compactCandidatePromptEvidence =
+        JSON.parse(request.user).evidenceCatalog || [];
+      const response = compactV2Response(
+        domain,
+        candidateIncludedRef
+      );
+      response.familyA.d.b[0].l =
+        `${candidateLabel} home-office buying team`;
+      response.familyB.d.b[0].l =
+        `${candidateLabel} home-office buying team`;
+      response.candidates = [{
+        k: 'organization',
+        l: candidateLabel,
+        o: candidateLabel,
+        r: compactHiddenRole,
+        m: compactHiddenMarket,
+        e: [compactHiddenRef, candidateIncludedRef]
+      }];
+      return {
+        data: response,
+        usage,
+        diagnostics: { finishReason: 'stop' }
+      };
+    }
+  });
+  const compactModelCandidate =
+    compactCandidateResult.candidates?.find(
+      (candidate) =>
+        candidate.displayLabel === candidateLabel &&
+        candidate.providers?.includes(
+          'openrouter_evidence_extraction'
+        )
+    );
+  const compactHiddenEvidence =
+    compactCandidatePromptEvidence.find(
+      (item) => item.id === compactHiddenRef
+    );
+  const compactRoleVisible =
+    compactHiddenEvidence?.summary?.includes(compactHiddenRole) ===
+      true;
+  const compactMarketVisible =
+    compactHiddenEvidence?.summary?.includes(compactHiddenMarket) ===
+      true;
+  if (!compactHiddenEvidence ||
+      !compactModelCandidate ||
+      compactModelCandidate.role !==
+        (compactRoleVisible ? compactHiddenRole : '') ||
+      compactModelCandidate.market !==
+        (compactMarketVisible ? compactHiddenMarket : '') ||
+      !compactModelCandidate.evidenceRefs?.includes(
+        compactHiddenRef
+      ) ||
+      !compactModelCandidate.evidenceRefs?.includes(
+        candidateIncludedRef
+      )) {
+    throw new Error(
+      `candidate fields hidden by the provider projection leaked from the full local record: ${JSON.stringify({
+        compactHiddenEvidence,
+        compactModelCandidate,
+        compactCandidateResult
+      })}`
+    );
+  }
+}
+
+async function verifyProviderSchemaEvidenceParity() {
+  const domain = { ...domains.find((item) => item.name === 'commerce') };
+  const sourceID = 'src-provider-schema-parity';
+  const website = 'https://schema-parity.example/';
+  const observationRef = 'observation:obs-provider-schema-parity';
+  const evidenceSnapshot = {
+    profile: {
+      identity: { website }
+    },
+    sources: [{
+      id: sourceID,
+      label: 'Schema parity source',
+      url: website,
+      status: 'monitoring',
+      trustLevel: 'high'
+    }],
+    sourceEvidence: [{
+      observationId: 'obs-provider-schema-parity',
+      sourceId: sourceID,
+      kind: 'service-page',
+      title: domain.destination,
+      summary: domain.sourceSummary,
+      url: `${website}offer`,
+      observedAt: '2026-07-29T12:00:00Z',
+      confidence: 'high'
+    }]
+  };
+  for (const invalidRef of [
+    `source:${sourceID}`,
+    `${website}offer`
+  ]) {
+    let request;
+    const result = await runDomainRepairSequence({
+      domain,
+      ref: observationRef,
+      suffix:
+        `provider-schema-parity-${
+          invalidRef.startsWith('source:') ? 'source' : 'url'
+        }`,
+      responses: [compactV2Response(domain, invalidRef)],
+      diagnostics: [{ finishReason: 'stop' }],
+      usages: [usage],
+      evidenceSnapshot,
+      budgetOverrides: {
+        maxLLMCalls: 1
+      },
+      onRequest: (value) => {
+        request = value;
+      }
+    });
+    const promptEvidence = JSON.parse(
+      request?.user || '{}'
+    ).evidenceCatalog || [];
+    const promptIDs = promptEvidence.map((item) => item.id);
+    const schemaIDs =
+      request?.responseFormat?.json_schema?.schema
+        ?.$defs?.evidenceRef?.enum || [];
+    const experiment = result.nextExperiment || {};
+    const invalidRefIsVisible = invalidRef.startsWith('source:')
+      ? promptIDs.includes(invalidRef)
+      : promptEvidence.some((item) => item.url === invalidRef);
+    const invalidRefShouldBeVisible =
+      !invalidRef.startsWith('source:');
+    if (invalidRefIsVisible !== invalidRefShouldBeVisible ||
+        schemaIDs.includes(invalidRef) ||
+        !schemaIDs.includes(observationRef) ||
+        result.status !== 'skipped' ||
+        result.searchSpace?.completeStrategyFamilyCount !== 0 ||
+        result.searchSpace?.modelCalls !== 1 ||
+        result.usage?.calls !== 1 ||
+        result.winner !== null ||
+        experiment.kind !== 'strategy_generation_shape_recovery' ||
+        hasBusinessExperimentField(experiment) ||
+        result.gate?.decision !== 'strategy_generation_incomplete') {
+      throw new Error(
+        `local evidence normalization accepted a provider reference forbidden by the strict schema: ${JSON.stringify({
+          invalidRef,
+          promptEvidence,
+          schemaIDs,
+          result
+        })}`
+      );
+    }
+  }
+}
+
+async function verifyQueryScopedOwnedAssetPreserved() {
+  const ref = 'observation:obs-query-scoped-booking';
+  const decoyRef = 'observation:obs-retailer-product-contact';
+  const sourceID = 'src-query-scoped-booking';
+  const decoySourceID = 'src-retailer-product-contact';
+  const bookingURL =
+    'https://booking.example/schedule?provider=betty&service=lactation';
+  const redactedBookingURL = 'https://booking.example/schedule';
+  const decoyURL =
+    'https://retailer.example/products/desk-organizer?checkout=retailer';
+  const redactedDecoyURL =
+    'https://retailer.example/products/desk-organizer';
+  const decoySummary =
+    'Retailers can ask about this paid product through the product page contact. ' +
+    'Product specification context. '.repeat(6) +
+    'Additional details are available for this paid product. ' +
+    'Fulfillment and catalog context. '.repeat(6);
+  const domain = {
+    name: 'query-scoped-booking',
+    buyer: 'New parents seeking lactation support',
+    offer: 'A paid lactation consultation',
+    destination: 'Provider-specific lactation booking page',
+    mechanism: 'paid_booking',
+    outcome: 'One paid booking recorded',
+    attributionMethod: 'booking_record',
+    attribution:
+      'Booking record source field stores the organic-search campaign',
+    sourceSummary:
+      'New parents can purchase a paid lactation consultation through the provider-specific booking page. The booking record source field stores the organic-search campaign.',
+    fullyGrounded: false
+  };
+  let promptEvidence = [];
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-query-scoped-booking',
+      payload: {
+        tournamentId: 'tournament-query-scoped-booking',
+        researchOnly: true,
+        objective: {
+          outcome:
+            'Generate one new attributed paid lactation consultation.',
+          successMetric:
+            'One paid consultation booking with a stored acquisition source.'
+        },
+        budget: {
+          maxHypotheses: 128,
+          maxFinalists: 8,
+          maxLLMCalls: 1,
+          maxOutputTokens: 8_000
+        },
+        evidenceSnapshot: {
+          profile: {
+            identity: {
+              bookingUrl: bookingURL,
+              website: decoyURL
+            }
+          },
+          sources: [{
+            id: sourceID,
+            kind: 'booking',
+            label: 'Provider-specific lactation booking',
+            url: bookingURL,
+            status: 'monitoring',
+            trustLevel: 'high'
+          }, {
+            id: decoySourceID,
+            kind: 'website',
+            label: 'Retailer product contact',
+            url: decoyURL,
+            status: 'monitoring',
+            trustLevel: 'high'
+          }],
+          sourceEvidence: [{
+            observationId: 'obs-query-scoped-booking',
+            sourceId: sourceID,
+            kind: 'booking-page',
+            title: domain.destination,
+            summary: domain.sourceSummary,
+            url: bookingURL,
+            observedAt: '2026-07-29T12:00:00Z',
+            current: true,
+            confidence: 'high'
+          }, {
+            observationId: 'obs-retailer-product-contact',
+            sourceId: decoySourceID,
+            kind: 'product-page',
+            title: 'Paid product page contact for retailers',
+            summary: decoySummary,
+            url: decoyURL,
+            observedAt: '2026-07-29T12:00:00Z',
+            current: true,
+            confidence: 'high'
+          }]
+        }
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      promptEvidence =
+        JSON.parse(request.user).evidenceCatalog || [];
+      const response = strictV2Response(domain, ref);
+      response.evidenceExperiment.e = [decoyRef, ref];
+      response.familyA.d.revenuePaths[0].observableRevenueOutcome =
+        'One consultation inquiry recorded';
+      response.familyB.d.revenuePaths[0].observableRevenueOutcome =
+        'One consultation inquiry recorded';
+      return {
+        data: response,
+        usage,
+        diagnostics: { finishReason: 'stop' }
+      };
+    }
+  });
+  const projectedAsset = promptEvidence.find(
+    (item) => item.id === ref
+  );
+  const projectedDecoy = promptEvidence.find(
+    (item) => item.id === decoyRef
+  );
+  const experiment = result.nextExperiment || {};
+  const sideEffects = result.gate?.sideEffects || {};
+  if (!projectedAsset ||
+      !projectedDecoy ||
+      projectedDecoy.url !== redactedDecoyURL ||
+      projectedAsset.url !== redactedBookingURL ||
+      projectedAsset.approvedSourceUrl !== redactedBookingURL ||
+      projectedAsset.revenueAssetRole !==
+        'current_owner_paid_conversion_asset' ||
+      result.status !== 'skipped' ||
+      experiment.kind !== 'inbound_revenue_evidence' ||
+      experiment.asset?.publicUrl !== bookingURL ||
+      experiment.evidenceRefs?.[0] !== decoyRef ||
+      experiment.evidenceRefs?.[1] !== ref ||
+      Object.prototype.hasOwnProperty.call(
+        experiment,
+        'assetEvidenceRef'
+      ) ||
+      !completeBusinessExperimentFields(experiment) ||
+      result.gate?.decision !== 'needs_more_approved_evidence' ||
+      sideEffects.outreachAttempts !== 0 ||
+      sideEffects.publishAttempts !== 0 ||
+      sideEffects.providerWrites !== 0) {
+    throw new Error(
+      `query-scoped owned asset was broadened or lost after provider-safe URL projection: ${JSON.stringify({
+        projectedAsset,
+        projectedDecoy,
+        experiment,
+        result
+      })}`
+    );
+  }
+}
+
+async function verifySummaryCompactionPreservesRevenueTokens() {
+  const ref = 'observation:obs-summary-splice-paid-offer';
+  const sourceID = 'src-summary-splice-paid-offer';
+  const website = 'https://summary-splice.example/';
+  const lead =
+    'Engineering leaders seeking architecture advice arrive through organic search at the Architecture consultation booking page. ';
+  const paidTokenIndex = 194;
+  const paddingLength = paidTokenIndex - lead.length - 1;
+  if (paddingLength < 1) {
+    throw new Error('summary-splice fixture lead exceeded its target');
+  }
+  const sourceSummary =
+    `${lead}${'x'.repeat(paddingLength)} ` +
+    'paid architecture consultation is available to qualified buyers. ' +
+    'Booking record source field stores the organic-search UTM campaign. ' +
+    'Current offer details remain available for qualified buyers.';
+  if (sourceSummary.indexOf('paid') !== paidTokenIndex ||
+      sourceSummary.length <= 320 ||
+      sourceSummary.length > 420) {
+    throw new Error(
+      `summary-splice fixture missed the former cut boundary: ${JSON.stringify({
+        paidTokenIndex: sourceSummary.indexOf('paid'),
+        summaryLength: sourceSummary.length
+      })}`
+    );
+  }
+  const domain = {
+    name: 'summary-splice',
+    buyer: 'Engineering leaders seeking architecture advice',
+    offer: 'A paid architecture consultation',
+    destination: 'Architecture consultation booking page',
+    mechanism: 'paid_booking',
+    outcome: 'One paid booking recorded',
+    attributionMethod: 'booking_record',
+    attribution:
+      'Booking record source field stores the organic-search UTM campaign',
+    sourceSummary
+  };
+  let projectedSummary = '';
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-summary-splice-paid-offer',
+      payload: {
+        researchOnly: true,
+        objective: {
+          outcome:
+            'Generate one new attributed paid architecture consultation.',
+          successMetric:
+            'One paid booking with an organic-search source field.'
+        },
+        budget: {
+          maxHypotheses: 128,
+          maxLLMCalls: 1,
+          maxOutputTokens: 8_000
+        },
+        evidenceSnapshot: {
+          profile: {
+            identity: { website }
+          },
+          sources: [{
+            id: sourceID,
+            kind: 'website',
+            label: 'Architecture consultation site',
+            url: website,
+            status: 'monitoring',
+            trustLevel: 'high'
+          }],
+          sourceEvidence: [{
+            observationId: 'obs-summary-splice-paid-offer',
+            sourceId: sourceID,
+            kind: 'service-page',
+            title: domain.destination,
+            summary: sourceSummary,
+            url: `${website}offer`,
+            observedAt: '2026-07-29T12:00:00Z',
+            current: true,
+            confidence: 'high'
+          }]
+        }
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      projectedSummary = (
+        JSON.parse(request.user).evidenceCatalog || []
+      ).find((item) => item.id === ref)?.summary || '';
+      return {
+        data: strictV2Response(domain, ref),
+        usage,
+        diagnostics: { finishReason: 'stop' }
+      };
+    }
+  });
+  const sideEffects = result.gate?.sideEffects || {};
+  if (projectedSummary.length > 320 ||
+      !/\bpaid\b/.test(projectedSummary) ||
+      /\bpa\s*…|…\s*id\b/.test(projectedSummary) ||
+      result.status !== 'completed' ||
+      result.searchSpace?.eligibleCount !== 2 ||
+      !result.winner ||
+      !result.runnerUp ||
+      sideEffects.outreachAttempts !== 0 ||
+      sideEffects.publishAttempts !== 0 ||
+      sideEffects.providerWrites !== 0) {
+    throw new Error(
+      `token-safe evidence compaction changed a grounded paid result: ${JSON.stringify({
+        projectedSummary,
+        result
+      })}`
+    );
+  }
+
+  for (const buyerCase of [{
+    name: 'healthcare-buyer',
+    buyer: 'Patients seeking lactation support',
+    offer: 'A paid lactation consultation',
+    destination: 'Lactation consultation booking page'
+  }, {
+    name: 'engineering-buyer',
+    buyer: 'Engineering leaders seeking architecture advice',
+    offer: 'A paid architecture consultation',
+    destination: 'Architecture consultation booking page'
+  }]) {
+    const buyerRef =
+      `observation:obs-summary-splice-${buyerCase.name}`;
+    const buyerSourceID =
+      `src-summary-splice-${buyerCase.name}`;
+    const buyerWebsite =
+      `https://${buyerCase.name}.summary-splice.example/`;
+    const buyerLead =
+      `Qualified buyers arrive through organic search at the ${
+        buyerCase.destination
+      }, where ${buyerCase.offer} can be booked. `;
+    const buyerTokenIndex = 194;
+    const buyerPaddingLength =
+      buyerTokenIndex - buyerLead.length - 1;
+    if (buyerPaddingLength < 1) {
+      throw new Error(
+        `${buyerCase.name} summary-splice lead exceeded its target`
+      );
+    }
+    const buyerSummary =
+      `${buyerLead}${'x'.repeat(buyerPaddingLength)} ` +
+      `${buyerCase.buyer} use this current service. ` +
+      'Booking record source field stores the organic-search UTM campaign. ' +
+      'Current offer details remain available for qualified buyers.';
+    const buyerDomain = {
+      name: buyerCase.name,
+      buyer: buyerCase.buyer,
+      offer: buyerCase.offer,
+      destination: buyerCase.destination,
+      mechanism: 'paid_booking',
+      outcome: 'One paid booking recorded',
+      attributionMethod: 'booking_record',
+      attribution:
+        'Booking record source field stores the organic-search UTM campaign',
+      sourceSummary: buyerSummary
+    };
+    let projectedBuyerSummary = '';
+    const buyerResult = await runOpportunityTournament({
+      job: {
+        id: `job-summary-splice-${buyerCase.name}`,
+        payload: {
+          researchOnly: true,
+          objective: {
+            outcome:
+              `Generate one new attributed ${buyerCase.offer} for ${buyerCase.buyer}.`,
+            successMetric:
+              'One paid booking with an organic-search source field.'
+          },
+          budget: {
+            maxHypotheses: 128,
+            maxLLMCalls: 1,
+            maxOutputTokens: 8_000
+          },
+          evidenceSnapshot: {
+            profile: {
+              identity: { website: buyerWebsite }
+            },
+            sources: [{
+              id: buyerSourceID,
+              kind: 'website',
+              label: `${buyerCase.name} consultation site`,
+              url: buyerWebsite,
+              status: 'monitoring',
+              trustLevel: 'high'
+            }],
+            sourceEvidence: [{
+              observationId:
+                `obs-summary-splice-${buyerCase.name}`,
+              sourceId: buyerSourceID,
+              kind: 'service-page',
+              title: buyerCase.destination,
+              summary: buyerSummary,
+              url: `${buyerWebsite}offer`,
+              observedAt: '2026-07-29T12:00:00Z',
+              current: true,
+              confidence: 'high'
+            }]
+          }
+        }
+      },
+      model: 'test/v2',
+      now,
+      completeJSON: async (request) => {
+        projectedBuyerSummary = (
+          JSON.parse(request.user).evidenceCatalog || []
+        ).find((item) => item.id === buyerRef)?.summary || '';
+        return {
+          data: strictV2Response(buyerDomain, buyerRef),
+          usage,
+          diagnostics: { finishReason: 'stop' }
+        };
+      }
+    });
+    if (buyerSummary.indexOf(buyerCase.buyer) !== buyerTokenIndex ||
+        buyerSummary.length <= 320 ||
+        projectedBuyerSummary.length > 320 ||
+        !projectedBuyerSummary.includes(buyerCase.buyer) ||
+        buyerResult.status !== 'completed' ||
+        buyerResult.searchSpace?.eligibleCount !== 2) {
+      throw new Error(
+        `objective-salient buyer compaction favored one profession: ${JSON.stringify({
+          buyerCase,
+          buyerSummaryLength: buyerSummary.length,
+          buyerTokenIndex: buyerSummary.indexOf(buyerCase.buyer),
+          projectedBuyerSummary,
+          buyerResult
+        })}`
+      );
+    }
+  }
+}
+
+async function verifyFullCatalogUnicodeCapStable() {
+  const sourceID = 'src-full-catalog-unicode-cap';
+  const website = 'https://unicode-cap.example/';
+  const paidRef = 'observation:z-paid-subscription';
+  const domain = {
+    name: 'unicode-cap',
+    buyer: 'Operations teams buying workflow software',
+    offer: 'A paid workflow-software subscription',
+    destination: 'Workflow software pricing and signup page',
+    mechanism: 'subscription_or_retainer',
+    outcome: 'One subscription payment receipt',
+    attributionMethod: 'payment_receipt',
+    attribution:
+      'Payment receipt source field stores the organic-search UTM campaign',
+    sourceSummary:
+      'Operations teams buying workflow software arrive through organic search at the workflow software pricing and signup page, purchase a paid subscription, and store the organic-search UTM campaign in the payment receipt source field.'
+  };
+  const asciiEvidence = Array.from({ length: 62 }, (_, index) => ({
+    observationId: `a-cap-${String(index).padStart(3, '0')}`,
+    sourceId: sourceID,
+    kind: 'case-study',
+    title: `Neutral professional evidence ${index}`,
+    summary:
+      'Current source-backed professional evidence with equivalent quality.',
+    url: `${website}evidence/ascii-${index}`,
+    observedAt: '2026-07-29T12:00:00Z',
+    current: true,
+    confidence: 'high'
+  }));
+  const unicodeEvidence = [
+    {
+      observationId: 'café',
+      sourceId: sourceID,
+      kind: 'case-study',
+      title: 'Precomposed Unicode professional evidence',
+      summary:
+        'Current source-backed professional evidence with equivalent quality.',
+      url: `${website}evidence/unicode-precomposed`,
+      observedAt: '2026-07-29T12:00:00Z',
+      current: true,
+      confidence: 'high'
+    },
+    {
+      observationId: 'café',
+      sourceId: sourceID,
+      kind: 'case-study',
+      title: 'Decomposed Unicode professional evidence',
+      summary:
+        'Current source-backed professional evidence with equivalent quality.',
+      url: `${website}evidence/unicode-decomposed`,
+      observedAt: '2026-07-29T12:00:00Z',
+      current: true,
+      confidence: 'high'
+    }
+  ];
+  const paidEvidence = {
+    observationId: 'z-paid-subscription',
+    sourceId: sourceID,
+    kind: 'service-page',
+    title: domain.destination,
+    summary: domain.sourceSummary,
+    url: `${website}pricing`,
+    observedAt: '2026-07-29T12:00:00Z',
+    current: true,
+    confidence: 'high'
+  };
+  const baseSnapshot = {
+    profile: {
+      identity: { website }
+    },
+    sources: [{
+      id: sourceID,
+      kind: 'website',
+      label: 'Unicode cap source',
+      url: website,
+      status: 'monitoring',
+      trustLevel: 'high'
+    }]
+  };
+  const run = async (sourceEvidence, suffix) => {
+    let promptIDs = [];
+    const result = await runOpportunityTournament({
+      job: {
+        id: `job-full-catalog-unicode-cap-${suffix}`,
+        payload: {
+          researchOnly: true,
+          objective: {
+            outcome:
+              'Generate one new attributed workflow-software subscription.',
+            successMetric:
+              'One subscription payment receipt with a stored acquisition source.'
+          },
+          budget: {
+            maxHypotheses: 128,
+            maxLLMCalls: 1,
+            maxOutputTokens: 8_000
+          },
+          evidenceSnapshot: {
+            ...baseSnapshot,
+            sourceEvidence
+          }
+        }
+      },
+      model: 'test/v2',
+      now,
+      completeJSON: async (request) => {
+        promptIDs = (
+          JSON.parse(request.user).evidenceCatalog || []
+        ).map((item) => item.id);
+        return {
+          data: strictV2Response(domain, paidRef),
+          usage,
+          diagnostics: { finishReason: 'stop' }
+        };
+      }
+    });
+    return { result, promptIDs };
+  };
+  const forwardEvidence = [
+    ...asciiEvidence,
+    ...unicodeEvidence,
+    paidEvidence
+  ];
+  const reverseEvidence = [...forwardEvidence].reverse();
+  const forwardCatalog = buildEvidenceCatalog({
+    evidenceSnapshot: {
+      ...baseSnapshot,
+      sourceEvidence: forwardEvidence
+    }
+  }, {}, now);
+  const reverseCatalog = buildEvidenceCatalog({
+    evidenceSnapshot: {
+      ...baseSnapshot,
+      sourceEvidence: reverseEvidence
+    }
+  }, {}, now);
+  const forward = await run(forwardEvidence, 'forward');
+  const reverse = await run(reverseEvidence, 'reverse');
+  const forwardIDs = forwardCatalog.map((item) => item.id);
+  const reverseIDs = reverseCatalog.map((item) => item.id);
+  const decomposedID = 'observation:café';
+  const precomposedID = 'observation:café';
+  if (forwardCatalog.length !== 64 ||
+      reverseCatalog.length !== 64 ||
+      JSON.stringify(forwardIDs) !== JSON.stringify(reverseIDs) ||
+      !forwardIDs.includes(decomposedID) ||
+      forwardIDs.includes(precomposedID) ||
+      forward.result.status !== 'completed' ||
+      reverse.result.status !== 'completed' ||
+      forward.result.evidenceHash !== reverse.result.evidenceHash ||
+      forward.result.searchSpace?.promptEvidenceHash !==
+        reverse.result.searchSpace?.promptEvidenceHash ||
+      JSON.stringify(forward.promptIDs) !==
+        JSON.stringify(reverse.promptIDs)) {
+    throw new Error(
+      `full-catalog cap changed under Unicode-equivalent input reversal: ${JSON.stringify({
+        forwardIDs,
+        reverseIDs,
+        forward: {
+          status: forward.result.status,
+          evidenceHash: forward.result.evidenceHash,
+          promptEvidenceHash:
+            forward.result.searchSpace?.promptEvidenceHash,
+          promptIDs: forward.promptIDs
+        },
+        reverse: {
+          status: reverse.result.status,
+          evidenceHash: reverse.result.evidenceHash,
+          promptEvidenceHash:
+            reverse.result.searchSpace?.promptEvidenceHash,
+          promptIDs: reverse.promptIDs
+        }
+      })}`
+    );
+  }
+}
+
+async function verifyProviderProjectionOrderAndProfessionNeutrality() {
+  const sourceID = 'src-profession-neutral-projection';
+  const website = 'https://architecture-advisory.example/';
+  const paidRef = 'observation:obs-architecture-paid-offer';
+  const domain = {
+    name: 'architecture-advisory',
+    buyer: 'Engineering leaders buying software architecture advice',
+    offer: 'A paid software architecture advisory engagement',
+    destination: 'Software architecture advisory booking page',
+    mechanism: 'signed_contract',
+    outcome: 'One signed software architecture contract recorded',
+    attributionMethod: 'invoice_or_contract',
+    attribution:
+      'Contract source field stores the organic-search UTM campaign',
+    sourceSummary:
+      'Engineering leaders can purchase a paid software architecture advisory engagement through organic search and the advisory booking page. The signed contract source field stores the organic-search UTM campaign.'
+  };
+  const paidOffer = {
+    observationId: 'obs-architecture-paid-offer',
+    sourceId: sourceID,
+    kind: 'service-page',
+    title: domain.destination,
+    summary: domain.sourceSummary,
+    url: `${website}advisory`,
+    observedAt: '2026-07-29T12:00:00Z',
+    current: true,
+    confidence: 'high'
+  };
+  const relevantEvidence = [
+    ...Array.from(
+      { length: 22 },
+      (_, index) => ({
+        observationId: `obs-architecture-relevant-${String(index).padStart(2, '0')}`,
+        sourceId: sourceID,
+        kind: 'article',
+        title: `Software architecture engagement evidence ${index}`,
+        summary:
+          'Software architecture advisory engagement patterns for engineering leaders evaluating technical strategy.',
+        url: `${website}software-architecture/${index}/`,
+        observedAt: '2026-07-29T12:00:00Z',
+        publishedAt: '2026-07-28T12:00:00Z',
+        confidence: 'high'
+      })
+    ),
+    {
+      observationId: 'obs-architecture-unicode-café',
+      sourceId: sourceID,
+      kind: 'article',
+      title:
+        'Paid software architecture advisory engagement café evidence',
+      summary:
+        'Software architecture advisory engagement evidence for engineering leaders evaluating technical strategy.',
+      url: `${website}software-architecture/unicode-precomposed/`,
+      observedAt: '2026-07-29T12:00:00Z',
+      publishedAt: '2026-07-28T12:00:00Z',
+      confidence: 'high'
+    },
+    {
+      observationId: 'obs-architecture-unicode-café',
+      sourceId: sourceID,
+      kind: 'article',
+      title:
+        'Paid software architecture advisory engagement café evidence',
+      summary:
+        'Software architecture advisory engagement evidence for engineering leaders evaluating technical strategy.',
+      url: `${website}software-architecture/unicode-decomposed/`,
+      observedAt: '2026-07-29T12:00:00Z',
+      publishedAt: '2026-07-28T12:00:00Z',
+      confidence: 'high'
+    }
+  ];
+  const distractorEvidence = Array.from(
+    { length: 24 },
+    (_, index) => ({
+      observationId: `obs-medical-contract-distractor-${String(index).padStart(2, '0')}`,
+      sourceId: sourceID,
+      kind: 'article',
+      title: `Educational patient home visit article ${index}`,
+      summary:
+        'Educational patient home visit article for community readers with an overview of contract concepts.',
+      url: `${website}unrelated-health-article/${index}/`,
+      observedAt: '2026-07-29T12:00:00Z',
+      publishedAt: '2026-07-28T12:00:00Z',
+      confidence: 'high'
+    })
+  );
+  const runProjection = async (sourceEvidence, suffix) => {
+    let request;
+    const result = await runOpportunityTournament({
+      job: {
+        id: `job-profession-neutral-projection-${suffix}`,
+        payload: {
+          tournamentId:
+            `tournament-profession-neutral-projection-${suffix}`,
+          researchOnly: true,
+          objective: {
+            outcome:
+              'Win one paid software architecture advisory engagement.',
+            successMetric:
+              'One signed software architecture contract with a stored acquisition source.'
+          },
+          budget: {
+            maxHypotheses: 128,
+            maxFinalists: 8,
+            maxLLMCalls: 1,
+            maxOutputTokens: 8_000
+          },
+          evidenceSnapshot: {
+            profile: {
+              identity: { website }
+            },
+            sources: [{
+              id: sourceID,
+              label: 'Architecture advisory source',
+              url: website,
+              status: 'monitoring',
+              trustLevel: 'high'
+            }],
+            sourceEvidence
+          }
+        }
+      },
+      model: 'test/v2',
+      now,
+      completeJSON: async (value) => {
+        request = value;
+        return {
+          data: compactV2Response(domain, paidRef),
+          usage,
+          diagnostics: { finishReason: 'stop' }
+        };
+      }
+    });
+    return {
+      result,
+      request,
+      task: JSON.parse(request?.user || '{}')
+    };
+  };
+  const originalEvidence = [
+    ...distractorEvidence,
+    ...relevantEvidence,
+    paidOffer
+  ];
+  const forward = await runProjection(originalEvidence, 'forward');
+  const reverse = await runProjection(
+    [...originalEvidence].reverse(),
+    'reverse'
+  );
+  const forwardIDs = (forward.task.evidenceCatalog || [])
+    .map((item) => item.id);
+  const reverseIDs = (reverse.task.evidenceCatalog || [])
+    .map((item) => item.id);
+  const relevantCount = forwardIDs.filter((id) =>
+    id.startsWith('observation:obs-architecture-relevant-') ||
+    id.startsWith('observation:obs-architecture-unicode-')
+  ).length;
+  const distractorCount = forwardIDs.filter((id) =>
+    id.startsWith(
+      'observation:obs-medical-contract-distractor-'
+    )
+  ).length;
+  const forwardBytes = Buffer.byteLength(
+    serializeOpenRouterJSONRequestBody(forward.request),
+    'utf8'
+  );
+  const reverseBytes = Buffer.byteLength(
+    serializeOpenRouterJSONRequestBody(reverse.request),
+    'utf8'
+  );
+  if (forwardIDs.length !== 16 ||
+      reverseIDs.length !== 16 ||
+      forwardIDs[0] !== paidRef ||
+      !forwardIDs.includes(
+        'observation:obs-architecture-unicode-café'
+      ) ||
+      !forwardIDs.includes(
+        'observation:obs-architecture-unicode-café'
+      ) ||
+      JSON.stringify(forwardIDs) !== JSON.stringify(reverseIDs) ||
+      forward.result.searchSpace?.promptEvidenceHash !==
+        reverse.result.searchSpace?.promptEvidenceHash ||
+      relevantCount < 12 ||
+      distractorCount > 2 ||
+      forwardBytes > 36 * 1_024 ||
+      reverseBytes > 36 * 1_024 ||
+      forward.result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      forward.result.gate?.sideEffects?.publishAttempts !== 0 ||
+      forward.result.gate?.sideEffects?.providerWrites !== 0 ||
+      reverse.result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      reverse.result.gate?.sideEffects?.publishAttempts !== 0 ||
+      reverse.result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `provider projection was order-sensitive or profession-biased under distractor pressure: ${JSON.stringify({
+        forwardIDs,
+        reverseIDs,
+        forwardHash:
+          forward.result.searchSpace?.promptEvidenceHash,
+        reverseHash:
+          reverse.result.searchSpace?.promptEvidenceHash,
+        relevantCount,
+        distractorCount,
+        forwardBytes,
+        reverseBytes
       })}`
     );
   }
@@ -1819,6 +3104,194 @@ async function verifyBettyProductionTraceRegression() {
         'needs_more_approved_evidence') {
     throw new Error(
       `Betty structured-family repair did not yield the grounded bounded experiment: ${JSON.stringify(repairedResult)}`
+    );
+  }
+}
+
+async function verifyBettyDistinctArticlePressureRegression() {
+  const sourceID = 'src-betty-distinct-pressure';
+  const website = 'https://breastfeedingwithlove.com/';
+  const homeRef = 'observation:obs-betty-distinct-current-home';
+  const staleArticles = Array.from({ length: 80 }, (_, index) => ({
+    observationId: `obs-betty-distinct-old-${index}`,
+    sourceId: sourceID,
+    kind: 'article',
+    title: `Archived lactation information article ${index}`,
+    summary:
+      `Historical educational article ${index} for hospital and family audiences; ` +
+      'it does not describe a current paid or reimbursable offer.',
+    url: `${website}resources/archived-lactation-article-${index}/`,
+    observedAt: '2026-07-29T12:00:00Z',
+    publishedAt: '2021-07-02T12:00:00Z',
+    current: false,
+    confidence: 'high'
+  }));
+  const currentHomepage = {
+    observationId: 'obs-betty-distinct-current-home',
+    sourceId: sourceID,
+    kind: 'service-page',
+    title: 'Lactation Consultant NYC — Book a Same-Day Home Visit',
+    summary:
+      'New York parents can book a reimbursable same-day lactation home visit. United Healthcare is accepted and the booking page is current.',
+    url: website,
+    observedAt: '2026-07-29T12:00:00Z',
+    current: true,
+    confidence: 'high'
+  };
+  const domain = {
+    name: 'betty-distinct-pressure',
+    buyer: 'New York parents seeking same-day lactation support',
+    offer: 'A reimbursable same-day lactation home visit',
+    destination: 'Same-day home-visit booking page',
+    mechanism: 'insurance_reimbursement',
+    outcome: 'One paid or reimbursed consultation recorded',
+    attributionMethod: 'claim_record',
+    attribution:
+      'Booking or claim record source field stores the organic-search campaign',
+    sourceSummary: currentHomepage.summary
+  };
+  const invalidInitial = compactV2Response(domain, homeRef);
+  invalidInitial.seedContract = 'unsupported_seed_contract';
+  const requests = [];
+  const result = await runDomainRepairSequence({
+    domain,
+    ref: homeRef,
+    suffix: 'betty-distinct-article-pressure',
+    responses: [
+      invalidInitial,
+      compactV2Response(domain, homeRef)
+    ],
+    diagnostics: [
+      { finishReason: 'stop' },
+      { finishReason: 'stop' }
+    ],
+    usages: [usage, usage],
+    evidenceSnapshot: {
+      profile: {
+        identity: {
+          fullName: 'Betty Hannah Greenman',
+          website
+        }
+      },
+      sources: [{
+        id: sourceID,
+        kind: 'website',
+        label: 'Breastfeeding With Love',
+        url: website,
+        status: 'monitoring',
+        trustLevel: 'high'
+      }],
+      sourceEvidence: [
+        ...staleArticles,
+        currentHomepage
+      ]
+    },
+    onRequest: (request) => requests.push(request)
+  });
+  const initialTask = JSON.parse(requests[0]?.user || '{}');
+  const repairTask = JSON.parse(requests[1]?.user || '{}');
+  const initialIDs = (initialTask.evidenceCatalog || [])
+    .map((item) => item.id);
+  const repairIDs = (repairTask.evidenceCatalog || [])
+    .map((item) => item.id);
+  const expectedSchemaIDs = initialIDs;
+  const initialSchemaIDs =
+    requests[0]?.responseFormat?.json_schema?.schema
+      ?.$defs?.evidenceRef?.enum || [];
+  const repairSchemaIDs =
+    requests[1]?.responseFormat?.json_schema?.schema
+      ?.$defs?.evidenceRef?.enum || [];
+  const homeEvidence = initialTask.evidenceCatalog?.find(
+    (item) => item.id === homeRef
+  );
+  const stalePromptEvidence = initialTask.evidenceCatalog?.filter(
+    (item) => item.url?.includes('/resources/archived-')
+  ) || [];
+  const initialBytes = Buffer.byteLength(
+    serializeOpenRouterJSONRequestBody(requests[0]),
+    'utf8'
+  );
+  const repairBytes = Buffer.byteLength(
+    serializeOpenRouterJSONRequestBody(requests[1]),
+    'utf8'
+  );
+  const experiment = result.nextExperiment || {};
+  const sideEffects = result.gate?.sideEffects || {};
+  if (requests.length !== 2 ||
+      result.status !== 'skipped' ||
+      result.searchSpace?.evidenceCatalogCount !== 64 ||
+      result.searchSpace?.promptEvidenceCount !== 16 ||
+      initialIDs.some((id) => /^source:/i.test(id)) ||
+      result.searchSpace?.promptEvidenceOmittedCount !== 48 ||
+      initialIDs.length !== 16 ||
+      initialIDs[0] !== homeRef ||
+      JSON.stringify(initialIDs) !== JSON.stringify(repairIDs) ||
+      JSON.stringify(initialSchemaIDs) !==
+        JSON.stringify(expectedSchemaIDs) ||
+      JSON.stringify(repairSchemaIDs) !==
+        JSON.stringify(expectedSchemaIDs) ||
+      initialBytes > 36 * 1_024 ||
+      repairBytes > 36 * 1_024 ||
+      homeEvidence?.url !== website ||
+      homeEvidence?.current !== true ||
+      homeEvidence?.revenueAssetRole !==
+        'current_owner_paid_conversion_asset' ||
+      stalePromptEvidence.length === 0 ||
+      stalePromptEvidence.some((item) =>
+        item.current !== false ||
+        item.revenueAssetRole !== 'informational_only'
+      ) ||
+      result.searchSpace?.completeStrategyFamilyCount !== 2 ||
+      result.searchSpace?.incompleteStrategyFamilyCount !== 0 ||
+      result.searchSpace?.structuredRepair?.attempted !== true ||
+      result.searchSpace?.structuredRepair?.succeeded !== true ||
+      result.searchSpace?.modelCalls !== 2 ||
+      result.usage?.calls !== 2 ||
+      result.winner !== null ||
+      experiment.kind !== 'inbound_revenue_evidence' ||
+      experiment.asset?.publicUrl !== website ||
+      !completeBusinessExperimentFields(experiment) ||
+      experiment.knownFact !== domain.sourceSummary ||
+      experiment.acquisitionMechanism !== 'organic search' ||
+      !/\bqualified\b/i.test(experiment.buyer || '') ||
+      !/\bpaid\b/i.test(experiment.paidOffer || '') ||
+      !/\bconversion page\b/i.test(
+        experiment.conversionDestination || ''
+      ) ||
+      !/\bpaid (?:booking|claim|consultation)\b/i.test(
+        experiment.paidConversion || ''
+      ) ||
+      !/\bsource\/origin field\b/i.test(
+        experiment.attributionSignal || ''
+      ) ||
+      !/\b25 qualified(?: organic-search)? visits\b/i.test(
+        experiment.action || ''
+      ) ||
+      !experiment.action?.includes('14 days') ||
+      !experiment.action?.includes('organic_search') ||
+      !/\bno outreach, publishing, advertising, form submission, or automatic execution is authorized\b/i.test(
+        experiment.action || ''
+      ) ||
+      /archived lactation information/i.test(
+        `${experiment.title} ${experiment.action} ${experiment.successSignal}`
+      ) ||
+      experiment.rerunPolicy?.maxReruns !== 1 ||
+      result.gate?.decision !== 'needs_more_approved_evidence' ||
+      sideEffects.outreachAttempts !== 0 ||
+      sideEffects.publishAttempts !== 0 ||
+      sideEffects.providerWrites !== 0) {
+    throw new Error(
+      `Betty's distinct stale article pressure did not preserve the current paid homepage and bounded repair contract: ${JSON.stringify({
+        result,
+        initialIDs,
+        repairIDs,
+        initialSchemaIDs,
+        repairSchemaIDs,
+        initialBytes,
+        repairBytes,
+        homeEvidence,
+        stalePromptEvidence
+      })}`
     );
   }
 }
