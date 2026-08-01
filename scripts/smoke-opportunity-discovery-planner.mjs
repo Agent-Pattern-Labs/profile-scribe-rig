@@ -443,6 +443,18 @@ for (const scenario of cases) {
       `${scenario.name}: call 1 commercial graph broadened or dropped system attribution`
     );
   }
+  const projectedOwnerAssetNode =
+    plannerPrompt.commercialEvidenceGraph?.nodes?.find((item) =>
+      item.revenueAssetRole === 'current_owner_paid_conversion_asset'
+    );
+  if (projectedOwnerAssetNode &&
+      !['paid_offer', 'conversion_destination', 'paid_conversion'].every(
+        (role) => projectedOwnerAssetNode.roles?.includes(role)
+      )) {
+    throw new Error(
+      `${scenario.name}: current owner paid-conversion asset lost its typed causal roles`
+    );
+  }
 }
 
 const unsafeScenario = cases[0];
@@ -574,8 +586,8 @@ async function verifyNaturalReviewFirstActionsPass(job, evidenceRef) {
   const actions = [
     'After review, ask {{TARGET_NAME}} to recommend the verified paid lactation home visit through its professional referral pathway (resource card).',
     'Following human approval, ask {{TARGET_NAME}} to refer one appropriate inquiry to the verified paid lactation home visit (booking handoff).',
-    'Pending user review, send {{TARGET_NAME}} one verified paid-service referral resource and ask for a professional recommendation (single resource).',
-    'After explicit approval, present {{TARGET_NAME}} with the verified paid lactation offer and request one partner referral (one introduction).'
+    "Pending user review, ask {{TARGET_NAME}} to recommend Betty's paid lactation consultations to one appropriate family through its newborn referral workflow.",
+    'After explicit approval, ask {{TARGET_NAME}} to include one referral to the paid lactation booking page in its discharge process.'
   ];
   let index = 0;
   for (const familyKey of ['familyA', 'familyB']) {
@@ -663,6 +675,14 @@ async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
 
 async function verifySemanticDriftFailsClosed(job, evidenceRef) {
   const checks = [
+    {
+      name: 'non-local decision-maker chain drift',
+      mutate(plans) {
+        plans[0].targetSlot.resolutionStrategy =
+          'organization_then_decision_maker';
+      },
+      reason: /only for a local-organization search/i
+    },
     {
       name: 'family acquisition mode drift',
       mutate(plans) {
@@ -861,11 +881,30 @@ async function verifyTwoStageTargetBinding() {
       `two-stage planner setup failed: ${JSON.stringify(discoveryPlan)}`
     );
   }
-  const selectedMotion = discoveryPlan.plans[0];
-  const attempt = {
-    id: 'attempt-two-stage-person-search',
+  const selectedMotion = structuredClone(discoveryPlan.plans[1]);
+  selectedMotion.targetSlot = {
+    ...selectedMotion.targetSlot,
+    finalTargetKind: 'person',
+    resolutionStrategy: 'organization_then_decision_maker'
+  };
+  const exaAttempt = {
+    id: 'attempt-two-stage-folded-exa-search',
+    provider: 'openrouter_exa_web_search',
+    operation: 'forced_exa_web_search',
+    queryHash: discoveryPlan.webSearchReceipt.requestHash,
+    status: 'succeeded',
+    estimatedSpendMicros: 5_000,
+    actualSpendMicros: 0,
+    creditsUsed: 1,
+    resultCount: 1,
+    reservedAt: '2026-08-01T12:00:00Z',
+    updatedAt: '2026-08-01T12:00:00Z',
+    completedAt: '2026-08-01T12:00:00Z'
+  };
+  const pdlAttempt = {
+    id: 'attempt-two-stage-decision-maker-search',
     provider: 'people_data_labs_person_search',
-    operation: 'planned_professional_search',
+    operation: 'planned_decision_maker_search',
     queryHash: 'd'.repeat(64),
     status: 'succeeded',
     estimatedSpendMicros: 280_000,
@@ -876,8 +915,12 @@ async function verifyTwoStageTargetBinding() {
     updatedAt: '2026-08-01T12:01:01Z',
     completedAt: '2026-08-01T12:01:01Z'
   };
-  const targetEvidenceRef =
+  const organizationEvidenceRef =
     'external_discovery:111111111111111111111111';
+  const personEvidenceRef =
+    'external_discovery:333333333333333333333333';
+  const organizationCandidateId =
+    'candidate:external:444444444444444444444444';
   const targetCandidateId =
     'candidate:external:222222222222222222222222';
   const oneMotionDiscoveryPlan = {
@@ -903,51 +946,90 @@ async function verifyTwoStageTargetBinding() {
       status: 'found',
       motion: selectedMotion.id,
       buyerArchetype: selectedMotion.buyer,
-      queryHash: commercialDiscoveryAttemptLedgerHash([attempt]),
+      queryHash: commercialDiscoveryAttemptLedgerHash([
+        exaAttempt,
+        pdlAttempt
+      ]),
       market: selectedMotion.market,
-      providersAttempted: ['people_data_labs_person_search'],
-      providerCalls: 1,
-      paidProviderCalls: 1,
-      creditsUsed: 1,
-      resultCount: 1,
+      providersAttempted: [
+        'openrouter_exa_web_search',
+        'people_data_labs_person_search'
+      ],
+      providerCalls: 2,
+      paidProviderCalls: 2,
+      creditsUsed: 2,
+      resultCount: 2,
       patientTargetingExcluded: true,
       sideEffectsPerformed: 0,
-      attempts: [attempt],
+      attempts: [exaAttempt, pdlAttempt],
       plan: oneMotionDiscoveryPlan,
-      evidence: [{
-        motionId: selectedMotion.id,
-        evidenceRef: targetEvidenceRef,
-        kind: 'verified_external_professional_target',
-        label: 'Dr. Ava Rivera at Riverside Pediatrics',
-        summary: 'Dr. Ava Rivera is a current pediatrician at Riverside Pediatrics in Queens and a prospective professional partner for a newborn-care referral channel. This public professional record does not establish a warm relationship, willingness, permission, or patient demand.',
-        url: 'https://riverside-pediatrics.example/ava-rivera',
-        provider: 'people_data_labs_person_search',
-        provenance: 'people_data_labs_professional_record',
-        roles: ['acquisition', 'channel_fit', 'prospective_partner'],
-        verified: true,
-        observedAt: '2026-08-01T12:01:01Z'
-      }],
-      candidates: [{
-        motionId: selectedMotion.id,
-        id: targetCandidateId,
-        kind: 'person',
-        displayLabel: 'Dr. Ava Rivera',
-        organization: 'Riverside Pediatrics',
-        role: 'Pediatrician',
-        commercialRole: 'referral_partner',
-        market: 'Queens, New York',
-        publicUrl: 'https://riverside-pediatrics.example/ava-rivera',
-        provider: 'people_data_labs_person_search',
-        evidenceRefs: [targetEvidenceRef],
-        contactPaths: [{
-          kind: 'public_professional_url',
-          available: true,
+      evidence: [
+        {
+          motionId: selectedMotion.id,
+          evidenceRef: organizationEvidenceRef,
+          kind: 'verified_external_professional_target',
+          label: 'Riverside Pediatrics newborn care',
+          summary: 'OpenRouter Exa Web Search returned Riverside Pediatrics as an exact public pediatric practice in Queens. This independently validates the organization only and does not prove a relationship or permission.',
+          url: 'https://riverside-pediatrics.example/newborn-care',
+          provider: 'openrouter_exa_web_search',
+          provenance: 'openrouter_exa_url_citation',
+          roles: ['acquisition', 'channel_fit', 'prospective_partner'],
           verified: true,
-          reference: 'https://riverside-pediatrics.example/ava-rivera'
-        }],
-        exactNamedCandidate: true,
-        identityResolved: true
-      }],
+          observedAt: '2026-08-01T12:00:00Z'
+        },
+        {
+          motionId: selectedMotion.id,
+          evidenceRef: personEvidenceRef,
+          kind: 'verified_external_professional_target',
+          label: 'Dr. Ava Rivera — Pediatrician at Riverside Pediatrics',
+          summary: 'People Data Labs returned Dr. Ava Rivera as an exact public professional identity after a resume-only search scoped to the independently validated Riverside Pediatrics organization. This does not prove a relationship, interest, or permission.',
+          url: 'https://www.linkedin.com/in/ava-rivera',
+          provider: 'people_data_labs_person_search',
+          provenance: 'people_data_labs_resume_record_scoped_to_validated_organization',
+          roles: ['acquisition', 'channel_fit', 'prospective_partner'],
+          verified: true,
+          observedAt: '2026-08-01T12:01:01Z'
+        }
+      ],
+      candidates: [
+        {
+          motionId: selectedMotion.id,
+          id: organizationCandidateId,
+          kind: 'organization',
+          displayLabel: 'Riverside Pediatrics newborn care',
+          organization: 'Riverside Pediatrics',
+          role: 'Pediatric practice',
+          commercialRole: 'referral_partner',
+          market: 'Queens, New York',
+          publicUrl: 'https://riverside-pediatrics.example/newborn-care',
+          provider: 'openrouter_exa_web_search',
+          evidenceRefs: [organizationEvidenceRef],
+          contactPaths: [],
+          exactNamedCandidate: true,
+          identityResolved: true
+        },
+        {
+          motionId: selectedMotion.id,
+          id: targetCandidateId,
+          kind: 'person',
+          displayLabel: 'Dr. Ava Rivera',
+          organization: 'Riverside Pediatrics',
+          role: 'Pediatrician',
+          commercialRole: 'referral_partner',
+          market: 'Queens, New York',
+          publicUrl: 'https://www.linkedin.com/in/ava-rivera',
+          provider: 'people_data_labs_person_search',
+          evidenceRefs: [organizationEvidenceRef, personEvidenceRef],
+          contactPaths: [{
+            kind: 'public_professional_url',
+            available: true,
+            verified: true,
+            reference: 'https://www.linkedin.com/in/ava-rivera'
+          }],
+          exactNamedCandidate: true,
+          identityResolved: true
+        }
+      ],
       discoveredAt: '2026-08-01T12:01:01Z'
     }
   };
@@ -1025,8 +1107,11 @@ async function verifyTwoStageTargetBinding() {
       result.trace?.contingentFinalists
         ?.exactTargetPresentInEveryPrimaryAction !== true ||
       result.commercialEvidenceGraph?.nodes?.find((node) =>
-        node.evidenceRef === targetEvidenceRef
+        node.evidenceRef === personEvidenceRef
       )?.commercialDiscoveryMotionId !== selectedMotion.id ||
+      result.commercialEvidenceGraph?.nodes?.find((node) =>
+        node.evidenceRef === organizationEvidenceRef
+      )?.provider !== 'openrouter_exa_web_search' ||
       !result.winner?.action?.includes('Dr. Ava Rivera') ||
       result.winner?.action?.includes('{{TARGET_NAME}}') ||
       result.winner?.candidateId !== targetCandidateId ||
@@ -1056,18 +1141,25 @@ async function verifyTwoStageTargetBinding() {
   }
 
   const multiMotionPayload = structuredClone(downstreamPayload);
+  const firstMotion = structuredClone(discoveryPlan.plans[0]);
   multiMotionPayload.commercialDiscoveryEvidence.plan =
-    structuredClone(discoveryPlan);
-  const secondMotion = discoveryPlan.plans[1];
-  const secondEvidenceRef =
-    'external_discovery:333333333333333333333333';
-  const secondCandidateId =
-    'candidate:external:444444444444444444444444';
-  multiMotionPayload.commercialDiscoveryEvidence.attempts[0].resultCount = 2;
-  multiMotionPayload.commercialDiscoveryEvidence.resultCount = 2;
+    {
+      ...structuredClone(discoveryPlan),
+      plans: [firstMotion, structuredClone(selectedMotion)]
+    };
+  const firstEvidenceRef =
+    'external_discovery:555555555555555555555555';
+  const firstCandidateId =
+    'candidate:external:666666666666666666666666';
+  multiMotionPayload.commercialDiscoveryEvidence.attempts[1].resultCount = 2;
+  multiMotionPayload.commercialDiscoveryEvidence.resultCount = 3;
+  multiMotionPayload.commercialDiscoveryEvidence.queryHash =
+    commercialDiscoveryAttemptLedgerHash(
+      multiMotionPayload.commercialDiscoveryEvidence.attempts
+    );
   multiMotionPayload.commercialDiscoveryEvidence.evidence.push({
-    motionId: secondMotion.id,
-    evidenceRef: secondEvidenceRef,
+    motionId: firstMotion.id,
+    evidenceRef: firstEvidenceRef,
     kind: 'verified_external_professional_target',
     label: 'Dr. Noor Patel at Summit Pediatrics',
     summary: 'Dr. Noor Patel is a current pediatrician at Summit Pediatrics in Queens and a prospective professional partner for a newborn-care referral channel. This public professional record does not establish a warm relationship, willingness, permission, or patient demand.',
@@ -1079,8 +1171,8 @@ async function verifyTwoStageTargetBinding() {
     observedAt: '2026-08-01T12:01:01Z'
   });
   multiMotionPayload.commercialDiscoveryEvidence.candidates.push({
-    motionId: secondMotion.id,
-    id: secondCandidateId,
+    motionId: firstMotion.id,
+    id: firstCandidateId,
     kind: 'person',
     displayLabel: 'Dr. Noor Patel',
     organization: 'Summit Pediatrics',
@@ -1089,7 +1181,7 @@ async function verifyTwoStageTargetBinding() {
     market: 'Queens, New York',
     publicUrl: 'https://summit-pediatrics.example/noor-patel',
     provider: 'people_data_labs_person_search',
-    evidenceRefs: [secondEvidenceRef],
+    evidenceRefs: [firstEvidenceRef],
     contactPaths: [{
       kind: 'public_professional_url',
       available: true,
@@ -1121,7 +1213,7 @@ async function verifyTwoStageTargetBinding() {
             item.primaryAction?.includes('Dr. Ava Rivera')
           ) ||
           !finalists.some((item) =>
-            item.primaryAction?.includes('Summit Pediatrics')
+            item.primaryAction?.includes('Dr. Noor Patel')
           )) {
         throw new Error(
           `critic did not receive both bounded motions: ${JSON.stringify(finalists)}`
@@ -1136,8 +1228,8 @@ async function verifyTwoStageTargetBinding() {
           const rightAction = finalists.find((item) =>
             item.finalistId === right
           )?.primaryAction || '';
-          return Number(rightAction.includes('Summit Pediatrics')) -
-            Number(leftAction.includes('Summit Pediatrics'));
+          return Number(rightAction.includes('Dr. Ava Rivera')) -
+            Number(leftAction.includes('Dr. Ava Rivera'));
         });
       return {
         data: {
@@ -1151,16 +1243,16 @@ async function verifyTwoStageTargetBinding() {
             causalAcquisitionPath: true,
             incrementalRevenueOutcome: true,
             incrementalRevenue: item.primaryAction?.includes(
-              'Summit Pediatrics'
+              'Dr. Ava Rivera'
             ) ? 'strong' : 'moderate',
             evidenceStrength: 'strong',
             reachability: 'strong',
             timeToFirstDollar: 'fast',
             paidOutcomeProbability: item.primaryAction?.includes(
-              'Summit Pediatrics'
+              'Dr. Ava Rivera'
             ) ? 0.9 : 0.6,
             timeToFirstDollarDays: item.primaryAction?.includes(
-              'Summit Pediatrics'
+              'Dr. Ava Rivera'
             ) ? 5 : 10,
             recurringValue: 'recurring',
             cost: 'low',
@@ -1193,9 +1285,9 @@ async function verifyTwoStageTargetBinding() {
         ?.distinctMotionComparison !== true ||
       JSON.stringify(
         multiMotion.trace?.contingentFinalists?.motionIds
-      ) !== JSON.stringify([selectedMotion.id, secondMotion.id]) ||
-      !multiMotion.winner?.action?.includes('Summit Pediatrics') ||
-      multiMotion.winner?.candidateId !== secondCandidateId ||
+      ) !== JSON.stringify([firstMotion.id, selectedMotion.id]) ||
+      !multiMotion.winner?.action?.includes('Dr. Ava Rivera') ||
+      multiMotion.winner?.candidateId !== targetCandidateId ||
       multiMotion.searchSpace?.commercialCritic
         ?.criticInputFinalistCount > 6 ||
       multiMotion.usage?.calls !== 1) {
@@ -1205,7 +1297,7 @@ async function verifyTwoStageTargetBinding() {
   }
 
   const bindingFailurePayload = structuredClone(downstreamPayload);
-  bindingFailurePayload.commercialDiscoveryEvidence.candidates[0].kind =
+  bindingFailurePayload.commercialDiscoveryEvidence.candidates[1].kind =
     'organization';
   let bindingFailureCalls = 0;
   const bindingFailure = await runOpportunityTournament({
@@ -1230,10 +1322,8 @@ async function verifyTwoStageTargetBinding() {
   const organizationSlotMismatchPayload = structuredClone(
     downstreamPayload
   );
-  organizationSlotMismatchPayload.commercialDiscoveryEvidence.plan
-    .plans[0].targetSlot.finalTargetKind = 'organization';
   organizationSlotMismatchPayload.commercialDiscoveryEvidence
-    .candidates[0].organization = 'Fabricated Pediatrics';
+    .candidates[1].organization = 'Fabricated Pediatrics';
   let organizationSlotMismatchCalls = 0;
   const organizationSlotMismatch = await runOpportunityTournament({
     job: {
@@ -1255,8 +1345,8 @@ async function verifyTwoStageTargetBinding() {
   );
 
   const crossMotionPayload = structuredClone(downstreamPayload);
-  const otherMotionId = discoveryPlan.plans[1].id;
-  crossMotionPayload.commercialDiscoveryEvidence.candidates[0].motionId =
+  const otherMotionId = discoveryPlan.plans[0].id;
+  crossMotionPayload.commercialDiscoveryEvidence.candidates[1].motionId =
     otherMotionId;
   let crossMotionCalls = 0;
   const crossMotion = await runOpportunityTournament({
@@ -1278,13 +1368,58 @@ async function verifyTwoStageTargetBinding() {
     'cross-motion target rejection'
   );
 
+  const chainIntegrityChecks = [
+    {
+      label: 'decision-maker provenance mismatch',
+      mutate(payload) {
+        payload.commercialDiscoveryEvidence.evidence[1].provenance =
+          'people_data_labs_professional_record';
+      }
+    },
+    {
+      label: 'decision-maker public URL mismatch',
+      mutate(payload) {
+        payload.commercialDiscoveryEvidence.candidates[1].publicUrl =
+          'https://www.linkedin.com/in/not-ava-rivera';
+      }
+    },
+    {
+      label: 'decision-maker commercial-role mismatch',
+      mutate(payload) {
+        payload.commercialDiscoveryEvidence.candidates[1].commercialRole =
+          'buyer';
+      }
+    }
+  ];
+  for (const check of chainIntegrityChecks) {
+    const payload = structuredClone(downstreamPayload);
+    check.mutate(payload);
+    let calls = 0;
+    const rejected = await runOpportunityTournament({
+      job: {
+        id: `job-two-stage-${check.label.replace(/\W+/g, '-')}`,
+        kind: 'opportunity_tournament',
+        payload
+      },
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => {
+        calls += 1;
+        throw new Error(`${check.label} dispatched an LLM call`);
+      }
+    });
+    assertTechnicalRecovery(rejected, calls, check.label);
+  }
+
   const noTargetPayload = structuredClone(downstreamPayload);
-  const noTargetAttempt =
-    noTargetPayload.commercialDiscoveryEvidence.attempts[0];
-  noTargetAttempt.status = 'not_found';
-  noTargetAttempt.resultCount = 0;
+  const noTargetAttempts =
+    noTargetPayload.commercialDiscoveryEvidence.attempts;
+  for (const attempt of noTargetAttempts) {
+    attempt.status = 'not_found';
+    attempt.resultCount = 0;
+  }
   noTargetPayload.commercialDiscoveryEvidence.queryHash =
-    commercialDiscoveryAttemptLedgerHash([noTargetAttempt]);
+    commercialDiscoveryAttemptLedgerHash(noTargetAttempts);
   noTargetPayload.commercialDiscoveryEvidence.status = 'not_found';
   noTargetPayload.commercialDiscoveryEvidence.resultCount = 0;
   noTargetPayload.commercialDiscoveryEvidence.evidence = [];

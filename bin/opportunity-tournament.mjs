@@ -275,6 +275,10 @@ const COMMERCIAL_CRITIC_BURDEN_PRIORITY = new Map([
 ]);
 const COMMERCIAL_DISCOVERY_PROVENANCE =
   'provider_attested_commercial_discovery';
+const PDL_SCOPED_DECISION_MAKER_PROVENANCE =
+  'people_data_labs_resume_record_scoped_to_validated_organization';
+const PDL_DECISION_MAKER_SEARCH_OPERATION =
+  'planned_decision_maker_search';
 const COMMERCIAL_DISCOVERY_STATUSES = new Set([
   'found',
   'not_found',
@@ -286,6 +290,7 @@ const COMMERCIAL_DISCOVERY_PROVIDERS = new Set([
   'google_places',
   'github_search',
   'brave_web_search',
+  OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER,
   'people_data_labs_person_search',
   'people_data_labs_job_posting_search'
 ]);
@@ -298,8 +303,15 @@ const COMMERCIAL_DISCOVERY_PROVIDER_PROVENANCE = new Map([
   ['github_search', new Set(['read_only_professional_provider'])],
   ['brave_web_search', new Set(['read_only_professional_provider'])],
   [
+    OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER,
+    new Set(['openrouter_exa_url_citation'])
+  ],
+  [
     'people_data_labs_person_search',
-    new Set(['people_data_labs_professional_record'])
+    new Set([
+      'people_data_labs_professional_record',
+      PDL_SCOPED_DECISION_MAKER_PROVENANCE
+    ])
   ],
   [
     'people_data_labs_job_posting_search',
@@ -307,6 +319,10 @@ const COMMERCIAL_DISCOVERY_PROVIDER_PROVENANCE = new Map([
   ]
 ]);
 const COMMERCIAL_DISCOVERY_ATTEMPT_OPERATIONS = new Map([
+  [
+    OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER,
+    new Set([OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION])
+  ],
   [
     'brave_web_search',
     new Set([
@@ -321,7 +337,11 @@ const COMMERCIAL_DISCOVERY_ATTEMPT_OPERATIONS = new Map([
   ],
   [
     'people_data_labs_person_search',
-    new Set(['person_search', 'planned_professional_search'])
+    new Set([
+      'person_search',
+      'planned_professional_search',
+      PDL_DECISION_MAKER_SEARCH_OPERATION
+    ])
   ],
   [
     'people_data_labs_job_posting_search',
@@ -506,10 +526,10 @@ Treat commercialEvidenceGraph.verifiedFacts as the typed commercial ground truth
 Infer the economic relationship, not a profession keyword category. A lactation consultant may need a newborn-care referral authority; a programmer may need current compensated demand; a consultant may need a company with a current buying trigger; a product owner may need a marketplace, buyer, or distribution partner. These are examples of reasoning, not fixed mappings.
 Separate the end payer from a referral or distribution counterparty. Prefer live paid demand over a generic identity when supported. A public website or booking page is a destination, not acquisition demand.
 Every plan is a contingent commercial motion, not evidence that a target exists, is interested, will refer, has budget, or granted contact permission. Web results are not self-authenticating model prose: do not put a discovered target name in the plan. Keep the exact target unresolved through the fixed {{TARGET_NAME}} token; local code will bind it only to a separately validated provider citation or provider record. Use target:evidence wherever that future provider fact must ground a dimension.
-For every plan, author two complete, distinct causal finalist families. Every primary action must contain {{TARGET_NAME}} exactly once and already be a complete review-first action sentence after that one token is replaced. Deterministic code may replace declared target and URL tokens and evidence refs only; it will not compose missing recommendation prose. Each family must include two variants in every dimension, one v3 revenue path, a current paid offer, buyer, acquisition mechanism distinct from destination, paid conversion, durable attribution method and signal, numeric stop, expected value, spend estimate, exact supply grounding, and active—not observational or operational—primary actions. The two families must differ in their causal acquisition tactic, not merely wording.
+For every plan, author two complete, distinct causal finalist families. Every primary action must contain {{TARGET_NAME}} exactly once and already be a complete review-first action sentence after that one token is replaced. Deterministic code may replace declared target and URL tokens and evidence refs only; it will not compose missing recommendation prose. Use a direct causal form: ask {{TARGET_NAME}} to refer or recommend one qualified buyer to the paid offer; present the paid offer to {{TARGET_NAME}} and request one referral or introduction; or submit/list one paid application, proposal, or offer at {{TARGET_NAME}}. A workflow, scheduling aid, resource, document, profile, content item, or measurement step may appear only inside that demand-moving sentence and cannot be the requested outcome. Each family must include two variants in every dimension, one v3 revenue path, a current paid offer, buyer, acquisition mechanism distinct from destination, paid conversion, durable attribution method and signal, numeric stop, expected value, spend estimate, exact supply grounding, and active—not observational or operational—primary actions. The two families must differ in their causal acquisition tactic, not merely wording.
 Keep the complete JSON response below 18 KiB. Use compact labels and one concise sentence per action/path field; do not repeat rationale or evidence prose inside dimension labels.
 Do not use target:evidence to claim a seller capability, existing relationship, warmness, permission, private contact detail, or paid demand that the typed target slot cannot establish. Keep current user offer/destination/attribution facts grounded in exact approved evidence IDs. A professional-identity slot can establish only the exact professional target and its prospective channel fit; only a live-paid-demand slot may contingently ground an outside paid offer, application destination, and compensated conversion.
-Prefer two distinct bounded plans. If only one grounded outer search motion is defensible, return it only when both complete, causally distinct finalist families are present; those two model-authored tactics still provide the required comparison. Use active_job_posting only for a compensated employment or contract path; professional_counterparty for a buyer, referral authority, sponsor, or partner; local_organization for a location-bound professional organization; and public_live_demand for a current public RFP, contract, marketplace request, sponsorship request, or other paid demand page. If the final actionable target requires resolving a decision-maker after an organization, declare organization_then_decision_maker instead of pretending the organization is the person.
+Prefer two distinct bounded plans. If only one grounded outer search motion is defensible, return it only when both complete, causally distinct finalist families are present; those two model-authored tactics still provide the required comparison. Use active_job_posting only for a compensated employment or contract path; professional_counterparty for a buyer, referral authority, sponsor, or partner; local_organization for a location-bound professional organization; and public_live_demand for a current public RFP, contract, marketplace request, sponsorship request, or other paid demand page. If a local_organization search requires resolving a decision-maker after the organization, declare organization_then_decision_maker instead of pretending the organization is the person. Do not use organization_then_decision_maker with any other search mode.
 Do not search for patients, consumers selected by health/family status, private contact data, or sensitive traits. Copy evidence IDs and fixed tokens exactly. Return only strict JSON.`;
   const user = JSON.stringify({
     objective,
@@ -923,7 +943,7 @@ function compactOpportunityDiscoveryHardRules() {
   return [
     'Prefer 2 planned motions with different searchMode/commercialRole/acquisitionMode tuples; 1 planned motion is valid only with both complete causal families; insufficient_verified_supply requires 0 plans plus a reason.',
     'Use only evidenceCatalog IDs. Each plan/family has an observation:* seller anchor. System attribution evidence supports attribution only. Obey outputContract targetRoleMap exactly.',
-    `Every d.a action is distinct, contains ${CONTINGENT_TARGET_NAME_TOKEN} exactly once, and actively requests a reviewed referral/application/proposal/offer leading to paid commitment—not research, tracking, verification, profile, or operations work.`,
+    `Every d.a action is distinct, contains ${CONTINGENT_TARGET_NAME_TOKEN} exactly once, and directly asks it to refer/recommend one buyer, requests one introduction, presents one paid offer, or submits/lists one paid application/proposal/offer. Workflow, scheduling, resource, document, profile, content, and measurement work cannot be the requested outcome.`,
     'For each r: a=plan acquisitionMode; io says additional/incremental paid income; c is active; o names a paid booking/payment/contract/order/subscription/compensation receipt.',
     'For each r: atm is allowed; ats names its matching durable record plus source/referral/UTM/campaign/channel/code field; cd is a concrete conversion page distinct from acquisition; st has a number, unit, and stop/at-most/whichever-first; vm>0.',
     'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence. A prospective partner never proves buyer, offer, warmness, permission, or demand.',
@@ -1274,6 +1294,10 @@ function contingentTargetSlotIssue(planValue) {
   if (slot.resolutionStrategy === 'organization_then_decision_maker' &&
       slot.finalTargetKind !== 'person') {
     return 'must resolve a person after the intermediate organization.';
+  }
+  if (slot.resolutionStrategy === 'organization_then_decision_maker' &&
+      plan.searchMode !== 'local_organization') {
+    return 'may resolve an organization then decision-maker only for a local-organization search.';
   }
   if (plan.searchMode === 'active_job_posting' ||
       plan.searchMode === 'public_live_demand') {
@@ -4026,6 +4050,20 @@ export function normalizeCommercialDiscoveryEvidence(
           .filter(Boolean)
       : compactStrings([base.motion])
   );
+  const plannedMotionByID = new Map(
+    base.plan.present === true && base.plan.valid === true
+      ? asArray(base.plan.plans).map((motionValue) => {
+          const motion = asObject(motionValue);
+          return [firstText(motion.id), motion];
+        })
+      : []
+  );
+  const hasSucceededDecisionMakerSearch = base.attempts.some((attempt) =>
+    attempt.provider === 'people_data_labs_person_search' &&
+    attempt.operation === PDL_DECISION_MAKER_SEARCH_OPERATION &&
+    attempt.status === 'succeeded' &&
+    attempt.resultCount > 0
+  );
   if (allowedMotionIds.size === 0 ||
       !allowedMotionIds.has(base.motion)) {
     reject('invalid_discovery_motion');
@@ -4040,6 +4078,11 @@ export function normalizeCommercialDiscoveryEvidence(
       attemptedProviders,
       allowedMotionIds
     );
+    if (fact?.provenance === PDL_SCOPED_DECISION_MAKER_PROVENANCE &&
+        !hasSucceededDecisionMakerSearch) {
+      reject('decision_maker_evidence_without_succeeded_attempt');
+      continue;
+    }
     if (!fact || evidenceByID.has(fact.evidenceRef)) {
       reject(fact ? 'duplicate_evidence_ref' : 'invalid_evidence');
       continue;
@@ -4069,7 +4112,8 @@ export function normalizeCommercialDiscoveryEvidence(
       candidateValue,
       evidenceByID,
       attemptedProviders,
-      allowedMotionIds
+      allowedMotionIds,
+      plannedMotionByID
     );
     if (!candidate || candidateIDs.has(candidate.id)) {
       reject(candidate ? 'duplicate_candidate_id' : 'invalid_candidate');
@@ -4080,6 +4124,19 @@ export function normalizeCommercialDiscoveryEvidence(
   }
   if (asArray(raw.candidates).length > MAX_COMMERCIAL_DISCOVERY_CANDIDATES) {
     reject('candidate_limit_exceeded');
+  }
+  const unboundDecisionMakerFact = base.evidence.find((fact) =>
+    fact.provenance === PDL_SCOPED_DECISION_MAKER_PROVENANCE &&
+    !base.candidates.some((candidate) =>
+      candidate.provider === 'people_data_labs_person_search' &&
+      candidate.kind === 'person' &&
+      candidate.evidenceRefs.length === 2 &&
+      candidate.evidenceRefs.includes(fact.evidenceRef)
+    )
+  );
+  if (unboundDecisionMakerFact) {
+    reject('unbound_decision_maker_evidence');
+    return base;
   }
   if (base.evidence.length === 0 || base.candidates.length === 0) {
     reject('empty_verified_discovery');
@@ -4266,7 +4323,8 @@ function normalizeCommercialDiscoveryCandidate(
   value,
   evidenceByID,
   attemptedProviders,
-  allowedMotionIds
+  allowedMotionIds,
+  plannedMotionByID = new Map()
 ) {
   const raw = asObject(value);
   const motionId = truncate(firstText(raw.motionId), 80);
@@ -4304,14 +4362,30 @@ function normalizeCommercialDiscoveryCandidate(
   const evidenceValues = evidenceRefs.map((ref) =>
     asObject(evidenceByID.get(ref))
   );
-  if (evidenceValues.some((fact) =>
-    fact.motionId !== motionId ||
-    fact.provider !== provider ||
-    !exactTextContains(
+  const standardProviderBinding = evidenceValues.every((fact) =>
+    fact.motionId === motionId &&
+    fact.provider === provider &&
+    fact.provenance !== PDL_SCOPED_DECISION_MAKER_PROVENANCE &&
+    exactTextContains(
       `${firstText(fact.label)} ${firstText(fact.summary)}`,
       displayLabel
     )
-  )) {
+  );
+  const decisionMakerChainBinding =
+    commercialDiscoveryDecisionMakerCandidateFactsBound({
+      motion: asObject(plannedMotionByID.get(motionId)),
+      evidenceValues,
+      candidate: {
+        motionId,
+        kind,
+        displayLabel,
+        organization,
+        publicUrl,
+        provider,
+        commercialRole
+      }
+    });
+  if (!standardProviderBinding && !decisionMakerChainBinding) {
     return null;
   }
   if (publicUrl && !evidenceValues.some((fact) =>
@@ -4365,6 +4439,91 @@ function normalizeCommercialDiscoveryCandidate(
     exactNamedCandidate: true,
     identityResolved: true
   });
+}
+
+function commercialDiscoveryDecisionMakerCandidateFactsBound({
+  motion: motionValue,
+  evidenceValues: evidenceValuesInput,
+  candidate: candidateValue
+}) {
+  const motion = asObject(motionValue);
+  const candidate = asObject(candidateValue);
+  const slot = asObject(motion.targetSlot);
+  const evidenceValues = asArray(evidenceValuesInput).map(asObject);
+  const organization = firstText(candidate.organization);
+  const displayLabel = firstText(candidate.displayLabel);
+  const publicUrl = safePublicHTTPSURL(candidate.publicUrl);
+  if (!firstText(motion.id) ||
+      firstText(candidate.motionId) !== firstText(motion.id) ||
+      firstText(motion.searchMode) !== 'local_organization' ||
+      firstText(candidate.provider) !==
+        'people_data_labs_person_search' ||
+      contractEnum(firstText(candidate.kind)) !== 'person' ||
+      firstText(candidate.commercialRole) !==
+        firstText(motion.commercialRole) ||
+      firstText(slot.commercialRole) !== firstText(motion.commercialRole) ||
+      firstText(slot.finalTargetKind) !== 'person' ||
+      firstText(slot.resolutionStrategy) !==
+        'organization_then_decision_maker' ||
+      !organization || !displayLabel || organization === displayLabel ||
+      !publicUrl || evidenceValues.length !== 2) {
+    return false;
+  }
+
+  let personFact;
+  let organizationFact;
+  for (const factValue of evidenceValues) {
+    const fact = asObject(factValue);
+    if (firstText(fact.motionId) !== firstText(motion.id) ||
+        firstText(fact.kind) !==
+          'verified_external_professional_target') {
+      return false;
+    }
+    if (firstText(fact.provider) ===
+        'people_data_labs_person_search') {
+      if (personFact ||
+          firstText(fact.provenance) !==
+            PDL_SCOPED_DECISION_MAKER_PROVENANCE ||
+          comparableURL(fact.url) !== comparableURL(publicUrl) ||
+          !exactTextContains(
+            `${firstText(fact.label)} ${firstText(fact.summary)}`,
+            displayLabel
+          ) ||
+          !exactTextContains(
+            `${firstText(fact.label)} ${firstText(fact.summary)}`,
+            organization
+          )) {
+        return false;
+      }
+      personFact = fact;
+      continue;
+    }
+    const organizationProvider = firstText(fact.provider);
+    const expectedProvenance = organizationProvider ===
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER
+      ? 'openrouter_exa_url_citation'
+      : organizationProvider === 'brave_web_search'
+        ? 'read_only_professional_provider'
+        : '';
+    if (organizationFact || !expectedProvenance ||
+        firstText(fact.provenance) !== expectedProvenance ||
+        !safePublicHTTPSURL(fact.url) ||
+        comparableURL(fact.url) === comparableURL(publicUrl) ||
+        !exactTextContains(
+          `${firstText(fact.label)} ${firstText(fact.summary)}`,
+          organization
+        )) {
+      return false;
+    }
+    organizationFact = fact;
+  }
+  if (!personFact || !organizationFact) return false;
+  const roles = new Set(evidenceValues.flatMap((fact) =>
+    compactStrings(fact.roles).map(contractEnum)
+  ));
+  return requiredCommercialDiscoveryRolesForSlot(motion).every((role) =>
+    roles.has(role)
+  );
 }
 
 function commercialDiscoveryContainsPrivateContact(value) {
@@ -5640,6 +5799,19 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
         : systemAttributionCapability
           ? ['attribution']
           : commercialEvidenceRoles(text);
+      // This role is assigned only after deterministic owner-origin,
+      // freshness, affirmative paid/reimbursable offer, and conversion-ready
+      // asset checks. Keep the graph consistent with that stronger fact
+      // instead of asking the planner to rediscover destination/conversion
+      // semantics from a compacted evidence excerpt.
+      if (firstText(evidence.revenueAssetRole) ===
+          'current_owner_paid_conversion_asset') {
+        roles.push(
+          'paid_offer',
+          'conversion_destination',
+          'paid_conversion'
+        );
+      }
       if (firstText(evidence.revenueAssetRole) === 'informational_only') {
         for (const role of [
           'paid_offer',
@@ -13084,14 +13256,17 @@ function operationOnlyAction(value) {
     );
   if (!namesOperations) return false;
   const namesPaidCommitment =
-    /\b(paid (?:booking|order|pilot|consultation|engagement)|payment|purchase|sale|contract|agreement|deposit|invoice|order|checkout|subscription|retainer|reimburs(?:able|ed|ement)|licen[cs]e|royalt(?:y|ies)|commission|referral fee|sponsorship|platform payout|compensated role|salary|wage)\b/i.test(
+    /\b(?:paid|billable|reimburs(?:able|ed|ement))\s+(?:(?:[\p{L}\p{N}-]+)\s+){0,4}(?:bookings?|orders?|pilots?|consultations?|engagements?|sessions?|services?|visits?)\b/iu.test(
+      text
+    ) ||
+    /\b(payment|purchase|sale|contract|agreement|deposit|invoice|order|checkout|subscription|retainer|reimburs(?:able|ed|ement)|licen[cs]e|royalt(?:y|ies)|commission|referral fee|sponsorship|platform payout|compensated role|salary|wage)\b/i.test(
       text
     );
   const namesBoundedAcquisitionStep =
-    /\b(inbound|warm (?:introduction|referral)|permissioned|partner (?:introduction|referral|channel)|existing (?:customer|client|patient)|referral)\b/i.test(
+    /\b(inbound|warm (?:introduction|referral)|permissioned|partner (?:introduction|referral|channel)|existing (?:customer|client|patient)|introduc(?:e|tion)|refer(?:s|red|ring|ral)?|recommend(?:s|ed|ing|ation)?)\b/i.test(
       text
     ) &&
-    /\b(offer|proposal|quote|request|invite|introduction|referral|book(?:ing|ed)?|checkout|order|purchase|contract|agreement|pilot)\b/i.test(
+    /\b(ask|offer|proposal|quote|request|invite|introduc(?:e|tion)|refer(?:s|red|ring|ral)?|recommend(?:s|ed|ing|ation)?|book(?:ing|ed)?|checkout|order|purchase|contract|agreement|pilot)\b/i.test(
       text
     );
   return !namesPaidCommitment && !namesBoundedAcquisitionStep;
