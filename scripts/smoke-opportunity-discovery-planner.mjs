@@ -754,6 +754,30 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
           'Once approved, verify the paid offer for {{TARGET_NAME}} before proceeding.';
       },
       reason: /commercial rather than operational/i
+    },
+    {
+      name: 'subscription metrics artifact drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'Review first: email {{TARGET_NAME}} the paid-subscription metrics report.';
+      },
+      reason: /causally advance acquisition/i
+    },
+    {
+      name: 'contract analytics artifact drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'Subject to approval, send {{TARGET_NAME}} the contract analytics dashboard.';
+      },
+      reason: /causally advance acquisition/i
+    },
+    {
+      name: 'paid offer availability question drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'Once human approved, ask whether the paid offer is available from {{TARGET_NAME}}.';
+      },
+      reason: /causally advance acquisition/i
     }
   ];
   for (const check of checks) {

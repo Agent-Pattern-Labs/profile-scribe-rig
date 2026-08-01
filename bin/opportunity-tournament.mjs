@@ -1351,19 +1351,20 @@ function contingentFinalistBundleIssue(planValue) {
         return `has an incomplete ${dimension} finalist dimension.`;
       }
     }
-    for (const actionValue of asArray(dimensions.a)) {
+    for (const [actionIndex, actionValue] of
+      asArray(dimensions.a).entries()) {
       const action = firstText(asObject(actionValue).l);
       if (countExactToken(action, CONTINGENT_TARGET_NAME_TOKEN) !== 1) {
-        return 'must author every primary action with exactly one target token.';
+        return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_target_token]: must contain exactly one target token.`;
       }
       if (passiveOrObservationalPrimaryAction(action)) {
-        return 'must make every primary action active rather than observational.';
+        return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_passive]: must be active rather than observational.`;
       }
       if (operationOnlyAction(action)) {
-        return 'must make every primary action commercial rather than operational.';
+        return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_operational]: must be commercial rather than operational.`;
       }
       if (!revenueAdvancingAction(action)) {
-        return 'must make every primary action causally advance acquisition or paid conversion.';
+        return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_non_revenue]: must causally advance acquisition or paid conversion.`;
       }
       actionSignatures.add(comparable(action));
     }
@@ -13007,8 +13008,9 @@ function incrementalIncomeText(value) {
 
 function revenueAdvancingAction(value) {
   const text = firstText(value);
+  if (nonRevenueArtifactOrQuestionAction(text)) return false;
   const advancesAcquisition =
-    /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|refer(?:ral|red)?|recommend(?:ation|ed)?|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot|licen[cs](?:e|ing)|royalt(?:y|ies)|commission|sponsor(?:ship)?|payout|compensated|salary|wage|hire|role)\b/i.test(
+    /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|refer(?:s|red|ring|ral)?|recommend(?:s|ed|ing|ation)?|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot|licen[cs](?:e|ing)|royalt(?:y|ies)|commission|sponsor(?:ship)?|payout|compensated|salary|wage|hire|role)\b/i.test(
       text
     );
   const namesPaidCommitment =
@@ -13076,8 +13078,24 @@ function operationOnlyAction(value) {
 
 function primaryActionSemanticText(value) {
   return comparable(firstText(value)).replace(
-    /\b(?:(?:after|following|pending) (?:explicit |human |user )?(?:approval|review)|subject to (?:explicit |human |user )?approval|once (?:explicitly |human-)?approved)\b[,:;-]?/g,
+    /\b(?:(?:after|following|pending) (?:explicit |human |user )?(?:approval|review)|review first|subject to (?:explicit |human |user )?(?:approval|review)|once (?:explicitly |human )?approved)\b[,:;-]?/g,
     ' '
+  );
+}
+
+function nonRevenueArtifactOrQuestionAction(value) {
+  const text = comparable(firstText(value));
+  const namesArtifact =
+    /\b(?:analysis|analytics|article|dashboard|findings|metrics|report)\b/.test(
+      text
+    );
+  const asksOnlyForEvidence =
+    /\b(?:ask whether|confirm|determine|find out)\b|\bavailability\b/.test(
+      text
+    );
+  if (!namesArtifact && !asksOnlyForEvidence) return false;
+  return !/\b(?:apply|book|buy|close|distribute|enroll|hire|introduce|invite|list|present|propose|purchase|recommend|refer|request|route|sell|sign|submit|subscribe)\b/.test(
+    text
   );
 }
 
