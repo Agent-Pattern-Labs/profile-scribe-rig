@@ -770,9 +770,7 @@ async function runOpportunityTournamentJob(job, options) {
     : [
       'read_profile',
       'read_sources',
-      'read_source_evidence',
-      'search_timeline_posts',
-      'discover_timeline_posts'
+      'read_source_evidence'
     ];
   return {
     status: tournament.status,
@@ -1120,36 +1118,12 @@ async function loadOpportunityTournamentContext(payload) {
   const sourceEvidence = await readSourceEvidence(
     numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_EVIDENCE_LIMIT, 160)
   );
-  let timelineSearch = null;
-  const query = text(
-    payload.topic ||
-    profile?.identity?.headline ||
-    profile?.identity?.fullName
-  );
-  if (query) {
-    try {
-      timelineSearch = await callMCPTool(
-        'search_timeline_posts',
-        { query, limit: 8 }
-      );
-    } catch {
-      timelineSearch = null;
-    }
-  }
-  const timelineBrief = await buildTimelineBrief({
-    payload,
-    profile,
-    sources: sourceList,
-    primarySearch: timelineSearch
-  });
   return {
     profile,
     sources: sourceList,
     sourceEvidence,
-    timelineSearch,
-    timelineBrief,
     // Opportunity tournaments consume only persisted safe crawl evidence.
-    // They never fetch a source URL directly, regardless of source status.
+    // They neither fetch source URLs nor consume the global timeline feed.
     sourceExtracts: []
   };
 }

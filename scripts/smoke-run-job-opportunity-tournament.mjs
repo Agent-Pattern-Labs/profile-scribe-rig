@@ -11,6 +11,7 @@ const temporaryDirectory = mkdtempSync(
   join(tmpdir(), 'profilescribe-rig-opportunity-tournament-')
 );
 const providerCalls = [];
+const mcpCalls = [];
 const generatorCallsByObjective = new Map();
 const unexpectedRequests = [];
 const usage = {
@@ -23,6 +24,70 @@ const usage = {
 const server = createServer(async (request, response) => {
   let raw = '';
   for await (const chunk of request) raw += chunk;
+
+  if (request.url === '/mcp') {
+    const envelope = JSON.parse(raw || '{}');
+    const name = envelope?.params?.name || '';
+    mcpCalls.push({
+      name,
+      arguments: envelope?.params?.arguments || {}
+    });
+    const results = {
+      read_profile: {
+        identity: {
+          fullName: 'Casey Founder',
+          website: 'https://example.com/'
+        }
+      },
+      read_sources: [{
+        id: 'src-run-job-revenue',
+        kind: 'website',
+        label: 'Paid diagnostic page',
+        url: 'https://example.com/diagnostic',
+        status: 'approved',
+        trustLevel: 'high'
+      }],
+      read_source_evidence: [{
+        observationId: 'obs-run-job-revenue',
+        sourceId: 'src-run-job-revenue',
+        kind: 'service-page',
+        title: 'Paid client-delivery diagnostic booking page',
+        summary:
+          'Professional-service clients seeking delivery consulting arrive through organic search at the paid client-delivery diagnostic booking page, where they can book and pay $500 for a paid client-delivery diagnostic. One paid booking is recorded, and the booking record source field stores the organic-search UTM campaign.',
+        url: 'https://example.com/diagnostic',
+        observedAt: '2026-07-29T12:00:00Z',
+        confidence: 'high'
+      }],
+      search_timeline_posts: {
+        results: [{
+          authorSlug: 'unrelated-user',
+          topic: 'Foreign timeline evidence must not enter the tournament'
+        }]
+      },
+      discover_timeline_posts: {
+        posts: [{
+          authorSlug: 'unrelated-user',
+          topic: 'Foreign timeline evidence must not enter the tournament'
+        }]
+      }
+    };
+    if (!(name in results)) {
+      response.writeHead(400, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({
+        error: { message: `unexpected MCP tool ${name}` }
+      }));
+      return;
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      jsonrpc: '2.0',
+      id: envelope.id || 1,
+      result: {
+        content: [{ type: 'text', text: JSON.stringify(results[name]) }]
+      }
+    }));
+    return;
+  }
 
   if (request.url !== '/openrouter') {
     unexpectedRequests.push({ method: request.method, url: request.url });
@@ -114,6 +179,21 @@ try {
     'dry run made a provider call'
   );
   verifyDryRun(dryRun);
+
+  const scopedContextJob = tournamentJob(
+    'scoped-context',
+    'objective-run-job-scoped-context'
+  );
+  delete scopedContextJob.payload.evidenceSnapshot;
+  const scopedContextFile = writeJob('scoped-context', scopedContextJob);
+  const scopedContextCallOffset = mcpCalls.length;
+  const scopedContext = await runJob(scopedContextFile, port, {
+    mcpURL: `http://127.0.0.1:${port}/mcp`
+  });
+  verifyTournamentContextIsolation(
+    scopedContext,
+    mcpCalls.slice(scopedContextCallOffset)
+  );
 
   const missingKeyJob = tournamentJob(
     'missing-key',
@@ -618,6 +698,33 @@ function verifyDryRun(receipt) {
   verifyNoExecution(metadata);
 }
 
+function verifyTournamentContextIsolation(receipt, calls) {
+  assert(
+    receipt.status === 'completed' || receipt.status === 'skipped',
+    `tournament context run returned an invalid receipt: ${JSON.stringify(receipt)}`
+  );
+  const toolNames = calls.map((call) => call.name);
+  assertEqual(
+    JSON.stringify(toolNames),
+    JSON.stringify([
+      'read_profile',
+      'read_sources',
+      'read_source_evidence'
+    ]),
+    'tournament context invoked tools outside scoped profile/source evidence'
+  );
+  assert(
+    !toolNames.includes('search_timeline_posts') &&
+      !toolNames.includes('discover_timeline_posts'),
+    'tournament context consumed the global timeline'
+  );
+  assertEqual(
+    JSON.stringify(receipt.metadata?.trace?.tools || []),
+    JSON.stringify(toolNames),
+    'tournament trace did not match the scoped research tools'
+  );
+}
+
 function verifyMissingKeyPreflight(receipt) {
   const metadata = receipt.metadata || {};
   const preflight = metadata.searchSpace?.providerPreflight || {};
@@ -822,7 +929,11 @@ function runJob(jobFile, port, options = {}) {
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
           'openai/gpt-4.1-mini',
-        PROFILESCRIBE_APP_URL: 'https://profilescribe.test'
+        PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
+        PROFILESCRIBE_AGENT_TOKEN: 'test-token',
+        ...(options.mcpURL
+          ? { PROFILESCRIBE_MCP_URL: options.mcpURL }
+          : {})
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });
