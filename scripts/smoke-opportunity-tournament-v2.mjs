@@ -209,6 +209,7 @@ await verifySummaryCompactionPreservesRevenueTokens();
 await verifyProviderProjectionOrderAndProfessionNeutrality();
 await verifyFullCatalogUnicodeCapStable();
 await verifyRepeatedLengthFinishFailsClosed();
+await verifyBettyLongHomepageCompactionRegression();
 await verifyBettyProductionTraceRegression();
 await verifyBettyDistinctArticlePressureRegression();
 await verifyStructuredRepairAcrossDomains();
@@ -2862,6 +2863,173 @@ async function runDomainWithResponse(
     now,
     completeJSON: async () => ({ data: response, usage, diagnostics })
   });
+}
+
+async function verifyBettyLongHomepageCompactionRegression() {
+  const sourceID = 'src-betty-long-homepage';
+  const homeRef = 'observation:obs-a76ca342-5ca5-44c7-8844-8facc9f69d04';
+  const website = 'https://breastfeedingwithlove.com/';
+  const observedURL = 'https://www.breastfeedingwithlove.com';
+  const publicURL = 'https://www.breastfeedingwithlove.com/';
+  const sourceSummary =
+    'The page is categorized as WebSite and LocalBusiness. Headings mention Book a Same-Day Home Visit Today., United Healthcare Accepted, Helping Mothers Breastfeed with Confidence. Lactation Consultant NYC 0 Skip to Content Virtual Lactation Consultation Lactation Consultant Home Visit FAQs Blog Contact: 212-555-0147 Open Menu Close Menu Virtual Lactation Consultation Lactation Consultant Home Visit FAQs Blog Contact: 212-555-0147 Open Menu Close Menu Virtual Lactation Consultation Lactation Consultant Home Visit FAQs Blog Contact: 212-555-0147 Book a Same-Day Home Visit Today. Betty Greenman is...';
+  for (const [index, ambiguousText] of [
+    'Read our license.',
+    'Contact us about a contract.'
+  ].entries()) {
+    const ambiguousCatalog = buildEvidenceCatalog({
+      evidenceSnapshot: {
+        profile: { identity: { website } },
+        sources: [{
+          id: sourceID,
+          kind: 'website',
+          label: 'Owner website',
+          url: website,
+          status: 'monitoring'
+        }],
+        sourceEvidence: [{
+          observationId: `obs-ambiguous-${index}`,
+          sourceId: sourceID,
+          kind: 'website',
+          title: 'Owner website',
+          summary: `${'Professional overview and background. '.repeat(30)}${ambiguousText}${' Professional overview and background.'.repeat(30)}`,
+          url: observedURL,
+          observedAt: '2026-07-02T22:44:22.646277Z'
+        }]
+      }
+    }, {}, now);
+    if (ambiguousCatalog.some((item) =>
+      item.revenueAssetRole === 'current_owner_paid_conversion_asset')) {
+      throw new Error(
+        `An ambiguous repeated revenue token became a paid-conversion asset: ${JSON.stringify({ ambiguousText, ambiguousCatalog })}`
+      );
+    }
+  }
+  const evidenceSnapshot = {
+    profile: {
+      identity: {
+        fullName: 'Betty Hannah Greenman',
+        website
+      }
+    },
+    sources: [{
+      id: sourceID,
+      kind: 'website',
+      label: 'Breastfeeding With Love',
+      url: website,
+      status: 'monitoring',
+      trustLevel: 'high'
+    }],
+    sourceEvidence: [{
+      observationId: homeRef.replace(/^observation:/, ''),
+      sourceId: sourceID,
+      kind: 'website',
+      title: 'Lactation Consultant NYC',
+      summary: sourceSummary,
+      url: observedURL,
+      observedAt: '2026-07-02T22:44:22.646277Z',
+      confidence: 'high'
+    }]
+  };
+  const catalog = buildEvidenceCatalog(
+    { evidenceSnapshot },
+    {},
+    now
+  );
+  const catalogHome = catalog.find((item) => item.id === homeRef);
+  if (sourceSummary.length <= 420 ||
+      !catalogHome ||
+      catalogHome.summary.length > 420 ||
+      !catalogHome.summary.includes(
+        'Book a Same-Day Home Visit Today.'
+      ) ||
+      !catalogHome.summary.includes('United Healthcare Accepted') ||
+      catalogHome.revenueAssetRole !==
+        'current_owner_paid_conversion_asset') {
+    throw new Error(
+      `Betty's long owner homepage lost its paid-conversion signals during catalog compaction: ${JSON.stringify({ catalogHome })}`
+    );
+  }
+
+  const domain = {
+    name: 'betty-long-homepage',
+    buyer: 'New York parents seeking same-day lactation support',
+    offer: 'A reimbursable same-day lactation home visit',
+    destination: 'Same-day home-visit booking page',
+    mechanism: 'insurance_reimbursement',
+    outcome: 'One paid or reimbursed consultation recorded',
+    attributionMethod: 'claim_record',
+    attribution:
+      'Claim record source field stores the organic-search campaign',
+    sourceSummary
+  };
+  const response = compactV2Response(domain, homeRef);
+  for (const family of [response.familyA, response.familyB]) {
+    family.d.o[0].l = 'A lactation consultation';
+  }
+  response.evidenceExperiment.x =
+    'Review first: attach exactly 1 current public paid-offer page.';
+  let promptHome = null;
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-betty-long-homepage',
+      payload: {
+        tournamentId: 'tournament-betty-long-homepage',
+        researchOnly: true,
+        objective: {
+          outcome:
+            'Create one new paid or reimbursed lactation consultation in New York.',
+          successMetric:
+            'One paid or reimbursed consultation attributed by its claim record.'
+        },
+        budget: {
+          maxHypotheses: 256,
+          maxFinalists: 8,
+          maxLLMCalls: 1,
+          maxOutputTokens: 8000
+        },
+        evidenceSnapshot
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      promptHome = (JSON.parse(request.user).evidenceCatalog || [])
+        .find((item) => item.id === homeRef) || null;
+      return {
+        data: response,
+        usage,
+        diagnostics: { finishReason: 'stop' }
+      };
+    }
+  });
+  const experiment = result.nextExperiment || {};
+  if (result.status !== 'skipped' ||
+      !promptHome ||
+      promptHome.summary.length > 320 ||
+      !promptHome.summary.includes(
+        'Book a Same-Day Home Visit Today.'
+      ) ||
+      !promptHome.summary.includes('United Healthcare Accepted') ||
+      promptHome.revenueAssetRole !==
+        'current_owner_paid_conversion_asset' ||
+      result.searchSpace?.retainedCount !== 0 ||
+      experiment.kind !== 'inbound_revenue_evidence' ||
+      experiment.asset?.publicUrl !== publicURL ||
+      !experiment.evidenceRefs?.includes(homeRef) ||
+      /\b(?:attach|approve|create|document)\b.{0,80}\bpaid[- ]offer page\b/i.test(
+        `${experiment.title} ${experiment.action}`
+      ) ||
+      experiment.missingEvidence?.some((item) =>
+        /current paid offer|paid[- ]offer page/i.test(item)
+      ) ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `Betty's long owner homepage did not prevent a redundant paid-offer-page experiment: ${JSON.stringify({ result, promptHome })}`
+    );
+  }
 }
 
 async function verifyBettyProductionTraceRegression() {

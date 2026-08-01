@@ -1533,21 +1533,49 @@ export function buildEvidenceCatalog(
       raw.topic,
       raw.headline
     );
-    const summary = boundedEvidenceSummary(
-      firstText(
-        raw.summary,
-        raw.description,
-        raw.evidenceSummary,
-        raw.detail,
-        raw.excerpt,
-        raw.body,
-        raw.value
-      ),
-      420,
-      label
+    const rawSummary = firstText(
+      raw.summary,
+      raw.description,
+      raw.evidenceSummary,
+      raw.detail,
+      raw.excerpt,
+      raw.body,
+      raw.value
     );
     const url = safePublicURL(firstText(raw.url, raw.sourceUrl, raw.publicUrl));
     const sourceID = firstText(raw.sourceId, raw.sourceID);
+    const rawEvidence = {
+      type,
+      label,
+      summary: rawSummary,
+      url,
+      observedAt: firstText(
+        raw.observedAt,
+        raw.updatedAt,
+        raw.publishedAt
+      ),
+      endDate: firstText(raw.endDate),
+      current: typeof raw.current === 'boolean'
+        ? raw.current
+        : undefined,
+      status: firstText(raw.status)
+    };
+    const trustedOwnedPaidConversion =
+      asObject(origin).approvedSourceObservation === true &&
+      asObject(origin).profileControlledSource === true &&
+      inboundAssetEvidenceSupportsPaidConversion(
+        rawEvidence,
+        referenceTime
+      );
+    const summary = trustedOwnedPaidConversion
+      ? boundedPaidConversionEvidenceSummary(
+          rawSummary,
+          420,
+          label,
+          rawEvidence,
+          referenceTime
+        )
+      : boundedEvidenceSummary(rawSummary, 420, label);
     const rawID = firstText(
       raw.evidenceRef,
       raw.id,
@@ -2190,15 +2218,28 @@ function compactPromptEvidenceCatalog(
             objective.successMetric
           ]).join(' ')
         ),
-        summary: boundedEvidenceSummary(
-          firstText(item.summary),
-          MAX_PROMPT_EVIDENCE_SUMMARY_CHARS,
-          compactStrings([
-            item.label,
-            objective.outcome,
-            objective.successMetric
-          ]).join(' ')
-        ),
+        summary: firstText(item.revenueAssetRole) ===
+          'current_owner_paid_conversion_asset'
+          ? boundedPaidConversionEvidenceSummary(
+              firstText(item.summary),
+              MAX_PROMPT_EVIDENCE_SUMMARY_CHARS,
+              compactStrings([
+                item.label,
+                objective.outcome,
+                objective.successMetric
+              ]).join(' '),
+              item,
+              referenceTime
+            )
+          : boundedEvidenceSummary(
+              firstText(item.summary),
+              MAX_PROMPT_EVIDENCE_SUMMARY_CHARS,
+              compactStrings([
+                item.label,
+                objective.outcome,
+                objective.successMetric
+              ]).join(' ')
+            ),
         url: compactPromptEvidenceURL(item.url),
         approvedSourceUrl:
           compactPromptEvidenceURL(item.approvedSourceUrl),
@@ -2452,6 +2493,67 @@ function boundedEvidenceSummary(
     retainedLength = nextLength;
   }
   return retained.join(' ');
+}
+
+function boundedPaidConversionEvidenceSummary(
+  value,
+  maxLength,
+  salientValue,
+  evidenceValue,
+  referenceTime
+) {
+  const text = firstText(value).replace(/\s+/g, ' ').trim();
+  const evidence = asObject(evidenceValue);
+  const supportsPaidConversion = (summary) =>
+    inboundAssetEvidenceSupportsPaidConversion(
+      {
+        ...evidence,
+        summary
+      },
+      referenceTime
+    );
+  const bounded = boundedEvidenceSummary(
+    text,
+    maxLength,
+    salientValue
+  );
+  if (!text || supportsPaidConversion(bounded)) return bounded;
+
+  // Owner pages often repeat their site navigation many times. Preserve one
+  // exact compact span containing the offer, conversion, and paid signals.
+  // This is deliberately extractive: no revenue wording is synthesized.
+  const signalSummary = paidConversionEvidenceSignalExcerpt(
+    text,
+    maxLength
+  );
+  return signalSummary && supportsPaidConversion(signalSummary)
+    ? signalSummary
+    : bounded;
+}
+
+function paidConversionEvidenceSignalExcerpt(value, maxLength) {
+  const text = firstText(value);
+  const matches = [
+    text.match(/\b(?:apply|application|appointment|book|booking|book now|buy|checkout|contact|demo|download|inquiry|license|order|pay|payment|purchase|request|schedule|sign|sign up|signup|sponsorship inquiry|subscribe)\b/i),
+    text.match(/\b(?:app|audit|class|consultation|contract|course|demo|diagnostic|digital download|engagement|home visit|license|membership|package|pilot|pricing plan|product|professional role|service|session|software|sponsorship|subscription|workshop)\b/i),
+    text.match(/\b(?:covered by insurance|insurance[- ]covered|insurance (?:is )?accepted|accepts insurance|health ?care (?:is )?accepted|bill(?:s|ing)? insurance|insurance claim|reimburs(?:able|ed|ement)|claim payment|billable|commission|compensated|contract|cost|deposit|fee|invoice|license|order|paid|pay|payment|platform payout|price|purchase|referral fee|retainer|royalty|salary|sale|sponsorship|subscription|wage)\b|\$\s*\d/i)
+  ];
+  if (matches.some((match) => !match?.[0])) return '';
+  // Do not let one ambiguous token (for example, "license" or "contract")
+  // stand in for an offer, a conversion action, and a paid mechanism. This
+  // recovery path may only preserve three independently present raw signals.
+  if (new Set(matches.map((match) => match.index)).size !== matches.length) {
+    return '';
+  }
+  const start = Math.min(...matches.map((match) => match.index));
+  const end = Math.max(...matches.map((match) =>
+    match.index + match[0].length
+  ));
+  const span = text.slice(start, end).trim();
+  if (span.length <= maxLength) return span;
+  const exact = compactStrings(matches.map((match) => match[0]))
+    .join(' … ');
+  return exact.length <= maxLength ? exact : '';
 }
 
 const EVIDENCE_SUMMARY_SALIENT_STOP_WORDS = new Set([
@@ -5219,7 +5321,7 @@ function normalizeGeneratedEvidenceExperiment(
       !sampleUnit) {
     return null;
   }
-  const userCopy = `${title} ${action} ${successSignal}`;
+  const userCopy = `${title} ${paidOffer} ${action} ${successSignal}`;
   if (/\b(?:approve source|approve observation|evidence approval|evidence id|crawl|generator|validator|retained strateg|missing[_ ])\b/i.test(
     userCopy
   ) ||
@@ -5273,6 +5375,9 @@ function normalizeGeneratedEvidenceExperiment(
   ]).join(' ');
   if (textOverlap(knownFact, citedText) <= 0 ||
       !asset ||
+      /\b(?:add|approve|attach|build|create|document|make|provide|publish|supply)\b[^.!?;\n]{0,100}\b(?:current\s+)?(?:public\s+)?paid[- ]offer\s+(?:link|page|url)\b/i.test(
+        userCopy
+      ) ||
       textOverlap(title, assetText) <= 0 ||
       textOverlap(buyer, assetText) <= 0 ||
       !paidOfferText(assetText) ||
