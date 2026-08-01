@@ -518,6 +518,8 @@ Do not search for patients, consumers selected by health/family status, private 
     commercialEvidenceGraph: promptCommercialEvidenceGraph,
     task:
       'Plan the smallest outside-world searches most likely to reveal one exact, review-first path to payment within 30 days.',
+    outputContract: compactOpportunityDiscoveryOutputContract(),
+    hardRules: compactOpportunityDiscoveryHardRules(),
     constraints: [
       RESEARCH_ONLY_CONSTRAINT,
       'Exactly two plans; the forced Exa search returns at most five sanitized URL citations and app adapters may make at most the separately budgeted bounded provider reads.',
@@ -864,6 +866,55 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
   };
 }
 
+function compactOpportunityDiscoveryOutputContract() {
+  const finalist = compactTournamentOutputContract(
+    INITIAL_FAMILY_VARIANT_COUNT
+  );
+  return {
+    plan:
+      '{id,priority,searchMode,commercialRole,acquisitionMode,buyer,counterparty,paidOffer,evidenceRefs,query,market,targetRoleTerms,organizationTerms,jobTitle,skills,acquisitionMechanism,conversionDestination,paidConversion,attributionSignal,rationale,targetSlot,contingentFinalists}',
+    targetSlot:
+      `Use exact tokens ${CONTINGENT_TARGET_NAME_TOKEN}, ${CONTINGENT_TARGET_URL_TOKEN}, ${CONTINGENT_TARGET_EVIDENCE_REF}; commercialRole=plan.commercialRole; live demand uses live_paid_demand/single_exact_target`,
+    targetRoleMap: {
+      referral_partner: [
+        'acquisition',
+        'channel_fit',
+        'prospective_partner'
+      ],
+      buyer: ['defined_buyer'],
+      paid_demand: [
+        'acquisition',
+        'channel_fit',
+        'conversion_destination',
+        'defined_buyer',
+        'demand_signal',
+        'paid_conversion',
+        'paid_offer'
+      ]
+    },
+    finalists:
+      `contingentFinalists={seedContract:${SEED_CONTRACT_VERSION},familyA,familyB,w}; family={l,m,e,s,tacticKey,d}; m=plan.acquisitionMode; tacticKey values are unique lower_snake_case`,
+    dimensions: finalist.dimensions,
+    item: finalist.item,
+    revenuePath: finalist.revenuePath,
+    evidence:
+      `family e contains ${CONTINGENT_TARGET_EVIDENCE_REF}, one plan observation:* ID, and every child ref; child refs stay inside plan.evidenceRefs plus ${CONTINGENT_TARGET_EVIDENCE_REF}`
+  };
+}
+
+function compactOpportunityDiscoveryHardRules() {
+  return [
+    'planned requires exactly 2 plans with different searchMode/commercialRole/acquisitionMode tuples; insufficient_verified_supply requires 0 plans plus a reason.',
+    'Use only evidenceCatalog IDs. Each plan/family has an observation:* seller anchor. System attribution evidence supports attribution only. Obey outputContract targetRoleMap exactly.',
+    `Every d.a action is distinct, contains ${CONTINGENT_TARGET_NAME_TOKEN} exactly once, and actively requests a reviewed referral/application/proposal/offer leading to paid commitment—not research, tracking, verification, profile, or operations work.`,
+    'For each r: a=plan acquisitionMode; io says additional/incremental paid income; c is active; o names a paid booking/payment/contract/order/subscription/compensation receipt.',
+    'For each r: atm is allowed; ats names its matching durable record plus source/referral/UTM/campaign/channel/code field; cd is a concrete conversion page distinct from acquisition; st has a number, unit, and stop/at-most/whichever-first; vm>0.',
+    'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence. A prospective partner never proves buyer, offer, warmness, permission, or demand.',
+    'Two families use distinct causal tactics. No patients/sensitive traits/private contacts/outreach copy/publishing/ads/forms/provider writes/prose outside JSON.',
+    'Silently audit every short key and semantic rule once before returning the strict JSON.'
+  ];
+}
+
 function normalizeOpportunityDiscoveryPlan(
   value,
   evidenceCatalog,
@@ -918,7 +969,7 @@ function normalizeOpportunityDiscoveryPlan(
       attributionSignal: truncate(firstText(plan.attributionSignal), 220),
       rationale: truncate(firstText(plan.rationale), 260)
       ,
-      targetSlot: normalizeContingentTargetSlot(plan.targetSlot),
+      targetSlot: normalizeContingentTargetSlot(plan.targetSlot, plan),
       contingentFinalists: normalizeContingentFinalistBundle(
         plan.contingentFinalists,
         knownEvidence,
@@ -941,18 +992,23 @@ function normalizeOpportunityDiscoveryPlan(
   };
 }
 
-function normalizeContingentTargetSlot(value) {
+function normalizeContingentTargetSlot(value, planValue) {
   const raw = asObject(value);
+  const plan = asObject(planValue);
+  const commercialRole = contractEnum(firstText(plan.commercialRole));
   return {
-    targetNameToken: firstText(raw.targetNameToken),
-    targetUrlToken: firstText(raw.targetUrlToken),
-    evidenceRefToken: firstText(raw.evidenceRefToken),
+    // These are protocol structure, not model-authored commercial facts.
+    // Canonicalize them locally so a harmless ordering or role-list drift
+    // cannot consume the user's sole bounded recovery run.
+    targetNameToken: CONTINGENT_TARGET_NAME_TOKEN,
+    targetUrlToken: CONTINGENT_TARGET_URL_TOKEN,
+    evidenceRefToken: CONTINGENT_TARGET_EVIDENCE_REF,
     finalTargetKind: contractEnum(firstText(raw.finalTargetKind)),
-    commercialRole: contractEnum(firstText(raw.commercialRole)),
+    commercialRole,
     resolutionStrategy: contractEnum(firstText(raw.resolutionStrategy)),
-    requiredEvidenceRoles: compactStrings(raw.requiredEvidenceRoles)
-      .map(contractEnum)
-      .slice(0, 7)
+    requiredEvidenceRoles: [
+      ...requiredCommercialDiscoveryRolesForSlot({ commercialRole })
+    ]
   };
 }
 

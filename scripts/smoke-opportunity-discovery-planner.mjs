@@ -18,6 +18,8 @@ const usage = {
 };
 const MAX_REPRESENTATIVE_PLANNER_RESPONSE_BYTES = 18 * 1024;
 let largestPlannerResponseBytes = 0;
+let largestPlannerRequestBytes = 0;
+let largestPlannerContractBytes = 0;
 
 const cases = [
   {
@@ -269,6 +271,16 @@ for (const scenario of cases) {
         reason: 'These distinct searches are the closest supported paths to current paid demand or a qualified commercial channel.',
         plans: scenario.plans(evidenceRef)
       };
+      if (scenario.name === 'lactation referral reasoning') {
+        // These values are individually schema-valid but contradict their
+        // containing motion. They are protocol structure, not commercial
+        // facts, so normalization must bind them deterministically without a
+        // second model call.
+        responseData.plans[0].targetSlot.commercialRole = 'buyer';
+        responseData.plans[0].targetSlot.requiredEvidenceRoles = [
+          'defined_buyer'
+        ];
+      }
       const responseBytes = Buffer.byteLength(
         JSON.stringify(responseData),
         'utf8'
@@ -344,7 +356,52 @@ for (const scenario of cases) {
       `${scenario.name}: generic discovery plan failed ${JSON.stringify(result)}`
     );
   }
+  largestPlannerRequestBytes = Math.max(
+    largestPlannerRequestBytes,
+    result.preflight?.requestBodyByteCount || 0
+  );
+  if (result.preflight?.requestBodyByteCount > 36 * 1024) {
+    throw new Error(
+      `${scenario.name}: call-1 request exceeded the 36 KiB provider envelope`
+    );
+  }
   const plannerPrompt = JSON.parse(requestSeen.user || '{}');
+  const promptWithoutContract = { ...plannerPrompt };
+  delete promptWithoutContract.outputContract;
+  delete promptWithoutContract.hardRules;
+  const requestWithoutContract = {
+    ...requestSeen,
+    user: JSON.stringify(promptWithoutContract)
+  };
+  largestPlannerContractBytes = Math.max(
+    largestPlannerContractBytes,
+    Buffer.byteLength(JSON.stringify(requestSeen), 'utf8') -
+      Buffer.byteLength(JSON.stringify(requestWithoutContract), 'utf8')
+  );
+  if (!plannerPrompt.outputContract?.targetRoleMap ||
+      !plannerPrompt.outputContract?.revenuePath ||
+      !Array.isArray(plannerPrompt.hardRules) ||
+      plannerPrompt.hardRules.length < 7) {
+    throw new Error(
+      `${scenario.name}: call 1 omitted its compact semantic contract`
+    );
+  }
+  if (scenario.name === 'lactation referral reasoning') {
+    const normalizedMotion = result.plans[0];
+    const expectedRoles = [
+      'acquisition',
+      'channel_fit',
+      'prospective_partner'
+    ];
+    if (normalizedMotion.targetSlot?.commercialRole !==
+          normalizedMotion.commercialRole ||
+        JSON.stringify(normalizedMotion.targetSlot?.requiredEvidenceRoles) !==
+          JSON.stringify(expectedRoles)) {
+      throw new Error(
+        `call-1 structural binding drift was not canonicalized: ${JSON.stringify(normalizedMotion)}`
+      );
+    }
+  }
   const projectedSystemCapability = plannerPrompt.evidenceCatalog?.find(
     (item) => item.id ===
       PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
@@ -449,11 +506,65 @@ if (unsafeResult.status !== 'blocked' ||
   );
 }
 
+await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifyTwoStageTargetBinding();
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + two-stage target binding; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
 );
+
+async function verifySemanticDriftFailsClosed(job, evidenceRef) {
+  const checks = [
+    {
+      name: 'family acquisition mode drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.m = 'inbound';
+      },
+      reason: /tactic families/i
+    },
+    {
+      name: 'primary action target binding drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, request one paid partner referral without an exact target.';
+      },
+      reason: /primary action|target token/i
+    }
+  ];
+  for (const check of checks) {
+    const plans = cases[0].plans(evidenceRef);
+    check.mutate(plans);
+    const result = await runOpportunityDiscoveryPlanner({
+      job,
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => ({
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: 'Schema-valid but semantically inconsistent fixture.',
+          plans
+        },
+        usage,
+        generationId: `generation-${check.name.replace(/\W+/g, '-')}`,
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: 'f'.repeat(64)
+        }
+      })
+    });
+    if (result.status !== 'blocked' ||
+        !check.reason.test(result.reason) ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${check.name} did not fail closed: ${JSON.stringify(result)}`
+      );
+    }
+  }
+}
 
 async function verifyTwoStageTargetBinding() {
   const scenario = cases[0];
