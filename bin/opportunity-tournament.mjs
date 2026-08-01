@@ -1122,11 +1122,18 @@ function opportunityDiscoveryPlanIssue(value) {
       : 'Insufficient-supply planning must return no outside search plans and a reason.';
   }
   const plans = asArray(plan.plans);
-  if ((!legacy && plans.length !== 2) ||
+  // One v2 motion still contains two complete, causally distinct tactic
+  // families. Downstream binding already compares those two families when
+  // only one outside motion resolves, so do not turn a usable one-motion
+  // response into a provider recovery merely because a second outer search
+  // wrapper was not returned. The prompt continues to request two motions;
+  // accepting one is bounded contract tolerance, not deterministic strategy
+  // authorship.
+  if ((!legacy && (plans.length < 1 || plans.length > 2)) ||
       (legacy && (plans.length < 2 || plans.length > 3))) {
     return legacy
       ? 'Legacy discovery planning requires two or three distinct commercial motions.'
-      : 'Discovery planning requires exactly two distinct commercial motions.';
+      : 'Discovery planning requires one or two grounded commercial motions.';
   }
   const ids = new Set();
   const priorities = new Set();

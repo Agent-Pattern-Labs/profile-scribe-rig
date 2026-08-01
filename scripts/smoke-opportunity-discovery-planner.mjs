@@ -516,11 +516,53 @@ if (unsafeResult.status !== 'blocked' ||
 }
 
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
+await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
 await verifyTwoStageTargetBinding();
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
 );
+
+async function verifyOneMotionWithTwoCausalFamilies(job, evidenceRef) {
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: 'One grounded motion contains two distinct causal tactics.',
+        plans: [cases[0].plans(evidenceRef)[0]]
+      },
+      usage,
+      generationId: 'generation-one-motion-two-families',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 700,
+        contentSha256: '1'.repeat(64)
+      },
+      annotations: [{
+        type: 'url_citation',
+        url_citation: {
+          url: 'https://riverside-pediatrics.example/newborn-care',
+          title: 'Riverside Pediatrics newborn care',
+          content: 'Current public newborn-care practice in Queens.'
+        }
+      }]
+    })
+  });
+  if (result.status !== 'planned' ||
+      result.plans.length !== 1 ||
+      !result.plans[0].contingentFinalists?.familyA ||
+      !result.plans[0].contingentFinalists?.familyB ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `one grounded motion with two causal families was rejected: ${JSON.stringify(result)}`
+    );
+  }
+}
 
 async function verifySemanticDriftFailsClosed(job, evidenceRef) {
   const checks = [
