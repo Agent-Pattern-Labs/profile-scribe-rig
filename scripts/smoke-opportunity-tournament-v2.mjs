@@ -291,6 +291,7 @@ await verifyLengthFinishedStructuredRepair();
 await verifyThrownLengthStructuredRepair();
 await verifyProviderSpendBudgetRecovery();
 await verifyMaximumTournamentSpendCeiling();
+await verifyAdaptivePromptEnvelopeCompaction();
 await verifyPromptEnvelopeFailsLocally();
 await verifyOmittedProviderEvidenceFailsClosed();
 await verifyProviderSchemaEvidenceParity();
@@ -2741,6 +2742,201 @@ async function verifyMaximumTournamentSpendCeiling() {
         repairCeiling,
         totalCeiling: initialCeiling + repairCeiling,
         repairTrace
+      })}`
+    );
+  }
+}
+
+async function verifyAdaptivePromptEnvelopeCompaction() {
+  const domain = { ...domains.find((item) => item.name === 'commerce') };
+  const website = 'https://adaptive-envelope.example/';
+  const sourceID = 'src-adaptive-envelope';
+  const paidRef = 'observation:obs-adaptive-envelope-00';
+  const discoveryRef =
+    'external_discovery:edededededededededededed';
+  const candidateID =
+    'candidate:external:acacacacacacacacacacacac';
+  const provider = 'google_places';
+  const publicURL = 'https://acme-advisory.example/';
+  const sourceEvidence = Array.from({ length: 64 }, (_, index) => ({
+    observationId:
+      `obs-adaptive-envelope-${String(index).padStart(2, '0')}`,
+    sourceId: sourceID,
+    kind: index === 0 ? 'service-page' : 'case-study',
+    title:
+      `Paid advisory checkout evidence ${index} ${'L'.repeat(150)}`,
+    summary:
+      `Buy a paid advisory service through checkout for customer ${index}. ` +
+      'Organic search discovery and a UTM source field are recorded on the ' +
+      `paid invoice. ${'S'.repeat(500)}`,
+    url: `${website}offer/${index}/`,
+    observedAt: '2026-07-29T12:00:00Z',
+    publishedAt: '2026-07-28T12:00:00Z',
+    confidence: 'high'
+  }));
+  const commercialDiscoveryEvidence = commercialDiscoveryFixture({
+    id: 'attempt-adaptive-envelope-discovery',
+    provider,
+    operation: 'places_text_search',
+    queryHash: 'a'.repeat(64),
+    motion: 'local_service_referral',
+    buyerArchetype: 'Teams seeking paid advisory services',
+    market: 'New York, NY',
+    evidence: [{
+      evidenceRef: discoveryRef,
+      kind: 'verified_external_professional_target',
+      label: 'Acme Advisory',
+      summary:
+        'Acme Advisory is a current New York professional advisory ' +
+        'organization and a prospective referral partner. The public record ' +
+        'supports channel fit only and establishes no warm relationship, ' +
+        'permission, willingness, or buyer demand.',
+      url: publicURL,
+      provider,
+      provenance: 'read_only_professional_provider',
+      roles: ['acquisition', 'channel_fit', 'prospective_partner'],
+      verified: true,
+      observedAt: '2026-07-30T11:00:00Z'
+    }],
+    candidates: [{
+      id: candidateID,
+      kind: 'organization',
+      displayLabel: 'Acme Advisory',
+      organization: 'Acme Advisory',
+      role: 'Advisory organization',
+      market: 'New York, NY',
+      publicUrl: publicURL,
+      provider,
+      commercialRole: 'referral_partner',
+      evidenceRefs: [discoveryRef],
+      contactPaths: [{
+        kind: 'public_professional_url',
+        available: true,
+        verified: true,
+        reference: publicURL
+      }],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }]
+  });
+  let providerCalls = 0;
+  let request;
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-adaptive-prompt-envelope',
+      payload: {
+        tournamentId: 'tournament-adaptive-prompt-envelope',
+        researchOnly: true,
+        objective: {
+          outcome: `Generate one new attributed ${domain.outcome}.`,
+          successMetric: domain.outcome,
+          evidenceRefs: [paidRef, discoveryRef]
+        },
+        budget: {
+          maxHypotheses: 128,
+          maxFinalists: 8,
+          maxLLMCalls: 1,
+          maxOutputTokens: 8_000,
+          hardStop: false
+        },
+        evidenceSnapshot: {
+          profile: { identity: { website } },
+          sources: [{
+            id: sourceID,
+            url: website,
+            status: 'monitoring',
+            trustLevel: 'high'
+          }],
+          sourceEvidence
+        },
+        commercialDiscoveryEvidence
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (value) => {
+      providerCalls += 1;
+      request = value;
+      return {
+        data: compactV2Response(domain, paidRef),
+        usage,
+        diagnostics: { finishReason: 'stop' }
+      };
+    }
+  });
+  const task = JSON.parse(request?.user || '{}');
+  const promptEvidence = task.evidenceCatalog || [];
+  const promptIDs = promptEvidence.map((item) => item.id);
+  const schemaIDs = request?.responseFormat?.json_schema?.schema
+    ?.$defs?.evidenceRef?.enum || [];
+  const graphRefs = (task.commercialEvidenceGraph?.nodes || [])
+    .map((node) => node.evidenceRef);
+  const envelope = result.searchSpace?.providerPromptEnvelope || {};
+  const attempts = envelope.attempts || [];
+  const finalBytes = request
+    ? Buffer.byteLength(
+        serializeOpenRouterJSONRequestBody(request),
+        'utf8'
+      )
+    : 0;
+  const finalAttempt = attempts[attempts.length - 1] || {};
+  const paidEvidence = promptEvidence.find((item) => item.id === paidRef);
+  const discoveryEvidence = promptEvidence.find(
+    (item) => item.id === discoveryRef
+  );
+  const repairTrace = result.searchSpace?.structuredRepair || {};
+  if (providerCalls !== 1 ||
+      !request ||
+      envelope.authorized !== true ||
+      envelope.adaptiveCompactionAttempted !== true ||
+      envelope.adaptiveCompactionApplied !== true ||
+      envelope.profile !== 'focused' ||
+      envelope.originalRequestBodyByteCount <= 36 * 1_024 ||
+      envelope.requestBodyByteCount !== finalBytes ||
+      envelope.requestBodyByteCount > 36 * 1_024 ||
+      envelope.maxRequestBodyByteCount !== 36 * 1_024 ||
+      envelope.originalPromptEvidenceCount !== 16 ||
+      envelope.promptEvidenceCount !== promptEvidence.length ||
+      envelope.essentialEvidenceCount < 2 ||
+      JSON.stringify(attempts.map((attempt) => attempt.profile)) !==
+        JSON.stringify(['standard', 'dense', 'focused']) ||
+      attempts[0]?.withinEnvelope !== false ||
+      finalAttempt.withinEnvelope !== true ||
+      finalAttempt.requestBodyByteCount !== finalBytes ||
+      finalAttempt.promptEvidenceHash !==
+        result.searchSpace?.promptEvidenceHash ||
+      !promptIDs.includes(paidRef) ||
+      !promptIDs.includes(discoveryRef) ||
+      JSON.stringify(schemaIDs) !== JSON.stringify(promptIDs) ||
+      !graphRefs.includes(paidRef) ||
+      !graphRefs.includes(discoveryRef) ||
+      paidEvidence?.revenueAssetRole !==
+        'current_owner_paid_conversion_asset' ||
+      discoveryEvidence?.providerAttestedCommercialDiscovery !== true ||
+      !discoveryEvidence?.commercialDiscoveryRoles?.includes(
+        'prospective_partner'
+      ) ||
+      repairTrace.initialPromptTokenCanary?.requestBodyByteCount !==
+        finalBytes ||
+      repairTrace.initialPromptTokenCanary?.promptTokenCeiling !==
+        finalBytes + 1_024 ||
+      result.nextExperiment?.kind ===
+        'strategy_generation_prompt_envelope_recovery' ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `adaptive prompt compaction did not preserve the bounded commercial trust envelope: ${JSON.stringify({
+        providerCalls,
+        finalBytes,
+        promptIDs,
+        schemaIDs,
+        graphRefs,
+        paidEvidence,
+        discoveryEvidence,
+        envelope,
+        repairTrace,
+        result
       })}`
     );
   }

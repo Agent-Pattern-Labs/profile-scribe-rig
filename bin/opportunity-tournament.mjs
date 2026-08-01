@@ -71,7 +71,9 @@ const MAX_PROMPT_EVIDENCE_ITEMS = 16;
 const MAX_PROMPT_PAID_ASSET_ITEMS = 4;
 const MAX_PROMPT_OBJECTIVE_EVIDENCE_ITEMS = 4;
 const MAX_PROMPT_CANDIDATE_EVIDENCE_ITEMS = 4;
-const MAX_PROMPT_COMMERCIAL_DISCOVERY_EVIDENCE_ITEMS = 4;
+// Match the normalized discovery envelope so adaptive compaction never drops
+// a provider-attested discovery fact that entered the standard prompt view.
+const MAX_PROMPT_COMMERCIAL_DISCOVERY_EVIDENCE_ITEMS = 10;
 const MAX_PROMPT_REVENUE_EVIDENCE_ITEMS = 3;
 const MAX_PROMPT_ATTRIBUTION_EVIDENCE_ITEMS = 2;
 const MAX_PROMPT_RISK_EVIDENCE_ITEMS = 2;
@@ -81,6 +83,44 @@ const MAX_PROMPT_EVIDENCE_LABEL_CHARS = 160;
 const MAX_PROMPT_EVIDENCE_SUMMARY_CHARS = 320;
 const MAX_PROMPT_EVIDENCE_URL_CHARS = 240;
 const MAX_PROVIDER_REQUEST_BODY_BYTES = 36 * 1_024;
+const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
+  {
+    name: 'standard',
+    maxItems: MAX_PROMPT_EVIDENCE_ITEMS,
+    labelChars: MAX_PROMPT_EVIDENCE_LABEL_CHARS,
+    summaryChars: MAX_PROMPT_EVIDENCE_SUMMARY_CHARS,
+    urlChars: MAX_PROMPT_EVIDENCE_URL_CHARS,
+    coreMetadataOnly: false,
+    compactGraph: false
+  },
+  {
+    name: 'dense',
+    maxItems: MAX_PROMPT_EVIDENCE_ITEMS,
+    labelChars: 120,
+    summaryChars: 192,
+    urlChars: 160,
+    coreMetadataOnly: true,
+    compactGraph: true
+  },
+  {
+    name: 'focused',
+    maxItems: 12,
+    labelChars: 104,
+    summaryChars: 160,
+    urlChars: 144,
+    coreMetadataOnly: true,
+    compactGraph: true
+  },
+  {
+    name: 'essential',
+    maxItems: 0,
+    labelChars: 96,
+    summaryChars: 128,
+    urlChars: 128,
+    coreMetadataOnly: true,
+    compactGraph: true
+  }
+];
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
 
@@ -431,18 +471,18 @@ async function runOpportunityTournamentCore({
     now,
     { commercialDiscovery }
   );
-  const promptEvidenceCatalog = compactPromptEvidenceCatalog(
+  let promptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
     objective,
     now
   );
-  const providerValidationEvidenceCatalog = promptEvidenceCatalog
+  let providerValidationEvidenceCatalog = promptEvidenceCatalog
     .filter((item) => !/^source:/i.test(firstText(item.id)))
     .map((item) => ({
       ...item,
       aliases: []
     }));
-  const promptEvidenceHash = stableHash(promptEvidenceCatalog);
+  let promptEvidenceHash = stableHash(promptEvidenceCatalog);
   const evidenceHash = stableHash(evidenceCatalog);
   const timestamp = validDate(now).toISOString();
   const commercialEvidenceGraph = buildCommercialEvidenceGraph(
@@ -457,7 +497,7 @@ async function runOpportunityTournamentCore({
   const commercialEvidenceGraphHash = stableHash(
     commercialEvidenceGraph
   );
-  const promptCommercialEvidenceGraph =
+  let promptCommercialEvidenceGraph =
     projectCommercialEvidenceGraphForPrompt(
       commercialEvidenceGraph,
       promptEvidenceCatalog
@@ -567,34 +607,41 @@ async function runOpportunityTournamentCore({
     };
   }
 
-  const prompt = seedAndJudgePrompt({
+  const initialEnvelope = boundedStrategyGenerationRequest({
     objective,
     constraints,
     commercialContext,
-    evidenceCatalog: promptEvidenceCatalog,
-    commercialEvidenceGraph: promptCommercialEvidenceGraph,
+    evidenceCatalog,
+    initialPromptEvidenceCatalog: promptEvidenceCatalog,
+    commercialEvidenceGraph,
     priorOutcomes,
+    model,
+    budget,
+    referenceTime: now,
     maxSeedsPerDimension: Math.min(4, MAX_SEEDS_PER_DIMENSION)
   });
+  promptEvidenceCatalog = initialEnvelope.promptEvidenceCatalog;
+  providerValidationEvidenceCatalog = promptEvidenceCatalog
+    .filter((item) => !/^source:/i.test(firstText(item.id)))
+    .map((item) => ({
+      ...item,
+      aliases: []
+    }));
+  promptEvidenceHash = stableHash(promptEvidenceCatalog);
+  promptCommercialEvidenceGraph =
+    initialEnvelope.promptCommercialEvidenceGraph;
+  base.searchSpace.promptEvidenceCount = promptEvidenceCatalog.length;
+  base.searchSpace.promptEvidenceOmittedCount = Math.max(
+    0,
+    evidenceCatalog.length - promptEvidenceCatalog.length
+  );
+  base.searchSpace.promptEvidenceHash = promptEvidenceHash;
+  base.searchSpace.providerPromptEnvelope =
+    initialEnvelope.providerPromptEnvelope;
+  const prompt = initialEnvelope.prompt;
   const promptHash = stableHash({ system: prompt.system, user: prompt.user });
-  const initialCompletionRequest = {
-    model,
-    system: prompt.system,
-    user: prompt.user,
-    maxTokens: budget.maxOutputTokens,
-    responseFormat: tournamentStructuredResponseFormat(
-      promptEvidenceCatalog,
-      INITIAL_FAMILY_VARIANT_COUNT
-    ),
-    plugins: [{ id: 'response-healing' }],
-    temperature: 0,
-    provider: {
-      ...TOURNAMENT_PROVIDER_ROUTING,
-      max_price: budget.providerMaxPrice
-    }
-  };
-  const initialProviderSpendPreflight =
-    providerCallSpendPreflight(initialCompletionRequest, budget);
+  const initialCompletionRequest = initialEnvelope.request;
+  const initialProviderSpendPreflight = initialEnvelope.preflight;
   const initialCallSpendCeilingMicros =
     initialProviderSpendPreflight.callSpendCeilingMicros;
   const initialProviderEnvelopeIssue =
@@ -616,6 +663,7 @@ async function runOpportunityTournamentCore({
         ...base.searchSpace,
         modelCalls: 0,
         providerPromptEnvelope: {
+          ...initialEnvelope.providerPromptEnvelope,
           authorized: false,
           cause: initialProviderEnvelopeIssue,
           requestBodyByteCount:
@@ -3595,9 +3643,13 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
 
 function projectCommercialEvidenceGraphForPrompt(
   graphValue,
-  promptEvidenceCatalogValue
+  promptEvidenceCatalogValue,
+  optionsValue = {}
 ) {
   const graph = asObject(graphValue);
+  const compactProjection =
+    asObject(optionsValue).compactProjection === true;
+  const descriptiveChars = compactProjection ? 64 : 100;
   const allowedEvidenceRefs = new Set(
     asArray(promptEvidenceCatalogValue)
       .map((item) => firstText(asObject(item).id))
@@ -3615,25 +3667,33 @@ function projectCommercialEvidenceGraphForPrompt(
       channelFitChannels: compactStrings(node.channelFitChannels),
       revenueAssetRole: firstText(node.revenueAssetRole),
       provenance: firstText(node.provenance),
-      provider: truncate(firstText(node.provider), 100),
+      provider: truncate(firstText(node.provider), descriptiveChars),
       providerProvenance: truncate(firstText(
         node.providerProvenance
-      ), 100),
+      ), descriptiveChars),
       commercialDiscoveryKind: truncate(firstText(
         node.commercialDiscoveryKind
-      ), 100),
+      ), descriptiveChars),
       commercialDiscoveryRoles: compactStrings(
         node.commercialDiscoveryRoles
       ),
       prospectiveExternalTarget:
         node.prospectiveExternalTarget === true ? true : undefined,
-      location: truncate(firstText(node.location), 96),
-      availability: truncate(firstText(node.availability), 96),
-      serviceAreas: compactStrings(node.serviceAreas).slice(0, 8),
-      channel: truncate(firstText(node.channel), 96),
+      location: truncate(firstText(node.location),
+        compactProjection ? 64 : 96),
+      availability: truncate(firstText(node.availability),
+        compactProjection ? 64 : 96),
+      serviceAreas: compactStrings(node.serviceAreas)
+        .slice(0, compactProjection ? 4 : 8)
+        .map((value) => truncate(
+          value,
+          compactProjection ? 64 : 100
+        )),
+      channel: truncate(firstText(node.channel),
+        compactProjection ? 64 : 96),
       linkedEvidenceRefs: compactStrings(node.linkedEvidenceRefs)
         .filter((ref) => allowedEvidenceRefs.has(ref))
-        .slice(0, 8)
+        .slice(0, compactProjection ? 4 : 8)
     }));
   const projectedRefs = new Set(
     nodes.map((node) => firstText(node.evidenceRef)).filter(Boolean)
@@ -3957,15 +4017,277 @@ function objectiveValidationIssue(objective) {
   return null;
 }
 
+function boundedStrategyGenerationRequest({
+  objective,
+  constraints,
+  commercialContext,
+  evidenceCatalog,
+  initialPromptEvidenceCatalog,
+  commercialEvidenceGraph,
+  priorOutcomes,
+  model,
+  budget,
+  referenceTime,
+  maxSeedsPerDimension
+}) {
+  const attempts = [];
+  let standardPromptEvidenceCatalog = [];
+  let standardEvidenceRefs = [];
+  let essentialEvidenceRefs = [];
+  let selected;
+
+  for (const profile of PROVIDER_PROMPT_ENVELOPE_PROFILES) {
+    let selectedEvidenceRefs;
+    let maxItems = profile.maxItems;
+    if (profile.name !== 'standard') {
+      if (profile.name === 'dense') {
+        selectedEvidenceRefs = standardEvidenceRefs;
+      } else if (profile.name === 'focused') {
+        selectedEvidenceRefs = boundedPromptEvidenceRefs(
+          standardEvidenceRefs,
+          essentialEvidenceRefs,
+          profile.maxItems
+        );
+        maxItems = selectedEvidenceRefs.length;
+      } else {
+        selectedEvidenceRefs = boundedPromptEvidenceRefs(
+          standardEvidenceRefs,
+          essentialEvidenceRefs,
+          essentialEvidenceRefs.length || 1
+        );
+        maxItems = selectedEvidenceRefs.length;
+      }
+    }
+    const promptEvidenceCatalog = profile.name === 'standard'
+      ? asArray(initialPromptEvidenceCatalog)
+      : compactPromptEvidenceCatalog(
+          standardPromptEvidenceCatalog,
+          objective,
+          referenceTime,
+          {
+            selectedEvidenceRefs,
+            maxItems,
+            labelChars: profile.labelChars,
+            summaryChars: profile.summaryChars,
+            urlChars: profile.urlChars,
+            coreMetadataOnly: profile.coreMetadataOnly
+          }
+        );
+    if (profile.name === 'standard') {
+      standardPromptEvidenceCatalog = promptEvidenceCatalog;
+      standardEvidenceRefs = promptEvidenceCatalog
+        .map((item) => firstText(item.id))
+        .filter(Boolean);
+      essentialEvidenceRefs = essentialPromptEvidenceRefs(
+        evidenceCatalog,
+        promptEvidenceCatalog,
+        commercialEvidenceGraph,
+        objective,
+        referenceTime
+      );
+    }
+    const promptCommercialEvidenceGraph =
+      projectCommercialEvidenceGraphForPrompt(
+        commercialEvidenceGraph,
+        promptEvidenceCatalog,
+        { compactProjection: profile.compactGraph }
+      );
+    const prompt = seedAndJudgePrompt({
+      objective,
+      constraints,
+      commercialContext,
+      evidenceCatalog: promptEvidenceCatalog,
+      commercialEvidenceGraph: promptCommercialEvidenceGraph,
+      priorOutcomes,
+      maxSeedsPerDimension
+    });
+    const request = {
+      model,
+      system: prompt.system,
+      user: prompt.user,
+      maxTokens: budget.maxOutputTokens,
+      responseFormat: tournamentStructuredResponseFormat(
+        promptEvidenceCatalog,
+        INITIAL_FAMILY_VARIANT_COUNT
+      ),
+      plugins: [{ id: 'response-healing' }],
+      temperature: 0,
+      provider: {
+        ...TOURNAMENT_PROVIDER_ROUTING,
+        max_price: budget.providerMaxPrice
+      }
+    };
+    const preflight = providerCallSpendPreflight(request, budget);
+    const issue = providerPromptEnvelopeIssue(preflight);
+    attempts.push(compact({
+      profile: profile.name,
+      promptEvidenceCount: promptEvidenceCatalog.length,
+      promptEvidenceHash: stableHash(promptEvidenceCatalog),
+      serializationSucceeded: preflight.serializationSucceeded,
+      requestBodyByteCount: preflight.requestBodyByteCount,
+      withinEnvelope: !issue
+    }));
+    selected = {
+      profile: profile.name,
+      promptEvidenceCatalog,
+      promptCommercialEvidenceGraph,
+      prompt,
+      request,
+      preflight,
+      issue
+    };
+    if (!issue || issue === 'provider_request_serialization') break;
+  }
+
+  const firstAttempt = attempts[0] || {};
+  const finalAttempt = attempts[attempts.length - 1] || {};
+  const authorized = !selected?.issue;
+  return {
+    ...selected,
+    providerPromptEnvelope: compact({
+      authorized,
+      cause: selected?.issue,
+      profile: selected?.profile,
+      adaptiveCompactionAttempted: attempts.length > 1,
+      adaptiveCompactionApplied:
+        authorized && selected?.profile !== 'standard',
+      originalRequestBodyByteCount:
+        firstAttempt.requestBodyByteCount,
+      requestBodyByteCount: finalAttempt.requestBodyByteCount,
+      maxRequestBodyByteCount: MAX_PROVIDER_REQUEST_BODY_BYTES,
+      originalPromptEvidenceCount:
+        firstAttempt.promptEvidenceCount,
+      promptEvidenceCount: finalAttempt.promptEvidenceCount,
+      essentialEvidenceCount: essentialEvidenceRefs.length,
+      essentialEvidenceHash: stableHash(essentialEvidenceRefs),
+      attempts
+    })
+  };
+}
+
+function boundedPromptEvidenceRefs(
+  standardEvidenceRefsValue,
+  essentialEvidenceRefsValue,
+  requestedCount
+) {
+  const standardEvidenceRefs = compactStrings(
+    standardEvidenceRefsValue
+  );
+  const essentialEvidenceRefs = new Set(
+    compactStrings(essentialEvidenceRefsValue)
+  );
+  const boundedCount = Math.min(
+    standardEvidenceRefs.length,
+    Math.max(
+      nonNegativeInteger(requestedCount) || 1,
+      essentialEvidenceRefs.size
+    )
+  );
+  return [
+    ...standardEvidenceRefs.filter((ref) =>
+      essentialEvidenceRefs.has(ref)
+    ),
+    ...standardEvidenceRefs.filter((ref) =>
+      !essentialEvidenceRefs.has(ref)
+    )
+  ].slice(0, boundedCount);
+}
+
+function essentialPromptEvidenceRefs(
+  fullEvidenceCatalogValue,
+  promptEvidenceCatalogValue,
+  commercialEvidenceGraphValue,
+  objectiveValue,
+  referenceTime
+) {
+  const standardEvidenceRefs = asArray(promptEvidenceCatalogValue)
+    .map((item) => firstText(asObject(item).id))
+    .filter(Boolean);
+  const selectedRefSet = new Set(standardEvidenceRefs);
+  const evidenceByID = evidenceIndex(fullEvidenceCatalogValue);
+  const graphNodeByRef = new Map(
+    asArray(asObject(commercialEvidenceGraphValue).nodes)
+      .map(asObject)
+      .map((node) => [firstText(node.evidenceRef), node])
+      .filter(([ref]) => selectedRefSet.has(ref))
+  );
+  const essential = new Set();
+  const addRef = (refValue) => {
+    const ref = firstText(refValue);
+    if (selectedRefSet.has(ref)) essential.add(ref);
+  };
+  const addFirst = (predicate) => {
+    const ref = standardEvidenceRefs.find((candidateRef) =>
+      predicate(
+        asObject(evidenceByID.get(candidateRef)),
+        asObject(graphNodeByRef.get(candidateRef))
+      )
+    );
+    addRef(ref);
+  };
+
+  addFirst((evidence) => firstText(evidence.revenueAssetRole) ===
+    'current_owner_paid_conversion_asset');
+  for (const ref of standardEvidenceRefs) {
+    if (asObject(evidenceByID.get(ref))
+      .providerAttestedCommercialDiscovery === true) {
+      addRef(ref);
+    }
+  }
+  for (const ref of compactStrings(asObject(objectiveValue).evidenceRefs)) {
+    addRef(ref);
+  }
+  for (const role of [
+    'defined_buyer',
+    'paid_offer',
+    'acquisition',
+    'conversion_destination',
+    'paid_conversion',
+    'attribution',
+    'channel_fit'
+  ]) {
+    addFirst((_evidence, node) => asArray(node.roles).includes(role));
+  }
+  addFirst((evidence) => promptRiskEvidence(evidence, referenceTime));
+  if (essential.size === 0) addRef(standardEvidenceRefs[0]);
+
+  // Preserve the standard deterministic order even when an adaptive profile
+  // removes nonessential records.
+  return standardEvidenceRefs.filter((ref) => essential.has(ref));
+}
+
 function compactPromptEvidenceCatalog(
   value,
   objectiveValue = {},
-  referenceTime = new Date()
+  referenceTime = new Date(),
+  optionsValue = {}
 ) {
   const catalog = asArray(value)
     .map(asObject)
     .filter((item) => !/^source:/i.test(firstText(item.id)));
   const objective = asObject(objectiveValue);
+  const options = asObject(optionsValue);
+  const maxItems = Math.min(
+    MAX_PROMPT_EVIDENCE_ITEMS,
+    Math.max(1, nonNegativeInteger(options.maxItems) ||
+      MAX_PROMPT_EVIDENCE_ITEMS)
+  );
+  const labelChars = Math.max(
+    64,
+    nonNegativeInteger(options.labelChars) ||
+      MAX_PROMPT_EVIDENCE_LABEL_CHARS
+  );
+  const summaryChars = Math.max(
+    96,
+    nonNegativeInteger(options.summaryChars) ||
+      MAX_PROMPT_EVIDENCE_SUMMARY_CHARS
+  );
+  const urlChars = Math.max(
+    96,
+    nonNegativeInteger(options.urlChars) ||
+      MAX_PROMPT_EVIDENCE_URL_CHARS
+  );
+  const coreMetadataOnly = options.coreMetadataOnly === true;
   const catalogByID = evidenceIndex(catalog);
   const objectivePinned = compactStrings(objective.evidenceRefs)
     .map((ref) => catalogByID.get(ref))
@@ -4028,36 +4350,49 @@ function compactPromptEvidenceCatalog(
   // filling by deterministic relevance. This exact projected view is the
   // provider-output trust boundary; the full catalog remains available only
   // for post-validation provenance, caller evidence, and fallback selection.
-  for (const item of [
-    ...paidAssets,
-    ...commercialDiscoveryEvidence,
-    ...objectivePinned,
-    ...objectiveEvidence,
-    ...riskEvidence,
-    ...attributionEvidence,
-    ...motionEvidence,
-    ...candidateEvidence,
-    ...revenueEvidence,
-    ...contextEvidence,
-    ...diverseEvidence,
-    ...ranked,
-    ...catalog
-  ]) {
+  const explicitlySelected = compactStrings(
+    options.selectedEvidenceRefs
+  )
+    .map((ref) => catalogByID.get(ref))
+    .filter(Boolean);
+  const selectionCandidates = explicitlySelected.length > 0
+    ? explicitlySelected
+    : [
+        ...paidAssets,
+        ...commercialDiscoveryEvidence,
+        ...objectivePinned,
+        ...objectiveEvidence,
+        ...riskEvidence,
+        ...attributionEvidence,
+        ...motionEvidence,
+        ...candidateEvidence,
+        ...revenueEvidence,
+        ...contextEvidence,
+        ...diverseEvidence,
+        ...ranked,
+        ...catalog
+      ];
+  for (const item of selectionCandidates) {
     const id = firstText(item.id);
     if (!id || selectedIDs.has(id)) continue;
     selectedIDs.add(id);
     selected.push(item);
-    if (selected.length >= MAX_PROMPT_EVIDENCE_ITEMS) break;
+    if (selected.length >= maxItems) break;
   }
   return selected
     .map((itemValue) => {
       const item = asObject(itemValue);
+      const url = compactPromptEvidenceURL(item.url, urlChars);
+      const approvedSourceUrl = compactPromptEvidenceURL(
+        item.approvedSourceUrl,
+        urlChars
+      );
       return compact({
         id: firstText(item.id),
-        type: truncate(firstText(item.type), 64),
+        type: truncate(firstText(item.type), coreMetadataOnly ? 48 : 64),
         label: boundedEvidenceSummary(
           firstText(item.label),
-          MAX_PROMPT_EVIDENCE_LABEL_CHARS,
+          labelChars,
           compactStrings([
             item.label,
             objective.outcome,
@@ -4068,7 +4403,7 @@ function compactPromptEvidenceCatalog(
           'current_owner_paid_conversion_asset'
           ? boundedPaidConversionEvidenceSummary(
               firstText(item.summary),
-              MAX_PROMPT_EVIDENCE_SUMMARY_CHARS,
+              summaryChars,
               compactStrings([
                 item.label,
                 objective.outcome,
@@ -4079,26 +4414,35 @@ function compactPromptEvidenceCatalog(
             )
           : boundedEvidenceSummary(
               firstText(item.summary),
-              MAX_PROMPT_EVIDENCE_SUMMARY_CHARS,
+              summaryChars,
               compactStrings([
                 item.label,
                 objective.outcome,
                 objective.successMetric
               ]).join(' ')
             ),
-        url: compactPromptEvidenceURL(item.url),
-        approvedSourceUrl:
-          compactPromptEvidenceURL(item.approvedSourceUrl),
-        sourceId: truncate(firstText(item.sourceId), 96),
+        url,
+        approvedSourceUrl: coreMetadataOnly && approvedSourceUrl === url
+          ? undefined
+          : approvedSourceUrl,
+        sourceId: coreMetadataOnly
+          ? undefined
+          : truncate(firstText(item.sourceId), 96),
         observedAt: truncate(firstText(item.observedAt), 40),
-        publishedAt: truncate(firstText(item.publishedAt), 40),
-        startDate: truncate(firstText(item.startDate), 40),
+        publishedAt: coreMetadataOnly
+          ? undefined
+          : truncate(firstText(item.publishedAt), 40),
+        startDate: coreMetadataOnly
+          ? undefined
+          : truncate(firstText(item.startDate), 40),
         endDate: truncate(firstText(item.endDate), 40),
         current: typeof item.current === 'boolean'
           ? item.current
           : undefined,
         status: truncate(firstText(item.status), 64),
-        confidence: truncate(firstText(item.confidence), 16),
+        confidence: coreMetadataOnly
+          ? undefined
+          : truncate(firstText(item.confidence), 16),
         approvedSourceObservation:
           item.approvedSourceObservation === true ? true : undefined,
         profileControlledSource:
@@ -4109,13 +4453,13 @@ function compactPromptEvidenceCatalog(
             : undefined,
         commercialDiscoveryProvider: truncate(firstText(
           item.commercialDiscoveryProvider
-        ), 100),
+        ), coreMetadataOnly ? 64 : 100),
         commercialDiscoveryProvenance: truncate(firstText(
           item.commercialDiscoveryProvenance
-        ), 100),
+        ), coreMetadataOnly ? 64 : 100),
         commercialDiscoveryKind: truncate(firstText(
           item.commercialDiscoveryKind
-        ), 100),
+        ), coreMetadataOnly ? 64 : 100),
         commercialDiscoveryRoles: compactStrings(
           item.commercialDiscoveryRoles
         ),
@@ -4301,47 +4645,60 @@ function boundedEvidenceSummary(
     }
   }
 
-  const candidates = [];
+  const prefixWeights = [0];
+  for (const weight of weights) {
+    prefixWeights.push(prefixWeights[prefixWeights.length - 1] + weight);
+  }
   const preferredCenter =
     Math.floor((text.length - 1) * 0.62);
+  let selected;
+  let suffixStartIndex = 2;
   for (let startIndex = 1;
     startIndex < tokens.length - 1;
     startIndex += 1) {
-    let omittedWeight = 0;
-    for (let endIndex = startIndex;
-      endIndex < tokens.length - 1;
-      endIndex += 1) {
-      omittedWeight += weights[endIndex];
-      const prefix = text.slice(0, tokens[startIndex].start).trimEnd();
-      const suffix = text.slice(tokens[endIndex].end).trimStart();
-      const outputLength =
-        prefix.length + separator.length + suffix.length;
-      if (outputLength > maxLength) continue;
-      candidates.push({
-        prefix,
-        suffix,
-        omittedWeight,
-        omittedCharacters:
-          tokens[endIndex].end - tokens[startIndex].start,
-        centerDistance: Math.abs(
-          Math.floor(
-            (
-              tokens[startIndex].start +
-              tokens[endIndex].end
-            ) / 2
-          ) - preferredCenter
-        )
-      });
+    suffixStartIndex = Math.max(suffixStartIndex, startIndex + 1);
+    const prefixLength = Math.max(0, tokens[startIndex].start - 1);
+    while (suffixStartIndex < tokens.length &&
+        prefixLength + separator.length +
+          text.length - tokens[suffixStartIndex].start > maxLength) {
+      suffixStartIndex += 1;
+    }
+    if (suffixStartIndex >= tokens.length) break;
+    const endIndex = suffixStartIndex - 1;
+    const candidate = {
+      startIndex,
+      endIndex,
+      omittedWeight:
+        prefixWeights[suffixStartIndex] - prefixWeights[startIndex],
+      omittedCharacters:
+        tokens[endIndex].end - tokens[startIndex].start,
+      centerDistance: Math.abs(
+        Math.floor(
+          (
+            tokens[startIndex].start +
+            tokens[endIndex].end
+          ) / 2
+        ) - preferredCenter
+      )
+    };
+    if (!selected ||
+        candidate.omittedWeight < selected.omittedWeight ||
+        (candidate.omittedWeight === selected.omittedWeight &&
+          candidate.omittedCharacters < selected.omittedCharacters) ||
+        (candidate.omittedWeight === selected.omittedWeight &&
+          candidate.omittedCharacters === selected.omittedCharacters &&
+          candidate.centerDistance < selected.centerDistance)) {
+      selected = candidate;
     }
   }
-  const selected = candidates.sort((left, right) =>
-    left.omittedWeight - right.omittedWeight ||
-    left.omittedCharacters - right.omittedCharacters ||
-    left.centerDistance - right.centerDistance ||
-    compareStableText(left.prefix, right.prefix)
-  )[0];
   if (selected) {
-    return `${selected.prefix}${separator}${selected.suffix}`;
+    const prefix = text
+      .slice(0, tokens[selected.startIndex].start)
+      .trimEnd();
+    const suffix = text
+      .slice(tokens[selected.endIndex].end)
+      .trimStart();
+    return `${prefix}${separator}${suffix}`;
   }
 
   const retained = [];
@@ -4474,7 +4831,10 @@ function evidenceSummaryTokenWeight(value, salientTokens = new Set()) {
   return 1;
 }
 
-function compactPromptEvidenceURL(value) {
+function compactPromptEvidenceURL(
+  value,
+  maxLength = MAX_PROMPT_EVIDENCE_URL_CHARS
+) {
   const safeURL = safePublicURL(firstText(value));
   if (!safeURL) return '';
   try {
@@ -4482,17 +4842,17 @@ function compactPromptEvidenceURL(value) {
     parsed.search = '';
     parsed.hash = '';
     const canonical = parsed.toString();
-    if (canonical.length <= MAX_PROMPT_EVIDENCE_URL_CHARS) {
+    if (canonical.length <= maxLength) {
       return canonical;
     }
     const origin = `${parsed.origin}/`;
-    if (origin.length > MAX_PROMPT_EVIDENCE_URL_CHARS) return '';
+    if (origin.length > maxLength) return '';
     let bounded = origin;
     for (const segment of parsed.pathname.split('/').filter(Boolean)) {
       const next = new URL(
         `${bounded.endsWith('/') ? bounded : `${bounded}/`}${segment}`
       ).toString();
-      if (next.length > MAX_PROMPT_EVIDENCE_URL_CHARS) break;
+      if (next.length > maxLength) break;
       bounded = next;
     }
     return bounded;
