@@ -533,11 +533,17 @@ if (unsafeResult.status !== 'blocked' ||
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
 await verifyNaturalReviewFirstActionsPass(unsafeJob, unsafeRef);
+await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
+await verifyServicePaymentOutcomesPass(unsafeJob, unsafeRef);
+await verifyUnpaidServiceOutcomeFails(unsafeJob, unsafeRef);
+await verifyRevenueStopUnits(unsafeJob, unsafeRef);
+await verifyNaturalBookingAttribution(unsafeJob, unsafeRef);
+await verifyCausalPathDiagnosticsAreFieldSpecific(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTwoStageTargetBinding();
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + natural review-first actions + raw-cardinality guard + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
 );
 
 async function verifyOneMotionWithTwoCausalFamilies(job, evidenceRef) {
@@ -638,6 +644,226 @@ async function verifyNaturalReviewFirstActionsPass(job, evidenceRef) {
       `natural review-first revenue actions were rejected: ${JSON.stringify(result)}`
     );
   }
+}
+
+async function verifyOptionalSupportingBottleneckPasses(job, evidenceRef) {
+  const motion = cases[0].plans(evidenceRef)[0];
+  for (const familyKey of ['familyA', 'familyB']) {
+    motion.contingentFinalists[familyKey].d.r[0].sb = '';
+  }
+  const result = await plannerResultForMotion({
+    job,
+    motion,
+    generationId: 'generation-empty-optional-supporting-bottleneck'
+  });
+  if (result.status !== 'planned' || result.plans.length !== 1) {
+    throw new Error(
+      `empty optional supporting bottleneck was rejected: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyServicePaymentOutcomesPass(job, evidenceRef) {
+  const outcomes = [
+    'One completed paid lactation consultation recorded.',
+    'One completed paid or reimbursed lactation home visit recorded.',
+    'One paid visit recorded.',
+    'One paid session recorded.',
+    'One paid service recorded.',
+    'One paid engagement recorded.',
+    'One billable professional support session recorded.',
+    'One reimbursed consultation recorded.',
+    'One reimbursed visit recorded.',
+    'One reimbursed session recorded.'
+  ];
+  for (const [index, outcome] of outcomes.entries()) {
+    const motion = cases[0].plans(evidenceRef)[0];
+    motion.contingentFinalists.familyA.d.r[0].o = outcome;
+    const result = await plannerResultForMotion({
+      job,
+      motion,
+      generationId: `generation-service-payment-outcome-${index + 1}`
+    });
+    if (result.status !== 'planned' || result.plans.length !== 1) {
+      throw new Error(
+        `explicit service payment outcome was rejected (${outcome}): ${JSON.stringify(result)}`
+      );
+    }
+  }
+}
+
+async function verifyUnpaidServiceOutcomeFails(job, evidenceRef) {
+  const motion = cases[0].plans(evidenceRef)[0];
+  motion.contingentFinalists.familyA.d.r[0].o =
+    'One completed lactation consultation recorded.';
+  const result = await plannerResultForMotion({
+    job,
+    motion,
+    generationId: 'generation-unpaid-service-outcome'
+  });
+  if (result.status !== 'blocked' ||
+      !result.reason.includes('[observable_revenue]') ||
+      result.plans.length !== 0 ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `unpaid service outcome passed the revenue gate: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyRevenueStopUnits(job, evidenceRef) {
+  const validStops = [
+    'Stop after 5 referrals.',
+    'At most 5 referral requests.',
+    'Stop after 3 bookings.',
+    'Stop after 4 introductions.',
+    'At most 6 applications.',
+    'Stop after 7 proposals.'
+  ];
+  for (const [index, stopCondition] of validStops.entries()) {
+    const motion = cases[0].plans(evidenceRef)[0];
+    motion.contingentFinalists.familyA.d.r[0].st = stopCondition;
+    const result = await plannerResultForMotion({
+      job,
+      motion,
+      generationId: `generation-revenue-stop-unit-${index + 1}`
+    });
+    if (result.status !== 'planned' || result.plans.length !== 1) {
+      throw new Error(
+        `sound revenue stop unit was rejected (${stopCondition}): ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const invalidStops = [
+    'Five referral requests within fourteen days.',
+    '5 referrals within 14 calendar days.',
+    'Stop after 5 profile edits.'
+  ];
+  for (const [index, stopCondition] of invalidStops.entries()) {
+    const motion = cases[0].plans(evidenceRef)[0];
+    motion.contingentFinalists.familyA.d.r[0].st = stopCondition;
+    const result = await plannerResultForMotion({
+      job,
+      motion,
+      generationId: `generation-invalid-revenue-stop-${index + 1}`
+    });
+    if (result.status !== 'blocked' ||
+        !result.reason.includes('[numeric_stop]') ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `invalid revenue stop passed (${stopCondition}): ${JSON.stringify(result)}`
+      );
+    }
+  }
+}
+
+async function verifyNaturalBookingAttribution(job, evidenceRef) {
+  const validSignals = [
+    'Referral source recorded on the booking with the tournament action id.',
+    'Campaign source field stored on the appointment record.',
+    'Referral origin recorded with the consultation.'
+  ];
+  for (const [index, attributionSignal] of validSignals.entries()) {
+    const motion = cases[0].plans(evidenceRef)[0];
+    const revenue = motion.contingentFinalists.familyA.d.r[0];
+    revenue.atm = 'booking_record';
+    revenue.ats = attributionSignal;
+    const result = await plannerResultForMotion({
+      job,
+      motion,
+      generationId: `generation-natural-booking-attribution-${index + 1}`
+    });
+    if (result.status !== 'planned' || result.plans.length !== 1) {
+      throw new Error(
+        `natural booking attribution was rejected (${attributionSignal}): ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const invalidSignals = [
+    'Referral source field stores the tournament action id.',
+    'Booking record stores the tournament action id.'
+  ];
+  for (const [index, attributionSignal] of invalidSignals.entries()) {
+    const motion = cases[0].plans(evidenceRef)[0];
+    const revenue = motion.contingentFinalists.familyA.d.r[0];
+    revenue.atm = 'booking_record';
+    revenue.ats = attributionSignal;
+    const result = await plannerResultForMotion({
+      job,
+      motion,
+      generationId: `generation-invalid-booking-attribution-${index + 1}`
+    });
+    if (result.status !== 'blocked' ||
+        !result.reason.includes('[attribution_signal]') ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `incomplete booking attribution passed (${attributionSignal}): ${JSON.stringify(result)}`
+      );
+    }
+  }
+}
+
+async function verifyCausalPathDiagnosticsAreFieldSpecific(
+  job,
+  evidenceRef
+) {
+  const motion = cases[0].plans(evidenceRef)[0];
+  const revenue = motion.contingentFinalists.familyA.d.r[0];
+  revenue.io = 'A consultation may occur.';
+  revenue.o = 'A consultation may occur.';
+  revenue.cd = 'The owner website';
+  revenue.vm = 0;
+  const result = await plannerResultForMotion({
+    job,
+    motion,
+    generationId: 'generation-field-specific-causal-diagnostics'
+  });
+  const expected =
+    '[incremental_income,observable_revenue,conversion_destination,expected_value]';
+  if (result.status !== 'blocked' ||
+      !result.reason.includes(expected) ||
+      result.plans.length !== 0 ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `causal-path diagnostics were not field-specific and safe: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function plannerResultForMotion({ job, motion, generationId }) {
+  return runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: 'One review-first commercial motion has two causal tactics.',
+        plans: [motion]
+      },
+      usage,
+      generationId,
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 800,
+        contentSha256: '4'.repeat(64)
+      },
+      annotations: [{
+        type: 'url_citation',
+        url_citation: {
+          url: 'https://riverside-pediatrics.example/newborn-care',
+          title: 'Riverside Pediatrics newborn care',
+          content: 'Current public newborn-care practice in Queens.'
+        }
+      }]
+    })
+  });
 }
 
 async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {

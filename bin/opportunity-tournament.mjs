@@ -945,7 +945,7 @@ function compactOpportunityDiscoveryHardRules() {
     'Use only evidenceCatalog IDs. Each plan/family has an observation:* seller anchor. System attribution evidence supports attribution only. Obey outputContract targetRoleMap exactly.',
     `Every d.a action is distinct, contains ${CONTINGENT_TARGET_NAME_TOKEN} exactly once, and directly asks it to refer/recommend one buyer, requests one introduction, presents one paid offer, or submits/lists one paid application/proposal/offer. Workflow, scheduling, resource, document, profile, content, and measurement work cannot be the requested outcome.`,
     'For each r: a=plan acquisitionMode; io says additional/incremental paid income; c is active; o names a paid booking/payment/contract/order/subscription/compensation receipt.',
-    'For each r: atm is allowed; ats names its matching durable record plus source/referral/UTM/campaign/channel/code field; cd is a concrete conversion page distinct from acquisition; st has a number, unit, and stop/at-most/whichever-first; vm>0.',
+    'For each r: atm is allowed; ats names its matching durable record plus source/referral/UTM/campaign/channel/code field; cd is a concrete conversion page distinct from acquisition; st has a number, a sound time/sample/action unit such as referral request, booking, introduction, application, or proposal, and stop/at-most/whichever-first; vm>0.',
     'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence. A prospective partner never proves buyer, offer, warmness, permission, or demand.',
     'Two families use distinct causal tactics. No patients/sensitive traits/private contacts/outreach copy/publishing/ads/forms/provider writes/prose outside JSON.',
     'Silently audit every short key and semantic rule once before returning the strict JSON.'
@@ -1414,28 +1414,12 @@ function contingentFinalistBundleIssue(planValue) {
       actionSignatures.add(comparable(action));
     }
     const revenue = asObject(asArray(dimensions.r)[0]);
-    const grounding = asObject(revenue.g);
-    const destination = asObject(grounding.d);
-    if (firstText(revenue.v) !== REVENUE_PATH_CONTRACT_VERSION ||
-        !REVENUE_MECHANISMS.has(firstText(revenue.rm)) ||
-        firstText(revenue.a) !== firstText(plan.acquisitionMode) ||
-        !ATTRIBUTION_METHODS.has(firstText(revenue.atm)) ||
-        !incrementalIncomeText(revenue.io) ||
-        !revenueAdvancingAction(revenue.c) ||
-        !observableRevenueText(revenue.o) ||
-        !attributionSignalText(revenue.ats, revenue.atm) ||
-        !conversionDestinationText(revenue.cd) ||
-        !boundedRevenueStopCondition(revenue.st) ||
-        !(nonNegativeInteger(revenue.vm) > 0) ||
-        !firstText(revenue.sb) ||
-        asArray(grounding.b).length === 0 ||
-        asArray(grounding.o).length === 0 ||
-        asArray(grounding.a).length === 0 ||
-        !firstText(destination.l) ||
-        asArray(destination.e).length === 0 ||
-        asArray(grounding.c).length === 0 ||
-        asArray(grounding.t).length === 0) {
-      return `has an incomplete causal revenue path in family ${familyIndex + 1}.`;
+    const revenuePathIssues = contingentCausalRevenuePathIssues(
+      revenue,
+      plan.acquisitionMode
+    );
+    if (revenuePathIssues.length > 0) {
+      return `has an incomplete causal revenue path in family ${familyIndex + 1} [${revenuePathIssues.join(',')}].`;
     }
   }
   if (actionSignatures.size < 4) {
@@ -1447,6 +1431,58 @@ function contingentFinalistBundleIssue(planValue) {
     return 'has incomplete semantic judge weights.';
   }
   return '';
+}
+
+function contingentCausalRevenuePathIssues(
+  revenueValue,
+  acquisitionMode
+) {
+  const revenue = asObject(revenueValue);
+  const grounding = asObject(revenue.g);
+  const destination = asObject(grounding.d);
+  return [
+    [
+      firstText(revenue.v) === REVENUE_PATH_CONTRACT_VERSION,
+      'contract_version'
+    ],
+    [
+      REVENUE_MECHANISMS.has(firstText(revenue.rm)),
+      'revenue_mechanism'
+    ],
+    [
+      firstText(revenue.a) === firstText(acquisitionMode),
+      'acquisition_mode'
+    ],
+    [
+      ATTRIBUTION_METHODS.has(firstText(revenue.atm)),
+      'attribution_method'
+    ],
+    [incrementalIncomeText(revenue.io), 'incremental_income'],
+    [revenueAdvancingAction(revenue.c), 'conversion_action'],
+    [observableRevenueText(revenue.o), 'observable_revenue'],
+    [
+      attributionSignalText(revenue.ats, revenue.atm),
+      'attribution_signal'
+    ],
+    [
+      conversionDestinationText(revenue.cd),
+      'conversion_destination'
+    ],
+    [boundedRevenueStopCondition(revenue.st), 'numeric_stop'],
+    [nonNegativeInteger(revenue.vm) > 0, 'expected_value'],
+    [asArray(grounding.b).length > 0, 'grounding_buyer'],
+    [asArray(grounding.o).length > 0, 'grounding_offer'],
+    [asArray(grounding.a).length > 0, 'grounding_acquisition'],
+    [firstText(destination.l), 'grounding_destination_label'],
+    [
+      asArray(destination.e).length > 0,
+      'grounding_destination_evidence'
+    ],
+    [asArray(grounding.c).length > 0, 'grounding_conversion'],
+    [asArray(grounding.t).length > 0, 'grounding_attribution']
+  ]
+    .filter(([valid]) => !valid)
+    .map(([, code]) => code);
 }
 
 function countExactToken(value, token) {
@@ -7355,7 +7391,7 @@ function compactTournamentOutputContract(
       'o is observable paid outcome; atm is attribution method; ats is attribution record; ' +
       'cd is the concrete conversion destination; st is a numeric time/sample stop; ' +
       'g binds buyer/offer/acquisition/destination/conversion/attribution evidence; ' +
-      'sb is optional support only; vm is positive expected gross-income micros',
+      'sb is optional support only and may be ""; vm is positive expected gross-income micros',
     revenueMechanisms: [...REVENUE_MECHANISMS],
     attributionMethods: [...ATTRIBUTION_METHODS],
     evidenceExperiment:
@@ -13242,7 +13278,7 @@ function passiveOrObservationalPrimaryAction(value) {
 function boundedRevenueStopCondition(value) {
   const text = firstText(value);
   return /\b\d+\b/.test(text) &&
-    /\b(?:attempts?|buyers?|calendar days?|conversions?|days?|hours?|inquiries|outcomes?|prospects?|sales?|samples?|visits?|weeks?)\b/i.test(
+    /\b(?:applications?|attempts?|bookings?|buyers?|calendar days?|conversions?|days?|hours?|inquiries|introductions?|outcomes?|proposals?|prospects?|referral requests?|referrals?|sales?|samples?|visits?|weeks?)\b/i.test(
       text
     ) &&
     /\b(?:stop|whichever comes first|at most|maximum|or)\b/i.test(text);
@@ -13296,7 +13332,7 @@ function nonRevenueArtifactOrQuestionAction(value) {
 }
 
 function observableRevenueText(value) {
-  return /\b(paid (?:booking|claim|invoice|order|pilot)|payment(?: receipt)?|signed (?:contract|agreement)|contract signed|deposit received|invoice (?:issued|accepted|paid)|checkout|purchase|order|sale|subscription|retainer|revenue recorded|income recorded|reimbursement (?:received|paid)|claim paid|licen[cs]e (?:signed|payment received)|royalty (?:statement|payment)|commission (?:recorded|paid)|referral fee (?:recorded|paid)|sponsorship (?:contract signed|payment received)|platform payout recorded|compensation (?:offer accepted|payment recorded)|salary payment|wage payment)\b/i.test(
+  return /\b(paid (?:booking|claim|invoice|order|pilot)|(?:paid|billable|reimbursed)\s+(?:(?:[\p{L}\p{N}-]+)\s+){0,5}(?:consultations?|engagements?|services?|sessions?|visits?)|payment(?: receipt)?|signed (?:contract|agreement)|contract signed|deposit received|invoice (?:issued|accepted|paid)|checkout|purchase|order|sale|subscription|retainer|revenue recorded|income recorded|reimbursement (?:received|paid)|claim paid|licen[cs]e (?:signed|payment received)|royalty (?:statement|payment)|commission (?:recorded|paid)|referral fee (?:recorded|paid)|sponsorship (?:contract signed|payment received)|platform payout recorded|compensation (?:offer accepted|payment recorded)|salary payment|wage payment)\b/iu.test(
     firstText(value)
   );
 }
@@ -13711,8 +13747,11 @@ function attributionSignalText(value, method) {
   if (!/\b(source|referral|utm|campaign|origin|channel|code|crm)\b/i.test(text)) {
     return false;
   }
+  if (method === 'booking_record') {
+    return /\b(?:booking|appointment|consultation)\b/i.test(text) &&
+      /\b(?:record(?:s|ed|ing)?|field|source)\b/i.test(text);
+  }
   const patterns = {
-    booking_record: /\b(booking|appointment|consultation) (?:record|field|source)\b/i,
     payment_receipt: /\b(payment|receipt|transaction)\b/i,
     invoice_or_contract: /\b(invoice|contract|agreement)\b/i,
     checkout_or_order: /\b(checkout|order|purchase)\b/i,
