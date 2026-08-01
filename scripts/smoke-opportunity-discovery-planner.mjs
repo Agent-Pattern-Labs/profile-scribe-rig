@@ -612,7 +612,13 @@ async function verifyNaturalReviewFirstActionsPass(job, evidenceRef) {
       }]
     })
   });
-  if (result.status !== 'planned' || result.plans.length !== 1) {
+  const returnedActions = ['familyA', 'familyB'].flatMap((familyKey) =>
+    result.plans[0]?.contingentFinalists?.[familyKey]?.d?.a?.map(
+      (action) => action.l
+    ) || []
+  );
+  if (result.status !== 'planned' || result.plans.length !== 1 ||
+      JSON.stringify(returnedActions) !== JSON.stringify(actions)) {
     throw new Error(
       `natural review-first revenue actions were rejected: ${JSON.stringify(result)}`
     );
@@ -708,6 +714,46 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
           'After approval, contact {{TARGET_NAME}} to check paid booking availability.';
       },
       reason: /active rather than observational/i
+    },
+    {
+      name: 'recommend tracking action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, recommend that {{TARGET_NAME}} track paid-booking metrics.';
+      },
+      reason: /active rather than observational/i
+    },
+    {
+      name: 'recommend audit action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, recommend a referral process audit to {{TARGET_NAME}}.';
+      },
+      reason: /active rather than observational/i
+    },
+    {
+      name: 'present analysis action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, present {{TARGET_NAME}} with a paid-booking analysis.';
+      },
+      reason: /causally advance acquisition/i
+    },
+    {
+      name: 'route analytics action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          "After review, route {{TARGET_NAME}}'s paid booking data into analytics.";
+      },
+      reason: /causally advance acquisition/i
+    },
+    {
+      name: 'imperative verification action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'Once approved, verify the paid offer for {{TARGET_NAME}} before proceeding.';
+      },
+      reason: /commercial rather than operational/i
     }
   ];
   for (const check of checks) {

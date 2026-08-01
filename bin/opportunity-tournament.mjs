@@ -13076,7 +13076,7 @@ function operationOnlyAction(value) {
 
 function primaryActionSemanticText(value) {
   return comparable(firstText(value)).replace(
-    /\b(?:after|following|pending) (?:explicit |human |user )?(?:approval|review)\b[,:;-]?/g,
+    /\b(?:(?:after|following|pending) (?:explicit |human |user )?(?:approval|review)|subject to (?:explicit |human |user )?approval|once (?:explicitly |human-)?approved)\b[,:;-]?/g,
     ' '
   );
 }
