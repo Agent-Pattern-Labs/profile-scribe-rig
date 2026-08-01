@@ -698,8 +698,21 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
     INITIAL_FAMILY_VARIANT_COUNT
   ).json_schema.schema;
   const contingentFamily = asObject(contingentSchema.$defs.family);
+  const contingentActionItem = asObject(
+    contingentSchema.$defs.actionItem
+  );
   const contingentDefs = {
     ...contingentSchema.$defs,
+    actionItem: {
+      ...contingentActionItem,
+      properties: {
+        ...asObject(contingentActionItem.properties),
+        l: {
+          ...asObject(asObject(contingentActionItem.properties).l),
+          pattern: '\\{\\{TARGET_NAME\\}\\}'
+        }
+      }
+    },
     family: {
       ...contingentFamily,
       properties: {
@@ -1354,8 +1367,16 @@ function contingentFinalistBundleIssue(planValue) {
     for (const [actionIndex, actionValue] of
       asArray(dimensions.a).entries()) {
       const action = firstText(asObject(actionValue).l);
-      if (countExactToken(action, CONTINGENT_TARGET_NAME_TOKEN) !== 1) {
-        return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_target_token]: must contain exactly one target token.`;
+      const targetNameCount = countExactToken(
+        action,
+        CONTINGENT_TARGET_NAME_TOKEN
+      );
+      if (targetNameCount !== 1) {
+        const targetURLCount = countExactToken(
+          action,
+          CONTINGENT_TARGET_URL_TOKEN
+        );
+        return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_target_token]: must contain exactly one target-name token (name_count=${targetNameCount}, url_count=${targetURLCount}).`;
       }
       if (passiveOrObservationalPrimaryAction(action)) {
         return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_passive]: must be active rather than observational.`;

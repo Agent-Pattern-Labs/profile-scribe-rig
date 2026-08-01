@@ -384,7 +384,10 @@ for (const scenario of cases) {
   if (!plannerPrompt.outputContract?.targetRoleMap ||
       !plannerPrompt.outputContract?.revenuePath ||
       !Array.isArray(plannerPrompt.hardRules) ||
-      plannerPrompt.hardRules.length < 7) {
+      plannerPrompt.hardRules.length < 7 ||
+      requestSeen.responseFormat?.json_schema?.schema?.$defs
+        ?.actionItem?.properties?.l?.pattern !==
+          '\\{\\{TARGET_NAME\\}\\}') {
     throw new Error(
       `${scenario.name}: call 1 omitted its compact semantic contract`
     );
@@ -673,7 +676,7 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
         plans[0].contingentFinalists.familyA.d.a[0].l =
           'After review, request one paid partner referral without an exact target.';
       },
-      reason: /primary action|target token/i
+      reason: /primary_action|target-name token/i
     },
     {
       name: 'passive primary action drift',
