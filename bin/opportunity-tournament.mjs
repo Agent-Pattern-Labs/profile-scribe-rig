@@ -1,11 +1,17 @@
 import { createHash } from 'crypto';
 import { isIP } from 'net';
 
-export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v4';
+export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v5';
 export const OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT =
-  'opportunity_tournament_compact_v1';
+  'opportunity_tournament_commercial_v2';
 const TOURNAMENT_GENERATOR_CONTRACT =
   OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT;
+export const OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT =
+  'opportunity_tournament_critic_v1';
+export const OPPORTUNITY_TOURNAMENT_RESULT_CONTRACT =
+  'opportunity_tournament_result_v2';
+export const ACTIVE_REVENUE_ACTION_CONTRACT =
+  'active_revenue_action_v1';
 
 const MAX_HYPOTHESES = 10_000;
 const MAX_FINALISTS = 20;
@@ -53,11 +59,12 @@ const DIMENSIONS = [
   ['revenuePaths', ['revenuePaths', 'revenuePath', 'r']]
 ];
 
-// One canonical path per family keeps the strict provider output bounded. The
-// model compares broadly in-context and returns its best two coherent paths;
-// deterministic gates then validate and rank those two finalists.
-const INITIAL_FAMILY_VARIANT_COUNT = 1;
-const REPAIR_FAMILY_VARIANT_COUNT = 1;
+// One canonical revenue path per family anchors a bounded local combination
+// space. Two grounded variants across each strategy dimension preserve broad
+// deterministic exploration (up to 256 coherent tuples across two families)
+// without adding model calls or asking the provider for extra revenue paths.
+const INITIAL_FAMILY_VARIANT_COUNT = 2;
+const REPAIR_FAMILY_VARIANT_COUNT = 2;
 const MAX_PROMPT_EVIDENCE_ITEMS = 16;
 const MAX_PROMPT_PAID_ASSET_ITEMS = 4;
 const MAX_PROMPT_OBJECTIVE_EVIDENCE_ITEMS = 4;
@@ -72,6 +79,7 @@ const MAX_PROMPT_EVIDENCE_SUMMARY_CHARS = 320;
 const MAX_PROMPT_EVIDENCE_URL_CHARS = 240;
 const MAX_PROVIDER_REQUEST_BODY_BYTES = 36 * 1_024;
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
+const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
 
 const DEFAULT_JUDGE_WEIGHTS = {
   objectiveFit: 0.22,
@@ -105,9 +113,15 @@ const LEGACY_SEED_CONTRACT_VERSION = 'revenue_family_bundle_v1';
 const SEED_CONTRACT_VERSION = 'revenue_family_bundle_v2';
 const LEGACY_REVENUE_PATH_CONTRACT_VERSION =
   'incremental_revenue_v1';
-export const REVENUE_PATH_CONTRACT_VERSION =
+const PRIOR_REVENUE_PATH_CONTRACT_VERSION =
   'incremental_revenue_v2';
-export const REVENUE_GATE_VERSION = 'incremental_income_v2';
+export const REVENUE_PATH_CONTRACT_VERSION =
+  'incremental_revenue_v3';
+const TYPED_REVENUE_PATH_CONTRACT_VERSIONS = new Set([
+  PRIOR_REVENUE_PATH_CONTRACT_VERSION,
+  REVENUE_PATH_CONTRACT_VERSION
+]);
+export const REVENUE_GATE_VERSION = 'incremental_revenue_causal_v3';
 const LEGACY_REVENUE_GATE_VERSION = 'incremental_income_v1';
 export const REVENUE_EVIDENCE_EXPERIMENT_CONTRACT =
   'revenue_evidence_experiment_v1';
@@ -303,7 +317,12 @@ const SCORE_ALIASES = {
  * inputs once. This module performs the Cartesian expansion, hard filtering,
  * judging, diversity selection, and winner explanation deterministically.
  */
-export async function runOpportunityTournament({
+export async function runOpportunityTournament(args) {
+  const rawResult = await runOpportunityTournamentCore(args);
+  return finalizeOpportunityTournamentResult(rawResult, args);
+}
+
+async function runOpportunityTournamentCore({
   job,
   context = {},
   model,
@@ -319,6 +338,15 @@ export async function runOpportunityTournament({
   const objective = normalizeObjective(payload.objective, payload);
   const budget = normalizeBudget(payload.budget);
   const constraints = normalizeConstraints(objective, payload);
+  const commercialContext = normalizeCommercialContext(
+    payload,
+    objective,
+    constraints
+  );
+  const priorOutcomes = normalizePriorOutcomes([
+    ...asArray(payload.priorOutcomes),
+    ...asArray(asObject(payload.commercialContext).priorAttributedOutcomes)
+  ]);
   const evidenceCatalog = buildEvidenceCatalog(payload, context, now);
   const promptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
@@ -334,6 +362,23 @@ export async function runOpportunityTournament({
   const promptEvidenceHash = stableHash(promptEvidenceCatalog);
   const evidenceHash = stableHash(evidenceCatalog);
   const timestamp = validDate(now).toISOString();
+  const commercialEvidenceGraph = buildCommercialEvidenceGraph(
+    evidenceCatalog,
+    {
+      commercialContext,
+      priorOutcomes,
+      objective,
+      constraints
+    }
+  );
+  const commercialEvidenceGraphHash = stableHash(
+    commercialEvidenceGraph
+  );
+  const promptCommercialEvidenceGraph =
+    projectCommercialEvidenceGraphForPrompt(
+      commercialEvidenceGraph,
+      promptEvidenceCatalog
+    );
   const base = {
     tournamentId,
     algorithmVersion,
@@ -344,6 +389,8 @@ export async function runOpportunityTournament({
     winner: null,
     runnerUp: null,
     nextExperiment: null,
+    commercialEvidenceGraph,
+    commercialEvidenceGraphHash,
     searchSpace: {
       ...emptySearchSpace(budget),
       evidenceCatalogCount: evidenceCatalog.length,
@@ -373,7 +420,9 @@ export async function runOpportunityTournament({
       evidenceHash,
       missingEvidence,
       referenceTime: timestamp,
-      generatedExperiment: generatedEvidenceExperiment
+      generatedExperiment: generatedEvidenceExperiment,
+      commercialContext,
+      commercialEvidenceGraph
     });
 
   const objectiveIssue = objectiveValidationIssue(objective);
@@ -432,8 +481,10 @@ export async function runOpportunityTournament({
   const prompt = seedAndJudgePrompt({
     objective,
     constraints,
+    commercialContext,
     evidenceCatalog: promptEvidenceCatalog,
-    priorOutcomes: normalizePriorOutcomes(payload.priorOutcomes),
+    commercialEvidenceGraph: promptCommercialEvidenceGraph,
+    priorOutcomes,
     maxSeedsPerDimension: Math.min(4, MAX_SEEDS_PER_DIMENSION)
   });
   const promptHash = stableHash({ system: prompt.system, user: prompt.user });
@@ -531,6 +582,8 @@ export async function runOpportunityTournament({
         strategyGenerationFailureMissingEvidence(error);
       const providerMetadata = openRouterMetadata({
         model,
+        purpose: 'opportunity_tournament_strategy_generation',
+        structuredOutputContract: TOURNAMENT_GENERATOR_CONTRACT,
         status: 'failed',
         usage: error?.openRouterUsage,
         generationId: error?.openRouterGenerationId,
@@ -561,6 +614,8 @@ export async function runOpportunityTournament({
   const providerMetadata = initialTruncationError
     ? openRouterMetadata({
         model,
+        purpose: 'opportunity_tournament_strategy_generation',
+        structuredOutputContract: TOURNAMENT_GENERATOR_CONTRACT,
         status: 'failed',
         usage: initialTruncationError?.openRouterUsage,
         generationId: initialTruncationError?.openRouterGenerationId,
@@ -570,6 +625,8 @@ export async function runOpportunityTournament({
       })
     : openRouterMetadata({
         model,
+        purpose: 'opportunity_tournament_strategy_generation',
+        structuredOutputContract: TOURNAMENT_GENERATOR_CONTRACT,
         status: initialCompletionTruncated ? 'incomplete' : 'completed',
         usage: completion?.usage,
         generationId: completion?.generationId,
@@ -792,6 +849,8 @@ export async function runOpportunityTournament({
           'openrouter_truncated_structured_output';
         const repairMetadata = openRouterMetadata({
           model,
+          purpose: 'opportunity_tournament_structured_repair',
+          structuredOutputContract: TOURNAMENT_GENERATOR_CONTRACT,
           status: 'failed',
           usage: error?.openRouterUsage,
           generationId: error?.openRouterGenerationId,
@@ -843,6 +902,8 @@ export async function runOpportunityTournament({
         );
       const repairMetadata = openRouterMetadata({
         model,
+        purpose: 'opportunity_tournament_structured_repair',
+        structuredOutputContract: TOURNAMENT_GENERATOR_CONTRACT,
         status: repairCompletionTruncated
           ? 'incomplete'
           : 'completed',
@@ -1122,11 +1183,32 @@ export async function runOpportunityTournament({
     };
   }
 
+  const requiresCommercialCritic =
+    searchContracts.revenuePathContract === REVENUE_PATH_CONTRACT_VERSION;
+  let commercialCritic = {
+    contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+    contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+    attempted: false,
+    enforced: requiresCommercialCritic,
+    valid: false,
+    verdict: requiresCommercialCritic ? 'not_run' : 'not_required',
+    acceptedFamilyIds: [],
+    acceptedFinalistIds: [],
+    selectedOrdering: [],
+    reason: requiresCommercialCritic
+      ? 'A bounded comparative critic has not run.'
+      : 'Legacy revenue-path contracts do not use the v5 comparative critic.',
+    cause: budget.maxLLMCalls < 2
+      ? 'critic_call_not_budgeted'
+      : structuredRepair.attempted
+        ? 'structured_repair_consumed_second_call'
+        : 'insufficient_grounded_finalists'
+  };
   const expanded = expandAndJudge({
     objective,
     constraints,
     evidenceCatalog: providerValidationEvidenceCatalog,
-    priorOutcomes: normalizePriorOutcomes(payload.priorOutcomes),
+    priorOutcomes,
     seedSet,
     weights: normalizeJudgeWeights(
       completion?.data?.judgeWeights ?? completion?.data?.w
@@ -1134,7 +1216,7 @@ export async function runOpportunityTournament({
     budget,
     timestamp
   });
-  const initialHypotheses = expanded.finalists;
+  let initialHypotheses = expanded.finalists;
   const searchSpaceFor = (retainedHypotheses) => ({
     ...base.searchSpace,
     maxHypotheses: budget.maxHypotheses,
@@ -1145,6 +1227,8 @@ export async function runOpportunityTournament({
     filteredCount: expanded.filteredCount,
     incompatibleCount: expanded.incompatibleCount,
     motionConflictCount: expanded.motionConflictCount,
+    criticRejectedCount:
+      nonNegativeInteger(commercialCritic.rejectedFinalistCount) || 0,
     motionConflictDimensions: expanded.motionConflictDimensions,
     revenueGate: searchContracts.revenueGate,
     revenuePathContract: searchContracts.revenuePathContract,
@@ -1169,6 +1253,7 @@ export async function runOpportunityTournament({
     deterministic: true,
     modelCalls: usage.calls,
     structuredRepair,
+    commercialCritic,
     judgeWeights: expanded.weights
   });
   if (initialHypotheses.length < 2) {
@@ -1189,6 +1274,188 @@ export async function runOpportunityTournament({
         'A completed tournament requires a distinct winner and runner-up grounded in approved evidence.'
       )
     };
+  }
+  if (requiresCommercialCritic) {
+    const deterministicFinalists = initialHypotheses.filter((hypothesis) =>
+      deterministicCommercialHypothesisGate(
+        hypothesis,
+        commercialEvidenceGraph
+      ).valid
+    );
+    const deterministicExcludedCount =
+      initialHypotheses.length - deterministicFinalists.length;
+    if (deterministicFinalists.length < 2) {
+      commercialCritic = {
+        ...commercialCritic,
+        cause: 'insufficient_deterministic_finalists',
+        reason:
+          'Fewer than two finalist motions passed the deterministic active, causal, incremental-revenue gate; no invalid or passive family was sent to the critic.',
+        deterministicExcludedCount
+      };
+      initialHypotheses = deterministicFinalists;
+      return {
+        status: 'skipped',
+        summary:
+          'The tournament retained fewer than two active causal revenue finalists before critic review.',
+        ...base,
+        hypotheses: initialHypotheses.map(publicHypothesis),
+        nextExperiment: nextExperimentFor([
+          'active_causal_revenue_finalist',
+          'second_grounded_finalist'
+        ]),
+        searchSpace: searchSpaceFor(initialHypotheses),
+        llm: llmTrace,
+        usage,
+        gate: researchOnlyGate(
+          'needs_more_approved_evidence',
+          'Passive, operational, or non-causal motions were rejected before the independent critic.'
+        )
+      };
+    }
+    if (terminalStructuredIssue ||
+        budget.maxLLMCalls < 2 ||
+        usage.calls >= budget.maxLLMCalls) {
+      commercialCritic = {
+        ...commercialCritic,
+        cause: structuredRepair.attempted
+          ? 'commercial_critic_displaced_by_repair'
+          : 'critic_call_not_budgeted',
+        reason: structuredRepair.attempted
+          ? 'The one bounded repair consumed call 2, so the mandatory comparative critic could not run and no recommendation was accepted.'
+          : 'The configured call budget did not leave a second call for the mandatory comparative critic.',
+        deterministicExcludedCount
+      };
+      return {
+        status: 'skipped',
+        summary:
+          'The mandatory commercial critic could not run within the two-call ceiling, so no recommendation was accepted.',
+        ...base,
+        hypotheses: deterministicFinalists.map(publicHypothesis),
+        nextExperiment: nextExperimentFor([
+          structuredRepair.attempted
+            ? 'commercial_critic_displaced_by_repair'
+            : 'commercial_critic_budget_recovery'
+        ]),
+        llm: llmTrace,
+        usage,
+        searchSpace: {
+          ...searchSpaceFor(deterministicFinalists),
+          commercialCritic
+        },
+        gate: researchOnlyGate(
+          'commercial_critic_failed',
+          'A v5 recommendation is invalid without a completed independent comparative critic.'
+        )
+      };
+    }
+    const criticFinalists = selectCommercialCriticFinalists(
+      deterministicFinalists,
+      6
+    );
+    const criticInputBindings = commercialCriticFinalists(
+      criticFinalists
+    ).map((finalist) => ({
+      finalistId: finalist.finalistId,
+      familyId: finalist.familyId
+    }));
+    const criticOutcome = await runCommercialCritic({
+      objective,
+      commercialContext,
+      commercialEvidenceGraph: promptCommercialEvidenceGraph,
+      finalists: criticFinalists,
+      model,
+      budget,
+      usage,
+      completedRequests: [initialCompletionRequest],
+      completeJSON
+    });
+    commercialCritic = {
+      ...criticOutcome.trace,
+      enforced: true,
+      inputFinalists: criticInputBindings,
+      deterministicExcludedCount,
+      preCriticFinalistCount: initialHypotheses.length,
+      deterministicFinalistCount: deterministicFinalists.length,
+      criticInputFinalistCount: criticFinalists.length
+    };
+    if (criticOutcome.metadata) {
+      providerMetadataEntries.push(criticOutcome.metadata);
+      llmTrace.commercialCritic = criticOutcome.metadata;
+      usage = aggregateUsage(providerMetadataEntries, budget);
+    }
+    if (budget.hardStop &&
+        usage.reportedCostMicros > budget.maxLLMSpendMicros) {
+      criticOutcome.status = 'failed';
+      criticOutcome.cause = 'commercial_critic_budget_recovery';
+      commercialCritic.valid = false;
+      commercialCritic.verdict = 'rejected';
+      commercialCritic.cause = 'critic_reported_budget_exceeded';
+      commercialCritic.reason =
+        'The critic response exceeded the hard tournament spend budget.';
+      commercialCritic.acceptedFamilyIds = [];
+      commercialCritic.acceptedFinalistIds = [];
+    }
+    if (criticOutcome.status !== 'completed') {
+      return {
+        status: 'skipped',
+        summary:
+          'The independent commercial critic did not return a usable bounded comparison, so no recommendation was accepted.',
+        ...base,
+        hypotheses: deterministicFinalists.map(publicHypothesis),
+        nextExperiment: nextExperimentFor([
+          criticOutcome.cause ||
+            'commercial_critic_contract_recovery'
+        ]),
+        llm: llmTrace,
+        usage,
+        searchSpace: {
+          ...searchSpaceFor(deterministicFinalists),
+          modelCalls: usage.calls,
+          commercialCritic
+        },
+        gate: researchOnlyGate(
+          'commercial_critic_failed',
+          'No AI recommendation was accepted because the comparative critic failed its provider, budget, token, or strict-contract gate.'
+        )
+      };
+    }
+    const acceptedIDs = new Set(
+      compactStrings(commercialCritic.acceptedFinalistIds)
+    );
+    const byID = new Map(
+      deterministicFinalists.map((hypothesis) => [hypothesis.id, hypothesis])
+    );
+    initialHypotheses = compactStrings(commercialCritic.selectedOrdering)
+      .map((id) => byID.get(id))
+      .filter((hypothesis) => hypothesis && acceptedIDs.has(hypothesis.id))
+      .map((hypothesis, index) => ({
+        ...hypothesis,
+        rank: index + 1,
+        status: index === 0
+          ? 'winner'
+          : index === 1 ? 'runner_up' : 'finalist'
+      }));
+    if (commercialCritic.verdict !== 'accepted' ||
+        initialHypotheses.length < 2) {
+      return {
+        status: 'skipped',
+        summary:
+          'The independent commercial critic did not accept two comparable causal revenue finalists.',
+        ...base,
+        hypotheses: initialHypotheses.map(publicHypothesis),
+        nextExperiment: nextExperimentFor([
+          'critic_rejected_commercial_motion',
+          'second_grounded_finalist'
+        ]),
+        searchSpace: searchSpaceFor(initialHypotheses),
+        llm: llmTrace,
+        usage,
+        gate: researchOnlyGate(
+          'needs_more_approved_evidence',
+          'The comparative critic rejected or could not rank two grounded causal revenue motions.'
+        )
+      };
+    }
   }
   const profileScribePublicBaseURL = firstText(
     payload.profileScribePublicBaseURL,
@@ -1263,9 +1530,14 @@ export async function runOpportunityTournament({
           evidenceCatalog
         )
       )
-    )
-    .sort(compareHypotheses);
-  const winningHypothesis = actionableHypotheses[0];
+    );
+  if (!requiresCommercialCritic) {
+    actionableHypotheses.sort(compareHypotheses);
+  }
+  const winningHypothesis = requiresCommercialCritic &&
+      actionableHypotheses[0]?.id !== initialHypotheses[0]?.id
+    ? undefined
+    : actionableHypotheses[0];
   if (!winningHypothesis) {
     return {
       status: 'skipped',
@@ -1296,9 +1568,15 @@ export async function runOpportunityTournament({
   const remainingHypotheses = initialHypotheses
     .filter((hypothesis) =>
       hypothesis.id !== winningHypothesis.id &&
-      hypothesis.score.total <= winningHypothesis.score.total
-    )
-    .sort(compareHypotheses);
+      (!requiresCommercialCritic || actionableHypotheses.some((item) =>
+        item.id === hypothesis.id
+      )) &&
+      (requiresCommercialCritic ||
+       hypothesis.score.total <= winningHypothesis.score.total)
+    );
+  if (!requiresCommercialCritic) {
+    remainingHypotheses.sort(compareHypotheses);
+  }
   const alternateFamilyIndex = remainingHypotheses.findIndex((hypothesis) =>
     firstText(hypothesis._strategyFamily) !==
       firstText(winningHypothesis._strategyFamily)
@@ -1370,6 +1648,7 @@ export async function runOpportunityTournament({
     hypotheses,
     candidates,
     evidenceCatalog,
+    commercialCritic,
     eligibleCount: expanded.eligibleCount,
     exploredCount: expanded.expandedCount
   });
@@ -1442,6 +1721,253 @@ function publicHypothesis(hypothesis) {
     ...value
   } = asObject(hypothesis);
   return value;
+}
+
+function finalizeOpportunityTournamentResult(rawValue, argsValue) {
+  const raw = asObject(rawValue);
+  const args = asObject(argsValue);
+  const payload = asObject(asObject(args.job).payload);
+  const objective = normalizeObjective(payload.objective, payload);
+  const constraints = normalizeConstraints(objective, payload);
+  const commercialContext = normalizeCommercialContext(
+    payload,
+    objective,
+    constraints
+  );
+  const winner = asObject(raw.winner);
+  const winnerHypothesis = asArray(raw.hypotheses)
+    .map(asObject)
+    .find((hypothesis) =>
+      firstText(hypothesis.id) === firstText(winner.hypothesisId)
+    );
+  const path = asObject(
+    winnerHypothesis?.revenuePath ?? winner.revenuePath
+  );
+  const hypothesisChannel = firstText(winnerHypothesis?.channel);
+  const allowedChannel = commercialContext.allowedChannels.find(
+    (channel) => allowedValue(hypothesisChannel, [channel])
+  ) || '';
+  const graphNodes = new Map(
+    asArray(asObject(raw.commercialEvidenceGraph).nodes)
+      .map(asObject)
+      .map((node) => [firstText(node.evidenceRef), node])
+  );
+  const dimensionRefs = (name) => compactStrings(
+    asObject(asObject(winnerHypothesis?.provenance).dimensions)[name]
+      ?.evidenceRefs
+  );
+  const verifiedRole = (refs, role) => refs.some((ref) => {
+    const node = asObject(graphNodes.get(ref));
+    return node.approved === true && asArray(node.roles).includes(role);
+  });
+  const buyerRefs = dimensionRefs('buyerSegment');
+  const offerRefs = dimensionRefs('offer');
+  const critic = asObject(asObject(raw.searchSpace).commercialCritic);
+  const familyID = firstText(
+    asObject(winnerHypothesis?.provenance).strategyFamilyId
+  );
+  const criticAttempted = critic.attempted === true;
+  const criticAccepted =
+    firstText(critic.contract) === OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT &&
+    criticAttempted &&
+    critic.enforced === true &&
+    critic.valid === true &&
+    firstText(critic.verdict) === 'accepted' &&
+    Boolean(firstText(critic.reason)) &&
+    asArray(critic.acceptedFamilyIds).includes(familyID) &&
+    asArray(critic.acceptedFinalistIds).includes(
+      firstText(winnerHypothesis?.id)
+    ) &&
+    firstText(asArray(critic.selectedOrdering)[0]) ===
+      firstText(winnerHypothesis?.id);
+  const activeAction = asObject(path.activeRevenueAction);
+  const commercialConstraint = deterministicCommercialHypothesisGate(
+    winnerHypothesis,
+    raw.commercialEvidenceGraph
+  );
+  const primarilyOperationalOrObservational = winnerHypothesis
+    ? passiveOrObservationalPrimaryAction(winnerHypothesis.action) ||
+      operationOnlyAction(winnerHypothesis.action)
+    : true;
+  const gate = {
+    contractVersion: REVENUE_GATE_VERSION,
+    reachableBuyer:
+      Boolean(firstText(winnerHypothesis?.buyerSegment)) &&
+      buyerRefs.length > 0 &&
+      buyerRefs.some((ref) => asObject(graphNodes.get(ref)).approved === true),
+    currentPaidOffer:
+      paidOfferText(firstText(winnerHypothesis?.offer)) &&
+      verifiedRole(offerRefs, 'paid_offer'),
+    namedAcquisitionMechanism:
+      ACQUISITION_MODES.has(firstText(path.acquisitionMode)) &&
+      Boolean(hypothesisChannel),
+    acquisitionDistinctFromDestination:
+      Boolean(hypothesisChannel) &&
+      conversionDestinationText(path.conversionDestination) &&
+      comparable(hypothesisChannel) !==
+        comparable(path.conversionDestination),
+    actionCanBeginNow:
+      activeAction.active === true &&
+      commercialConstraint.commercialConstraintsSatisfied === true &&
+      Boolean(allowedChannel),
+    knownPermissions: Boolean(allowedChannel),
+    observablePaidConversion: observableRevenueText(
+      path.observableRevenueOutcome
+    ),
+    attribution: attributionSignalText(
+      path.attributionSignal,
+      path.attributionMethod
+    ),
+    counterfactualIncrementality: incrementalIncomeText(
+      path.incrementalIncomeOutcome
+    ),
+    numericStop: boundedRevenueStopCondition(path.stopCondition),
+    primarilyOperationalOrObservational,
+    activeRevenueAction: activeAction.active === true,
+    causalAcquisitionPath:
+      activeAction.causalAcquisitionPath === true,
+    incrementalRevenueOutcome:
+      activeAction.incrementalRevenueOutcome === true,
+    commercialConstraintsSatisfied:
+      commercialConstraint.commercialConstraintsSatisfied === true,
+    criticContract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+    criticVerdict: criticAttempted
+      ? criticAccepted ? 'accepted' : 'rejected'
+      : 'not_run',
+    reason: ''
+  };
+  const requiredPositive = [
+    'reachableBuyer',
+    'currentPaidOffer',
+    'namedAcquisitionMechanism',
+    'acquisitionDistinctFromDestination',
+    'actionCanBeginNow',
+    'knownPermissions',
+    'observablePaidConversion',
+    'attribution',
+    'counterfactualIncrementality',
+    'numericStop',
+    'activeRevenueAction',
+    'causalAcquisitionPath',
+    'incrementalRevenueOutcome',
+    'commercialConstraintsSatisfied'
+  ];
+  gate.passed = raw.status === 'completed' &&
+    requiredPositive.every((field) => gate[field] === true) &&
+    gate.primarilyOperationalOrObservational === false &&
+    criticAccepted;
+  if (!gate.passed) {
+    const failed = requiredPositive.filter((field) => gate[field] !== true);
+    if (gate.primarilyOperationalOrObservational) {
+      failed.push('primarily_operational_or_observational');
+    }
+    if (!criticAccepted) {
+      failed.push(criticAttempted
+        ? 'critic_rejected_or_unbound'
+        : 'critic_not_run');
+    }
+    gate.reason = failed.length > 0
+      ? `Failed closed: ${failed.join(', ')}.`
+      : 'No completed grounded revenue recommendation was available.';
+  } else {
+    gate.reason =
+      'The recommendation passed deterministic causal, incremental-revenue, permission-boundary, and critic checks.';
+  }
+  let coherent = raw;
+  if (raw.status === 'completed' && !gate.passed) {
+    const criticTechnicalFailure =
+      criticAttempted !== true ||
+      critic.enforced !== true ||
+      critic.valid !== true;
+    const evidenceCatalog = buildEvidenceCatalog(
+      payload,
+      asObject(args.context),
+      args.now || new Date()
+    );
+    const fallbackExperiment = revenueEvidenceExperiment({
+      objective,
+      evidenceCatalog,
+      evidenceHash: firstText(raw.evidenceHash, stableHash(evidenceCatalog)),
+      missingEvidence: criticTechnicalFailure
+        ? ['commercial_critic_contract_recovery']
+        : requiredPositive
+            .filter((field) => gate[field] !== true)
+            .concat(criticAccepted ? [] : ['critic_rejected_commercial_motion']),
+      referenceTime: validDate(args.now || new Date()).toISOString(),
+      commercialContext,
+      commercialEvidenceGraph: raw.commercialEvidenceGraph
+    });
+    coherent = {
+      ...raw,
+      status: 'skipped',
+      summary: criticTechnicalFailure
+        ? 'The result failed closed because the mandatory comparative critic was unavailable or invalid.'
+        : 'The result failed closed because the proposed winner did not pass every causal incremental-revenue gate.',
+      hypotheses: asArray(raw.hypotheses).map((hypothesisValue) => ({
+        ...asObject(hypothesisValue),
+        status: 'rejected'
+      })),
+      winner: null,
+      runnerUp: null,
+      nextExperiment: fallbackExperiment,
+      gate: researchOnlyGate(
+        criticTechnicalFailure
+          ? 'commercial_critic_failed'
+          : 'needs_more_approved_evidence',
+        gate.reason
+      )
+    };
+  }
+  const coherentExperiment = asObject(coherent.nextExperiment);
+  const technicalRecovery = /^strategy_generation_/i.test(
+    firstText(coherentExperiment.kind)
+  );
+  const resultType = gate.passed
+    ? 'immediate_revenue_action'
+    : technicalRecovery
+      ? 'technical_recovery'
+      : coherentExperiment.noGroundedPath === true
+        ? 'no_grounded_path'
+        : Object.keys(coherentExperiment).length > 0
+        ? 'revenue_evidence_gap'
+        : 'no_grounded_path';
+  const coherentWinner = asObject(coherent.winner);
+  const recommendedAction = Object.keys(coherentWinner).length > 0
+    ? firstText(coherentWinner.action)
+    : Object.keys(coherentExperiment).length > 0
+      ? firstText(coherentExperiment.action)
+      : firstText(
+          coherent.summary,
+          asObject(coherent.gate).reason,
+          'No immediate revenue action is grounded by the approved evidence.'
+        );
+  const experimentAllowedChannel = commercialContext.allowedChannels.find(
+    (channel) =>
+      allowedValue(
+        firstText(coherentExperiment.acquisitionMechanism),
+        [channel]
+      ) ||
+      comparable(firstText(coherentExperiment.acquisitionMechanism))
+        .includes(comparable(channel))
+  ) || '';
+  return {
+    ...coherent,
+    result: {
+      resultContract: OPPORTUNITY_TOURNAMENT_RESULT_CONTRACT,
+      resultType,
+      recommendedAction,
+      executionAuthorization: 'none',
+      requiresReview: true,
+      sideEffectsPerformed: 0,
+      allowedChannel: gate.passed
+        ? allowedChannel
+        : resultType === 'revenue_evidence_gap' && experimentAllowedChannel
+          ? experimentAllowedChannel
+          : 'none',
+      permissionRequired: 'explicit_user_approval',
+      incrementalRevenueGate: gate
+    }
+  };
 }
 
 export function buildEvidenceCatalog(
@@ -1840,7 +2366,8 @@ export function expandAndJudge({
   seedSet,
   weights,
   budget,
-  timestamp
+  timestamp,
+  criticAcceptedFamilyIDs = null
 }) {
   const dimensionValues = DIMENSIONS.map(([name]) => seedSet[name]);
   const theoreticalCount = dimensionValues.reduce((total, items) => total * items.length, 1);
@@ -1860,6 +2387,7 @@ export function expandAndJudge({
   let filteredCount = 0;
   let incompatibleCount = 0;
   let motionConflictCount = 0;
+  let criticRejectedCount = 0;
   const motionConflictDimensions = emptyMotionConflictDimensions();
   let revenueRejectedCount = 0;
   const revenueRejectionReasons = {};
@@ -1869,11 +2397,21 @@ export function expandAndJudge({
     const tuple = Object.fromEntries(
       DIMENSIONS.map(([name], index) => [name, selected[index]])
     );
-    const compatibleFamilies = commonCompatibilityFamilies(tuple, seedSet);
+    let compatibleFamilies = commonCompatibilityFamilies(tuple, seedSet);
     if (compatibleFamilies.length === 0) {
       incompatibleCount += 1;
       filteredCount += 1;
       continue;
+    }
+    if (criticAcceptedFamilyIDs instanceof Set) {
+      compatibleFamilies = compatibleFamilies.filter((familyID) =>
+        criticAcceptedFamilyIDs.has(familyID)
+      );
+      if (compatibleFamilies.length === 0) {
+        criticRejectedCount += 1;
+        filteredCount += 1;
+        continue;
+      }
     }
     const motionSignature = strategyMotionSignature(tuple);
     if (!motionSignature.coherent) {
@@ -1983,6 +2521,7 @@ export function expandAndJudge({
     filteredCount,
     incompatibleCount,
     motionConflictCount,
+    criticRejectedCount,
     motionConflictDimensions,
     revenueRejectedCount,
     revenueRejectionReasons: Object.fromEntries(
@@ -2064,10 +2603,11 @@ function normalizeBudget(value) {
     },
     maxHypotheses: clampInteger(raw.maxHypotheses, 1, MAX_HYPOTHESES, MAX_HYPOTHESES),
     maxFinalists: clampInteger(raw.maxFinalists, 2, MAX_FINALISTS, MAX_FINALISTS),
-    // One initial structured generation plus, when the caller explicitly
-    // budgets it, one bounded shape-repair call. The default remains one so
-    // existing callers cannot incur a second request implicitly.
-    maxLLMCalls: clampInteger(raw.maxLLMCalls, 0, 2, 1),
+    // V5 uses one bounded generator and one compact comparative critic. If
+    // the second call is consumed by structured repair, the recommendation
+    // fails closed as technical recovery because an uncriticized result is
+    // never immediate-action eligible.
+    maxLLMCalls: clampInteger(raw.maxLLMCalls, 0, 2, 2),
     maxOutputTokens: clampInteger(raw.maxOutputTokens, 600, 10_000, 8_000),
     minimumScore: clampNumber(raw.minimumScore, 0.2, 0.9, 0.42),
     hardStop: raw.hardStop !== false
@@ -2099,6 +2639,555 @@ function normalizeConstraints(objective, payload) {
       ...asArray(raw.rules)
     ])
   };
+}
+
+function normalizeCommercialContext(payloadValue, objectiveValue, constraintsValue) {
+  const payload = asObject(payloadValue);
+  const objective = asObject(objectiveValue);
+  const constraints = asObject(constraintsValue);
+  const raw = asObject(payload.commercialContext);
+  const destinations = firstArray(
+    raw.activeDistributionDestinations,
+    raw.distributionDestinations,
+    raw.destinations,
+    raw.capabilities
+  ).slice(0, 16).map(asObject);
+  const distributionAccounts = asArray(raw.distributionAccounts)
+    .map(asObject)
+    .filter((account) =>
+      /^(?:active|connected|enabled|ready)$/i.test(
+        firstText(account.status)
+      )
+    )
+    .slice(0, 16)
+    .map((account) => compact({
+      provider: truncate(firstText(
+        account.provider,
+        account.service,
+        account.channel,
+        account.name
+      ), 80),
+      status: truncate(firstText(account.status), 40),
+      mode: truncate(firstText(account.mode), 40),
+      capabilities: compactStrings(account.capabilities)
+        .slice(0, 12)
+        .map((value) => truncate(value, 80))
+    }))
+    .filter((account) => Boolean(account.provider));
+  const profile = asObject(raw.profile);
+  const focus = asArray(profile.currentFocus)
+    .slice(0, 8)
+    .map(asObject)
+    .map((item) => compact({
+      name: truncate(firstText(item.name, item.title), 120),
+      description: truncate(firstText(item.description, item.summary), 240),
+      status: truncate(firstText(item.status), 40),
+      priority: truncate(firstText(item.priority), 40)
+    }))
+    .filter((item) => Boolean(item.name || item.description));
+  return {
+    allowedChannels: compactStrings([
+      ...asArray(raw.allowedChannels),
+      ...asArray(objective.allowedChannels),
+      ...asArray(constraints.allowedChannels),
+      ...destinations.flatMap((destination) => [
+        destination.channel,
+        destination.service,
+        destination.provider,
+        destination.name,
+        destination.label
+      ]),
+      ...distributionAccounts.flatMap((account) => [
+        account.provider
+      ])
+    ]).slice(0, 20).map((value) => truncate(value, 80)),
+    allowedActions: compactStrings([
+      ...asArray(raw.allowedActions),
+      ...asArray(raw.permissions),
+      ...asArray(raw.capabilityScopes),
+      ...asArray(objective.allowedActions),
+      ...asArray(constraints.allowedActions),
+      ...distributionAccounts.flatMap((account) =>
+        asArray(account.capabilities)
+      )
+    ]).slice(0, 24).map((value) => truncate(value, 100)),
+    constraints: compactStrings([
+      ...asArray(raw.constraints),
+      ...asArray(objective.constraints),
+      ...asArray(constraints.rules)
+    ]).slice(0, 20).map((value) => truncate(value, 240)),
+    profile: compact({
+      profession: truncate(firstText(profile.profession), 160),
+      location: truncate(firstText(profile.location), 120),
+      availability: truncate(firstText(profile.availability), 160),
+      specialties: compactStrings(profile.specialties)
+        .slice(0, 16)
+        .map((value) => truncate(value, 100)),
+      serviceAreas: compactStrings(profile.serviceAreas)
+        .slice(0, 16)
+        .map((value) => truncate(value, 100)),
+      currentFocus: focus
+    }),
+    distributionAccounts,
+    priorAttributedOutcomes: normalizePriorOutcomes(
+      raw.priorAttributedOutcomes
+    ),
+    permissionRequired: firstText(
+      raw.permissionRequired,
+      'explicit_user_approval'
+    )
+  };
+}
+
+function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
+  const evidenceCatalog = asArray(evidenceCatalogValue).map(asObject);
+  const options = asObject(optionsValue);
+  const commercialContext = asObject(options.commercialContext);
+  const objective = asObject(options.objective);
+  const constraints = asObject(options.constraints);
+  const priorOutcomes = normalizePriorOutcomes([
+    ...asArray(options.priorOutcomes),
+    ...asArray(commercialContext.priorAttributedOutcomes)
+  ]);
+  const evidenceNodes = evidenceCatalog
+    .filter((evidence) => !/^source:/i.test(firstText(evidence.id)))
+    .map((evidence) => {
+      const text = compactStrings([
+        evidence.label,
+        evidence.summary,
+        evidence.url
+      ]).join(' ');
+      const roles = commercialEvidenceRoles(text);
+      if (firstText(evidence.revenueAssetRole) === 'informational_only') {
+        for (const role of [
+          'paid_offer',
+          'conversion_destination',
+          'paid_conversion'
+        ]) {
+          const index = roles.indexOf(role);
+          if (index >= 0) roles.splice(index, 1);
+        }
+      }
+      const channelFitChannels = commercialChannelFitChannels(
+        text,
+        commercialContext.allowedChannels
+      );
+      if (channelFitChannels.length > 0) roles.push('channel_fit');
+      return compact({
+        evidenceRef: firstText(evidence.id),
+        sourceId: firstText(evidence.sourceId),
+        type: firstText(evidence.type),
+        label: truncate(firstText(evidence.label), 180),
+        summary: truncate(firstText(evidence.summary), 320),
+        url: safePublicURL(evidence.url),
+        roles: compactStrings(roles),
+        channelFitChannels,
+        observedAt: firstText(evidence.observedAt),
+        approved: evidence.approvedSourceObservation === true,
+        provenance: evidence.approvedSourceObservation === true
+          ? 'approved_source_observation'
+          : 'profile_or_caller_fact',
+        ownerControlled: evidence.profileControlledSource === true,
+        revenueAssetRole: firstText(evidence.revenueAssetRole)
+      });
+    });
+  const contextNodes = commercialContextEvidenceNodes({
+    commercialContext,
+    objective,
+    constraints,
+    priorOutcomes
+  });
+  const nodes = [...evidenceNodes, ...contextNodes];
+  const verifiedFacts = nodes
+    .filter((node) =>
+      node.approved === true ||
+      /^(?:user_declared|user_constraint|verified_prior_outcome|permission_capability)$/.test(
+        firstText(node.provenance)
+      )
+    )
+    .flatMap((node) => asArray(node.roles).map((role) => ({
+      evidenceRef: node.evidenceRef,
+      role,
+      status: 'verified',
+      provenance: node.provenance
+    })));
+  const inferences = nodes
+    .filter((node) =>
+      node.approved !== true &&
+      firstText(node.provenance) === 'profile_or_caller_fact'
+    )
+    .flatMap((node) => asArray(node.roles).map((role) => ({
+      evidenceRef: node.evidenceRef,
+      role,
+      status: 'inferred_unverified'
+    })));
+  const verifiedRoles = new Set(
+    verifiedFacts.map((fact) => fact.role)
+  );
+  const definedBuyerEvidenceRefs = compactStrings(
+    verifiedFacts
+      .filter((fact) => fact.role === 'defined_buyer')
+      .map((fact) => fact.evidenceRef)
+  );
+  const inferredBuyerEvidenceRefs = compactStrings(
+    inferences
+      .filter((fact) => fact.role === 'defined_buyer')
+      .map((fact) => fact.evidenceRef)
+  );
+  const missingFacts = [
+    'defined_buyer',
+    'paid_offer',
+    'acquisition',
+    'conversion_destination',
+    'paid_conversion',
+    'attribution',
+    'channel_fit'
+  ].filter((role) => !verifiedRoles.has(role));
+  return {
+    contractVersion: 'commercial_evidence_graph_v1',
+    nodes,
+    verifiedFacts,
+    inferences,
+    missingFacts,
+    definedBuyer: {
+      status: definedBuyerEvidenceRefs.length > 0
+        ? 'verified'
+        : inferredBuyerEvidenceRefs.length > 0
+          ? 'inferred'
+          : 'missing',
+      evidenceRefs: definedBuyerEvidenceRefs.length > 0
+        ? definedBuyerEvidenceRefs
+        : inferredBuyerEvidenceRefs
+    },
+    summary: {
+      existingCustomerOrPatientEvidenceRefs: refsForCommercialRoles(
+        nodes,
+        ['existing_customer', 'existing_patient']
+      ),
+      namedPartnerOrReferralEvidenceRefs: refsForCommercialRoles(
+        nodes,
+        ['named_partner', 'referral_relationship']
+      ),
+      demandOrEngagementEvidenceRefs: refsForCommercialRoles(
+        nodes,
+        ['demand_signal', 'engagement_signal']
+      ),
+      channelFitEvidenceRefs: refsForCommercialRoles(nodes, ['channel_fit']),
+      geographicConstraintEvidenceRefs: refsForCommercialRoles(
+        nodes,
+        ['geographic_constraint']
+      ),
+      capacityConstraintEvidenceRefs: refsForCommercialRoles(
+        nodes,
+        ['capacity_constraint']
+      ),
+      timingConstraintEvidenceRefs: refsForCommercialRoles(
+        nodes,
+        ['timing_constraint']
+      ),
+      priorAttributedOutcomeEvidenceRefs: refsForCommercialRoles(
+        nodes,
+        ['prior_attributed_outcome']
+      )
+    }
+  };
+}
+
+function projectCommercialEvidenceGraphForPrompt(
+  graphValue,
+  promptEvidenceCatalogValue
+) {
+  const graph = asObject(graphValue);
+  const allowedEvidenceRefs = new Set(
+    asArray(promptEvidenceCatalogValue)
+      .map((item) => firstText(asObject(item).id))
+      .filter(Boolean)
+  );
+  const nodes = asArray(graph.nodes)
+    .map(asObject)
+    .filter((node) =>
+      /^commercial_context:/i.test(firstText(node.evidenceRef)) ||
+      allowedEvidenceRefs.has(firstText(node.evidenceRef))
+    )
+    .map((node) => compact({
+      evidenceRef: firstText(node.evidenceRef),
+      roles: compactStrings(node.roles),
+      channelFitChannels: compactStrings(node.channelFitChannels),
+      revenueAssetRole: firstText(node.revenueAssetRole),
+      location: truncate(firstText(node.location), 96),
+      availability: truncate(firstText(node.availability), 96),
+      serviceAreas: compactStrings(node.serviceAreas).slice(0, 8),
+      channel: truncate(firstText(node.channel), 96),
+      linkedEvidenceRefs: compactStrings(node.linkedEvidenceRefs)
+        .filter((ref) => allowedEvidenceRefs.has(ref))
+        .slice(0, 8)
+    }));
+  const projectedRefs = new Set(
+    nodes.map((node) => firstText(node.evidenceRef)).filter(Boolean)
+  );
+  const verifiedFacts = asArray(graph.verifiedFacts)
+    .map(asObject)
+    .filter((fact) => projectedRefs.has(firstText(fact.evidenceRef)))
+    .map((fact) => ({
+      evidenceRef: firstText(fact.evidenceRef),
+      role: firstText(fact.role)
+    }));
+  const inferences = asArray(graph.inferences)
+    .map(asObject)
+    .filter((fact) => projectedRefs.has(firstText(fact.evidenceRef)))
+    .map((fact) => ({
+      evidenceRef: firstText(fact.evidenceRef),
+      role: firstText(fact.role)
+    }));
+  const verifiedRoles = new Set(
+    verifiedFacts.map((fact) => firstText(fact.role)).filter(Boolean)
+  );
+  const definedBuyerEvidenceRefs = compactStrings(
+    verifiedFacts
+      .filter((fact) => firstText(fact.role) === 'defined_buyer')
+      .map((fact) => fact.evidenceRef)
+  );
+  const inferredBuyerEvidenceRefs = compactStrings(
+    inferences
+      .filter((fact) => firstText(fact.role) === 'defined_buyer')
+      .map((fact) => fact.evidenceRef)
+  );
+  const summary = Object.fromEntries(
+    Object.entries(asObject(graph.summary)).map(([key, refs]) => [
+      key,
+      compactStrings(refs).filter((ref) => projectedRefs.has(ref))
+    ])
+  );
+  return {
+    contractVersion: firstText(
+      graph.contractVersion,
+      'commercial_evidence_graph_v1'
+    ),
+    projection: 'provider_prompt_v1',
+    nodes,
+    verifiedFacts,
+    inferences,
+    missingFacts: [
+      'defined_buyer',
+      'paid_offer',
+      'acquisition',
+      'conversion_destination',
+      'paid_conversion',
+      'attribution',
+      'channel_fit'
+    ].filter((role) => !verifiedRoles.has(role)),
+    definedBuyer: {
+      status: definedBuyerEvidenceRefs.length > 0
+        ? 'verified'
+        : inferredBuyerEvidenceRefs.length > 0
+          ? 'inferred'
+          : 'missing',
+      evidenceRefs: definedBuyerEvidenceRefs.length > 0
+        ? definedBuyerEvidenceRefs
+        : inferredBuyerEvidenceRefs
+    },
+    summary
+  };
+}
+
+function commercialEvidenceRoles(value) {
+  const text = firstText(value);
+  const roles = [];
+  if (paidOfferText(text)) roles.push('paid_offer');
+  if (conversionDestinationEvidenceText(text)) {
+    roles.push('conversion_destination');
+  }
+  if ([...ACQUISITION_MODES].some((mode) =>
+    acquisitionEvidenceSupportsMode(mode, text)
+  )) {
+    roles.push('acquisition');
+  }
+  if ([...ATTRIBUTION_METHODS].some((method) =>
+    attributionSignalText(text, method)
+  )) {
+    roles.push('attribution');
+  }
+  if (observableRevenueText(text)) roles.push('paid_conversion');
+  if (/\b(?:buyer|buyers|customer segment|ideal customer|target customer|target patient|target client|patients? seeking|clients? seeking|customers? seeking|organizations? buying|teams? buying|leaders? seeking)\b/i.test(text)) {
+    roles.push('defined_buyer');
+  }
+  if (/\b(?:existing|current|returning|former|past)\s+(?:paying\s+)?(?:customer|client)s?\b/i.test(text)) {
+    roles.push('existing_customer');
+  }
+  if (/\b(?:existing|current|returning|former|past)\s+(?:paying\s+)?patients?\b/i.test(text)) {
+    roles.push('existing_patient');
+  }
+  if (/\b(?:named\s+)?partner(?:ship|ed)?\s+(?:with|channel|referral)|\bpartner\s+(?:introduction|referral)\b/i.test(text)) {
+    roles.push('named_partner');
+  }
+  if (/\b(?:referred by|referral (?:from|relationship|source|partner)|warm introduction from)\b/i.test(text)) {
+    roles.push('referral_relationship');
+  }
+  if (/\b(?:qualified (?:demand|inquir(?:y|ies)|leads?)|buyer requests?|customer requests?|patient requests?|waitlist|proposals? requested|inbound (?:demand|inquir(?:y|ies)|leads?)|(?:received|recorded|completed|new|\d+) (?:paid )?(?:bookings?|orders?|applications?))\b/i.test(text)) {
+    roles.push('demand_signal');
+  }
+  if (/\b(?:clicks?|page views?|website visits?|qualified visits?|replies|responses|engagement rate|conversion rate|open rate|click-through|ctr)\b/i.test(text)) {
+    roles.push('engagement_signal');
+  }
+  if (/\b(?:location|located|service area|serves?|city|state|region|remote|on[- ]site|in[- ]person|within \d+ (?:miles?|km))\b/i.test(text)) {
+    roles.push('geographic_constraint');
+  }
+  if (/\b(?:availability|available|accepting|capacity|slots?|appointments?|hours? per week|waitlist|fully booked|limited to \d+)\b/i.test(text)) {
+    roles.push('capacity_constraint');
+  }
+  if (/\b(?:deadline|by \d{4}|this (?:week|month|quarter)|within \d+ (?:days?|weeks?)|before |after |starts? |ends? |launch(?:es|ed)? |renewal)\b/i.test(text)) {
+    roles.push('timing_constraint');
+  }
+  return compactStrings(roles);
+}
+
+function commercialChannelFitChannels(value, allowedChannelsValue) {
+  const text = firstText(value);
+  const fitSignal = /\b(?:qualified (?:demand|buyers?|customers?|patients?|clients?|leads?|inquir(?:y|ies))|existing (?:audience|customers?|clients?|patients?)|referral|partner|bookings?|orders?|replies|responses|conversions?|attributed|source\/origin|utm|campaign source)\b/i.test(text);
+  if (!fitSignal) return [];
+  return compactStrings(allowedChannelsValue).filter((channel) =>
+    allowedValue(channel, [text]) ||
+    comparable(text).includes(comparable(channel))
+  );
+}
+
+function commercialContextEvidenceNodes({
+  commercialContext,
+  objective,
+  constraints,
+  priorOutcomes
+}) {
+  const nodes = [];
+  const profile = asObject(commercialContext.profile);
+  const profileText = compactStrings([
+    profile.profession,
+    profile.location,
+    profile.availability,
+    ...asArray(profile.specialties),
+    ...asArray(profile.serviceAreas),
+    ...asArray(profile.currentFocus).flatMap((itemValue) => {
+      const item = asObject(itemValue);
+      return [item.name, item.description, item.status, item.priority];
+    })
+  ]).join('; ');
+  if (profileText) {
+    const roles = commercialEvidenceRoles(profileText);
+    if (firstText(profile.location) || asArray(profile.serviceAreas).length > 0) {
+      roles.push('geographic_constraint');
+    }
+    if (firstText(profile.availability)) roles.push('capacity_constraint');
+    nodes.push(compact({
+      evidenceRef: 'commercial_context:profile',
+      type: 'commercial_context_profile',
+      label: truncate(firstText(profile.profession, 'Declared profile context'), 180),
+      summary: truncate(profileText, 320),
+      roles: compactStrings(roles),
+      location: firstText(profile.location),
+      availability: firstText(profile.availability),
+      serviceAreas: compactStrings(profile.serviceAreas),
+      approved: true,
+      provenance: 'user_declared',
+      ownerControlled: true
+    }));
+  }
+  const constraintValues = compactStrings([
+    ...asArray(commercialContext.constraints),
+    ...asArray(objective.constraints),
+    ...asArray(constraints.rules),
+    objective.deadline
+  ]);
+  constraintValues.forEach((value, index) => {
+    const roles = commercialEvidenceRoles(value).filter((role) =>
+      [
+        'geographic_constraint',
+        'capacity_constraint',
+        'timing_constraint'
+      ].includes(role)
+    );
+    if (firstText(objective.deadline) && value === objective.deadline) {
+      roles.push('timing_constraint');
+    }
+    nodes.push(compact({
+      evidenceRef: `commercial_context:constraint:${index + 1}`,
+      type: 'commercial_constraint',
+      label: truncate(value, 180),
+      summary: truncate(value, 320),
+      roles: compactStrings(roles),
+      approved: true,
+      provenance: 'user_constraint',
+      ownerControlled: true
+    }));
+  });
+  compactStrings(commercialContext.allowedChannels).forEach((channel, index) => {
+    nodes.push({
+      evidenceRef: `commercial_context:allowed_channel:${index + 1}`,
+      type: 'permission_capability',
+      label: channel,
+      summary: 'The channel is configured or explicitly allowed; this proves permission capability only, not buyer reachability or fit.',
+      roles: ['permissioned_channel'],
+      channel: channel,
+      approved: true,
+      provenance: 'permission_capability',
+      ownerControlled: true
+    });
+  });
+  priorOutcomes.forEach((outcome, index) => {
+    if (outcome.verified !== true) return;
+    const attribution = asObject(outcome.attribution);
+    const text = compactStrings([
+      outcome.kind,
+      outcome.status,
+      outcome.offer,
+      outcome.buyerSegment,
+      outcome.channel,
+      attribution.objectiveId,
+      attribution.tournamentId,
+      attribution.hypothesisId,
+      attribution.candidateId,
+      attribution.actionId,
+      attribution.evidenceExperimentId,
+      attribution.algorithmVersion,
+      attribution.experimentArm
+    ]).join('; ');
+    const affirmative = affirmativePriorOutcome(outcome);
+    const roles = affirmative
+      ? commercialEvidenceRoles(text)
+      : [];
+    roles.push('prior_attributed_outcome');
+    if (affirmative && firstText(outcome.buyerSegment)) {
+      roles.push('defined_buyer');
+    }
+    if (affirmative && firstText(outcome.channel)) {
+      roles.push('channel_fit');
+    }
+    if (Object.values(attribution).some(Boolean)) roles.push('attribution');
+    nodes.push(compact({
+      evidenceRef: `commercial_context:prior_outcome:${index + 1}`,
+      type: 'verified_prior_outcome',
+      label: truncate(firstText(outcome.kind, outcome.status, 'Verified prior outcome'), 180),
+      summary: truncate(text, 320),
+      roles: compactStrings(roles),
+      linkedEvidenceRefs: compactStrings(outcome.evidenceRefs),
+      channelFitChannels: affirmative
+        ? compactStrings([outcome.channel])
+        : [],
+      observedAt: firstText(outcome.occurredAt),
+      occurredAt: firstText(outcome.occurredAt),
+      status: firstText(outcome.status),
+      approved: true,
+      provenance: 'verified_prior_outcome',
+      ownerControlled: true
+    }));
+  });
+  return nodes;
+}
+
+function refsForCommercialRoles(nodesValue, rolesValue) {
+  const roles = new Set(compactStrings(rolesValue));
+  return compactStrings(asArray(nodesValue)
+    .map(asObject)
+    .filter((node) => asArray(node.roles).some((role) => roles.has(role)))
+    .map((node) => node.evidenceRef));
 }
 
 function objectiveValidationIssue(objective) {
@@ -2533,27 +3622,48 @@ function boundedPaidConversionEvidenceSummary(
 
 function paidConversionEvidenceSignalExcerpt(value, maxLength) {
   const text = firstText(value);
-  const matches = [
-    text.match(/\b(?:apply|application|appointment|book|booking|book now|buy|checkout|contact|demo|download|inquiry|license|order|pay|payment|purchase|request|schedule|sign|sign up|signup|sponsorship inquiry|subscribe)\b/i),
-    text.match(/\b(?:app|audit|class|consultation|contract|course|demo|diagnostic|digital download|engagement|home visit|license|membership|package|pilot|pricing plan|product|professional role|service|session|software|sponsorship|subscription|workshop)\b/i),
-    text.match(/\b(?:covered by insurance|insurance[- ]covered|insurance (?:is )?accepted|accepts insurance|health ?care (?:is )?accepted|bill(?:s|ing)? insurance|insurance claim|reimburs(?:able|ed|ement)|claim payment|billable|commission|compensated|contract|cost|deposit|fee|invoice|license|order|paid|pay|payment|platform payout|price|purchase|referral fee|retainer|royalty|salary|sale|sponsorship|subscription|wage)\b|\$\s*\d/i)
-  ];
-  if (matches.some((match) => !match?.[0])) return '';
-  // Do not let one ambiguous token (for example, "license" or "contract")
-  // stand in for an offer, a conversion action, and a paid mechanism. This
-  // recovery path may only preserve three independently present raw signals.
-  if (new Set(matches.map((match) => match.index)).size !== matches.length) {
-    return '';
-  }
-  const start = Math.min(...matches.map((match) => match.index));
-  const end = Math.max(...matches.map((match) =>
-    match.index + match[0].length
-  ));
+  const combination = paidConversionEvidenceSignalCombination(text);
+  if (!combination) return '';
+  const { matches, start, end } = combination;
   const span = text.slice(start, end).trim();
   if (span.length <= maxLength) return span;
   const exact = compactStrings(matches.map((match) => match[0]))
     .join(' … ');
   return exact.length <= maxLength ? exact : '';
+}
+
+function paidConversionEvidenceSignalCombination(value) {
+  const text = firstText(value);
+  const patterns = [
+    /\b(?:apply|application|appointment|book now|book|booking|buy|checkout|contact|demo|download|inquiry|license|order|pay|payment|purchase|request|schedule|sign up|sign|signup|sponsorship inquiry|subscribe)\b/gi,
+    /\b(?:app|audit|class|consultation|contract|course|demo|diagnostic|digital download|engagement|home visit|license|membership|package|pilot|pricing plan|product|professional role|service|session|software|sponsorship|subscription|workshop)\b/gi,
+    /\b(?:covered by insurance|insurance[- ]covered|insurance (?:is )?accepted|accepts insurance|health ?care (?:is )?accepted|bill(?:s|ing)? insurance|insurance claim|reimburs(?:able|ed|ement)|claim payment|billable|commission|compensated|contract|cost|deposit|fee|invoice|license|order|paid|pay|payment|platform payout|price|purchase|referral fee|retainer|royalty|salary|sale|sponsorship|subscription|wage)\b|\$\s*\d/gi
+  ];
+  const groups = patterns.map((pattern) =>
+    [...text.matchAll(pattern)].slice(0, 32)
+  );
+  if (groups.some((matches) => matches.length === 0)) return null;
+  let selected = null;
+  for (const conversion of groups[0]) {
+    for (const offer of groups[1]) {
+      for (const paid of groups[2]) {
+        const matches = [conversion, offer, paid];
+        if (new Set(matches.map((match) => match.index)).size !== 3) {
+          continue;
+        }
+        const start = Math.min(...matches.map((match) => match.index));
+        const end = Math.max(...matches.map((match) =>
+          match.index + match[0].length
+        ));
+        const width = end - start;
+        if (!selected || width < selected.width ||
+            (width === selected.width && start < selected.start)) {
+          selected = { matches, start, end, width };
+        }
+      }
+    }
+  }
+  return selected;
 }
 
 const EVIDENCE_SUMMARY_SALIENT_STOP_WORDS = new Set([
@@ -2621,7 +3731,9 @@ function compactPromptEvidenceURL(value) {
 function seedAndJudgePrompt({
   objective,
   constraints,
+  commercialContext,
   evidenceCatalog,
+  commercialEvidenceGraph,
   priorOutcomes,
   maxSeedsPerDimension
 }) {
@@ -2630,6 +3742,7 @@ Generate compact incremental-income strategy dimensions grounded only in the sup
 Internally compare multiple plausible evidence-grounded acquisition-to-payment paths, then emit only the strongest two coherent families. Do not expose private analysis or intermediate alternatives.
 This is internal hypothesis exploration, not outreach, publishable copy, or permission to act.
 Never invent accomplishments, customers, affiliations, contact details, market demand, intent, urgency, or relationships.
+Treat commercialContext only as a permission and channel-capability boundary. A connected or allowed channel does not prove buyer demand, buyer fit, reachability, or revenue potential.
 Treat experience with a past endDate as historical proof, never as a current role or affiliation.
 Do not recommend applying for, enrolling in, or creating a capability when the evidence says that capability already exists. Treat the existing capability as proof or supporting context for a paid acquisition/conversion path. Any verification of that capability belongs only in supportingBottleneck and must never be the primary action.
 Use only exact evidence IDs from evidenceCatalog. Unknown evidence IDs will be discarded.
@@ -2639,12 +3752,13 @@ When an exact named organization is the intended target buyer, begin the buyerSe
 Keep every strategy family coherent end to end. Its family m is one acquisition mode, and its buyer, offer, channel, action, timing trigger, proof point, follow-up, and revenue path must all belong to that same acquisition-to-payment route.
 Every family must trace one actual buyer and explicitly paid offer through inbound, warm, existing-customer, partner, or otherwise permissioned acquisition to an observable paid conversion and durable attribution record. A conversation, inquiry, eligibility check, scheduled consultation, profile change, post, impression, workflow improvement, or completed research task is not incremental income.
 Operations, administration, visibility, content, research, and workflow improvements may appear only as auxiliary supportingBottleneck context. The singular action must itself advance permissioned acquisition or paid conversion, align with revenuePath.conversionAction, and must never merely perform the supporting bottleneck.
+Monitoring, observing, measuring, reviewing, recording, researching, auditing, checking, or verifying is not an active primary revenue action. A family may use those verbs only for its bounded stop or supporting evidence; its primary action must causally create qualified discovery, present a paid offer through a permitted path, or complete a paid conversion.
 For inbound acquisition, name one explicit discovery or demand origin such as organic/local search, an app store, a comparison/search listing, an owned opted-in audience, earned media/directory discovery, a marketplace, a community, social distribution, platform discovery, or agent-mediated discovery, and separately name the offer, pricing, signup, demo, application, licensing, sponsorship-inquiry, storefront, product, service, landing, booking, download, marketplace-listing, or checkout destination. A destination by itself is not an acquisition channel.
 Construct each family's revenuePath first. Then derive that family's paid offer, buyer, channel, action, timing, proof, and follow-up items from the same revenue path.
 For every revenue path, explicitly bind the buyer, paid offer, acquisition mechanism, conversion destination, paid conversion, and attribution signal to the exact approved evidence records that support each element. If approved evidence does not support one element, do not disguise the gap by attaching an unrelated evidence ID.
 Return exactly two complete top-level family bundles named familyA and familyB. Family A is the strongest grounded path; family B is the strongest coherent alternative. They may use distinct tactics within the same business motion when the evidence does not support two different motions.
 Prefer an inbound paid-conversion path for familyA when approved evidence can ground it. Use warm referral, partner channel, existing-customer, or permissioned-outreach paths when inbound is ungrounded or semantically weaker; never invent inbound demand or an inbound asset.
-Within each family bundle, return exactly one family-specific paid offer, buyer segment, channel, action, timing trigger, proof point, follow-up, and revenue path. Never return global dimension arrays or cross-family compatibility tags.
+Within each family bundle, return exactly two grounded variants for paid offer, buyer segment, channel, action, timing trigger, proof point, and follow-up, plus exactly one family-specific revenue path. Never return global dimension arrays or cross-family compatibility tags.
 Also return one evidenceExperiment as a fallback for human review. It must name a known fact or owned asset from the evidence, one buyer, one paid offer, one singular acquisition mechanism that is not the conversion destination, one paid conversion, one durable attribution signal, and a numeric time and sample stop. Write its title, action, and success signal for the profile owner, never as internal source-approval or observation-processing instructions. The experiment is only a recommendation; do not claim it was launched.
 When any current_owner_paid_conversion_asset exists, the evidenceExperiment must cite the strongest relevant one and must test the missing acquisition or attribution evidence around that existing offer. Never ask the owner to attach, approve, create, or document another paid-offer page in that case.
 Return no email, direct message, post, pitch, sales script, or other outreach copy.
@@ -2655,7 +3769,9 @@ Return only JSON.`;
     task: 'Return two grounded revenue strategy families and one review-first fallback experiment.',
     objective,
     constraints,
+    commercialContext,
     evidenceCatalog,
+    commercialEvidenceGraph,
     priorOutcomes,
     outputContract: compactTournamentOutputContract(
       INITIAL_FAMILY_VARIANT_COUNT,
@@ -2678,14 +3794,15 @@ function compactTournamentOutputContract(
       's uses of,es,ba,ti,wp,re,ev,ef,co,ri,un; every value is 0..1',
     dimensions:
       `d uses only {r,o,b,c,a,t,p,f}: r=1 revenue path; ` +
-      `o,b,c,a,f=${variantCount} each; t,p=1 each; across both ` +
+      `o,b,c,a,t,p,f=${variantCount} each; across both ` +
       `families no multi-variant dimension exceeds ${maxSeedsPerDimension}`,
     item: '{l,e}; timing t item is {l,e,q}; e contains exact evidence IDs',
     revenuePath:
-      '{l,e,v,rm,io,a,c,o,atm,ats,g:{b,o,a,d:{l,e},c,t},sb,vm}; ' +
+      '{l,e,v,rm,io,a,c,o,atm,ats,cd,st,g:{b,o,a,d:{l,e},c,t},sb,vm}; ' +
       `v=${REVENUE_PATH_CONTRACT_VERSION}; rm is a revenue mechanism; ` +
       'io is incremental paid outcome; a is acquisition mode; c is conversion action; ' +
       'o is observable paid outcome; atm is attribution method; ats is attribution record; ' +
+      'cd is the concrete conversion destination; st is a numeric time/sample stop; ' +
       'g binds buyer/offer/acquisition/destination/conversion/attribution evidence; ' +
       'sb is optional support only; vm is positive expected gross-income micros',
     revenueMechanisms: [...REVENUE_MECHANISMS],
@@ -2708,6 +3825,7 @@ function compactTournamentHardRules() {
     'Use only evidenceCatalog IDs. Family e contains every ID cited by its items. Each item cites only IDs in its own family, and each family includes an approved observation:* anchor.',
     'Ground the buyer, current paid offer, acquisition, distinct destination, paid conversion, and attribution record; never invent demand or an outside target.',
     'Inbound names discovery separately from destination. Operations, research, scheduling, content, and verification may appear only in sb, never as the revenue action.',
+    'The primary action is active, causal, and incremental. Reject monitoring, observing, measuring, reviewing, recording, auditing, checking, or verifying as the primary action.',
     'r.ats names its booking/payment/invoice/contract/order/claim/CRM/referral record and source/referral/UTM/campaign/channel field.',
     'Timing q copies an exact phrase from a cited observation. If urgency is not observed, t.l begins Determine and includes that exact phrase; never invent urgency.',
     'The fallback experiment uses a current owner paid asset when present, is singular and bounded, and performs no external action.',
@@ -2738,7 +3856,9 @@ Return only the strict compact JSON once.`;
       'Freshly regenerate two compact complete comparison families; do not continue prior output.',
     objective: originalTask.objective,
     constraints: originalTask.constraints,
+    commercialContext: originalTask.commercialContext,
     evidenceCatalog: originalTask.evidenceCatalog,
+    commercialEvidenceGraph: originalTask.commercialEvidenceGraph,
     priorOutcomes: originalTask.priorOutcomes,
     repairIssue: issue,
     outputContract: compactTournamentOutputContract(
@@ -3126,8 +4246,8 @@ function tournamentStructuredResponseFormat(
           b: exactItems('#/$defs/buyerItem', familyVariantCount),
           c: exactItems('#/$defs/channelItem', familyVariantCount),
           a: exactItems('#/$defs/actionItem', familyVariantCount),
-          t: exactItems('#/$defs/timingItem', 1),
-          p: exactItems('#/$defs/proofItem', 1),
+          t: exactItems('#/$defs/timingItem', familyVariantCount),
+          p: exactItems('#/$defs/proofItem', familyVariantCount),
           f: exactItems('#/$defs/followUpItem', familyVariantCount)
         },
         required: ['r', 'o', 'b', 'c', 'a', 't', 'p', 'f'],
@@ -3217,6 +4337,8 @@ function tournamentStructuredResponseFormat(
                 enum: [...ATTRIBUTION_METHODS]
               },
               ats: { type: 'string' },
+              cd: { type: 'string' },
+              st: { type: 'string' },
               g: grounding,
               sb: { type: 'string' },
               vm: { type: 'integer' }
@@ -3232,6 +4354,8 @@ function tournamentStructuredResponseFormat(
               'o',
               'atm',
               'ats',
+              'cd',
+              'st',
               'g',
               'sb',
               'vm'
@@ -3258,6 +4382,591 @@ function tournamentStructuredResponseFormat(
           family: family()
         }
       }
+    }
+  };
+}
+
+function selectCommercialCriticFinalists(finalistsValue, limitValue = 6) {
+  const finalists = asArray(finalistsValue).map(asObject);
+  const limit = Math.max(2, Math.min(6,
+    nonNegativeInteger(limitValue) || 6
+  ));
+  const selected = [];
+  const selectedIDs = new Set();
+  const seenFamilies = new Set();
+  for (const finalist of finalists) {
+    const familyID = firstText(
+      asObject(finalist.provenance).strategyFamilyId,
+      finalist._strategyFamily
+    );
+    if (!familyID || seenFamilies.has(familyID)) continue;
+    seenFamilies.add(familyID);
+    selected.push(finalist);
+    selectedIDs.add(firstText(finalist.id));
+    if (selected.length >= limit) return selected;
+  }
+  for (const finalist of finalists) {
+    const id = firstText(finalist.id);
+    if (!id || selectedIDs.has(id)) continue;
+    selected.push(finalist);
+    selectedIDs.add(id);
+    if (selected.length >= limit) break;
+  }
+  return selected;
+}
+
+function commercialCriticFinalists(finalistsValue) {
+  return asArray(finalistsValue)
+    .map(asObject)
+    .map((hypothesis) => {
+      const revenuePath = asObject(hypothesis.revenuePath);
+      const {
+        _grounding: _privateGrounding,
+        activeRevenueAction: _derivedAction,
+        ...publicRevenuePath
+      } = revenuePath;
+      return {
+        finalistId: firstText(hypothesis.id),
+        familyId: firstText(
+          asObject(hypothesis.provenance).strategyFamilyId,
+          hypothesis._strategyFamily
+        ),
+        buyer: firstText(hypothesis.buyerSegment),
+        paidOffer: firstText(hypothesis.offer),
+        acquisitionChannel: firstText(hypothesis.channel),
+        primaryAction: firstText(hypothesis.action),
+        revenuePath: publicRevenuePath,
+        expectedGrossIncomeMicros:
+          nonNegativeInteger(hypothesis.expectedValueMicros) || 0,
+        estimatedSpendMicros:
+          nonNegativeInteger(hypothesis.estimatedSpendMicros) || 0,
+        deterministicScore: asObject(hypothesis.score),
+        evidenceRefs: compactStrings(hypothesis.evidenceRefs)
+      };
+    });
+}
+
+function commercialCriticPrompt({
+  objective,
+  commercialContext,
+  commercialEvidenceGraph,
+  finalists
+}) {
+  const system = `You are ProfileScribe's independent commercial-motion critic.
+Compare and rank exactly the supplied deterministically valid finalist motions. This is research only and authorizes no execution.
+For every finalist, assess incremental revenue, evidence strength, buyer reachability, time to first dollar, cost, effort, and uncertainty. Rank the best causal commercial motion first.
+Accept only finalists whose primary action actively and causally creates qualified demand or advances a paid conversion, whose income is counterfactually incremental, whose buyer and paid offer are grounded, whose acquisition is distinct from destination, and whose paid outcome has durable attribution plus a numeric stop.
+The deterministic pre-filter has already excluded passive and operational motions. If one appears anyway, reject it; never reward monitoring, measuring, profile work, content work, or administration.
+Treat commercialContext only as permission/channel capability. A connected channel never proves buyer demand, fit, or reachability.
+Return one complete comparison per supplied finalist plus an exact selected ordering. Do not rewrite the strategies and do not return outreach or publishing copy. Return only strict JSON.`;
+  const user = JSON.stringify({
+    task:
+      'Independently compare, rank, and accept or reject the grounded finalist commercial motions.',
+    criticContract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+    objective,
+    commercialContext,
+    commercialEvidenceGraph,
+    finalists: commercialCriticFinalists(finalists)
+  });
+  return { system, user };
+}
+
+function commercialCriticResponseFormat(finalistsValue) {
+  const finalistIDs = compactStrings(
+    commercialCriticFinalists(finalistsValue)
+      .map((finalist) => finalist.finalistId)
+  );
+  const comparison = {
+    type: 'object',
+    properties: {
+      finalistId: { type: 'string', enum: finalistIDs },
+      verdict: { type: 'string', enum: ['accept', 'reject'] },
+      activeRevenueAction: { type: 'boolean' },
+      causalAcquisitionPath: { type: 'boolean' },
+      incrementalRevenueOutcome: { type: 'boolean' },
+      incrementalRevenue: {
+        type: 'string',
+        enum: ['strong', 'moderate', 'weak']
+      },
+      evidenceStrength: {
+        type: 'string',
+        enum: ['strong', 'moderate', 'weak']
+      },
+      reachability: {
+        type: 'string',
+        enum: ['strong', 'moderate', 'weak']
+      },
+      timeToFirstDollar: {
+        type: 'string',
+        enum: ['fast', 'moderate', 'slow']
+      },
+      cost: { type: 'string', enum: ['low', 'moderate', 'high'] },
+      effort: { type: 'string', enum: ['low', 'moderate', 'high'] },
+      uncertainty: {
+        type: 'string',
+        enum: ['low', 'moderate', 'high']
+      },
+      reasonCode: {
+        type: 'string',
+        enum: [
+          'active_incremental_path',
+          'passive_observation',
+          'operations_only',
+          'unclear_causal_link',
+          'nonincremental_revenue',
+          'unsupported_evidence'
+        ]
+      },
+      reason: { type: 'string' }
+    },
+    required: [
+      'finalistId',
+      'verdict',
+      'activeRevenueAction',
+      'causalAcquisitionPath',
+      'incrementalRevenueOutcome',
+      'incrementalRevenue',
+      'evidenceStrength',
+      'reachability',
+      'timeToFirstDollar',
+      'cost',
+      'effort',
+      'uncertainty',
+      'reasonCode',
+      'reason'
+    ],
+    additionalProperties: false
+  };
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: {
+          criticContract: {
+            type: 'string',
+            enum: [OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT]
+          },
+          selectedOrdering: {
+            type: 'array',
+            items: { type: 'string', enum: finalistIDs },
+            minItems: finalistIDs.length,
+            maxItems: finalistIDs.length
+          },
+          selectedFinalistId: {
+            type: 'string',
+            enum: finalistIDs
+          },
+          comparisons: {
+            type: 'array',
+            items: comparison,
+            minItems: finalistIDs.length,
+            maxItems: finalistIDs.length
+          },
+          reason: { type: 'string' }
+        },
+        required: [
+          'criticContract',
+          'selectedOrdering',
+          'selectedFinalistId',
+          'comparisons',
+          'reason'
+        ],
+        additionalProperties: false
+      }
+    }
+  };
+}
+
+function deterministicCommercialHypothesisGate(
+  hypothesisValue,
+  commercialEvidenceGraphValue = {}
+) {
+  const hypothesis = asObject(hypothesisValue);
+  const action = firstText(hypothesis.action);
+  const channel = firstText(hypothesis.channel);
+  const revenuePath = asObject(hypothesis.revenuePath);
+  const conversionAction = firstText(revenuePath.conversionAction);
+  const destination = firstText(revenuePath.conversionDestination);
+  const constraintGate = commercialConstraintGate(
+    hypothesis,
+    commercialEvidenceGraphValue
+  );
+  const gate = {
+    activeRevenueAction:
+      !passiveOrObservationalPrimaryAction(action) &&
+      !passiveOrObservationalPrimaryAction(conversionAction) &&
+      !experimentActionClaimsCompletedExternalExecution(action) &&
+      !experimentActionClaimsCompletedExternalExecution(conversionAction) &&
+      !operationOnlyAction(action) &&
+      revenueAdvancingAction(action),
+    causalAcquisitionPath:
+      ACQUISITION_MODES.has(firstText(revenuePath.acquisitionMode)) &&
+      acquisitionModeMatchesText(
+        revenuePath.acquisitionMode,
+        `${channel} ${conversionAction}`
+      ) &&
+      conversionDestinationText(destination) &&
+      comparable(channel) !== comparable(destination),
+    incrementalRevenueOutcome:
+      incrementalIncomeText(revenuePath.incrementalIncomeOutcome) &&
+      observableRevenueText(revenuePath.observableRevenueOutcome) &&
+      boundedRevenueStopCondition(revenuePath.stopCondition),
+    commercialConstraintsSatisfied: constraintGate.valid
+  };
+  return {
+    ...gate,
+    constraintReasons: constraintGate.reasons,
+    valid: Object.values(gate).every(Boolean)
+  };
+}
+
+function commercialConstraintGate(hypothesisValue, graphValue) {
+  const hypothesis = asObject(hypothesisValue);
+  const nodes = asArray(asObject(graphValue).nodes).map(asObject);
+  const profileNode = nodes.find((node) =>
+    firstText(node.evidenceRef) === 'commercial_context:profile'
+  );
+  const constraintText = compactStrings(nodes
+    .filter((node) =>
+      /^(?:commercial_context:profile|commercial_context:constraint:)/.test(
+        firstText(node.evidenceRef)
+      )
+    )
+    .flatMap((node) => [node.label, node.summary, node.availability])
+  ).join(' ');
+  const reasons = [];
+  if (/\b(?:unavailable|not accepting|accepting no|zero capacity|no capacity|0 slots?|no openings?|fully booked|paused indefinitely)\b/i.test(
+    constraintText
+  )) {
+    reasons.push('unavailable_or_zero_capacity');
+  }
+  if (/\b(?:expired|deadline passed|no longer available|ended|closed)\b/i.test(
+    constraintText
+  )) {
+    reasons.push('timing_constraint_not_current');
+  }
+  if (/\b(?:outside (?:the )?(?:declared )?service area|not served|unsupported geography|does not serve)\b/i.test(
+    `${constraintText} ${hypothesis.buyerSegment || ''}`
+  )) {
+    reasons.push('buyer_outside_service_area');
+  }
+  const serviceAreas = compactStrings(profileNode?.serviceAreas);
+  const buyerLocationMatch = firstText(hypothesis.buyerSegment).match(
+    /\b(?:in|near)\s+([A-Z][\p{L}'’-]+(?:\s+[A-Z][\p{L}'’-]+){0,2}(?:,\s*[A-Z]{2})?)(?=\b|$)/u
+  );
+  if (serviceAreas.length > 0 && buyerLocationMatch?.[1]) {
+    const buyerLocation = buyerLocationMatch[1];
+    const withinServiceArea = serviceAreas.some((area) =>
+      allowedValue(buyerLocation, [area]) || allowedValue(area, [buyerLocation])
+    );
+    if (!withinServiceArea) reasons.push('buyer_outside_service_area');
+  }
+  return {
+    valid: reasons.length === 0,
+    reasons: compactStrings(reasons)
+  };
+}
+
+function normalizeCommercialCritic(
+  value,
+  finalistsValue,
+  commercialEvidenceGraphValue = {}
+) {
+  const raw = asObject(value);
+  const finalists = asArray(finalistsValue).map(asObject);
+  const finalistByID = new Map(
+    finalists.map((finalist) => [firstText(finalist.id), finalist])
+  );
+  const expectedIDs = [...finalistByID.keys()];
+  const values = asArray(raw.comparisons).map(asObject);
+  const returnedIDs = values.map((item) => firstText(item.finalistId));
+  const ordering = compactStrings(raw.selectedOrdering);
+  const shapeValid =
+    firstText(raw.criticContract) ===
+      OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT &&
+    values.length === expectedIDs.length &&
+    new Set(returnedIDs).size === expectedIDs.length &&
+    expectedIDs.every((id) => returnedIDs.includes(id)) &&
+    ordering.length === expectedIDs.length &&
+    new Set(ordering).size === expectedIDs.length &&
+    expectedIDs.every((id) => ordering.includes(id)) &&
+    firstText(raw.selectedFinalistId) === ordering[0] &&
+    Boolean(firstText(raw.reason));
+  if (!shapeValid) {
+    return {
+      valid: false,
+      acceptedFamilyIds: [],
+      acceptedFinalistIds: [],
+      selectedOrdering: [],
+      comparisons: [],
+      verdict: 'rejected',
+      reason: 'The critic response did not satisfy the exact comparison contract.'
+    };
+  }
+  const comparisons = values
+    .map((item) => {
+      const finalist = finalistByID.get(firstText(item.finalistId));
+      const deterministic = deterministicCommercialHypothesisGate(
+        finalist,
+        commercialEvidenceGraphValue
+      );
+      const modelAccepted = item.verdict === 'accept' &&
+        item.activeRevenueAction === true &&
+        item.causalAcquisitionPath === true &&
+        item.incrementalRevenueOutcome === true &&
+        item.reasonCode === 'active_incremental_path';
+      const deterministicAccepted =
+        deterministic.valid === true;
+      return {
+        finalistId: firstText(item.finalistId),
+        familyId: firstText(
+          asObject(finalist?.provenance).strategyFamilyId,
+          finalist?._strategyFamily
+        ),
+        verdict: modelAccepted && deterministicAccepted
+          ? 'accept'
+          : 'reject',
+        reasonCode: firstText(item.reasonCode),
+        reason: truncate(firstText(item.reason), 280),
+        incrementalRevenue: firstText(item.incrementalRevenue),
+        evidenceStrength: firstText(item.evidenceStrength),
+        reachability: firstText(item.reachability),
+        timeToFirstDollar: firstText(item.timeToFirstDollar),
+        cost: firstText(item.cost),
+        effort: firstText(item.effort),
+        uncertainty: firstText(item.uncertainty),
+        modelAccepted,
+        deterministicAccepted,
+        ...deterministic
+      };
+    })
+    .sort((left, right) =>
+      ordering.indexOf(left.finalistId) - ordering.indexOf(right.finalistId)
+    );
+  const acceptedFinalistIds = ordering.filter((id) =>
+    comparisons.some((item) =>
+      item.finalistId === id && item.verdict === 'accept'
+    )
+  );
+  const acceptedFamilyIds = compactStrings(acceptedFinalistIds.map((id) =>
+    firstText(
+      asObject(finalistByID.get(id)?.provenance).strategyFamilyId,
+      finalistByID.get(id)?._strategyFamily
+    )
+  ));
+  const accepted = acceptedFinalistIds.length >= 2 &&
+    acceptedFinalistIds[0] === firstText(raw.selectedFinalistId);
+  return {
+    valid: true,
+    verdict: accepted ? 'accepted' : 'rejected',
+    acceptedFamilyIds,
+    acceptedFinalistIds,
+    selectedOrdering: ordering,
+    selectedFinalistId: firstText(raw.selectedFinalistId),
+    comparisons,
+    reason: truncate(firstText(raw.reason), 360)
+  };
+}
+
+async function runCommercialCritic({
+  objective,
+  commercialContext,
+  commercialEvidenceGraph,
+  finalists,
+  model,
+  budget,
+  usage,
+  completedRequests,
+  completeJSON
+}) {
+  const prompt = commercialCriticPrompt({
+    objective,
+    commercialContext,
+    commercialEvidenceGraph,
+    finalists
+  });
+  const promptHash = stableHash(prompt);
+  const remainingSpendMicros = remainingRepairSpendMicros(
+    budget,
+    usage,
+    completedRequests
+  );
+  const request = {
+    model,
+    system: prompt.system,
+    user: prompt.user,
+    maxTokens: Math.min(
+      budget.maxOutputTokens,
+      MAX_CRITIC_OUTPUT_TOKENS
+    ),
+    responseFormat: commercialCriticResponseFormat(finalists),
+    plugins: [{ id: 'response-healing' }],
+    temperature: 0,
+    provider: {
+      ...TOURNAMENT_PROVIDER_ROUTING,
+      max_price: {
+        ...budget.providerMaxPrice,
+        request: roundMoney(Math.min(
+          budget.providerMaxPrice.request,
+          remainingSpendMicros / 1_000_000
+        ))
+      }
+    }
+  };
+  const preflight = providerCallSpendPreflight(request, budget);
+  const envelopeIssue = providerPromptEnvelopeIssue(preflight);
+  if (envelopeIssue) {
+    return {
+      status: 'failed',
+      cause: 'commercial_critic_prompt_recovery',
+      request,
+      preflight,
+      trace: {
+        contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+        contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+        attempted: false,
+        valid: false,
+        verdict: 'not_run',
+        acceptedFamilyIds: [],
+        acceptedFinalistIds: [],
+        selectedOrdering: [],
+        reason: 'The critic request did not fit the bounded provider prompt envelope.',
+        cause: envelopeIssue,
+        preflight
+      }
+    };
+  }
+  if (remainingSpendMicros <= 0 ||
+      (budget.hardStop &&
+       preflight.callSpendCeilingMicros > remainingSpendMicros)) {
+    return {
+      status: 'failed',
+      cause: 'commercial_critic_budget_recovery',
+      request,
+      preflight,
+      trace: {
+        contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+        contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+        attempted: false,
+        valid: false,
+        verdict: 'not_run',
+        acceptedFamilyIds: [],
+        acceptedFinalistIds: [],
+        selectedOrdering: [],
+        reason: 'The critic request did not fit the remaining hard spend budget.',
+        cause: 'critic_budget_unavailable',
+        remainingSpendMicros,
+        preflight
+      }
+    };
+  }
+  let completion;
+  try {
+    completion = await completeJSON(request);
+  } catch (error) {
+    const metadata = openRouterMetadata({
+      model,
+      purpose: 'opportunity_tournament_commercial_critic',
+      structuredOutputContract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+      status: 'failed',
+      usage: error?.openRouterUsage,
+      generationId: error?.openRouterGenerationId,
+      diagnostics: error?.openRouterDiagnostics,
+      promptHash,
+      error: openRouterFailureCode(error)
+    });
+    return {
+      status: 'failed',
+      cause: 'commercial_critic_provider_recovery',
+      request,
+      preflight,
+      metadata,
+      trace: {
+        contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+        contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+        attempted: true,
+        valid: false,
+        verdict: 'rejected',
+        acceptedFamilyIds: [],
+        acceptedFinalistIds: [],
+        selectedOrdering: [],
+        reason: 'The commercial critic provider call failed.',
+        cause: 'critic_provider_failure',
+        promptTokenCanary: providerPromptTokenCanary(
+          preflight,
+          metadata.openRouterUsage
+        ),
+        preflight
+      }
+    };
+  }
+  const truncated = openRouterDiagnosticsIndicateTruncation(
+    completion?.diagnostics
+  );
+  const metadata = openRouterMetadata({
+    model,
+    purpose: 'opportunity_tournament_commercial_critic',
+    structuredOutputContract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+    status: truncated ? 'incomplete' : 'completed',
+    usage: completion?.usage,
+    generationId: completion?.generationId,
+    diagnostics: completion?.diagnostics,
+    promptHash,
+    error: truncated
+      ? 'openrouter_truncated_structured_output'
+      : undefined
+  });
+  const promptTokenCanary = providerPromptTokenCanary(
+    preflight,
+    metadata.openRouterUsage
+  );
+  const normalized = normalizeCommercialCritic(
+    completion?.data,
+    finalists,
+    commercialEvidenceGraph
+  );
+  const valid = !truncated &&
+    promptTokenCanary.withinCeiling !== false &&
+    normalized.valid;
+  return {
+    status: valid ? 'completed' : 'failed',
+    cause: valid ? '' : 'commercial_critic_contract_recovery',
+    request,
+    preflight,
+    metadata,
+    trace: {
+      contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+      contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+      attempted: true,
+      valid,
+      verdict: valid ? normalized.verdict : 'rejected',
+      acceptedFamilyIds: valid
+        ? normalized.acceptedFamilyIds
+        : [],
+      acceptedFinalistIds: valid
+        ? normalized.acceptedFinalistIds
+        : [],
+      selectedOrdering: valid ? normalized.selectedOrdering : [],
+      selectedFinalistId: valid ? normalized.selectedFinalistId : '',
+      comparisons: valid ? normalized.comparisons : [],
+      rejectedFinalistCount: valid
+        ? normalized.comparisons.filter((item) => item.verdict === 'reject').length
+        : commercialCriticFinalists(finalists).length,
+      reason: valid
+        ? normalized.reason
+        : 'The critic output was incomplete, unbounded, or did not satisfy the exact comparison contract.',
+      cause: valid
+        ? ''
+        : truncated
+          ? 'critic_output_truncated'
+          : promptTokenCanary.withinCeiling === false
+            ? 'critic_prompt_token_ceiling_exceeded'
+            : 'critic_contract_invalid',
+      promptTokenCanary,
+      preflight
     }
   };
 }
@@ -3557,16 +5266,17 @@ function searchContractsForSeedSet(seedSetValue) {
 
 function normalizeRevenuePathSeed(seedValue, evidenceRefs) {
   const seed = asObject(seedValue);
+  const contractVersion = firstText(
+    seed.contractVersion,
+    seed.revenueContractVersion,
+    seed.v
+  );
   const grounding = normalizeRevenuePathGrounding(
     seed.g ?? seed.grounding,
     evidenceRefs
   );
   return compact({
-    contractVersion: firstText(
-      seed.contractVersion,
-      seed.revenueContractVersion,
-      seed.v
-    ),
+    contractVersion,
     revenueMechanism: contractEnum(firstText(
       seed.revenueMechanism,
       seed.mechanism,
@@ -3601,6 +5311,18 @@ function normalizeRevenuePathSeed(seedValue, evidenceRefs) {
     attributionSignal: truncate(firstText(
       seed.attributionSignal,
       seed.ats
+    ), 320),
+    conversionDestination: truncate(firstText(
+      seed.conversionDestination,
+      seed.cd,
+      asObject(grounding).conversionDestination
+    ), 240),
+    stopCondition: truncate(firstText(
+      seed.stopCondition,
+      seed.st,
+      contractVersion === PRIOR_REVENUE_PATH_CONTRACT_VERSION
+        ? 'Stop after 25 qualified prospects, 1 paid outcome, or 14 calendar days.'
+        : ''
     ), 320),
     _grounding: grounding,
     supportingBottleneck: truncate(firstText(
@@ -3928,20 +5650,74 @@ function normalizeJudgeWeights(value) {
 }
 
 function normalizePriorOutcomes(value) {
-  return firstArray(value)
-    .slice(0, 64)
+  const normalized = firstArray(value)
     .map((raw) => {
       const item = asObject(raw);
+      const attribution = asObject(item.attribution);
       return compact({
-        kind: firstText(item.kind, item.outcome, item.status),
+        kind: truncate(firstText(item.kind, item.outcome, item.status), 100),
+        status: truncate(firstText(item.status), 60),
         verified: item.verified === true,
-        offer: firstText(item.offer),
-        buyerSegment: firstText(item.buyerSegment, item.audience),
-        channel: firstText(item.channel),
-        action: firstText(item.action),
+        offer: truncate(firstText(item.offer), 180),
+        buyerSegment: truncate(firstText(item.buyerSegment, item.audience), 180),
+        channel: truncate(firstText(item.channel), 100),
+        action: truncate(firstText(item.action), 240),
         evidenceRefs: compactStrings(item.evidenceRefs)
+          .slice(0, 8)
+          .map((ref) => truncate(ref, 240)),
+        attribution: compact({
+          objectiveId: truncate(firstText(attribution.objectiveId), 120),
+          tournamentId: truncate(firstText(attribution.tournamentId), 120),
+          hypothesisId: truncate(firstText(attribution.hypothesisId), 120),
+          candidateId: truncate(firstText(attribution.candidateId), 120),
+          actionId: truncate(firstText(attribution.actionId), 120),
+          evidenceExperimentId: truncate(firstText(
+            attribution.evidenceExperimentId
+          ), 120),
+          algorithmVersion: truncate(firstText(attribution.algorithmVersion), 80),
+          experimentArm: truncate(firstText(attribution.experimentArm), 80),
+          selectionProbability: finite(attribution.selectionProbability)
+        }),
+        occurredAt: firstText(item.occurredAt)
       });
-    });
+    })
+    .filter((item) => item.verified === true);
+  const seen = new Set();
+  return normalized
+    .filter((item) => {
+      const attribution = asObject(item.attribution);
+      const attributionIDs = compactStrings([
+        attribution.objectiveId,
+        attribution.tournamentId,
+        attribution.hypothesisId,
+        attribution.candidateId,
+        attribution.actionId,
+        attribution.evidenceExperimentId
+      ]);
+      const key = stableHash({
+        attributionIDs,
+        kind: item.kind,
+        status: item.status,
+        occurredAt: item.occurredAt,
+        evidenceRefs: item.evidenceRefs,
+        fallback: attributionIDs.length > 0
+          ? ''
+          : compactStrings([
+              item.offer,
+              item.buyerSegment,
+              item.channel,
+              item.action
+            ]).join('|')
+      });
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) =>
+      validDate(right.occurredAt).getTime() -
+        validDate(left.occurredAt).getTime()
+    )
+    .slice(0, 16);
 }
 
 function scoreHypothesis({
@@ -3978,14 +5754,18 @@ function scoreHypothesis({
     semantic.evidenceStrength * 0.55 +
     (evidenceScores.length > 0 ? average(evidenceScores) : 0) * 0.45
   );
-  const priorAdjustment = priorOutcomeAdjustment(tuple, priorOutcomes);
-  semantic.expectedValue = clamp01(semantic.expectedValue + priorAdjustment.value);
-  semantic.uncertainty = clamp01(semantic.uncertainty + priorAdjustment.uncertainty);
   if (timingIsVerificationStep(tuple.timingTriggers.label)) {
     semantic.timing = Math.min(semantic.timing, 0.25);
     semantic.risk = Math.max(semantic.risk, 0.35);
     semantic.uncertainty = Math.max(semantic.uncertainty, 0.75);
   }
+  const priorAdjustment = priorOutcomeAdjustment(tuple, priorOutcomes);
+  semantic.expectedValue = clamp01(
+    semantic.expectedValue + priorAdjustment.value
+  );
+  semantic.uncertainty = clamp01(
+    semantic.uncertainty + priorAdjustment.uncertainty
+  );
 
   let positive = 0;
   let burden = 0;
@@ -4032,15 +5812,17 @@ function priorOutcomeAdjustment(tuple, outcomes) {
       outcome.action
     ].join(' ');
     if (textOverlap(tupleText, outcomeText) < 0.35) continue;
-    const kind = comparable(outcome.kind);
+    const polarity = comparable(
+      `${outcome.kind || ''} ${outcome.status || ''}`
+    );
     const verifiedFactor = outcome.verified ? 1 : 0.55;
-    if (/\b(won|paid|accepted|qualified reply|meeting booked|referral)\b/.test(kind)) {
+    if (/\b(won|paid|accepted|qualified reply|meeting booked|referral)\b/.test(polarity)) {
       value += 0.08 * verifiedFactor;
       uncertainty -= 0.04 * verifiedFactor;
-    } else if (/\b(lost|rejected|skipped|spam|complaint)\b/.test(kind)) {
+    } else if (/\b(lost|rejected|skipped|spam|complaint)\b/.test(polarity)) {
       value -= 0.08 * verifiedFactor;
       uncertainty += 0.04;
-    } else if (/\b(not now|no response|unverified)\b/.test(kind)) {
+    } else if (/\b(not now|no response|unverified)\b/.test(polarity)) {
       value -= 0.025;
       uncertainty += 0.03;
     }
@@ -4112,6 +5894,7 @@ function selectWinner({
   hypotheses,
   candidates,
   evidenceCatalog,
+  commercialCritic,
   eligibleCount,
   exploredCount
 }) {
@@ -4150,6 +5933,7 @@ function selectWinner({
     runnerUp: runnerHypothesis,
     candidate: selectedCandidate,
     evidenceCatalog,
+    commercialCritic,
     eligibleCount,
     exploredCount
   });
@@ -4160,6 +5944,7 @@ function selectWinner({
       runnerUp: null,
       candidate: normalizedCandidates.find((candidate) => candidate.hypothesisId === runnerHypothesis.id),
       evidenceCatalog,
+      commercialCritic,
       eligibleCount,
       exploredCount
     })
@@ -4180,14 +5965,16 @@ function recommendationFor({
   runnerUp,
   candidate,
   evidenceCatalog,
+  commercialCritic,
   eligibleCount,
   exploredCount
 }) {
   const tuple = hypothesis._tuple;
   const candidateLabel = truncate(firstText(candidate?.displayLabel), 180);
   const isV2 =
-    firstText(hypothesis?.revenuePath?.contractVersion) ===
-      REVENUE_PATH_CONTRACT_VERSION;
+    TYPED_REVENUE_PATH_CONTRACT_VERSIONS.has(
+      firstText(hypothesis?.revenuePath?.contractVersion)
+    );
   const buyerMotions = isV2
     ? acquisitionModesFromText(hypothesis.buyerSegment)
     : strategyMotions(
@@ -4226,10 +6013,12 @@ function recommendationFor({
     hypothesis.offer,
     candidateCopyLabel
   );
-  const action = truncate(
+  const unboundedAction =
     candidateCopyLabel && !actionNamesCandidate
       ? `${hypothesis.action} for ${candidateCopyLabel} through ${hypothesis.channel}; prepare only the singular, reviewable next step.`
-      : `${hypothesis.action} through ${hypothesis.channel}; prepare only the singular, reviewable next step.`,
+      : `${hypothesis.action} through ${hypothesis.channel}; prepare only the singular, reviewable next step.`;
+  const action = truncate(
+    explicitApprovalBoundedAction(unboundedAction),
     600
   );
   const title = truncate(
@@ -4256,7 +6045,7 @@ function recommendationFor({
     ? `${revenueWhy} ${candidateLabel} is the ${candidateIsOwnedInboundAsset ? 'approved owned inbound execution asset' : candidateIsContextAnchor ? 'exact named evidence anchor' : 'exact named candidate'} attached to this strategy. ${grounding} It led ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations on objective fit, evidence strength, buyer authority, timing, incremental expected value, effort, cost, risk, and uncertainty.`
     : `${revenueWhy} ${grounding} This was one of ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations.`;
   const whyOverRunnerUp = runnerUp
-    ? comparisonReason(hypothesis, runnerUp)
+    ? comparisonReason(hypothesis, runnerUp, commercialCritic)
     : '';
   const recommendationSignatureTexts = [
     title,
@@ -4310,7 +6099,43 @@ function recommendationFor({
   return recommendation;
 }
 
-function comparisonReason(winner, runnerUp) {
+function explicitApprovalBoundedAction(value) {
+  const action = firstText(value);
+  if (/^(?:after|if|once|upon) explicit (?:user )?approval\b/i.test(
+    action
+  )) {
+    return action;
+  }
+  return `After explicit approval, ${action}`;
+}
+
+function comparisonReason(winner, runnerUp, commercialCriticValue = {}) {
+  const critic = asObject(commercialCriticValue);
+  const ordering = compactStrings(critic.selectedOrdering);
+  const comparisons = asArray(critic.comparisons).map(asObject);
+  if (critic.valid === true &&
+      firstText(critic.verdict) === 'accepted' &&
+      ordering[0] === firstText(winner.id) &&
+      ordering.includes(firstText(runnerUp.id))) {
+    const comparison = comparisons.find((item) =>
+      firstText(item.finalistId) === firstText(winner.id)
+    );
+    const dimensions = [
+      ['incrementalRevenue', 'incremental revenue'],
+      ['evidenceStrength', 'evidence strength'],
+      ['reachability', 'reachability'],
+      ['timeToFirstDollar', 'time to first dollar'],
+      ['cost', 'cost'],
+      ['effort', 'effort'],
+      ['uncertainty', 'uncertainty']
+    ].map(([field, label]) =>
+      `${label}: ${firstText(comparison?.[field], 'noted')}`
+    ).join('; ');
+    return truncate(
+      `The independent commercial critic ranked it ahead of the runner-up after comparing ${dimensions}. Its deterministic score was ${winner.score.total.toFixed(3)} versus ${runnerUp.score.total.toFixed(3)}; the critic ordering, not that score alone, controlled final selection.`,
+      600
+    );
+  }
   const fields = [
     ['objectiveFit', 'objective fit'],
     ['evidenceStrength', 'evidence strength'],
@@ -5325,10 +7150,7 @@ function normalizeGeneratedEvidenceExperiment(
   if (/\b(?:approve source|approve observation|evidence approval|evidence id|crawl|generator|validator|retained strateg|missing[_ ])\b/i.test(
     userCopy
   ) ||
-      experimentActionHasExternalExecution(action) ||
-      !/\b(?:count|inspect|measure|monitor|observe|record|review|track)\b/i.test(
-        action
-      ) ||
+      experimentActionClaimsCompletedExternalExecution(action) ||
       !/\breview(?: first|-first)?\b/i.test(action)) {
     return null;
   }
@@ -5474,34 +7296,17 @@ function experimentInboundAcquisitionMechanismText(value) {
   );
 }
 
-function experimentActionHasExternalExecution(value) {
+function experimentActionClaimsCompletedExternalExecution(value) {
   const text = firstText(value);
-  const pattern =
-    /\b(?:send|email|call|message|share|invite|outreach|publish|publishing|post|posting|advertis(?:e|ing)|ads?|newsletter distribution|social distribution|content distribution|submit(?:ting)? forms?|form submission|provider writes?)\b/gi;
-  for (const match of text.matchAll(pattern)) {
-    const before = text.slice(0, match.index);
-    const segmentStart = Math.max(
-      before.lastIndexOf('.'),
-      before.lastIndexOf(';'),
-      before.lastIndexOf('\n')
-    ) + 1;
-    const prefix = before.slice(segmentStart);
-    const suffix = text.slice(
-      match.index + match[0].length,
-      match.index + match[0].length + 50
+  return /^(?:already\s+)?(?:sent|emailed|called|messaged|shared|invited|contacted|published|posted|advertised|launched|submitted|executed)\b/i.test(
+    text
+  ) ||
+    /\b(?:i|we|the agent|profilescribe|the system)\s+(?:already\s+|has\s+|have\s+)?(?:sent|emailed|called|messaged|shared|invited|contacted|published|posted|advertised|launched|submitted|executed)\b/i.test(
+    text
+  ) ||
+    /\b(?:was|were|has been|have been)\s+(?:sent|emailed|called|messaged|shared|published|posted|advertised|launched|submitted|executed)\b/i.test(
+      text
     );
-    const negatedBefore =
-      /\b(?:no|not|never|without|do not|does not|must not|cannot|can't|will not)\b[^.;]*$/i.test(
-        prefix
-      ) &&
-      !/\b(?:but|then|however|except)\b[^.;]*$/i.test(prefix);
-    const negatedAfter =
-      /^\s+(?:is|are|was|were|will be|remain)\s+not\s+(?:authorized|allowed|permitted)\b/i.test(
-        suffix
-      );
-    if (!negatedBefore && !negatedAfter) return true;
-  }
-  return false;
 }
 
 function currentApprovedExperimentEvidence(
@@ -5571,7 +7376,9 @@ function revenueEvidenceExperiment({
   evidenceHash,
   missingEvidence,
   referenceTime,
-  generatedExperiment
+  generatedExperiment,
+  commercialContext,
+  commercialEvidenceGraph
 }) {
   const evidenceByID = evidenceIndex(evidenceCatalog);
   const missing = compactStrings(missingEvidence)
@@ -5611,7 +7418,12 @@ function revenueEvidenceExperiment({
         generatedExperiment,
         objective,
         missing
-      )) {
+      ) &&
+      (!asset || generatedExperimentHasGroundedPermittedAcquisition(
+        generatedExperiment,
+        commercialContext,
+        commercialEvidenceGraph
+      ))) {
     const kind = generatedExperiment.asset
       ? 'inbound_revenue_evidence'
       : 'revenue_path_grounding';
@@ -5680,7 +7492,10 @@ function revenueEvidenceExperiment({
     ? 'inbound_revenue_evidence'
     : 'revenue_path_grounding';
   const experimentPlan = asset
-    ? ownedAssetEvidenceExperimentPlan(asset)
+    ? ownedAssetEvidenceExperimentPlan(asset, {
+        commercialContext,
+        commercialEvidenceGraph
+      })
     : revenuePathGroundingExperimentPlan({
         anchor,
         anchorLabel,
@@ -5691,7 +7506,7 @@ function revenueEvidenceExperiment({
   const successSignal = experimentPlan.successSignal;
   const stopCondition =
     asset
-      ? 'Stop after 25 qualified visits, 1 attributable paid outcome, or 14 calendar days, whichever comes first, followed by at most 1 rerun informed by the result; do not expand volume automatically.'
+      ? experimentPlan.stopCondition
       : 'Stop after 1 current paid-offer page or attributable revenue record, or 14 calendar days, followed by at most 1 rerun; do not launch or expand an external test automatically.';
   return {
     contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
@@ -5710,6 +7525,7 @@ function revenueEvidenceExperiment({
     conversionDestination: experimentPlan.conversionDestination,
     paidConversion: experimentPlan.paidConversion,
     attributionSignal: experimentPlan.attributionSignal,
+    noGroundedPath: experimentPlan.noGroundedPath === true,
     action: truncate(action, 700),
     missingEvidence: userReadableMissingEvidence.length > 0
       ? userReadableMissingEvidence
@@ -5773,8 +7589,9 @@ function selectCurrentOwnedPaidAsset(
     })[0];
 }
 
-function ownedAssetEvidenceExperimentPlan(assetValue) {
+function ownedAssetEvidenceExperimentPlan(assetValue, optionsValue = {}) {
   const asset = asObject(assetValue);
+  const options = asObject(optionsValue);
   const label = truncate(firstText(
     asset.label,
     'the current paid offer'
@@ -5794,32 +7611,135 @@ function ownedAssetEvidenceExperimentPlan(assetValue) {
     220
   );
   const destination = ownedAssetConversionDestination(label, text);
+  const acquisition = groundedPermittedAcquisition(
+    options.commercialEvidenceGraph,
+    options.commercialContext
+  );
+  if (!acquisition) {
+    const candidateChannel = compactStrings(
+      asObject(options.commercialContext).allowedChannels
+    )[0];
+    const candidateMechanism = candidateChannel
+      ? `connected ${candidateChannel} distribution; buyer/channel fit unverified`
+      : 'no permitted acquisition channel is configured';
+    return {
+      title: truncate(
+        `Ground one buyer-to-channel acquisition path for ${label}`,
+        240
+      ),
+      knownFact: truncate(firstText(
+        asset.summary,
+        asset.label
+      ), 320),
+      buyer: 'not yet grounded by approved demand or channel-fit evidence',
+      paidOffer,
+      acquisitionMechanism: candidateMechanism,
+      conversionDestination: destination,
+      paidConversion: outcome.paidConversion,
+      attributionSignal:
+        `${outcome.record}'s source/origin field after one acquisition path is grounded`,
+      action: truncate(
+        candidateChannel
+          ? `No immediate acquisition channel is grounded. Review first: for the candidate ${candidateChannel} channel, approve exactly 1 current existing-audience, qualified-demand, referral, partner, or attributed-outcome record that names both a reachable buyer and why that buyer already discovers offers like ${paidOffer} through ${candidateChannel}. Stop after that 1 qualifying record or 14 calendar days. Do not publish, contact anyone, assume channel fit from the connection alone, monitor traffic as the primary action, advertise, submit a form, or execute automatically.`
+          : `No immediate acquisition channel is grounded or permitted. Review first: select exactly 1 candidate discovery channel the user is willing to permit and attach exactly 1 current existing-audience, qualified-demand, referral, partner, or attributed-outcome record that names a reachable buyer and supports buyer/channel fit for ${paidOffer}. Stop after that one channel decision plus one qualifying record or 14 calendar days. Do not assume organic search, contact anyone, publish, advertise, submit a form, or execute automatically.`,
+        700
+      ),
+      successSignal: truncate(
+        `One approved record names a reachable buyer, one permitted acquisition channel, ${paidOffer}, the separate ${destination}, and the ${outcome.record} source field that would attribute ${outcome.paidConversion}.`,
+        360
+      ),
+      stopCondition:
+        'Stop after 1 qualifying buyer-and-channel-fit record or 14 calendar days, whichever comes first; permit at most 1 objective-preserving rerun after relevant new approved evidence.',
+      noGroundedPath: !candidateChannel
+    };
+  }
+  const channel = acquisition.channel;
+  const buyerForTest = truncate(
+    firstText(acquisition.buyer, buyer),
+    160
+  );
   const attributionSignal =
-    `${outcome.record}'s source/origin field set to organic_search`;
+    `${outcome.record}'s source/origin field set to ${channel}`;
   return {
     title: truncate(
-      `Measure ${outcome.shortOutcome} from organic search for ${label}`,
+      `Test one active ${channel} acquisition path for ${label}`,
       240
     ),
     knownFact: truncate(firstText(
       asset.summary,
       asset.label
     ), 320),
-    buyer,
+    buyer: buyerForTest,
     paidOffer,
-    acquisitionMechanism: 'organic search',
+    acquisitionMechanism: channel,
     conversionDestination: destination,
     paidConversion: outcome.paidConversion,
     attributionSignal,
     action: truncate(
-      `Review first: for 14 days or 25 qualified organic-search visits, measure whether ${buyer} discover ${paidOffer} through organic search and complete ${outcome.paidConversion} at the ${destination}. Store organic_search in the ${outcome.record}'s source/origin field and count only that paid event. No outreach, publishing, advertising, form submission, or automatic execution is authorized.`,
+      `Review first: run exactly 1 bounded ${channel} acquisition test for ${buyerForTest} to encounter ${paidOffer} and complete ${outcome.paidConversion} at the separate ${destination}. Store ${channel} in the ${outcome.record}'s source/origin field and stop after 10 qualified buyers, 1 attributed paid outcome, or 14 calendar days, whichever comes first. This recommendation authorizes no outreach, publishing, advertising, form submission, or automatic execution.`,
       700
     ),
     successSignal: truncate(
-      `One ${outcome.paidConversion} by ${buyer}, with organic_search stored in the ${outcome.record}'s source/origin field.`,
+      `One ${outcome.paidConversion} by ${buyerForTest}, with ${channel} stored in the ${outcome.record}'s source/origin field.`,
       360
-    )
+    ),
+    stopCondition:
+      'Stop after 10 qualified buyers, 1 attributable paid outcome, or 14 calendar days, whichever comes first; permit at most 1 objective-preserving rerun informed by the recorded result.'
   };
+}
+
+function groundedPermittedAcquisition(graphValue, contextValue) {
+  const graph = asObject(graphValue);
+  const context = asObject(contextValue);
+  const allowedChannels = compactStrings(context.allowedChannels);
+  if (allowedChannels.length === 0) return null;
+  const nodes = asArray(graph.nodes).map(asObject);
+  const buyerNodes = nodes.filter((node) =>
+    node.approved === true && asArray(node.roles).includes('defined_buyer')
+  );
+  for (const channel of allowedChannels) {
+    const fitNode = nodes.find((node) =>
+      node.approved === true &&
+      asArray(node.roles).includes('channel_fit') &&
+      asArray(node.channelFitChannels).some((value) =>
+        allowedValue(value, [channel]) || allowedValue(channel, [value])
+      )
+    );
+    if (!fitNode) continue;
+    const buyerNode = buyerNodes.find((node) =>
+      node.evidenceRef === fitNode.evidenceRef
+    ) || buyerNodes[0];
+    if (!buyerNode) continue;
+    return {
+      channel,
+      buyer: firstText(buyerNode.label, buyerNode.summary),
+      evidenceRefs: compactStrings([
+        fitNode.evidenceRef,
+        buyerNode.evidenceRef
+      ])
+    };
+  }
+  return null;
+}
+
+function generatedExperimentHasGroundedPermittedAcquisition(
+  generatedExperimentValue,
+  commercialContextValue,
+  commercialEvidenceGraphValue
+) {
+  const experiment = asObject(generatedExperimentValue);
+  const grounded = groundedPermittedAcquisition(
+    commercialEvidenceGraphValue,
+    commercialContextValue
+  );
+  if (!grounded) return false;
+  return allowedValue(
+    firstText(experiment.acquisitionMechanism),
+    [grounded.channel]
+  ) || allowedValue(
+    grounded.channel,
+    [firstText(experiment.acquisitionMechanism)]
+  );
 }
 
 function ownedAssetConversionDestination(label, evidenceText) {
@@ -5867,6 +7787,7 @@ function revenuePathGroundingExperimentPlan({
     240
   );
   return {
+    noGroundedPath: true,
     title: anchorValue
       ? `Define one attributable paid path for ${anchorLabel}`
       : 'Define one attributable paid offer',
@@ -6121,7 +8042,12 @@ function strategyGenerationRecoveryExperiment({
     'bounded_prompt_envelope',
     'usable_strategy_generation',
     'within_budget_strategy_generation',
-    'structured_strategy_family_repair'
+    'structured_strategy_family_repair',
+    'commercial_critic_displaced_by_repair',
+    'commercial_critic_prompt_recovery',
+    'commercial_critic_budget_recovery',
+    'commercial_critic_provider_recovery',
+    'commercial_critic_contract_recovery'
   ].find((cause) => missing.includes(cause));
   if (!recoveryCause) return null;
   const recoveryByCause = {
@@ -6178,6 +8104,57 @@ function strategyGenerationRecoveryExperiment({
         'Stop after 1 response-shape retry; if two complete comparison families still cannot be returned, surface the AI contract failure and do not spend again automatically.',
       trigger:
         'Rerun once only after strict structured-output support for two complete comparison families is verified; new business evidence is not required.'
+    },
+    commercial_critic_displaced_by_repair: {
+      kind: 'strategy_generation_critic_displaced_by_repair',
+      title:
+        'Retry once when the generator can complete on call one',
+      action:
+        'Preserve the objective and approved evidence. Retry the same tournament once only after the generator route can return the complete strict family contract on call 1, leaving call 2 for the mandatory comparative critic. Do not treat this response-shape failure as missing market evidence or execute an uncriticized recommendation.',
+      stopCondition:
+        'Stop after 1 objective-preserving retry; if generator repair is still required or the critic still cannot run, surface the technical contract failure.',
+      trigger:
+        'Rerun once only after the strict generator response is verified to complete on call 1 so call 2 remains available for the critic.'
+    },
+    commercial_critic_prompt_recovery: {
+      kind: 'strategy_generation_critic_prompt_recovery',
+      title: 'Retry once after the commercial critic request is bounded',
+      action:
+        'Preserve the objective and approved evidence. Correct the local compact critic request so it serializes within the provider prompt envelope, then retry the same tournament once; do not change business evidence or execute the recommendation.',
+      stopCondition:
+        'Stop after 1 critic-prompt recovery retry; if the request is still invalid or oversized, surface the technical failure without a provider call.',
+      trigger:
+        'Rerun once only after the exact commercial critic request passes local serialization and prompt-envelope checks.'
+    },
+    commercial_critic_budget_recovery: {
+      kind: 'strategy_generation_critic_budget_recovery',
+      title: 'Retry once when the commercial critic fits the existing budget',
+      action:
+        'Preserve the objective, approved evidence, and total budget. Retry the same tournament once only after the generator plus compact critic conservative ceilings fit the existing spend cap; do not raise the budget or substitute an uncriticized recommendation.',
+      stopCondition:
+        'Stop after 1 budget-compatible critic retry; if both calls cannot fit the existing cap, surface the technical budget failure.',
+      trigger:
+        'Rerun once only after both bounded calls fit the unchanged total tournament budget.'
+    },
+    commercial_critic_provider_recovery: {
+      kind: 'strategy_generation_critic_provider_recovery',
+      title: 'Retry once after the commercial critic provider recovers',
+      action:
+        'Preserve the generated families, objective, and approved evidence. After strict critic structured-output support is healthy, retry the same tournament once; do not accept or execute an uncriticized recommendation.',
+      stopCondition:
+        'Stop after 1 critic-provider recovery retry; if it fails again, surface the technical failure.',
+      trigger:
+        'Rerun once only after the critic provider route supports the exact strict contract.'
+    },
+    commercial_critic_contract_recovery: {
+      kind: 'strategy_generation_critic_contract_recovery',
+      title: 'Retry once for a complete commercial critic verdict',
+      action:
+        'Preserve the objective and approved evidence. Retry the same tournament once only after the compact critic can return one complete verdict per family under its strict contract; do not treat malformed or truncated critic output as market evidence.',
+      stopCondition:
+        'Stop after 1 critic-contract recovery retry; if the verdict remains incomplete, surface the technical failure.',
+      trigger:
+        'Rerun once only after strict output support for the commercial critic contract is verified.'
     }
   };
   const recovery = recoveryByCause[recoveryCause];
@@ -6346,26 +8323,13 @@ function inboundAssetEvidenceSupportsPaidConversion(
   )) {
     return false;
   }
-  const insurancePaidContext =
-    /\b(?:covered by insurance|insurance[- ]covered|insurance (?:is )?accepted|accepts insurance|health ?care (?:is )?accepted|bill(?:s|ing)? insurance|insurance claim|reimburs(?:able|ed|ement)|claim payment)\b/.test(
-      text
-    );
-  const namesOffer =
-    /\b(?:app|audit|class|consultation|contract|course|demo|diagnostic|digital download|engagement|home visit|license|membership|package|pilot|pricing plan|product|professional role|service|session|software|sponsorship|subscription|workshop)\b/.test(
-      text
-    );
-  const namesPositiveConversion =
-    /\b(?:apply|application|appointment|book|booking|book now|buy|checkout|contact|demo|download|inquiry|license|order|pay|payment|purchase|request|schedule|sign|sign up|signup|sponsorship inquiry|subscribe)\b/.test(
-      text
-    );
-  const namesPaidMechanism = insurancePaidContext ||
-    /\b(?:billable|commission|compensated|contract|cost|deposit|fee|invoice|license|order|paid|pay|payment|platform payout|price|purchase|referral fee|retainer|royalty|salary|sale|sponsorship|subscription|wage)\b/.test(
-      text
-    ) ||
-    /\$\s*\d/.test(
-      `${evidence.label || ''} ${evidence.summary || ''}`
-    );
-  return namesOffer && namesPositiveConversion && namesPaidMechanism;
+  return Boolean(paidConversionEvidenceSignalCombination(
+    compactStrings([
+      evidence.label,
+      evidence.summary,
+      evidence.url
+    ]).join(' ')
+  ));
 }
 
 function synthesizeOwnedInboundAssetCandidates(
@@ -6946,7 +8910,9 @@ function validateRevenuePath(
     };
   }
   const isV2 =
-    revenuePath.contractVersion === REVENUE_PATH_CONTRACT_VERSION;
+    TYPED_REVENUE_PATH_CONTRACT_VERSIONS.has(
+      revenuePath.contractVersion
+    );
   const isLegacyV1 =
     revenuePath.contractVersion ===
       LEGACY_REVENUE_PATH_CONTRACT_VERSION;
@@ -6977,6 +8943,10 @@ function validateRevenuePath(
     revenuePath.observableRevenueOutcome
   );
   const attributionSignal = firstText(revenuePath.attributionSignal);
+  const conversionDestination = firstText(
+    revenuePath.conversionDestination
+  );
+  const stopCondition = firstText(revenuePath.stopCondition);
   const supportingBottleneck = firstText(
     revenuePath.supportingBottleneck
   );
@@ -6998,6 +8968,15 @@ function validateRevenuePath(
   )) {
     reasons.add('missing_attribution_signal');
   }
+  if (revenuePath.contractVersion === REVENUE_PATH_CONTRACT_VERSION) {
+    if (!conversionDestinationText(conversionDestination) ||
+        comparable(conversionDestination) === comparable(channel)) {
+      reasons.add('invalid_conversion_destination');
+    }
+    if (!boundedRevenueStopCondition(stopCondition)) {
+      reasons.add('missing_numeric_stop');
+    }
+  }
 
   const acquisitionText = `${channel} ${conversionAction}`;
   if (prohibitedAcquisitionText(acquisitionText)) {
@@ -7010,7 +8989,16 @@ function validateRevenuePath(
     reasons.add('invalid_acquisition_mode');
   }
 
-  if (!revenueAdvancingAction(action) ||
+  if (revenuePath.contractVersion === REVENUE_PATH_CONTRACT_VERSION &&
+      (passiveOrObservationalPrimaryAction(action) ||
+       passiveOrObservationalPrimaryAction(conversionAction))) {
+    reasons.add('passive_or_observational_primary_action');
+  } else if (experimentActionClaimsCompletedExternalExecution(action) ||
+      experimentActionClaimsCompletedExternalExecution(
+        conversionAction
+      )) {
+    reasons.add('claimed_completed_external_execution');
+  } else if (!revenueAdvancingAction(action) ||
       operationOnlyAction(action) ||
       (supportingBottleneck &&
        comparable(action) === comparable(supportingBottleneck))) {
@@ -7045,10 +9033,30 @@ function validateRevenuePath(
     _grounding: _internalGrounding,
     ...publicRevenuePath
   } = revenuePath;
+  const activeRevenueAction = {
+    contractVersion: ACTIVE_REVENUE_ACTION_CONTRACT,
+    primaryAction: action,
+    conversionAction,
+    active: !passiveOrObservationalPrimaryAction(action) &&
+      !experimentActionClaimsCompletedExternalExecution(action) &&
+      !experimentActionClaimsCompletedExternalExecution(conversionAction) &&
+      !operationOnlyAction(action) &&
+      revenueAdvancingAction(action),
+    causalAcquisitionPath:
+      ACQUISITION_MODES.has(revenuePath.acquisitionMode) &&
+      acquisitionModeMatchesText(
+        revenuePath.acquisitionMode,
+        `${channel} ${conversionAction}`
+      ),
+    incrementalRevenueOutcome: incrementalIncomeText(incomeOutcome)
+  };
   return {
     valid: reasons.size === 0,
     reasons: [...reasons].sort(),
-    revenuePath: publicRevenuePath
+    revenuePath: {
+      ...publicRevenuePath,
+      activeRevenueAction
+    }
   };
 }
 
@@ -7176,6 +9184,14 @@ function revenuePathGroundingReasons(
       )) {
     reasons.add('unsupported_acquisition_evidence');
   }
+  if (groups.acquisition.some((ref) =>
+    !currentAffirmativeAcquisitionEvidence(
+      evidenceByID.get(ref),
+      referenceTime
+    )
+  )) {
+    reasons.add('noncurrent_or_negative_acquisition_evidence');
+  }
   const destination = firstText(
     grounding.conversionDestination
   );
@@ -7268,6 +9284,33 @@ function revenueAdvancingAction(value) {
     (namesPaidCommitment || namesPermissionedDemand);
 }
 
+function passiveOrObservationalPrimaryAction(value) {
+  const text = comparable(firstText(value));
+  if (!text) return true;
+  const namesPassiveWork =
+    /\b(?:analy[sz](?:e|es|ed|ing)|audit(?:s|ed|ing)?|check(?:s|ed|ing)?|count(?:s|ed|ing)?|inspect(?:s|ed|ing)?|measur(?:e|es|ed|ing)|monitor(?:s|ed|ing)?|observ(?:e|es|ed|ing)|record(?:s|ed|ing)?|research(?:es|ed|ing)?|review(?:s|ed|ing)?|stud(?:y|ies|ied|ying)|track(?:s|ed|ing)?|verif(?:y|ies|ied|ying)|watch(?:es|ed|ing)?)\b/.test(
+      text
+    );
+  if (!namesPassiveWork) return false;
+  const namesActiveCommercialStep =
+    /\b(?:activate|begin|book|buy|close|complete|convert|enroll|invite|launch|list|offer|open|place|present|propose|purchase|request|route|sell|sign|start|submit|use)\b/.test(
+      text
+    ) &&
+    /\b(?:application|booking|buyer|checkout|contract|customer|inbound|introduction|order|organic search|paid|partner|payment|proposal|purchase|referral|revenue|sale|search|subscription)\b/.test(
+      text
+    );
+  return !namesActiveCommercialStep;
+}
+
+function boundedRevenueStopCondition(value) {
+  const text = firstText(value);
+  return /\b\d+\b/.test(text) &&
+    /\b(?:attempts?|buyers?|calendar days?|conversions?|days?|hours?|inquiries|outcomes?|prospects?|sales?|samples?|visits?|weeks?)\b/i.test(
+      text
+    ) &&
+    /\b(?:stop|whichever comes first|at most|maximum|or)\b/i.test(text);
+}
+
 function operationOnlyAction(value) {
   const text = firstText(value);
   const namesOperations =
@@ -7305,7 +9348,7 @@ function acquisitionEvidenceSupportsMode(mode, value) {
     permissioned_outreach:
       /\b(?:permissioned|opt in|opted in|approved introduction|approved contact)\b/,
     existing_customer:
-      /\b(?:existing|current|past) (?:customer|client|patient)\b/,
+      /\b(?:existing|current|former|past|returning) (?:customer|client|patient)\b/,
     partner_channel:
       /\b(?:partner channel|partner referral|partner introduction|affiliate|association referral)\b/
   };
@@ -7485,6 +9528,76 @@ function currentAffirmativeRevenueEvidence(
   return paidOfferText(rawText);
 }
 
+function currentAffirmativeAcquisitionEvidence(
+  evidenceValue,
+  referenceTime
+) {
+  const evidence = asObject(evidenceValue);
+  const verifiedPriorOutcome =
+    firstText(evidence.type) === 'verified_prior_outcome' &&
+    firstText(evidence.provenance) === 'verified_prior_outcome';
+  if (verifiedPriorOutcome && !affirmativePriorOutcome(evidence)) {
+    return false;
+  }
+  if ((!verifiedPriorOutcome &&
+       evidence.approvedSourceObservation !== true) ||
+      evidence.current === false ||
+      /\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|former|historical|inactive|not accepting|sold out|stale|unavailable|withdrawn)\b/i.test(
+        firstText(evidence.status)
+      )) {
+    return false;
+  }
+  const referenceDate = new Date(referenceTime);
+  const observedDate = new Date(firstText(
+    evidence.observedAt,
+    evidence.occurredAt
+  ));
+  if (!Number.isFinite(referenceDate.getTime()) ||
+      !Number.isFinite(observedDate.getTime())) {
+    return false;
+  }
+  const age = referenceDate.getTime() - observedDate.getTime();
+  if (age < -MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS ||
+      age > MAX_INBOUND_ASSET_OBSERVATION_AGE_MS) {
+    return false;
+  }
+  const rawEndDate = firstText(evidence.endDate);
+  if (rawEndDate) {
+    const endDate = new Date(rawEndDate);
+    if (!Number.isFinite(endDate.getTime()) ||
+        endDate.getTime() < referenceDate.getTime()) {
+      return false;
+    }
+  }
+  const text = comparable(compactStrings([
+    evidence.label,
+    evidence.summary,
+    evidence.status
+  ]).join(' '));
+  return !/\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|no longer|not (?:accepting|active|available)|sold out|stale|unavailable|withdrawn)\b/.test(
+    text
+  );
+}
+
+function affirmativePriorOutcome(value) {
+  const outcome = asObject(value);
+  const polarity = comparable(compactStrings([
+    outcome.kind,
+    outcome.label,
+    outcome.status,
+    outcome.summary
+  ]).join(' '));
+  if (!polarity ||
+      /\b(?:cancelled|canceled|complaint|denied|failed|lost|no response|not now|rejected|refunded|skipped|spam|unpaid|unqualified)\b/.test(
+        polarity
+      )) {
+    return false;
+  }
+  return /\b(?:accepted|booked|closed won|contract signed|converted|paid|payment received|qualified(?: reply| lead| inquiry)?|reimbursed|revenue received|sale completed|won)\b/.test(
+    polarity
+  );
+}
+
 function prohibitedAcquisitionText(value) {
   return /\b(cold|unsolicited|mass|bulk|blast|spray(?:\s+and\s+pray)?|scrape|purchased list|automated form submission)\b/i.test(
     firstText(value)
@@ -7499,7 +9612,7 @@ function acquisitionModeMatchesText(mode, value) {
   const patterns = {
     warm_referral: /\b(warm|referral|introduction|existing network)\b/i,
     permissioned_outreach: /\b(permissioned|opt in|review first|approved|professional network|introduction request)\b/i,
-    existing_customer: /\b(existing|current|past) (?:customer|client|patient)\b/i,
+    existing_customer: /\b(existing|current|former|past|returning) (?:customer|client|patient)\b/i,
     partner_channel: /\b(partner|referral|affiliate|association|network channel)\b/i
   };
   return patterns[mode]?.test(text) === true;
@@ -7719,9 +9832,9 @@ function strategyProvenance(
 }
 
 function strategyMotionSignature(tuple) {
-  if (firstText(
+  if (TYPED_REVENUE_PATH_CONTRACT_VERSIONS.has(firstText(
     asObject(tuple?.revenuePaths?.revenuePath).contractVersion
-  ) === REVENUE_PATH_CONTRACT_VERSION) {
+  ))) {
     return acquisitionFamilySignature(tuple);
   }
   return legacyStrategyMotionSignature(tuple);
@@ -7797,7 +9910,7 @@ function acquisitionModesFromText(value) {
   )) {
     modes.push('permissioned_outreach');
   }
-  if (/\b(?:existing|current|past) (?:customer|client|patient)\b/.test(
+  if (/\b(?:existing|current|former|past|returning) (?:customer|client|patient)\b/.test(
     text
   )) {
     modes.push('existing_customer');
@@ -7854,9 +9967,9 @@ function timingEvidenceConflictsWithStrategyMotion(
   motionSignature,
   evidenceByID
 ) {
-  if (firstText(
+  if (TYPED_REVENUE_PATH_CONTRACT_VERSIONS.has(firstText(
     asObject(tuple?.revenuePaths?.revenuePath).contractVersion
-  ) === REVENUE_PATH_CONTRACT_VERSION) {
+  ))) {
     return false;
   }
   const primaryMotion = asArray(motionSignature?.motionSignatures)[0];
@@ -8308,6 +10421,8 @@ function zeroSideEffects() {
 
 function openRouterMetadata({
   model,
+  purpose,
+  structuredOutputContract,
   status,
   usage,
   generationId,
@@ -8321,8 +10436,12 @@ function openRouterMetadata({
   return compact({
     provider: 'openrouter',
     model: firstText(model),
-    purpose: 'rig_opportunity_tournament',
-    generatorContract: TOURNAMENT_GENERATOR_CONTRACT,
+    purpose: firstText(purpose),
+    structuredOutputContract: firstText(structuredOutputContract),
+    generatorContract:
+      firstText(structuredOutputContract) === TOURNAMENT_GENERATOR_CONTRACT
+        ? TOURNAMENT_GENERATOR_CONTRACT
+        : undefined,
     status,
     generationId: firstText(generationId),
     promptHash,

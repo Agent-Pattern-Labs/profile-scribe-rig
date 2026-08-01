@@ -127,30 +127,35 @@ for (const domain of domains) {
   if (domain.fullyGrounded === false) {
     const experiment = result.nextExperiment || {};
     if (result.status !== 'skipped' ||
+        result.result?.resultType !== 'revenue_evidence_gap' ||
+        result.result?.allowedChannel !== 'organic search' ||
+        result.result?.sideEffectsPerformed !== 0 ||
         result.searchSpace?.eligibleCount !== 0 ||
         experiment.contractVersion !==
           'revenue_evidence_experiment_v1' ||
-        experiment.title !==
-          'Measure paid home visits from organic search' ||
+        experiment.noGroundedPath === true ||
+        !/Ground one buyer-to-channel acquisition path/i.test(
+          experiment.title || ''
+        ) ||
         experiment.asset?.publicUrl !==
           'https://healthcare.example/offer' ||
         !completeBusinessExperimentFields(experiment) ||
         experiment.knownFact !== domain.sourceSummary ||
-        experiment.buyer !== domain.buyer ||
-        experiment.paidOffer !== domain.offer ||
-        experiment.acquisitionMechanism !== 'organic search' ||
-        experiment.conversionDestination !== domain.destination ||
-        experiment.paidConversion !== domain.outcome ||
-        experiment.attributionSignal !== domain.attribution ||
-        !experiment.action?.includes(domain.buyer) ||
-        !experiment.action?.includes(domain.offer) ||
-        !experiment.action?.includes('organic search') ||
-        !experiment.action?.includes(domain.destination) ||
-        !experiment.action?.includes('14') ||
-        !experiment.action?.includes('25') ||
-        !experiment.stopCondition?.includes(
-          '25 qualified visits or 14 calendar days'
+        !/not yet grounded/i.test(experiment.buyer || '') ||
+        !experiment.paidOffer?.includes(domain.destination) ||
+        !/organic search.*fit unverified/i.test(
+          experiment.acquisitionMechanism || ''
         ) ||
+        !experiment.action?.includes(
+          'No immediate acquisition channel is grounded'
+        ) ||
+        !experiment.action?.includes('organic search') ||
+        !experiment.action?.includes('exactly 1') ||
+        !experiment.action?.includes('14') ||
+        /measure (?:traffic|visits)|organic_search/i.test(
+          `${experiment.title} ${experiment.action} ${experiment.attributionSignal}`
+        ) ||
+        !experiment.stopCondition?.includes('1 qualifying') ||
         /\b(?:approve source|approve observation|evidence id|crawl|missing_|invalid_)\b/i.test(
           `${experiment.title} ${experiment.action} ${experiment.successSignal} ${(experiment.missingEvidence || []).join(' ')}`
         ) ||
@@ -160,17 +165,91 @@ for (const domain of domains) {
       );
     }
   } else {
+    const commercialCritic = result.searchSpace?.commercialCritic || {};
+    const resultGate = result.result?.incrementalRevenueGate || {};
+    const winnerID = result.winner?.hypothesisId;
+    const winnerFamilyID = result.hypotheses?.find(
+      (hypothesis) => hypothesis.id === winnerID
+    )?.provenance?.strategyFamilyId;
+    const positiveGateFields = [
+      'reachableBuyer',
+      'currentPaidOffer',
+      'namedAcquisitionMechanism',
+      'acquisitionDistinctFromDestination',
+      'actionCanBeginNow',
+      'knownPermissions',
+      'observablePaidConversion',
+      'attribution',
+      'counterfactualIncrementality',
+      'numericStop',
+      'activeRevenueAction',
+      'causalAcquisitionPath',
+      'incrementalRevenueOutcome',
+      'commercialConstraintsSatisfied',
+      'passed'
+    ];
     if (result.status !== 'completed' ||
         result.nextExperiment !== null ||
+        result.algorithmVersion !== 'cheap_tournament_v5' ||
+        result.result?.resultContract !==
+          'opportunity_tournament_result_v2' ||
+        result.result?.resultType !== 'immediate_revenue_action' ||
+        result.result?.recommendedAction !== result.winner?.action ||
+        result.result?.executionAuthorization !== 'none' ||
+        result.result?.requiresReview !== true ||
+        result.result?.sideEffectsPerformed !== 0 ||
+        !/^[a-f0-9]{64}$/.test(
+          result.commercialEvidenceGraphHash || ''
+        ) ||
+        result.result?.allowedChannel !== 'organic search' ||
+        result.result?.permissionRequired !==
+          'explicit_user_approval' ||
+        !/^After explicit approval,/i.test(
+          result.winner?.action || ''
+        ) ||
+        !/independent commercial critic/i.test(
+          result.winner?.whyOverRunnerUp || ''
+        ) ||
+        positiveGateFields.some((field) => resultGate[field] !== true) ||
+        resultGate.primarilyOperationalOrObservational !== false ||
         result.searchSpace?.seedContract !==
           'revenue_family_bundle_v2' ||
         result.searchSpace?.coherenceGate !==
           'acquisition_mode_family_v3' ||
         result.searchSpace?.revenuePathContract !==
-          'incremental_revenue_v2' ||
+          'incremental_revenue_v3' ||
+        result.searchSpace?.theoreticalCount < 100 ||
+        result.searchSpace?.expandedCount < 100 ||
         result.searchSpace?.eligibleCount < 2 ||
+        commercialCritic.contract !==
+          'opportunity_tournament_critic_v1' ||
+        commercialCritic.attempted !== true ||
+        commercialCritic.enforced !== true ||
+        commercialCritic.valid !== true ||
+        commercialCritic.verdict !== 'accepted' ||
+        !commercialCritic.reason ||
+        commercialCritic.selectedOrdering?.[0] !== winnerID ||
+        commercialCritic.inputFinalists?.length !==
+          commercialCritic.comparisons?.length ||
+        commercialCritic.inputFinalists?.some((binding, index) =>
+          binding.finalistId !==
+            commercialCritic.comparisons?.[index]?.finalistId ||
+          binding.familyId !==
+            commercialCritic.comparisons?.[index]?.familyId
+        ) ||
+        !commercialCritic.acceptedFinalistIds?.includes(winnerID) ||
+        !commercialCritic.acceptedFamilyIds?.includes(winnerFamilyID) ||
+        result.llm?.strategyGeneratorJudge?.purpose !==
+          'opportunity_tournament_strategy_generation' ||
+        result.llm?.strategyGeneratorJudge?.structuredOutputContract !==
+          'opportunity_tournament_commercial_v2' ||
+        result.llm?.commercialCritic?.purpose !==
+          'opportunity_tournament_commercial_critic' ||
+        result.llm?.commercialCritic?.structuredOutputContract !==
+          'opportunity_tournament_critic_v1' ||
+        result.llm?.commercialCritic?.generatorContract !== undefined ||
         result.winner?.revenuePath?.contractVersion !==
-          'incremental_revenue_v2' ||
+          'incremental_revenue_v3' ||
         result.hypotheses?.some((hypothesis) =>
           '_grounding' in (hypothesis.revenuePath || {}) ||
           hypothesis.provenance?.motionSignatures?.length !== 1 ||
@@ -195,7 +274,12 @@ await verifyTypedAcquisitionModeAllowsNeutralLabels();
 await verifyTypedFamilyTimingFallbackPreservesBusinessGates();
 await verifySaaSTimingRepair();
 await verifyNoncurrentWarmReferralRejected();
+await verifyFreshFormerCustomerAcquisitionAccepted();
 await verifyUnsafeGeneratedExperimentRejected();
+await verifyCompletedExternalExecutionRejected();
+await verifyInsufficientGroundedFinalistCause();
+await verifyCriticReorderingControlsWinner();
+await verifyPriorOutcomePolarityAndDedup();
 await verifyInvalidSeedContractsRejected();
 await verifyLengthFinishedStructuredRepair();
 await verifyThrownLengthStructuredRepair();
@@ -220,7 +304,7 @@ console.log(
   'profile-scribe-rig profession-neutral opportunity tournament v2 smoke check passed.'
 );
 
-async function runDomain(domain) {
+async function runDomain(domain, options = {}) {
   const ref = `observation:obs-${domain.name}`;
   const website = `https://${domain.name}.example/`;
   const sourceSnapshot = {
@@ -264,20 +348,79 @@ async function runDomain(domain) {
         budget: {
           maxHypotheses: 512,
           maxFinalists: 8,
-          maxLLMCalls: 1,
-          maxOutputTokens: 8000
+          maxLLMCalls: 2,
+          maxOutputTokens: 8000,
+          ...(options.budgetOverrides || {})
         },
+        commercialContext: {
+          allowedChannels: ['organic search'],
+          priorAttributedOutcomes:
+            options.contextPriorOutcomes || []
+        },
+        priorOutcomes: options.priorOutcomes || [],
         evidenceSnapshot: sourceSnapshot
       }
     },
     model: 'test/v2',
     now,
-    completeJSON: async () => ({
-      data: response,
-      usage,
-      generationId: `gen-${domain.name}`
-    })
+    completeJSON: completionWithCritic(
+      response,
+      `gen-${domain.name}`,
+      { reverseOrdering: options.reverseCritic === true }
+    )
   });
+}
+
+function completionWithCritic(
+  generatorResponse,
+  generationID = 'gen-test',
+  options = {}
+) {
+  return async (request) => {
+    if (request.responseFormat?.json_schema?.name ===
+        'opportunity_tournament_critic_v1') {
+      const prompt = JSON.parse(request.user);
+      const finalists = prompt.finalists || [];
+      const orderedFinalists = options.reverseOrdering === true
+        ? [...finalists].reverse()
+        : finalists;
+      const selectedOrdering = orderedFinalists
+        .map((item) => item.finalistId);
+      return {
+        data: {
+          criticContract: 'opportunity_tournament_critic_v1',
+          selectedOrdering,
+          selectedFinalistId: selectedOrdering[0],
+          comparisons: finalists.map((item) => ({
+            finalistId: item.finalistId,
+            verdict: 'accept',
+            activeRevenueAction: true,
+            causalAcquisitionPath: true,
+            incrementalRevenueOutcome: true,
+            incrementalRevenue: 'strong',
+            evidenceStrength: 'strong',
+            reachability: 'moderate',
+            timeToFirstDollar: 'moderate',
+            cost: 'low',
+            effort: 'moderate',
+            uncertainty: 'moderate',
+            reasonCode: 'active_incremental_path',
+            reason:
+              'The grounded motion actively advances an attributable paid conversion.'
+          })),
+          reason:
+            'Ranked the grounded finalists by incremental revenue, evidence, reachability, time, cost, effort, and uncertainty.'
+        },
+        usage,
+        generationId: `${generationID}-critic`
+      };
+    }
+    return {
+      data: generatorResponse,
+      usage,
+      generationId: generationID
+    };
+  };
 }
 
 function strictV2Response(domain, ref) {
@@ -319,7 +462,7 @@ function strictV2Response(domain, ref) {
       revenuePaths: [{
         l: `${domain.offer} from organic search`,
         e: [ref],
-        contractVersion: 'incremental_revenue_v2',
+        contractVersion: 'incremental_revenue_v3',
         revenueMechanism: domain.mechanism,
         incrementalIncomeOutcome:
           `One new ${domain.outcome} adds incremental gross income`,
@@ -329,6 +472,9 @@ function strictV2Response(domain, ref) {
         observableRevenueOutcome: domain.outcome,
         attributionMethod: domain.attributionMethod,
         attributionSignal: domain.attribution,
+        conversionDestination: domain.destination,
+        stopCondition:
+          'Stop after 25 qualified visits, 1 paid outcome, or 14 calendar days.',
         g: grounding,
         supportingBottleneck: '',
         vm: 250000
@@ -361,8 +507,15 @@ function strictV2Response(domain, ref) {
         l: `Check whether ${domain.destination} remains current`,
         e: [ref],
         q: domain.destination
+      }, {
+        l: `Determine whether ${domain.destination} supports acting now`,
+        e: [ref],
+        q: domain.destination
       }],
-      proofPoints: [item(domain.sourceSummary)],
+      proofPoints: [
+        item(domain.sourceSummary),
+        item(`${domain.offer}: ${domain.sourceSummary}`)
+      ],
       followUps: [
         item('Review the attributed paid result before any next step'),
         item('Stop after the bounded result is recorded')
@@ -431,6 +584,8 @@ function compactV2Response(domain, ref) {
           o: revenuePath.observableRevenueOutcome,
           atm: revenuePath.attributionMethod,
           ats: revenuePath.attributionSignal,
+          cd: revenuePath.conversionDestination,
+          st: revenuePath.stopCondition,
           g: revenuePath.g,
           sb: revenuePath.supportingBottleneck,
           vm: revenuePath.vm
@@ -498,7 +653,7 @@ async function verifyAcquisitionFamilyMismatch() {
   });
   if (result.status !== 'skipped' ||
       result.searchSpace?.motionConflictCount < 1 ||
-      result.searchSpace?.eligibleCount !== 1 ||
+      result.searchSpace?.eligibleCount < 1 ||
       result.hypotheses?.some((hypothesis) =>
         hypothesis.provenance?.strategyFamilyId !== 'family-b'
       )) {
@@ -549,7 +704,7 @@ async function verifyTypedAcquisitionModeAllowsNeutralLabels() {
   if (conflictResult.status !== 'skipped' ||
       conflictResult.searchSpace?.motionConflictCount < 1 ||
       conflictResult.searchSpace?.motionConflictDimensions?.channel < 1 ||
-      conflictResult.searchSpace?.eligibleCount !== 1 ||
+      conflictResult.searchSpace?.eligibleCount < 1 ||
       conflictResult.hypotheses?.some((hypothesis) =>
         hypothesis.provenance?.strategyFamilyId !== 'family-b'
       )) {
@@ -584,7 +739,7 @@ async function verifyTypedFamilyTimingFallbackPreservesBusinessGates() {
       result.searchSpace?.revenueRejectedCount < 1 ||
       result.searchSpace?.revenueRejectionReasons
         ?.unsupported_buyer_evidence < 1 ||
-      result.searchSpace?.eligibleCount !== 1 ||
+      result.searchSpace?.eligibleCount < 1 ||
       result.nextExperiment?.kind !== 'inbound_revenue_evidence' ||
       result.nextExperiment?.requiresReview !== true ||
       result.nextExperiment?.rerunPolicy?.maxReruns !== 1 ||
@@ -632,10 +787,10 @@ async function verifyTypedFamilyTimingFallbackPreservesBusinessGates() {
       staleResult.searchSpace?.incompleteStrategyFamilyCount !== 2 ||
       staleResult.searchSpace?.familyEvidenceMismatchSeedCount !== 2 ||
       staleResult.searchSpace?.invalidFamilySeedCount < 2 ||
-      staleResult.searchSpace?.unsupportedTimingSeedCount !== 0 ||
+      staleResult.searchSpace?.unsupportedTimingSeedCount < 1 ||
       staleResult.searchSpace?.timingVerificationRepairCount !== 0 ||
       staleResult.nextExperiment?.kind !==
-        'strategy_generation_shape_recovery' ||
+        'inbound_revenue_evidence' ||
       staleResult.winner !== null ||
       staleResult.gate?.sideEffects?.pdlCalls !== 0 ||
       staleResult.gate?.sideEffects?.outreachAttempts !== 0 ||
@@ -740,9 +895,292 @@ async function verifyNoncurrentWarmReferralRejected() {
   if (result.status !== 'skipped' ||
       result.searchSpace?.eligibleCount !== 0 ||
       reasons.noncurrent_or_negative_paid_offer_evidence < 1 ||
-      reasons.noncurrent_or_negative_paid_conversion_evidence < 1) {
+      reasons.noncurrent_or_negative_paid_conversion_evidence < 1 ||
+      reasons.noncurrent_or_negative_acquisition_evidence < 1 ||
+      result.searchSpace?.commercialCritic?.attempted === true) {
     throw new Error(
       `stale/free/negative warm-referral evidence survived v2 revenue validation: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyFreshFormerCustomerAcquisitionAccepted() {
+  const domain = {
+    ...domains.find((item) => item.name === 'saas'),
+    name: 'former-customer-reactivation',
+    buyer: 'Former Customer Cohort former paying workflow customers',
+    sourceSummary:
+      'Former Customer Cohort is a named customer segment of former paying workflow customers observed this week. The current paid subscription pricing page accepts reactivation purchases, and the payment receipt source field stores former customer reactivation.'
+  };
+  const ref = 'observation:obs-former-customer-reactivation';
+  const timingRef = 'observation:obs-former-customer-current-timing';
+  const response = strictV2Response(domain, ref);
+  for (const family of [response.familyA, response.familyB]) {
+    family.e.push(timingRef);
+    family.m = 'existing_customer';
+    family.d.channels = family.d.channels.map((item) => ({
+      ...item,
+      l:
+        `Former customer reactivation routes ${domain.buyer} to ${domain.destination}`
+    }));
+    family.d.actions = family.d.actions.map((item) => ({
+      ...item,
+      l:
+        `Present ${domain.offer} to former customers through former customer reactivation and complete ${domain.outcome}`
+    }));
+    family.d.timingTriggers = [{
+      l: 'Pricing page is current this week',
+      e: [ref, timingRef],
+      q: 'Pricing page is current this week'
+    }, {
+      l: 'Act while the Pricing page is current this week',
+      e: [ref, timingRef],
+      q: 'Pricing page is current this week'
+    }];
+    const revenuePath = family.d.revenuePaths[0];
+    revenuePath.acquisitionMode = 'existing_customer';
+    revenuePath.conversionAction =
+      `Present ${domain.offer} to former customers through former customer reactivation at ${domain.destination} and complete ${domain.outcome}`;
+    revenuePath.attributionSignal =
+      'Payment receipt source field stores former customer reactivation';
+  }
+  response.candidates = [{
+    k: 'organization',
+    l: 'Former Customer Cohort',
+    o: 'Former Customer Cohort',
+    e: [ref]
+  }];
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-former-customer-reactivation',
+      payload: {
+        researchOnly: true,
+        objective: {
+          outcome: 'Generate one new paid reactivation subscription.',
+          successMetric: domain.outcome
+        },
+        budget: {
+          maxHypotheses: 128,
+          maxLLMCalls: 2
+        },
+        commercialContext: {
+          allowedChannels: ['former customer reactivation']
+        },
+        evidenceSnapshot: {
+          profile: {
+            identity: {
+              website: 'https://former-customer.example/'
+            }
+          },
+          sources: [{
+            id: 'src-former-customer-reactivation',
+            url: 'https://former-customer.example/',
+            status: 'monitoring'
+          }],
+          sourceEvidence: [{
+            observationId: 'obs-former-customer-reactivation',
+            sourceId: 'src-former-customer-reactivation',
+            kind: 'service-page',
+            title: domain.destination,
+            summary: domain.sourceSummary,
+            url: 'https://former-customer.example/pricing',
+            observedAt: '2026-07-29T12:00:00Z',
+            current: true,
+            status: 'active'
+          }, {
+            observationId: 'obs-former-customer-current-timing',
+            sourceId: 'src-former-customer-reactivation',
+            kind: 'service-page',
+            title: 'Current pricing availability',
+            summary: 'Pricing page is current this week.',
+            url: 'https://former-customer.example/pricing/availability',
+            observedAt: '2026-07-29T12:00:00Z',
+            current: true,
+            status: 'active'
+          }]
+        }
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: completionWithCritic(
+      response,
+      'gen-former-customer-reactivation'
+    )
+  });
+  if (result.status !== 'completed' ||
+      result.winner?.revenuePath?.acquisitionMode !==
+        'existing_customer' ||
+      result.searchSpace?.revenueRejectionReasons
+        ?.noncurrent_or_negative_acquisition_evidence ||
+      result.result?.incrementalRevenueGate?.passed !== true ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `fresh former-customer evidence was mistaken for stale acquisition evidence: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyCompletedExternalExecutionRejected() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  const ref = 'observation:obs-completed-execution-claim';
+  const response = strictV2Response(domain, ref);
+  for (const family of [response.familyA, response.familyB]) {
+    family.d.actions = family.d.actions.map((item) => ({
+      ...item,
+      l:
+        `We already sent ${domain.offer} through organic search and completed ${domain.outcome}`
+    }));
+    family.d.revenuePaths[0].conversionAction =
+      `We already sent ${domain.offer} through organic search to ${domain.destination} and completed ${domain.outcome}`;
+  }
+  const result = await runDomainWithResponse(
+    domain,
+    response,
+    'completed-execution-claim'
+  );
+  if (result.status !== 'skipped' ||
+      result.winner !== null ||
+      result.searchSpace?.revenueRejectionReasons
+        ?.claimed_completed_external_execution < 1 ||
+      result.searchSpace?.commercialCritic?.attempted === true ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `past-tense external execution claim reached critic or recommendation: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyInsufficientGroundedFinalistCause() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  const result = await runDomain(domain, {
+    budgetOverrides: { maxHypotheses: 1 }
+  });
+  if (result.status !== 'skipped' ||
+      result.searchSpace?.retainedCount !== 1 ||
+      result.searchSpace?.commercialCritic?.attempted !== false ||
+      result.searchSpace?.commercialCritic?.cause !==
+        'insufficient_grounded_finalists' ||
+      result.usage?.calls !== 1 ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `fewer than two grounded finalists received an untruthful critic cause: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyCriticReorderingControlsWinner() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  const result = await runDomain(domain, { reverseCritic: true });
+  if (result.status !== 'completed' ||
+      result.winner?.hypothesisId !==
+        result.searchSpace?.commercialCritic?.selectedOrdering?.[0] ||
+      !(result.winner?.score?.total < result.runnerUp?.score?.total) ||
+      !/independent commercial critic ranked it ahead/i.test(
+        result.winner?.whyOverRunnerUp || ''
+      ) ||
+      !/critic ordering, not that score alone/i.test(
+        result.winner?.whyOverRunnerUp || ''
+      )) {
+    throw new Error(
+      `critic reordering did not control the exact winner or produced a false score claim: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyPriorOutcomePolarityAndDedup() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  const outcome = {
+    kind: 'business_progress',
+    status: 'won',
+    verified: true,
+    offer: domain.offer,
+    buyerSegment: domain.buyer,
+    channel:
+      `Organic-search inbound discovery routes buyers to ${domain.destination}`,
+    action:
+      `Use organic-search inbound discovery to ${domain.destination} and complete ${domain.outcome}`,
+    occurredAt: '2026-07-29T12:00:00Z',
+    evidenceRefs: ['observation:obs-saas'],
+    attribution: {
+      objectiveId: 'obj-prior-polarity',
+      tournamentId: 'opturn-prior-polarity',
+      hypothesisId: 'hyp-prior-polarity',
+      actionId: 'action-prior-polarity',
+      algorithmVersion: 'cheap_tournament_v5'
+    }
+  };
+  const [baseline, won, lost, duplicateWon] = await Promise.all([
+    runDomain(domain),
+    runDomain(domain, { priorOutcomes: [outcome] }),
+    runDomain(domain, {
+      priorOutcomes: [{ ...outcome, status: 'lost' }]
+    }),
+    runDomain(domain, {
+      priorOutcomes: [outcome],
+      contextPriorOutcomes: [structuredClone(outcome)]
+    })
+  ]);
+  const baselineScore = baseline.winner?.score || {};
+  const wonScore = won.winner?.score || {};
+  const lostScore = lost.winner?.score || {};
+  const duplicateScore = duplicateWon.winner?.score || {};
+  const wonPriorNode = won.commercialEvidenceGraph?.nodes?.find(
+    (node) => node.type === 'verified_prior_outcome'
+  );
+  const lostPriorNode = lost.commercialEvidenceGraph?.nodes?.find(
+    (node) => node.type === 'verified_prior_outcome'
+  );
+  const gapDomain = {
+    ...domains.find((item) => item.name === 'healthcare')
+  };
+  const lostOnly = await runDomain(gapDomain, {
+    priorOutcomes: [{
+      ...outcome,
+      status: 'lost',
+      offer: gapDomain.offer,
+      buyerSegment: gapDomain.buyer,
+      channel:
+        `Organic-search inbound discovery routes buyers to ${gapDomain.destination}`,
+      action:
+        `Use organic-search inbound discovery to ${gapDomain.destination} and complete ${gapDomain.outcome}`,
+      attribution: {
+        ...outcome.attribution,
+        objectiveId: 'obj-lost-only-gap',
+        tournamentId: 'opturn-lost-only-gap'
+      }
+    }]
+  });
+  const lostOnlyNode = lostOnly.commercialEvidenceGraph?.nodes?.find(
+    (node) => node.type === 'verified_prior_outcome'
+  );
+  if (wonScore.expectedValue <= baselineScore.expectedValue ||
+      wonScore.uncertainty >= baselineScore.uncertainty ||
+      lostScore.expectedValue >= baselineScore.expectedValue ||
+      lostScore.uncertainty <= baselineScore.uncertainty ||
+      duplicateScore.expectedValue !== wonScore.expectedValue ||
+      duplicateScore.uncertainty !== wonScore.uncertainty ||
+      !wonPriorNode?.roles?.includes('channel_fit') ||
+      !wonPriorNode?.roles?.includes('defined_buyer') ||
+      lostPriorNode?.roles?.includes('channel_fit') ||
+      lostPriorNode?.roles?.includes('defined_buyer') ||
+      lostPriorNode?.roles?.includes('acquisition') ||
+      lostPriorNode?.channelFitChannels?.length > 0 ||
+      lostOnly.result?.resultType === 'immediate_revenue_action' ||
+      lostOnly.status === 'completed' ||
+      lostOnlyNode?.roles?.some((role) =>
+        ['channel_fit', 'defined_buyer', 'acquisition'].includes(role)
+      ) ||
+      duplicateWon.commercialEvidenceGraph?.summary
+        ?.priorAttributedOutcomeEvidenceRefs?.length !== 1) {
+    throw new Error(
+      `prior business_progress status polarity, reachability safety, or stable dedupe failed: ${JSON.stringify({ baselineScore, wonScore, lostScore, duplicateScore, wonPriorNode, lostPriorNode, lostOnly, graph: duplicateWon.commercialEvidenceGraph })}`
     );
   }
 }
@@ -762,7 +1200,9 @@ async function verifyUnsafeGeneratedExperimentRejected() {
   if (result.status !== 'skipped' ||
       experiment.title === response.evidenceExperiment.l ||
       !completeBusinessExperimentFields(experiment) ||
-      experiment.acquisitionMechanism !== 'organic search' ||
+      !/organic search.*fit unverified/i.test(
+        experiment.acquisitionMechanism || ''
+      ) ||
       experiment.knownFact !== domain.sourceSummary ||
       /\b(?:send|newsletter distribution|send the owned newsletter)\b/i.test(
         `${experiment.title} ${experiment.action}`
@@ -846,7 +1286,13 @@ async function verifyLengthFinishedStructuredRepair() {
   const repairInput = JSON.parse(repairUser);
   const repairSchema = requests[1]?.responseFormat?.json_schema?.schema;
   if (requests.length !== 2 ||
-      result.status !== 'completed' ||
+      result.status !== 'skipped' ||
+      result.result?.resultType !== 'technical_recovery' ||
+      result.nextExperiment?.kind !==
+        'strategy_generation_critic_displaced_by_repair' ||
+      result.searchSpace?.commercialCritic?.attempted !== false ||
+      result.searchSpace?.commercialCritic?.cause !==
+        'commercial_critic_displaced_by_repair' ||
       result.searchSpace?.structuredRepair?.initialIssue !==
         'output_length_truncated' ||
       result.searchSpace?.structuredRepair?.initialFamilyWrapperCount !== 2 ||
@@ -877,9 +1323,9 @@ async function verifyLengthFinishedStructuredRepair() {
       repairSchema?.properties?.familyA?.$ref !== '#/$defs/family' ||
       repairSchema?.properties?.familyB?.$ref !== '#/$defs/family' ||
       repairSchema?.$defs?.family?.properties?.d?.properties
-        ?.o?.minItems !== 1 ||
+        ?.o?.minItems !== 2 ||
       repairSchema?.$defs?.family?.properties?.d?.properties
-        ?.o?.maxItems !== 1 ||
+        ?.o?.maxItems !== 2 ||
       repairSchema?.$defs?.family?.properties?.s?.$ref !==
         '#/$defs/scores' ||
       repairSchema?.properties?.candidates?.maxItems !== 8 ||
@@ -890,8 +1336,8 @@ async function verifyLengthFinishedStructuredRepair() {
       repairUser.includes('PRIOR_RESPONSE_CANARY_') ||
       repairUser.includes('PRIOR_RESPONSE_PADDING_') ||
       Buffer.byteLength(repairUser, 'utf8') > 30_000 ||
-      result.winner == null ||
-      result.runnerUp == null) {
+      result.winner !== null ||
+      result.runnerUp !== null) {
     throw new Error(
       `parseable length-finished output was not freshly repaired with the compact contract: ${JSON.stringify({ result, requests: requests.map((request) => ({ maxTokens: request.maxTokens, userBytes: Buffer.byteLength(request.user || '', 'utf8'), responseFormat: request.responseFormat })) })}`
     );
@@ -966,7 +1412,12 @@ async function verifyThrownLengthStructuredRepair() {
       nativeFinishReason: 'stop'
     }]
   });
-  if (result.status !== 'completed' ||
+  if (result.status !== 'skipped' ||
+      result.result?.resultType !== 'technical_recovery' ||
+      result.nextExperiment?.kind !==
+        'strategy_generation_critic_displaced_by_repair' ||
+      result.searchSpace?.commercialCritic?.cause !==
+        'commercial_critic_displaced_by_repair' ||
       result.searchSpace?.structuredRepair?.initialIssue !==
         'output_length_truncated' ||
       result.searchSpace?.structuredRepair?.succeeded !== true ||
@@ -976,7 +1427,8 @@ async function verifyThrownLengthStructuredRepair() {
       result.llm?.strategyFamilyRepair?.status !== 'completed' ||
       result.usage?.calls !== 2 ||
       result.usage?.successfulCalls !== 1 ||
-      result.winner == null) {
+      result.winner !== null ||
+      result.runnerUp !== null) {
     throw new Error(
       `a hard-rejected length response did not use the one fresh compact repair: ${JSON.stringify(result)}`
     );
@@ -1108,7 +1560,10 @@ async function verifyProviderSpendBudgetRecovery() {
     }
   });
   if (zeroCostCalls !== 2 ||
-      validZeroCost.status !== 'completed' ||
+      validZeroCost.status !== 'skipped' ||
+      validZeroCost.result?.resultType !== 'technical_recovery' ||
+      validZeroCost.nextExperiment?.kind !==
+        'strategy_generation_critic_displaced_by_repair' ||
       validZeroCost.searchSpace?.structuredRepair?.attempted !== true ||
       validZeroCost.searchSpace?.structuredRepair?.succeeded !== true ||
       validZeroCost.usage?.calls !== 2 ||
@@ -1459,7 +1914,10 @@ async function verifyMaximumTournamentSpendCeiling() {
   );
   const repairTrace = result.searchSpace?.structuredRepair || {};
   if (requests.length !== 2 ||
-      result.status !== 'completed' ||
+      result.status !== 'skipped' ||
+      result.result?.resultType !== 'technical_recovery' ||
+      result.searchSpace?.commercialCritic?.cause !==
+        'commercial_critic_displaced_by_repair' ||
       result.searchSpace?.evidenceCatalogCount !== 64 ||
       result.searchSpace?.promptEvidenceCount !== 16 ||
       result.searchSpace?.promptEvidenceOmittedCount !== 48 ||
@@ -1640,7 +2098,7 @@ async function verifyOmittedProviderEvidenceFailsClosed() {
         ? `${candidateLabel} is named here. ${'A'.repeat(200)} ${
             compactHiddenRole
           }; ${compactHiddenMarket}. ${'B'.repeat(130)} End of visible context.`
-      : `${candidateLabel} is listed as Hidden Revenue Role ${index} in Hidden Market ${index}.`,
+      : `Qualified buyers at ${candidateLabel} are listed as Hidden Revenue Role ${index} in Hidden Market ${index}.`,
     url: index === 0
       ? `${website}offer`
       : `${website}proof/${index}`,
@@ -1700,11 +2158,16 @@ async function verifyOmittedProviderEvidenceFailsClosed() {
   });
   const experiment = result.nextExperiment || {};
   const sideEffects = result.gate?.sideEffects || {};
+  const omittedGraphNode = result.commercialEvidenceGraph?.nodes?.find(
+    (node) => node.evidenceRef === omittedRef
+  );
   if (localEvidence.length !== 64 ||
       promptIDs.length !== 16 ||
       !omittedRef ||
       !localEvidence.some((item) => item.id === omittedRef) ||
       promptIDs.includes(omittedRef) ||
+      !omittedGraphNode ||
+      !omittedGraphNode.roles?.includes('defined_buyer') ||
       result.status !== 'skipped' ||
       result.winner !== null ||
       result.hypotheses?.length !== 0 ||
@@ -1729,6 +2192,13 @@ async function verifyOmittedProviderEvidenceFailsClosed() {
 
   let candidatePromptIDs = [];
   let candidateIncludedRef = '';
+  const candidatePayload = {
+    ...payload,
+    budget: {
+      ...payload.budget,
+      maxLLMCalls: 2
+    }
+  };
   const omittedIndex = omittedRef.match(/(\d+)$/)?.[1] || '';
   const hiddenRole = `Hidden Revenue Role ${omittedIndex}`;
   const hiddenMarket = `Hidden Market ${omittedIndex}`;
@@ -1736,7 +2206,7 @@ async function verifyOmittedProviderEvidenceFailsClosed() {
     job: {
       id: 'job-omitted-provider-candidate-evidence',
       payload: {
-        ...payload,
+        ...candidatePayload,
         tournamentId:
           'tournament-omitted-provider-candidate-evidence'
       }
@@ -1744,6 +2214,12 @@ async function verifyOmittedProviderEvidenceFailsClosed() {
     model: 'test/v2',
     now,
     completeJSON: async (request) => {
+      if (request.responseFormat?.json_schema?.name ===
+          'opportunity_tournament_critic_v1') {
+        return completionWithCritic(null, 'gen-omitted-candidate')(
+          request
+        );
+      }
       candidatePromptIDs = (
         JSON.parse(request.user).evidenceCatalog || []
       ).map((item) => item.id);
@@ -1806,7 +2282,7 @@ async function verifyOmittedProviderEvidenceFailsClosed() {
     job: {
       id: 'job-compact-provider-candidate-evidence',
       payload: {
-        ...payload,
+        ...candidatePayload,
         tournamentId:
           'tournament-compact-provider-candidate-evidence'
       }
@@ -1814,6 +2290,12 @@ async function verifyOmittedProviderEvidenceFailsClosed() {
     model: 'test/v2',
     now,
     completeJSON: async (request) => {
+      if (request.responseFormat?.json_schema?.name ===
+          'opportunity_tournament_critic_v1') {
+        return completionWithCritic(null, 'gen-compact-candidate')(
+          request
+        );
+      }
       compactCandidatePromptEvidence =
         JSON.parse(request.user).evidenceCatalog || [];
       const response = compactV2Response(
@@ -2097,8 +2579,18 @@ async function verifyQueryScopedOwnedAssetPreserved() {
       result.status !== 'skipped' ||
       experiment.kind !== 'inbound_revenue_evidence' ||
       experiment.asset?.publicUrl !== bookingURL ||
-      experiment.evidenceRefs?.[0] !== decoyRef ||
-      experiment.evidenceRefs?.[1] !== ref ||
+      JSON.stringify(experiment.evidenceRefs) !==
+        JSON.stringify([ref]) ||
+      experiment.noGroundedPath !== true ||
+      result.result?.resultContract !==
+        'opportunity_tournament_result_v2' ||
+      result.result?.resultType !== 'no_grounded_path' ||
+      result.result?.recommendedAction !== experiment.action ||
+      result.result?.allowedChannel !== 'none' ||
+      result.result?.executionAuthorization !== 'none' ||
+      result.result?.permissionRequired !==
+        'explicit_user_approval' ||
+      result.result?.sideEffectsPerformed !== 0 ||
       Object.prototype.hasOwnProperty.call(
         experiment,
         'assetEvidenceRef'
@@ -2107,7 +2599,8 @@ async function verifyQueryScopedOwnedAssetPreserved() {
       result.gate?.decision !== 'needs_more_approved_evidence' ||
       sideEffects.outreachAttempts !== 0 ||
       sideEffects.publishAttempts !== 0 ||
-      sideEffects.providerWrites !== 0) {
+      sideEffects.providerWrites !== 0 ||
+      sideEffects.pdlCalls !== 0) {
     throw new Error(
       `query-scoped owned asset was broadened or lost after provider-safe URL projection: ${JSON.stringify({
         projectedAsset,
@@ -2171,8 +2664,11 @@ async function verifySummaryCompactionPreservesRevenueTokens() {
         },
         budget: {
           maxHypotheses: 128,
-          maxLLMCalls: 1,
+          maxLLMCalls: 2,
           maxOutputTokens: 8_000
+        },
+        commercialContext: {
+          allowedChannels: ['organic search']
         },
         evidenceSnapshot: {
           profile: {
@@ -2203,14 +2699,16 @@ async function verifySummaryCompactionPreservesRevenueTokens() {
     model: 'test/v2',
     now,
     completeJSON: async (request) => {
-      projectedSummary = (
-        JSON.parse(request.user).evidenceCatalog || []
-      ).find((item) => item.id === ref)?.summary || '';
-      return {
-        data: strictV2Response(domain, ref),
-        usage,
-        diagnostics: { finishReason: 'stop' }
-      };
+      if (request.responseFormat?.json_schema?.name !==
+          'opportunity_tournament_critic_v1') {
+        projectedSummary = (
+          JSON.parse(request.user).evidenceCatalog || []
+        ).find((item) => item.id === ref)?.summary || '';
+      }
+      return completionWithCritic(
+        strictV2Response(domain, ref),
+        'gen-summary-splice'
+      )(request);
     }
   });
   const sideEffects = result.gate?.sideEffects || {};
@@ -2292,8 +2790,11 @@ async function verifySummaryCompactionPreservesRevenueTokens() {
           },
           budget: {
             maxHypotheses: 128,
-            maxLLMCalls: 1,
+            maxLLMCalls: 2,
             maxOutputTokens: 8_000
+          },
+          commercialContext: {
+            allowedChannels: ['organic search']
           },
           evidenceSnapshot: {
             profile: {
@@ -2325,14 +2826,16 @@ async function verifySummaryCompactionPreservesRevenueTokens() {
       model: 'test/v2',
       now,
       completeJSON: async (request) => {
-        projectedBuyerSummary = (
-          JSON.parse(request.user).evidenceCatalog || []
-        ).find((item) => item.id === buyerRef)?.summary || '';
-        return {
-          data: strictV2Response(buyerDomain, buyerRef),
-          usage,
-          diagnostics: { finishReason: 'stop' }
-        };
+        if (request.responseFormat?.json_schema?.name !==
+            'opportunity_tournament_critic_v1') {
+          projectedBuyerSummary = (
+            JSON.parse(request.user).evidenceCatalog || []
+          ).find((item) => item.id === buyerRef)?.summary || '';
+        }
+        return completionWithCritic(
+          strictV2Response(buyerDomain, buyerRef),
+          `gen-summary-splice-${buyerCase.name}`
+        )(request);
       }
     });
     if (buyerSummary.indexOf(buyerCase.buyer) !== buyerTokenIndex ||
@@ -2340,7 +2843,7 @@ async function verifySummaryCompactionPreservesRevenueTokens() {
         projectedBuyerSummary.length > 320 ||
         !projectedBuyerSummary.includes(buyerCase.buyer) ||
         buyerResult.status !== 'completed' ||
-        buyerResult.searchSpace?.eligibleCount !== 2) {
+        buyerResult.searchSpace?.eligibleCount < 2) {
       throw new Error(
         `objective-salient buyer compaction favored one profession: ${JSON.stringify({
           buyerCase,
@@ -2448,8 +2951,11 @@ async function verifyFullCatalogUnicodeCapStable() {
           },
           budget: {
             maxHypotheses: 128,
-            maxLLMCalls: 1,
+            maxLLMCalls: 2,
             maxOutputTokens: 8_000
+          },
+          commercialContext: {
+            allowedChannels: ['organic search']
           },
           evidenceSnapshot: {
             ...baseSnapshot,
@@ -2460,14 +2966,16 @@ async function verifyFullCatalogUnicodeCapStable() {
       model: 'test/v2',
       now,
       completeJSON: async (request) => {
-        promptIDs = (
-          JSON.parse(request.user).evidenceCatalog || []
-        ).map((item) => item.id);
-        return {
-          data: strictV2Response(domain, paidRef),
-          usage,
-          diagnostics: { finishReason: 'stop' }
-        };
+        if (request.responseFormat?.json_schema?.name !==
+            'opportunity_tournament_critic_v1') {
+          promptIDs = (
+            JSON.parse(request.user).evidenceCatalog || []
+          ).map((item) => item.id);
+        }
+        return completionWithCritic(
+          strictV2Response(domain, paidRef),
+          `gen-unicode-cap-${suffix}`
+        )(request);
       }
     });
     return { result, promptIDs };
@@ -2693,15 +3201,21 @@ async function verifyProviderProjectionOrderAndProfessionNeutrality() {
       'observation:obs-medical-contract-distractor-'
     )
   ).length;
-  const forwardBytes = Buffer.byteLength(
-    serializeOpenRouterJSONRequestBody(forward.request),
-    'utf8'
-  );
-  const reverseBytes = Buffer.byteLength(
-    serializeOpenRouterJSONRequestBody(reverse.request),
-    'utf8'
-  );
-  if (forwardIDs.length !== 16 ||
+  const forwardBytes = forward.request
+    ? Buffer.byteLength(
+      serializeOpenRouterJSONRequestBody(forward.request),
+      'utf8'
+    )
+    : 0;
+  const reverseBytes = reverse.request
+    ? Buffer.byteLength(
+      serializeOpenRouterJSONRequestBody(reverse.request),
+      'utf8'
+    )
+    : 0;
+  if (!forward.request ||
+      !reverse.request ||
+      forwardIDs.length !== 16 ||
       reverseIDs.length !== 16 ||
       forwardIDs[0] !== paidRef ||
       !forwardIDs.includes(
@@ -2734,7 +3248,11 @@ async function verifyProviderProjectionOrderAndProfessionNeutrality() {
         relevantCount,
         distractorCount,
         forwardBytes,
-        reverseBytes
+        reverseBytes,
+        forwardEnvelope:
+          forward.result.searchSpace?.providerPromptEnvelope,
+        reverseEnvelope:
+          reverse.result.searchSpace?.providerPromptEnvelope
       })}`
     );
   }
@@ -2833,8 +3351,11 @@ async function runDomainWithResponse(
         budget: {
           maxHypotheses: 512,
           maxFinalists: 8,
-          maxLLMCalls: 1,
+          maxLLMCalls: 2,
           maxOutputTokens: 8000
+        },
+        commercialContext: {
+          allowedChannels: ['organic search']
         },
         evidenceSnapshot: {
           profile: {
@@ -2861,7 +3382,14 @@ async function runDomainWithResponse(
     },
     model: 'test/v2',
     now,
-    completeJSON: async () => ({ data: response, usage, diagnostics })
+    completeJSON: async (request) => {
+      const completion = completionWithCritic(
+        response,
+        `gen-${suffix}`
+      );
+      const value = await completion(request);
+      return { ...value, diagnostics };
+    }
   });
 }
 
@@ -3250,24 +3778,23 @@ async function verifyBettyProductionTraceRegression() {
       repairedResult.searchSpace?.modelCalls !== 2 ||
       repairedResult.usage?.calls !== 2 ||
       repairedExperiment.kind !== 'inbound_revenue_evidence' ||
+      repairedExperiment.noGroundedPath !== true ||
       repairedExperiment.asset?.publicUrl !==
         'https://www.breastfeedingwithlove.com/' ||
       !completeBusinessExperimentFields(repairedExperiment) ||
       repairedExperiment.knownFact !== domain.sourceSummary ||
-      repairedExperiment.buyer !== domain.buyer ||
-      repairedExperiment.paidOffer !== domain.offer ||
-      repairedExperiment.acquisitionMechanism !== 'organic search' ||
-      repairedExperiment.conversionDestination !== domain.destination ||
-      repairedExperiment.paidConversion !== domain.outcome ||
-      repairedExperiment.attributionSignal !== domain.attribution ||
+      !/not yet grounded/i.test(repairedExperiment.buyer) ||
+      !/no permitted acquisition channel/i.test(
+        repairedExperiment.acquisitionMechanism
+      ) ||
+      repairedResult.result?.resultType !== 'no_grounded_path' ||
+      repairedResult.result?.allowedChannel !== 'none' ||
+      repairedResult.result?.sideEffectsPerformed !== 0 ||
       /Baby Friendly Initiative/i.test(
         `${repairedExperiment.title} ${repairedExperiment.action} ${repairedExperiment.successSignal}`
       ) ||
-      !repairedExperiment.action?.includes(domain.buyer) ||
-      !repairedExperiment.action?.includes(domain.offer) ||
-      !repairedExperiment.action?.includes('organic search') ||
-      !repairedExperiment.action?.includes(domain.destination) ||
-      !repairedExperiment.action?.includes(domain.attribution) ||
+      /organic search/i.test(repairedExperiment.acquisitionMechanism) ||
+      !/do not assume organic search/i.test(repairedExperiment.action) ||
       repairedResult.gate?.decision !==
         'needs_more_approved_evidence') {
     throw new Error(
@@ -3375,14 +3902,18 @@ async function verifyBettyDistinctArticlePressureRegression() {
   const stalePromptEvidence = initialTask.evidenceCatalog?.filter(
     (item) => item.url?.includes('/resources/archived-')
   ) || [];
-  const initialBytes = Buffer.byteLength(
-    serializeOpenRouterJSONRequestBody(requests[0]),
-    'utf8'
-  );
-  const repairBytes = Buffer.byteLength(
-    serializeOpenRouterJSONRequestBody(requests[1]),
-    'utf8'
-  );
+  const initialBytes = requests[0]
+    ? Buffer.byteLength(
+      serializeOpenRouterJSONRequestBody(requests[0]),
+      'utf8'
+    )
+    : 0;
+  const repairBytes = requests[1]
+    ? Buffer.byteLength(
+      serializeOpenRouterJSONRequestBody(requests[1]),
+      'utf8'
+    )
+    : 0;
   const experiment = result.nextExperiment || {};
   const sideEffects = result.gate?.sideEffects || {};
   if (requests.length !== 2 ||
@@ -3418,10 +3949,13 @@ async function verifyBettyDistinctArticlePressureRegression() {
       result.winner !== null ||
       experiment.kind !== 'inbound_revenue_evidence' ||
       experiment.asset?.publicUrl !== website ||
+      experiment.noGroundedPath !== true ||
       !completeBusinessExperimentFields(experiment) ||
       experiment.knownFact !== domain.sourceSummary ||
-      experiment.acquisitionMechanism !== 'organic search' ||
-      !/\bqualified\b/i.test(experiment.buyer || '') ||
+      !/no permitted acquisition channel/i.test(
+        experiment.acquisitionMechanism || ''
+      ) ||
+      !/not yet grounded/i.test(experiment.buyer || '') ||
       !/\bpaid\b/i.test(experiment.paidOffer || '') ||
       !/\bbooking page\b/i.test(
         experiment.conversionDestination || ''
@@ -3435,14 +3969,11 @@ async function verifyBettyDistinctArticlePressureRegression() {
       !/\bsource\/origin field\b/i.test(
         experiment.attributionSignal || ''
       ) ||
-      !/\b25 qualified(?: organic-search)? visits\b/i.test(
-        experiment.action || ''
-      ) ||
-      !experiment.action?.includes('14 days') ||
-      !experiment.action?.includes('organic_search') ||
-      !/\bno outreach, publishing, advertising, form submission, or automatic execution is authorized\b/i.test(
-        experiment.action || ''
-      ) ||
+      !/14 (?:calendar )?days/i.test(experiment.action || '') ||
+      !/do not assume organic search/i.test(experiment.action || '') ||
+      result.result?.resultType !== 'no_grounded_path' ||
+      result.result?.allowedChannel !== 'none' ||
+      result.result?.sideEffectsPerformed !== 0 ||
       /archived lactation information/i.test(
         `${experiment.title} ${experiment.action} ${experiment.successSignal}`
       ) ||
@@ -3460,6 +3991,8 @@ async function verifyBettyDistinctArticlePressureRegression() {
         repairSchemaIDs,
         initialBytes,
         repairBytes,
+        providerPromptEnvelope:
+          result.searchSpace?.providerPromptEnvelope,
         homeEvidence,
         stalePromptEvidence
       })}`
@@ -3553,8 +4086,9 @@ async function verifyStructuredRepairAcrossDomains() {
       }
     });
     if (calls !== 2 ||
-        result.status !== 'completed' ||
-        result.nextExperiment !== null ||
+        result.status !== 'skipped' ||
+        result.nextExperiment?.kind !==
+          'strategy_generation_critic_displaced_by_repair' ||
         result.searchSpace?.completeStrategyFamilyCount !== 2 ||
         result.searchSpace?.incompleteStrategyFamilyCount !== 0 ||
         result.searchSpace?.structuredRepair?.attempted !== true ||
@@ -3562,12 +4096,16 @@ async function verifyStructuredRepairAcrossDomains() {
         result.searchSpace?.modelCalls !== 2 ||
         result.usage?.calls !== 2 ||
         result.usage?.successfulCalls !== 2 ||
-        result.winner == null ||
-        result.runnerUp == null ||
-        !new RegExp(expectations[domain.name], 'i').test(
-          result.winner?.revenuePath?.attributionSignal || ''
-        ) ||
+        result.winner !== null ||
+        result.runnerUp !== null ||
+        result.result?.resultType !== 'technical_recovery' ||
+        result.searchSpace?.commercialCritic?.cause !==
+          'commercial_critic_displaced_by_repair' ||
         result.llm?.strategyFamilyRepair?.status !== 'completed' ||
+        result.llm?.strategyFamilyRepair?.purpose !==
+          'opportunity_tournament_structured_repair' ||
+        result.llm?.strategyFamilyRepair?.structuredOutputContract !==
+          'opportunity_tournament_commercial_v2' ||
         result.gate?.sideEffects?.outreachAttempts !== 0 ||
         result.gate?.sideEffects?.publishAttempts !== 0 ||
         result.gate?.sideEffects?.providerWrites !== 0) {
@@ -3649,9 +4187,15 @@ async function verifyEmptyEvidenceFailForward() {
   const experiment = result.nextExperiment || {};
   if (calls !== 0 ||
       result.status !== 'skipped' ||
+      result.result?.resultType !== 'no_grounded_path' ||
+      result.result?.allowedChannel !== 'none' ||
+      result.result?.recommendedAction !== experiment.action ||
+      result.result?.executionAuthorization !== 'none' ||
+      result.result?.sideEffectsPerformed !== 0 ||
       experiment.contractVersion !==
         'revenue_evidence_experiment_v1' ||
       experiment.kind !== 'revenue_path_grounding' ||
+      experiment.noGroundedPath !== true ||
       !completeBusinessExperimentFields(experiment) ||
       !/No current approved evidence/i.test(experiment.knownFact || '') ||
       !experiment.action?.includes(

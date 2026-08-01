@@ -56,16 +56,17 @@ The `opportunity_tournament` worker path is separate from post composition:
    source redirects, or uses the general source-extract fetcher.
    Exact structured timeline authors and people in approved source evidence can
    become candidates, with an internal ProfileScribe profile URL when an author
-   slug exists. The same model call may return up to eight named person or
+   slug exists. The generator call may return up to eight named person or
    organization candidates, but deterministic validation retains one only when
    its name and optional fields occur exactly in its approved evidence, its URL
    is already present there, it is not the profile owner, and its evidence
    overlaps an evaluated hypothesis. Accepted exact named candidates are marked
    identity-resolved for the tournament chain; this denotes a resolved
    evidence tuple, not People Data Labs or another provider's verification.
-3. One bounded OpenRouter call, routed with prompt/completion/request price
-   ceilings, uses `opportunity_tournament_compact_v1` to return the strongest
-   two `revenue_family_bundle_v2` acquisition-mode families. Each family
+3. A bounded two-stage OpenRouter route, with prompt/completion/request price
+   ceilings shared under one hard tournament budget, first uses
+   `opportunity_tournament_commercial_v2` to return the strongest two
+   `revenue_family_bundle_v2` acquisition-mode families. Each family
    contains one canonical revenue path, compact strategy dimensions, semantic
    score inputs, and explicit evidence bindings for
    buyer/offer/acquisition/destination/conversion/attribution; the response also
@@ -73,19 +74,23 @@ The `opportunity_tournament` worker path is separate from post composition:
    definitions own structural constraints only. Local deterministic validators
    remain authoritative for revenue semantics, current evidence, attribution,
    numeric bounds, and evidence containment. When `maxLLMCalls: 2` is
-   explicitly budgeted and the first response fails only the deterministic
-   family-shape gate, one additional price-capped call may replace the full
-   structured response. Both calls share the same hard spend cap and evidence
+   explicitly budgeted, call 2 is the mandatory independent
+   `opportunity_tournament_critic_v1` comparison. If call 1 instead fails only
+   the deterministic family-shape gate, call 2 may be consumed by one
+   price-capped full-response repair; in that case the critic cannot run and no
+   winner is accepted. Both calls share the same hard spend cap and evidence
    boundary. Length-finished output remains incomplete; safe generation IDs
    and provider error type/code diagnostics are retained without persisting
    partial content.
 4. Deterministic code expands at most 10,000 combinations, requires each
    family's declared acquisition mode to match its
-   `incremental_revenue_v2` path, verifies every grounding binding against the
+   `incremental_revenue_v3` path, verifies every grounding binding against the
    evidence catalog, applies permission and anti-volume gates, scores every
    eligible tuple, and performs diversity selection over a bounded top pool.
 5. The rig returns at most 20 attributable hypotheses, one singular winner,
-   one runner-up, usage/cost accounting, and a mandatory human-review gate whose
+   one runner-up, full commercial-evidence graph plus canonical SHA-256 hash,
+   exact generator/critic call receipts and bounded critic finalist/family
+   bindings, usage/cost accounting, and a mandatory human-review gate whose
    winning hypothesis ID matches rank 1. Completion requires a named candidate
    whose approved evidence overlaps the rank-one buyer-segment seed and its
    offer or proof evidence. The winner action and explanation name that exact

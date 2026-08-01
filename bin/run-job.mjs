@@ -4,8 +4,10 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
 import {
+  OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
   OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION,
   OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT,
+  OPPORTUNITY_TOURNAMENT_RESULT_CONTRACT,
   REVENUE_GATE_VERSION,
   REVENUE_PATH_CONTRACT_VERSION,
   runOpportunityTournament,
@@ -555,8 +557,17 @@ async function runOpportunityTournamentJob(job, options) {
           revenueGate: REVENUE_GATE_VERSION,
           revenuePathContract: REVENUE_PATH_CONTRACT_VERSION,
           revenueRejectedCount: 0,
-          revenueRejectionReasons: {}
+          revenueRejectionReasons: {},
+          commercialCritic: opportunityTournamentCriticNotRun(
+            'Dry run authorized no provider calls.',
+            'dry_run'
+          )
         },
+        result: opportunityTournamentTypedResult({
+          resultType: 'no_grounded_path',
+          recommendedAction:
+            'Dry run completed with no provider call and no immediate revenue action.'
+        }),
         gate: {
           decision: 'human_review',
           requiresReview: true,
@@ -572,7 +583,18 @@ async function runOpportunityTournamentJob(job, options) {
         usage: {
           provider: 'openrouter',
           calls: 0,
-          reportedCostMicros: 0
+          successfulCalls: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          reportedCostUsd: 0,
+          reportedCostMicros: 0,
+          costReporting: 'complete',
+          maxLLMSpendMicros: Math.max(
+            0,
+            numberOr(object(payload.budget).maxLLMSpendMicros, 0)
+          ),
+          withinBudget: true
         },
         trace: {
           tools: [],
@@ -593,19 +615,40 @@ async function runOpportunityTournamentJob(job, options) {
         candidates: [],
         winner: null,
         runnerUp: null,
-        nextExperiment: null,
+        nextExperiment: opportunityTournamentProviderRecoveryExperiment(
+          tournamentId
+        ),
         searchSpace: {
           maxHypotheses: Math.min(10000, numberOr(object(payload.budget).maxHypotheses, 10000)),
           generatorContract: OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT,
           expandedCount: 0,
           deterministic: true,
           modelCalls: 0,
+          providerPreflight: {
+            contractVersion:
+              'opportunity_tournament_provider_preflight_v1',
+            provider: 'openrouter',
+            requiredCredential: 'OPENROUTER_API_KEY',
+            status: 'blocked',
+            cause: 'missing_provider_credential',
+            providerCallsAttempted: 0
+          },
           timingVerificationRepairCount: 0,
           revenueGate: REVENUE_GATE_VERSION,
           revenuePathContract: REVENUE_PATH_CONTRACT_VERSION,
           revenueRejectedCount: 0,
-          revenueRejectionReasons: {}
+          revenueRejectionReasons: {},
+          commercialCritic: opportunityTournamentCriticNotRun(
+            'OPENROUTER_API_KEY is missing, so neither generator nor critic ran.',
+            'missing_provider_credential'
+          )
         },
+        result: opportunityTournamentTypedResult({
+          resultType: 'technical_recovery',
+          recommendedAction: opportunityTournamentProviderRecoveryExperiment(
+            tournamentId
+          ).action
+        }),
         gate: {
           decision: 'block',
           requiresReview: true,
@@ -621,11 +664,33 @@ async function runOpportunityTournamentJob(job, options) {
         usage: {
           provider: 'openrouter',
           calls: 0,
-          reportedCostMicros: 0
+          successfulCalls: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          reportedCostUsd: 0,
+          reportedCostMicros: 0,
+          costReporting: 'complete',
+          maxLLMSpendMicros: Math.max(
+            0,
+            numberOr(object(payload.budget).maxLLMSpendMicros, 0)
+          ),
+          withinBudget: true
         },
         trace: {
           tools: [],
-          steps: [{ name: 'strategy_generation', status: 'skipped', reason: 'missing_openrouter_key' }],
+          steps: [
+            {
+              name: 'provider_preflight',
+              status: 'blocked',
+              reason: 'missing_provider_credential'
+            },
+            {
+              name: 'strategy_generation',
+              status: 'skipped',
+              reason: 'missing_openrouter_key'
+            }
+          ],
           notes: ['research_only', 'no_pdl', 'no_outreach', 'no_publish']
         }
       }),
@@ -710,6 +775,10 @@ async function runOpportunityTournamentJob(job, options) {
       algorithmVersion: tournament.algorithmVersion,
       objective: object(tournament.objective),
       evidenceHash: text(tournament.evidenceHash),
+      commercialEvidenceGraph: object(tournament.commercialEvidenceGraph),
+      commercialEvidenceGraphHash: text(
+        tournament.commercialEvidenceGraphHash
+      ),
       hypotheses: arrayOfObjects(tournament.hypotheses),
       candidates: arrayOfObjects(tournament.candidates),
       winner: tournament.winner || null,
@@ -719,6 +788,7 @@ async function runOpportunityTournamentJob(job, options) {
       gate: object(tournament.gate),
       usage: object(tournament.usage),
       llm: object(tournament.llm),
+      result: object(tournament.result),
       trace: {
         tools: researchTools,
         steps: [
@@ -736,6 +806,16 @@ async function runOpportunityTournamentJob(job, options) {
                 .succeeded
                 ? 'completed'
                 : 'skipped'
+              : 'skipped'
+          },
+          {
+            name: 'run_commercial_critic',
+            status: object(object(tournament.searchSpace).commercialCritic)
+              .attempted
+              ? object(object(tournament.searchSpace).commercialCritic)
+                .valid
+                ? 'completed'
+                : 'failed'
               : 'skipped'
           },
           {
@@ -760,7 +840,11 @@ async function runOpportunityTournamentJob(job, options) {
         notes: [
           'research_only',
           object(tournament.usage).calls > 1
-            ? 'two_bounded_llm_calls_with_shape_repair'
+            ? object(object(tournament.searchSpace).commercialCritic).attempted
+              ? 'two_bounded_llm_calls_generator_and_critic'
+              : object(object(tournament.searchSpace).structuredRepair).attempted
+                ? 'two_bounded_llm_calls_generator_and_shape_repair'
+                : 'two_bounded_llm_calls'
             : 'one_bounded_llm_call',
           'deterministic_expansion',
           'no_pdl',
@@ -768,6 +852,89 @@ async function runOpportunityTournamentJob(job, options) {
           'no_publish'
         ]
       }
+    }
+  };
+}
+
+function opportunityTournamentCriticNotRun(reason, cause) {
+  return {
+    contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+    contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+    attempted: false,
+    enforced: true,
+    valid: false,
+    verdict: 'not_run',
+    acceptedFamilyIds: [],
+    acceptedFinalistIds: [],
+    selectedOrdering: [],
+    reason: text(reason),
+    cause: text(cause)
+  };
+}
+
+function opportunityTournamentTypedResult({
+  resultType,
+  recommendedAction
+}) {
+  return {
+    resultContract: OPPORTUNITY_TOURNAMENT_RESULT_CONTRACT,
+    resultType,
+    recommendedAction: text(recommendedAction),
+    executionAuthorization: 'none',
+    requiresReview: true,
+    sideEffectsPerformed: 0,
+    allowedChannel: 'none',
+    permissionRequired: 'explicit_user_approval',
+    incrementalRevenueGate: {
+      contractVersion: REVENUE_GATE_VERSION,
+      reachableBuyer: false,
+      currentPaidOffer: false,
+      namedAcquisitionMechanism: false,
+      acquisitionDistinctFromDestination: false,
+      actionCanBeginNow: false,
+      knownPermissions: false,
+      observablePaidConversion: false,
+      attribution: false,
+      counterfactualIncrementality: false,
+      numericStop: false,
+      primarilyOperationalOrObservational: true,
+      activeRevenueAction: false,
+      causalAcquisitionPath: false,
+      incrementalRevenueOutcome: false,
+      commercialConstraintsSatisfied: false,
+      passed: false,
+      criticContract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+      criticVerdict: 'not_run',
+      reason: text(recommendedAction)
+    }
+  };
+}
+
+function opportunityTournamentProviderRecoveryExperiment(tournamentId) {
+  const recoveryID = createHash('sha256')
+    .update(`${text(tournamentId)}|missing_openrouter_key`)
+    .digest('hex')
+    .slice(0, 24);
+  return {
+    contractVersion: 'revenue_evidence_experiment_v1',
+    id: `experiment-${recoveryID}`,
+    kind: 'strategy_generation_provider_recovery',
+    title: 'Retry once after the tournament provider is configured',
+    action:
+      'Preserve the objective and approved evidence. Configure OPENROUTER_API_KEY, verify strict structured-output support for the bounded generator and critic, then retry this same tournament once. Do not execute any commercial action.',
+    missingEvidence: ['usable_strategy_generation'],
+    paidOutcome: 'One attributable incremental paid outcome',
+    successSignal:
+      'One new attributable paid booking, payment, order, signed contract, reimbursed claim, or compensated outcome with its source stored in the durable revenue record.',
+    stopCondition:
+      'Stop after 1 provider-recovery retry; if the route remains unavailable, surface the technical failure.',
+    asset: null,
+    evidenceRefs: [],
+    requiresReview: true,
+    rerunPolicy: {
+      maxReruns: 1,
+      trigger:
+        'Rerun only after OPENROUTER_API_KEY and strict structured-output support are verified.'
     }
   };
 }

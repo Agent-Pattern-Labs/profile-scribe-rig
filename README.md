@@ -131,17 +131,19 @@ Additional managed job kinds:
   optional evidence snapshot, prior outcomes, and already discovered public
   candidates. It can also preserve exact candidates already present in
   ProfileScribe timeline-author and approved structured source-evidence fields;
-  it does not run a discovery provider. The same bounded model call may extract
+  it does not run a discovery provider. The bounded generator call may extract
   named person or organization candidates only when their names, optional
   details, public URLs, and evidence references are copied exactly from the
   supplied catalog; deterministic validation rejects inventions and the
   profile owner. Only source records, observations, and extracts tied to an
   explicitly `approved` source ID may ground the tournament. One bounded,
-  provider-price-capped OpenRouter call generates evidence-referenced strategy
-  dimensions, semantic score inputs, and those optional exact candidates.
-  When the caller explicitly budgets `maxLLMCalls: 2` and that response fails
-  only the deterministic family-shape gate, one further price-capped call may
-  repair the full strict response; it cannot widen evidence or authority.
+  provider-price-capped OpenRouter generator call produces evidence-referenced
+  strategy dimensions, semantic score inputs, and those optional exact
+  candidates. With `maxLLMCalls: 2`, the second call is the mandatory
+  `opportunity_tournament_critic_v1` comparison. If the generator instead
+  fails only the deterministic family-shape gate, that second call may repair
+  the full strict response; it cannot widen evidence or authority, the critic
+  then cannot run, and no winner is accepted.
   The strict `revenue_family_bundle_v2` seed contract organizes each family by
   one acquisition mode rather than by profession. It requires each family to
   identify an actual buyer, explicitly paid offer, acquisition mechanism,
@@ -176,17 +178,20 @@ Additional managed job kinds:
   Operations-only work, including eligibility, scheduling, workflow, profile,
   content, or research tasks, cannot be the singular opportunity even when it
   is useful supporting context. A completed finalist carries
-  `incremental_revenue_v2`, positive expected incremental gross income, and
+  `incremental_revenue_v3`, positive expected incremental gross income, and
   evidence-linked buyer, offer, acquisition, destination, conversion, outcome,
   and attribution fields. In addition to bookings, sales, contracts,
   subscriptions, and reimbursements, the v2 contract represents
   license/royalty income, commissions/referral fees, sponsorships, platform
   payouts, and compensated roles with matching durable attribution records.
-  Direct receipt metadata includes `hypotheses`, `candidates`, `winner`,
-  `runnerUp`, `searchSpace`, `gate`, and `usage` for the ProfileScribe worker.
-  `searchSpace` records `incremental_income_v2`, the revenue-path contract, and
-  stable deterministic rejection counts/reasons so the control plane can
-  validate the gate independently.
+  Direct receipt metadata includes `commercialEvidenceGraph` and its canonical
+  SHA-256 hash, `hypotheses`, `candidates`, `winner`, `runnerUp`, `searchSpace`,
+  exact generator/critic `llm` call receipts, the typed `result`, `gate`, and
+  `usage` for the ProfileScribe worker. `searchSpace` records
+  `incremental_revenue_causal_v3`, the revenue-path contract, stable
+  deterministic rejection counts/reasons, and the critic's bounded ordered
+  `finalistId`/`familyId` inputs so the control plane can validate the gate
+  independently.
   A completed result requires an unbroken objective → tournament → hypothesis
   → exact outside target or approved owned inbound asset → reviewable action
   chain. Target evidence must overlap the winning buyer-segment seed plus its
@@ -200,11 +205,12 @@ Additional managed job kinds:
   validation; it does not claim third-party verification. If no winner can be
   defended after the bounded generation and optional shape repair, the job returns one
   `revenue_evidence_experiment_v1` instead of a bare dead end. That experiment
-  uses the same bounded model call to name a known fact or owned asset, one
+  comes from the bounded generator response and names a known fact or owned asset, one
   buyer, paid offer, singular acquisition test, separate destination,
   attributable paid success signal, and numeric time/sample stop in
-  user-readable language. The existing v1 result now preserves those facts as
-  additive `knownFact`, `buyer`, `paidOffer`, `acquisitionMechanism`,
+  user-readable language. The typed `opportunity_tournament_result_v2` receipt
+  preserves those facts on its bounded experiment as `knownFact`, `buyer`,
+  `paidOffer`, `acquisitionMechanism`,
   `conversionDestination`, `paidConversion`, and `attributionSignal` fields,
   so the control plane does not have to reconstruct them from prose. Internal
   validator or source-approval jargon is not exposed. When model output cannot
@@ -221,7 +227,7 @@ Additional managed job kinds:
   survive its explicitly budgeted repair returns
   `strategy_generation_shape_recovery`; it is not mislabeled as missing market
   evidence. Tournament generation uses the versioned
-  `opportunity_tournament_compact_v1` strict provider contract. The model
+  `opportunity_tournament_commercial_v2` strict provider contract. The model
   considers multiple grounded acquisition-to-payment paths internally and
   returns one canonical path for each of the strongest two complete strategy
   families. Shared schema definitions keep the provider grammar bounded;
@@ -232,7 +238,8 @@ Additional managed job kinds:
   for incomplete responses. Response healing never converts a length-finished
   response into a valid result. The workflow uses one semantic score per
   complete strategy family, deterministic sampling, and at most two metered
-  model calls under the same hard budget.
+  model calls under the same hard budget: generator plus critic on the success
+  path, or generator plus one full structured repair on the repair path.
   Every experiment authorizes no execution.
   Tournament context uses only persisted profile,
   timeline, and approved crawl evidence returned by scoped read-only
