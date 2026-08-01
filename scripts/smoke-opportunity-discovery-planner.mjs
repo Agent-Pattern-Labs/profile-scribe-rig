@@ -517,11 +517,12 @@ if (unsafeResult.status !== 'blocked' ||
 
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
+await verifyNaturalReviewFirstActionsPass(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTwoStageTargetBinding();
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + raw-cardinality guard + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + natural review-first actions + raw-cardinality guard + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
 );
 
 async function verifyOneMotionWithTwoCausalFamilies(job, evidenceRef) {
@@ -561,6 +562,59 @@ async function verifyOneMotionWithTwoCausalFamilies(job, evidenceRef) {
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `one grounded motion with two causal families was rejected: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyNaturalReviewFirstActionsPass(job, evidenceRef) {
+  const motion = cases[0].plans(evidenceRef)[0];
+  const actions = [
+    'After review, ask {{TARGET_NAME}} to recommend the verified paid lactation home visit through its professional referral pathway (resource card).',
+    'Following human approval, ask {{TARGET_NAME}} to refer one appropriate inquiry to the verified paid lactation home visit (booking handoff).',
+    'Pending user review, send {{TARGET_NAME}} one verified paid-service referral resource and ask for a professional recommendation (single resource).',
+    'After explicit approval, present {{TARGET_NAME}} with the verified paid lactation offer and request one partner referral (one introduction).'
+  ];
+  let index = 0;
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = motion.contingentFinalists[familyKey];
+    family.d.r[0].c = actions[index];
+    for (const action of family.d.a) {
+      action.l = actions[index];
+      index += 1;
+    }
+  }
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: 'One review-first referral motion has two active causal tactics.',
+        plans: [motion]
+      },
+      usage,
+      generationId: 'generation-natural-review-first-actions',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 800,
+        contentSha256: '2'.repeat(64)
+      },
+      annotations: [{
+        type: 'url_citation',
+        url_citation: {
+          url: 'https://riverside-pediatrics.example/newborn-care',
+          title: 'Riverside Pediatrics newborn care',
+          content: 'Current public newborn-care practice in Queens.'
+        }
+      }]
+    })
+  });
+  if (result.status !== 'planned' || result.plans.length !== 1) {
+    throw new Error(
+      `natural review-first revenue actions were rejected: ${JSON.stringify(result)}`
     );
   }
 }
@@ -614,6 +668,46 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
           'After review, request one paid partner referral without an exact target.';
       },
       reason: /primary action|target token/i
+    },
+    {
+      name: 'passive primary action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, monitor {{TARGET_NAME}} referral traffic for 14 calendar days.';
+      },
+      reason: /active rather than observational/i
+    },
+    {
+      name: 'operational primary action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, configure scheduling for {{TARGET_NAME}}.';
+      },
+      reason: /commercial rather than operational/i
+    },
+    {
+      name: 'transport-only metrics action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, email {{TARGET_NAME}} the paid-booking metrics report.';
+      },
+      reason: /causally advance acquisition/i
+    },
+    {
+      name: 'transport-only article action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, share {{TARGET_NAME}} a paid industry article.';
+      },
+      reason: /causally advance acquisition/i
+    },
+    {
+      name: 'availability-check action drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After approval, contact {{TARGET_NAME}} to check paid booking availability.';
+      },
+      reason: /active rather than observational/i
     }
   ];
   for (const check of checks) {

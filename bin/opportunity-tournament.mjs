@@ -1353,11 +1353,17 @@ function contingentFinalistBundleIssue(planValue) {
     }
     for (const actionValue of asArray(dimensions.a)) {
       const action = firstText(asObject(actionValue).l);
-      if (countExactToken(action, CONTINGENT_TARGET_NAME_TOKEN) !== 1 ||
-          passiveOrObservationalPrimaryAction(action) ||
-          operationOnlyAction(action) ||
-          !revenueAdvancingAction(action)) {
-        return 'must author every active primary action with exactly one target token.';
+      if (countExactToken(action, CONTINGENT_TARGET_NAME_TOKEN) !== 1) {
+        return 'must author every primary action with exactly one target token.';
+      }
+      if (passiveOrObservationalPrimaryAction(action)) {
+        return 'must make every primary action active rather than observational.';
+      }
+      if (operationOnlyAction(action)) {
+        return 'must make every primary action commercial rather than operational.';
+      }
+      if (!revenueAdvancingAction(action)) {
+        return 'must make every primary action causally advance acquisition or paid conversion.';
       }
       actionSignatures.add(comparable(action));
     }
@@ -13002,7 +13008,7 @@ function incrementalIncomeText(value) {
 function revenueAdvancingAction(value) {
   const text = firstText(value);
   const advancesAcquisition =
-    /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|referr(?:al|ed)|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ing|ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot|licen[cs](?:e|ing)|royalt(?:y|ies)|commission|sponsor(?:ship)?|payout|compensated|salary|wage|hire|role)\b/i.test(
+    /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|refer(?:ral|red)?|recommend(?:ation|ed)?|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot|licen[cs](?:e|ing)|royalt(?:y|ies)|commission|sponsor(?:ship)?|payout|compensated|salary|wage|hire|role)\b/i.test(
       text
     );
   const namesPaidCommitment =
@@ -13021,10 +13027,10 @@ function revenueAdvancingAction(value) {
 }
 
 function passiveOrObservationalPrimaryAction(value) {
-  const text = comparable(firstText(value));
+  const text = primaryActionSemanticText(value);
   if (!text) return true;
   const namesPassiveWork =
-    /\b(?:analy[sz](?:e|es|ed|ing)|audit(?:s|ed|ing)?|check(?:s|ed|ing)?|count(?:s|ed|ing)?|inspect(?:s|ed|ing)?|measur(?:e|es|ed|ing)|monitor(?:s|ed|ing)?|observ(?:e|es|ed|ing)|record(?:s|ed|ing)?|research(?:es|ed|ing)?|review(?:s|ed|ing)?|stud(?:y|ies|ied|ying)|track(?:s|ed|ing)?|verif(?:y|ies|ied|ying)|watch(?:es|ed|ing)?)\b/.test(
+    /\b(?:analy[sz](?:e|es|ed|ing)|audit(?:s|ed|ing)?|check(?:s|ed|ing)?|count(?:s|ed|ing)?|inspect(?:s|ed|ing)?|measur(?:e|es|ed|ing)|monitor(?:s|ed|ing)?|observ(?:e|es|ed|ing)|record(?:s|ed|ing)?|research(?:es|ed|ing)?|review(?:s|ed|ing)?|stud(?:y|ies|ied|ying)|track(?:s|ed|ing)?|verif(?:y|ies|ying)|watch(?:es|ed|ing)?)\b/.test(
       text
     );
   if (!namesPassiveWork) return false;
@@ -13048,7 +13054,7 @@ function boundedRevenueStopCondition(value) {
 }
 
 function operationOnlyAction(value) {
-  const text = firstText(value);
+  const text = primaryActionSemanticText(value);
   const namesOperations =
     /\b(eligibility|coverage|schedule|scheduling|workflow|process|operations?|administration|documentation|profile|content|research|review|verify|check|map|validate|optimi[sz]e|automate|audit|diagnostic)\b/i.test(
       text
@@ -13066,6 +13072,13 @@ function operationOnlyAction(value) {
       text
     );
   return !namesPaidCommitment && !namesBoundedAcquisitionStep;
+}
+
+function primaryActionSemanticText(value) {
+  return comparable(firstText(value)).replace(
+    /\b(?:after|following|pending) (?:explicit |human |user )?(?:approval|review)\b[,:;-]?/g,
+    ' '
+  );
 }
 
 function observableRevenueText(value) {
