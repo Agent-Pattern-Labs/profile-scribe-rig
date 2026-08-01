@@ -3423,7 +3423,10 @@ async function verifyBettyDistinctArticlePressureRegression() {
       experiment.acquisitionMechanism !== 'organic search' ||
       !/\bqualified\b/i.test(experiment.buyer || '') ||
       !/\bpaid\b/i.test(experiment.paidOffer || '') ||
-      !/\bconversion page\b/i.test(
+      !/\bbooking page\b/i.test(
+        experiment.conversionDestination || ''
+      ) ||
+      /\bconversion page\b/i.test(
         experiment.conversionDestination || ''
       ) ||
       !/\bpaid (?:booking|claim|consultation)\b/i.test(

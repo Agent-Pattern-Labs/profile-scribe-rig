@@ -5793,10 +5793,7 @@ function ownedAssetEvidenceExperimentPlan(assetValue) {
     `${outcome.reimbursable ? 'the paid or reimbursable' : 'the paid'} ${label} offer`,
     220
   );
-  const destination = truncate(
-    `${label} conversion page`,
-    140
-  );
+  const destination = ownedAssetConversionDestination(label, text);
   const attributionSignal =
     `${outcome.record}'s source/origin field set to organic_search`;
   return {
@@ -5823,6 +5820,29 @@ function ownedAssetEvidenceExperimentPlan(assetValue) {
       360
     )
   };
+}
+
+function ownedAssetConversionDestination(label, evidenceText) {
+  const text = comparable(firstText(evidenceText));
+  let destinationType = 'service page';
+  if (/\b(?:appointment|book|booking|consultation|home visit|schedule)\b/.test(text)) {
+    destinationType = 'booking page';
+  } else if (/\b(?:buy|checkout|order|product|purchase)\b/.test(text)) {
+    destinationType = 'checkout';
+  } else if (/\b(?:membership|sign up|signup|subscribe|subscription)\b/.test(text)) {
+    destinationType = 'subscription page';
+  } else if (/\b(?:application|apply|professional role)\b/.test(text)) {
+    destinationType = 'application page';
+  } else if (/\b(?:licence|license|licensing)\b/.test(text)) {
+    destinationType = 'licensing page';
+  } else if (/\b(?:sponsor|sponsorship)\b/.test(text)) {
+    destinationType = 'sponsorship inquiry page';
+  } else if (/\b(?:demo|demonstration)\b/.test(text)) {
+    destinationType = 'demo request page';
+  } else if (/\bdownload\b/.test(text)) {
+    destinationType = 'download page';
+  }
+  return truncate(`${label} ${destinationType}`, 140);
 }
 
 function revenuePathGroundingExperimentPlan({
