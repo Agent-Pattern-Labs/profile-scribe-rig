@@ -509,7 +509,7 @@ Every plan is a contingent commercial motion, not evidence that a target exists,
 For every plan, author two complete, distinct causal finalist families. Every primary action must contain {{TARGET_NAME}} exactly once and already be a complete review-first action sentence after that one token is replaced. Deterministic code may replace declared target and URL tokens and evidence refs only; it will not compose missing recommendation prose. Each family must include two variants in every dimension, one v3 revenue path, a current paid offer, buyer, acquisition mechanism distinct from destination, paid conversion, durable attribution method and signal, numeric stop, expected value, spend estimate, exact supply grounding, and active—not observational or operational—primary actions. The two families must differ in their causal acquisition tactic, not merely wording.
 Keep the complete JSON response below 18 KiB. Use compact labels and one concise sentence per action/path field; do not repeat rationale or evidence prose inside dimension labels.
 Do not use target:evidence to claim a seller capability, existing relationship, warmness, permission, private contact detail, or paid demand that the typed target slot cannot establish. Keep current user offer/destination/attribution facts grounded in exact approved evidence IDs. A professional-identity slot can establish only the exact professional target and its prospective channel fit; only a live-paid-demand slot may contingently ground an outside paid offer, application destination, and compensated conversion.
-Return two distinct bounded plans. Use active_job_posting only for a compensated employment or contract path; professional_counterparty for a buyer, referral authority, sponsor, or partner; local_organization for a location-bound professional organization; and public_live_demand for a current public RFP, contract, marketplace request, sponsorship request, or other paid demand page. If the final actionable target requires resolving a decision-maker after an organization, declare organization_then_decision_maker instead of pretending the organization is the person.
+Prefer two distinct bounded plans. If only one grounded outer search motion is defensible, return it only when both complete, causally distinct finalist families are present; those two model-authored tactics still provide the required comparison. Use active_job_posting only for a compensated employment or contract path; professional_counterparty for a buyer, referral authority, sponsor, or partner; local_organization for a location-bound professional organization; and public_live_demand for a current public RFP, contract, marketplace request, sponsorship request, or other paid demand page. If the final actionable target requires resolving a decision-maker after an organization, declare organization_then_decision_maker instead of pretending the organization is the person.
 Do not search for patients, consumers selected by health/family status, private contact data, or sensitive traits. Copy evidence IDs and fixed tokens exactly. Return only strict JSON.`;
   const user = JSON.stringify({
     objective,
@@ -522,7 +522,7 @@ Do not search for patients, consumers selected by health/family status, private 
     hardRules: compactOpportunityDiscoveryHardRules(),
     constraints: [
       RESEARCH_ONLY_CONSTRAINT,
-      'Exactly two plans; the forced Exa search returns at most five sanitized URL citations and app adapters may make at most the separately budgeted bounded provider reads.',
+      'Prefer two distinct plans; one is valid only when it carries both complete causal finalist families. The forced Exa search returns at most five sanitized URL citations and app adapters may make at most the separately budgeted bounded provider reads.',
       'No outreach, publishing, form submission, advertising, provider writes, private contact retrieval, patient search, or sensitive-trait targeting.',
       'Use only evidence IDs in evidenceCatalog. Search terms may infer counterpart roles but may not assert outside-world facts.',
       `Use ${CONTINGENT_TARGET_NAME_TOKEN}, ${CONTINGENT_TARGET_URL_TOKEN}, and ${CONTINGENT_TARGET_EVIDENCE_REF} only as declared typed placeholders.`,
@@ -621,6 +621,9 @@ Do not search for patients, consumers selected by health/family status, private 
     preflight,
     providerMetadata.openRouterUsage
   );
+  const rawCardinalityIssue = opportunityDiscoveryRawPlanCardinalityIssue(
+    completion?.data
+  );
   const normalized = normalizeOpportunityDiscoveryPlan(
     completion?.data,
     evidenceCatalog,
@@ -633,7 +636,8 @@ Do not search for patients, consumers selected by health/family status, private 
     observedAt: validDate(now).toISOString()
   });
   normalized.webSearchReceipt = webSearchReceipt;
-  const issue = opportunityDiscoveryPlanIssue(normalized);
+  const issue = rawCardinalityIssue ||
+    opportunityDiscoveryPlanIssue(normalized);
   const webSearchIssue = opportunityDiscoveryWebSearchReceiptIssue(
     webSearchReceipt
   );
@@ -904,7 +908,7 @@ function compactOpportunityDiscoveryOutputContract() {
 
 function compactOpportunityDiscoveryHardRules() {
   return [
-    'planned requires exactly 2 plans with different searchMode/commercialRole/acquisitionMode tuples; insufficient_verified_supply requires 0 plans plus a reason.',
+    'Prefer 2 planned motions with different searchMode/commercialRole/acquisitionMode tuples; 1 planned motion is valid only with both complete causal families; insufficient_verified_supply requires 0 plans plus a reason.',
     'Use only evidenceCatalog IDs. Each plan/family has an observation:* seller anchor. System attribution evidence supports attribution only. Obey outputContract targetRoleMap exactly.',
     `Every d.a action is distinct, contains ${CONTINGENT_TARGET_NAME_TOKEN} exactly once, and actively requests a reviewed referral/application/proposal/offer leading to paid commitment—not research, tracking, verification, profile, or operations work.`,
     'For each r: a=plan acquisitionMode; io says additional/incremental paid income; c is active; o names a paid booking/payment/contract/order/subscription/compensation receipt.',
@@ -1214,6 +1218,23 @@ function opportunityDiscoveryPlanIssue(value) {
         return `Discovery plan ${item.id} ${contingentIssue}`;
       }
     }
+  }
+  return '';
+}
+
+function opportunityDiscoveryRawPlanCardinalityIssue(value) {
+  const raw = asObject(value);
+  if (!Array.isArray(raw.plans)) {
+    return 'Discovery planner returned a non-array plans field.';
+  }
+  const status = firstText(raw.status);
+  if (status === 'planned' &&
+      (raw.plans.length < 1 || raw.plans.length > 2)) {
+    return 'Discovery planning requires one or two grounded commercial motions.';
+  }
+  if (status === 'insufficient_verified_supply' &&
+      raw.plans.length !== 0) {
+    return 'Insufficient-supply planning must return no outside search plans and a reason.';
   }
   return '';
 }

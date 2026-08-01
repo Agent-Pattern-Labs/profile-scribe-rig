@@ -517,10 +517,11 @@ if (unsafeResult.status !== 'blocked' ||
 
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
+await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTwoStageTargetBinding();
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + raw-cardinality guard + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
 );
 
 async function verifyOneMotionWithTwoCausalFamilies(job, evidenceRef) {
@@ -560,6 +561,39 @@ async function verifyOneMotionWithTwoCausalFamilies(job, evidenceRef) {
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `one grounded motion with two causal families was rejected: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
+  const firstTwo = cases[0].plans(evidenceRef);
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: 'Raw provider shape violates the two-motion envelope.',
+        plans: [...firstTwo, {}]
+      },
+      usage,
+      generationId: 'generation-raw-over-cardinality',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 900,
+        contentSha256: '3'.repeat(64)
+      }
+    })
+  });
+  if (result.status !== 'blocked' ||
+      !/one or two grounded commercial motions/i.test(result.reason) ||
+      result.plans.length !== 0 ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `raw over-cardinality was normalized into compliance: ${JSON.stringify(result)}`
     );
   }
 }
@@ -679,6 +713,10 @@ async function verifyTwoStageTargetBinding() {
     'external_discovery:111111111111111111111111';
   const targetCandidateId =
     'candidate:external:222222222222222222222222';
+  const oneMotionDiscoveryPlan = {
+    ...discoveryPlan,
+    plans: [selectedMotion]
+  };
   const downstreamPayload = {
     ...planner.payload,
     algorithmVersion: 'cheap_tournament_v6',
@@ -708,7 +746,7 @@ async function verifyTwoStageTargetBinding() {
       patientTargetingExcluded: true,
       sideEffectsPerformed: 0,
       attempts: [attempt],
-      plan: discoveryPlan,
+      plan: oneMotionDiscoveryPlan,
       evidence: [{
         motionId: selectedMotion.id,
         evidenceRef: targetEvidenceRef,
@@ -851,6 +889,8 @@ async function verifyTwoStageTargetBinding() {
   }
 
   const multiMotionPayload = structuredClone(downstreamPayload);
+  multiMotionPayload.commercialDiscoveryEvidence.plan =
+    structuredClone(discoveryPlan);
   const secondMotion = discoveryPlan.plans[1];
   const secondEvidenceRef =
     'external_discovery:333333333333333333333333';
