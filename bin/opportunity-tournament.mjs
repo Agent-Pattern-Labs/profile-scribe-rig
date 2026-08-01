@@ -5218,7 +5218,7 @@ function commercialCriticPrompt({
 }) {
   const system = `You are ProfileScribe's independent commercial-motion critic.
 Compare and rank exactly the supplied deterministically valid finalist motions. This is research only and authorizes no execution.
-For every finalist, assess incremental revenue, evidence strength, buyer reachability, time to first dollar, cost, effort, and uncertainty. Rank the best causal commercial motion first.
+For every finalist, assess incremental revenue, evidence strength, buyer reachability, paid-outcome probability, a numeric 1-to-30-day time to first dollar, recurring value, cost, effort, and uncertainty. Rank the best causal commercial motion first.
 Accept only finalists whose primary action actively and causally creates qualified demand or advances a paid conversion, whose income is counterfactually incremental, whose buyer and paid offer are grounded, whose acquisition is distinct from destination, and whose paid outcome has durable attribution plus a numeric stop.
 The deterministic pre-filter has already excluded passive and operational motions. If one appears anyway, reject it; never reward monitoring, measuring, profile work, content work, or administration.
 Treat commercialContext only as permission/channel capability. A connected channel never proves buyer demand, fit, or reachability.
@@ -5264,6 +5264,20 @@ function commercialCriticResponseFormat(finalistsValue) {
         type: 'string',
         enum: ['fast', 'moderate', 'slow']
       },
+      paidOutcomeProbability: {
+        type: 'number',
+        minimum: 0,
+        maximum: 1
+      },
+      timeToFirstDollarDays: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 30
+      },
+      recurringValue: {
+        type: 'string',
+        enum: ['one_time', 'repeatable', 'recurring']
+      },
       cost: { type: 'string', enum: ['low', 'moderate', 'high'] },
       effort: { type: 'string', enum: ['low', 'moderate', 'high'] },
       uncertainty: {
@@ -5293,6 +5307,9 @@ function commercialCriticResponseFormat(finalistsValue) {
       'evidenceStrength',
       'reachability',
       'timeToFirstDollar',
+      'paidOutcomeProbability',
+      'timeToFirstDollarDays',
+      'recurringValue',
       'cost',
       'effort',
       'uncertainty',
@@ -5448,6 +5465,15 @@ function normalizeCommercialCritic(
   const values = asArray(raw.comparisons).map(asObject);
   const returnedIDs = values.map((item) => firstText(item.finalistId));
   const ordering = compactStrings(raw.selectedOrdering);
+  const commercialEstimateShapeValid = values.every((item) => {
+    const probability = Number(item.paidOutcomeProbability);
+    const days = Number(item.timeToFirstDollarDays);
+    return Number.isFinite(probability) && probability > 0 &&
+      probability <= 1 && Number.isInteger(days) && days >= 1 &&
+      days <= 30 && ['one_time', 'repeatable', 'recurring'].includes(
+        firstText(item.recurringValue)
+      );
+  });
   const shapeValid =
     firstText(raw.criticContract) ===
       OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT &&
@@ -5458,7 +5484,7 @@ function normalizeCommercialCritic(
     new Set(ordering).size === expectedIDs.length &&
     expectedIDs.every((id) => ordering.includes(id)) &&
     firstText(raw.selectedFinalistId) === ordering[0] &&
-    Boolean(firstText(raw.reason));
+    Boolean(firstText(raw.reason)) && commercialEstimateShapeValid;
   if (!shapeValid) {
     return {
       valid: false,
@@ -5499,6 +5525,9 @@ function normalizeCommercialCritic(
         evidenceStrength: firstText(item.evidenceStrength),
         reachability: firstText(item.reachability),
         timeToFirstDollar: firstText(item.timeToFirstDollar),
+        paidOutcomeProbability: Number(item.paidOutcomeProbability),
+        timeToFirstDollarDays: Number(item.timeToFirstDollarDays),
+        recurringValue: firstText(item.recurringValue),
         cost: firstText(item.cost),
         effort: firstText(item.effort),
         uncertainty: firstText(item.uncertainty),
@@ -6811,6 +6840,25 @@ function recommendationFor({
   const whyOverRunnerUp = runnerUp
     ? comparisonReason(hypothesis, runnerUp, commercialCritic)
     : '';
+  const criticComparison = asArray(
+    asObject(commercialCritic).comparisons
+  ).map(asObject).find((comparison) =>
+    firstText(comparison.finalistId) === firstText(hypothesis.id)
+  );
+  const paidOutcomeProbability = Number(
+    criticComparison?.paidOutcomeProbability
+  );
+  const timeToFirstDollarDays = Number(
+    criticComparison?.timeToFirstDollarDays
+  );
+  const recurringValue = firstText(criticComparison?.recurringValue);
+  if (!Number.isFinite(paidOutcomeProbability) ||
+      paidOutcomeProbability <= 0 || paidOutcomeProbability > 1 ||
+      !Number.isInteger(timeToFirstDollarDays) ||
+      timeToFirstDollarDays < 1 || timeToFirstDollarDays > 30 ||
+      !['one_time', 'repeatable', 'recurring'].includes(recurringValue)) {
+    return null;
+  }
   const recommendationSignatureTexts = [
     title,
     action,
@@ -6845,6 +6893,9 @@ function recommendationFor({
     whyNow,
     whyOverRunnerUp,
     uncertainty,
+    paidOutcomeProbability,
+    timeToFirstDollarDays,
+    recurringValue,
     motionSignatures: recommendationMotionSignatures,
     evidenceRefs,
     requiresReview: true,
