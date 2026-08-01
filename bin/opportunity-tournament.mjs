@@ -1,7 +1,10 @@
 import { createHash } from 'crypto';
 import { isIP } from 'net';
 
-export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v5';
+export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v6';
+const LEGACY_OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSIONS = new Set([
+  'cheap_tournament_v5'
+]);
 export const OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT =
   'opportunity_tournament_commercial_v2';
 const TOURNAMENT_GENERATOR_CONTRACT =
@@ -14,6 +17,45 @@ export const ACTIVE_REVENUE_ACTION_CONTRACT =
   'active_revenue_action_v1';
 export const COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT =
   'commercial_discovery_evidence_v1';
+export const OPPORTUNITY_DISCOVERY_PLAN_CONTRACT =
+  'opportunity_discovery_plan_v2';
+const LEGACY_OPPORTUNITY_DISCOVERY_PLAN_CONTRACT =
+  'opportunity_discovery_plan_v1';
+export const PROPOSED_COMMERCIAL_MOTIONS_CONTRACT =
+  'proposed_commercial_motions_v2';
+const LEGACY_PROPOSED_COMMERCIAL_MOTIONS_CONTRACT =
+  'proposed_commercial_motions_v1';
+export const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTRACT =
+  'openrouter_exa_web_search_v1';
+export const PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID =
+  'profile:system_attribution_capability:v1';
+
+const PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY = Object.freeze({
+  id: PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID,
+  type: 'profilescribe_system_attribution_capability',
+  label: 'ProfileScribe attributable paid-outcome recorder',
+  summary:
+    'After a reviewed action, ProfileScribe can durably record a user-confirmed payment receipt or linked outcome evidence with a source field bound to the tournament, objective, hypothesis, candidate, and action identifiers. This verifies attribution-recording capability only; it does not verify any buyer, paid offer, acquisition path, channel fit, demand, payment, or conversion.',
+  current: true,
+  status: 'verified_current',
+  confidence: 'high',
+  verifiedSystemCapability: true,
+  systemCapabilitySource: 'profilescribe_control_plane',
+  systemCapabilityProvenance: 'verified_system_capability',
+  systemCapabilityRoles: Object.freeze(['attribution'])
+});
+
+const CONTINGENT_TARGET_NAME_TOKEN = '{{TARGET_NAME}}';
+const CONTINGENT_TARGET_URL_TOKEN = '{{TARGET_URL}}';
+const CONTINGENT_TARGET_EVIDENCE_REF = 'target:evidence';
+const OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER =
+  'openrouter_exa_web_search';
+const OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION =
+  'forced_exa_web_search';
+const OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE = 'exa';
+const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
+const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
+const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE = 1_047_576;
 
 const MAX_HYPOTHESES = 10_000;
 const MAX_FINALISTS = 20;
@@ -123,6 +165,19 @@ const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
 ];
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
+const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 6_000;
+const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 18 * 1_024;
+const DISCOVERY_PLAN_SEARCH_MODES = new Set([
+  'active_job_posting',
+  'professional_counterparty',
+  'local_organization',
+  'public_live_demand'
+]);
+const DISCOVERY_PLAN_COMMERCIAL_ROLES = new Set([
+  'paid_demand',
+  'referral_partner',
+  'buyer'
+]);
 
 const DEFAULT_JUDGE_WEIGHTS = {
   objectiveFit: 0.22,
@@ -251,6 +306,28 @@ const COMMERCIAL_DISCOVERY_PROVIDER_PROVENANCE = new Map([
     new Set(['people_data_labs_active_job_posting'])
   ]
 ]);
+const COMMERCIAL_DISCOVERY_ATTEMPT_OPERATIONS = new Map([
+  [
+    'brave_web_search',
+    new Set([
+      'brave_web_search',
+      'web_search',
+      'planned_brave_web_search',
+      'planned_web_search',
+      'planned_public_live_demand_search',
+      'planned_professional_search',
+      'planned_local_organization_search'
+    ])
+  ],
+  [
+    'people_data_labs_person_search',
+    new Set(['person_search', 'planned_professional_search'])
+  ],
+  [
+    'people_data_labs_job_posting_search',
+    new Set(['job_posting_search', 'planned_job_posting_search'])
+  ]
+]);
 const COMMERCIAL_DISCOVERY_ROLES = new Set([
   'acquisition',
   'channel_fit',
@@ -260,6 +337,15 @@ const COMMERCIAL_DISCOVERY_ROLES = new Set([
   'paid_conversion',
   'paid_offer',
   'prospective_partner'
+]);
+const COMMERCIAL_DISCOVERY_LIVE_DEMAND_ROLES = new Set([
+  'acquisition',
+  'channel_fit',
+  'conversion_destination',
+  'defined_buyer',
+  'demand_signal',
+  'paid_conversion',
+  'paid_offer'
 ]);
 const COMMERCIAL_DISCOVERY_CANDIDATE_ROLES = new Set([
   'buyer',
@@ -320,6 +406,1037 @@ export function buildOpenRouterJSONRequestBody({
 
 export function serializeOpenRouterJSONRequestBody(request) {
   return JSON.stringify(buildOpenRouterJSONRequestBody(request));
+}
+
+/**
+ * Plans profession-neutral commercial motions while performing the one
+ * bounded, read-only search folded into call 1. The model may infer motions and
+ * counterpart roles from verified supply evidence, but it cannot attest that
+ * an outside target, demand signal, relationship, or permission exists. Only
+ * separately normalized provider citations and records can establish those
+ * facts before the control plane validates and binds the target slot.
+ */
+export async function runOpportunityDiscoveryPlanner({
+  job,
+  context = {},
+  model,
+  completeJSON,
+  now = new Date()
+}) {
+  const payload = asObject(job?.payload);
+  const objective = normalizeObjective(payload.objective, payload);
+  const constraints = normalizeConstraints(objective, payload);
+  const budget = normalizeBudget(payload.budget);
+  const commercialContext = normalizeCommercialContext(
+    payload,
+    objective,
+    constraints
+  );
+  const evidenceCatalog = buildEvidenceCatalog(payload, context, now, {
+    commercialDiscovery: {},
+    includeSystemAttributionCapability: true
+  });
+  const promptEvidenceCatalog = compactPromptEvidenceCatalog(
+    evidenceCatalog,
+    objective,
+    now,
+    { maxItems: 14, labelChars: 120, summaryChars: 220, urlChars: 160 }
+  );
+  const commercialEvidenceGraph = buildCommercialEvidenceGraph(
+    evidenceCatalog,
+    {
+      commercialContext,
+      priorOutcomes: normalizePriorOutcomes([
+        ...asArray(payload.priorOutcomes),
+        ...asArray(asObject(payload.commercialContext)
+          .priorAttributedOutcomes)
+      ]),
+      objective,
+      constraints
+    }
+  );
+  const promptCommercialEvidenceGraph =
+    projectCommercialEvidenceGraphForPrompt(
+      commercialEvidenceGraph,
+      promptEvidenceCatalog
+    );
+  const evidenceHash = stableHash(evidenceCatalog);
+  const base = {
+    contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+    status: 'blocked',
+    reason: '',
+    evidenceHash,
+    plans: [],
+    webSearchReceipt: null,
+    preflight: {},
+    usage: emptyUsage(model, budget),
+    llm: {},
+    sideEffectsPerformed: 0
+  };
+
+  const objectiveIssue = objectiveValidationIssue(objective);
+  if (objectiveIssue) {
+    return {
+      ...base,
+      reason: objectiveIssue.summary
+    };
+  }
+  if (!constraints.researchOnly) {
+    return {
+      ...base,
+      reason: 'Opportunity discovery planning requires research-only authority.'
+    };
+  }
+  if (evidenceCatalog.length === 0 || promptEvidenceCatalog.length === 0) {
+    return {
+      ...base,
+      reason: 'No approved professional evidence can ground an outside-world search plan.'
+    };
+  }
+  if (budget.maxLLMCalls < 1 || budget.maxLLMSpendMicros < 1) {
+    return {
+      ...base,
+      reason: 'The tournament budget does not authorize discovery planning.'
+    };
+  }
+
+  const system = `You are ProfileScribe's research-only commercial-motion generator.
+Use verified facts about one professional and the forced, read-only web-search context to propose the strongest distinct searches for the nearest credible path to payment within 30 days.
+Treat commercialEvidenceGraph.verifiedFacts as the typed commercial ground truth, its inferences as unverified, and its missingFacts as gaps. A verified system capability with roles=["attribution"] can ground only the future attribution record and never buyer, offer, demand, acquisition, channel fit, payment, or conversion.
+Infer the economic relationship, not a profession keyword category. A lactation consultant may need a newborn-care referral authority; a programmer may need current compensated demand; a consultant may need a company with a current buying trigger; a product owner may need a marketplace, buyer, or distribution partner. These are examples of reasoning, not fixed mappings.
+Separate the end payer from a referral or distribution counterparty. Prefer live paid demand over a generic identity when supported. A public website or booking page is a destination, not acquisition demand.
+Every plan is a contingent commercial motion, not evidence that a target exists, is interested, will refer, has budget, or granted contact permission. Web results are not self-authenticating model prose: do not put a discovered target name in the plan. Keep the exact target unresolved through the fixed {{TARGET_NAME}} token; local code will bind it only to a separately validated provider citation or provider record. Use target:evidence wherever that future provider fact must ground a dimension.
+For every plan, author two complete, distinct causal finalist families. Every primary action must contain {{TARGET_NAME}} exactly once and already be a complete review-first action sentence after that one token is replaced. Deterministic code may replace declared target and URL tokens and evidence refs only; it will not compose missing recommendation prose. Each family must include two variants in every dimension, one v3 revenue path, a current paid offer, buyer, acquisition mechanism distinct from destination, paid conversion, durable attribution method and signal, numeric stop, expected value, spend estimate, exact supply grounding, and active—not observational or operational—primary actions. The two families must differ in their causal acquisition tactic, not merely wording.
+Keep the complete JSON response below 18 KiB. Use compact labels and one concise sentence per action/path field; do not repeat rationale or evidence prose inside dimension labels.
+Do not use target:evidence to claim a seller capability, existing relationship, warmness, permission, private contact detail, or paid demand that the typed target slot cannot establish. Keep current user offer/destination/attribution facts grounded in exact approved evidence IDs. A professional-identity slot can establish only the exact professional target and its prospective channel fit; only a live-paid-demand slot may contingently ground an outside paid offer, application destination, and compensated conversion.
+Return two distinct bounded plans. Use active_job_posting only for a compensated employment or contract path; professional_counterparty for a buyer, referral authority, sponsor, or partner; local_organization for a location-bound professional organization; and public_live_demand for a current public RFP, contract, marketplace request, sponsorship request, or other paid demand page. If the final actionable target requires resolving a decision-maker after an organization, declare organization_then_decision_maker instead of pretending the organization is the person.
+Do not search for patients, consumers selected by health/family status, private contact data, or sensitive traits. Copy evidence IDs and fixed tokens exactly. Return only strict JSON.`;
+  const user = JSON.stringify({
+    objective,
+    commercialContext,
+    evidenceCatalog: promptEvidenceCatalog,
+    commercialEvidenceGraph: promptCommercialEvidenceGraph,
+    task:
+      'Plan the smallest outside-world searches most likely to reveal one exact, review-first path to payment within 30 days.',
+    constraints: [
+      RESEARCH_ONLY_CONSTRAINT,
+      'Exactly two plans; the forced Exa search returns at most five sanitized URL citations and app adapters may make at most the separately budgeted bounded provider reads.',
+      'No outreach, publishing, form submission, advertising, provider writes, private contact retrieval, patient search, or sensitive-trait targeting.',
+      'Use only evidence IDs in evidenceCatalog. Search terms may infer counterpart roles but may not assert outside-world facts.',
+      `Use ${CONTINGENT_TARGET_NAME_TOKEN}, ${CONTINGENT_TARGET_URL_TOKEN}, and ${CONTINGENT_TARGET_EVIDENCE_REF} only as declared typed placeholders.`,
+      'Plans must differ in economic path or discovery mode, not wording alone; each plan must still contain two family-diverse causal finalist tactics.'
+    ]
+  });
+  const request = {
+    model,
+    system,
+    user,
+    maxTokens: Math.min(
+      MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS,
+      Math.max(600, budget.maxOutputTokens)
+    ),
+    provider: {
+      ...TOURNAMENT_PROVIDER_ROUTING,
+      max_price: { ...budget.providerMaxPrice }
+    },
+    responseFormat: opportunityDiscoveryPlannerResponseFormat(
+      promptEvidenceCatalog
+    ),
+    plugins: [{
+      id: 'web',
+      engine: OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE,
+      max_results: OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS
+    }],
+    additionalPromptTokenReserve:
+      OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
+    fixedToolFeeMicros:
+      OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
+    temperature: 0.15
+  };
+  const preflight = providerCallSpendPreflight(request, budget);
+  const promptEnvelopeIssue = providerPromptEnvelopeIssue(preflight);
+  if (promptEnvelopeIssue ||
+      preflight.callSpendCeilingMicros > budget.maxLLMSpendMicros) {
+    return {
+      ...base,
+      reason: promptEnvelopeIssue
+        ? `Discovery planner request failed ${promptEnvelopeIssue}.`
+        : 'Discovery planner request does not fit the bounded LLM budget.',
+      preflight: {
+        ...preflight,
+        authorized: false,
+        cause: promptEnvelopeIssue || 'planner_budget_ceiling'
+      }
+    };
+  }
+
+  const promptHash = stableHash({ system, user });
+  let completion;
+  try {
+    completion = await completeJSON(request);
+  } catch (error) {
+    const providerMetadata = openRouterMetadata({
+      model,
+      purpose: 'opportunity_tournament_discovery_planning',
+      structuredOutputContract: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+      status: 'failed',
+      usage: error?.openRouterUsage,
+      generationId: error?.openRouterGenerationId,
+      diagnostics: error?.openRouterDiagnostics,
+      promptHash,
+      error: openRouterFailureCode(error)
+    });
+    return {
+      ...base,
+      reason: 'The bounded discovery planner did not return a usable plan.',
+      preflight: { ...preflight, authorized: true },
+      usage: aggregateUsage([providerMetadata], budget),
+      llm: { discoveryPlanner: providerMetadata }
+    };
+  }
+
+  const providerMetadata = openRouterMetadata({
+    model,
+    purpose: 'opportunity_tournament_discovery_planning',
+    structuredOutputContract: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+    status: 'completed',
+    usage: completion?.usage,
+    generationId: completion?.generationId,
+    diagnostics: completion?.diagnostics,
+    promptHash
+  });
+  const usage = aggregateUsage([providerMetadata], budget);
+  let responseBodyByteCount = 0;
+  try {
+    responseBodyByteCount = Buffer.byteLength(
+      JSON.stringify(completion?.data),
+      'utf8'
+    );
+  } catch {
+    responseBodyByteCount = MAX_DISCOVERY_PLANNER_RESPONSE_BYTES + 1;
+  }
+  const promptTokenCanary = providerPromptTokenCanary(
+    preflight,
+    providerMetadata.openRouterUsage
+  );
+  const normalized = normalizeOpportunityDiscoveryPlan(
+    completion?.data,
+    evidenceCatalog,
+    now
+  );
+  const webSearchReceipt = normalizeOpportunityDiscoveryWebSearchReceipt({
+    annotations: completion?.annotations,
+    requestHash: preflight.requestBodySha256,
+    attempted: true,
+    observedAt: validDate(now).toISOString()
+  });
+  normalized.webSearchReceipt = webSearchReceipt;
+  const issue = opportunityDiscoveryPlanIssue(normalized);
+  const webSearchIssue = opportunityDiscoveryWebSearchReceiptIssue(
+    webSearchReceipt
+  );
+  if (promptTokenCanary.withinCeiling === false ||
+      responseBodyByteCount > MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
+      usage.reportedCostMicros > budget.maxLLMSpendMicros || issue ||
+      webSearchIssue) {
+    return {
+      ...base,
+      reason: promptTokenCanary.withinCeiling === false
+        ? 'Discovery planner prompt-token usage exceeded its serialized-request ceiling.'
+        : responseBodyByteCount > MAX_DISCOVERY_PLANNER_RESPONSE_BYTES
+          ? 'Discovery planner response exceeded its bounded structured-output envelope.'
+        : usage.reportedCostMicros > budget.maxLLMSpendMicros
+          ? 'Discovery planner exceeded its bounded LLM budget.'
+          : issue || webSearchIssue,
+      preflight: {
+        ...preflight,
+        authorized: true,
+        responseBodyByteCount,
+        maxResponseBodyByteCount:
+          MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
+        promptTokenCanary
+      },
+      usage,
+      llm: { discoveryPlanner: providerMetadata },
+      webSearchReceipt
+    };
+  }
+  return {
+    ...base,
+    ...normalized,
+    evidenceHash,
+    webSearchReceipt,
+    preflight: {
+      ...preflight,
+      authorized: true,
+      responseBodyByteCount,
+      maxResponseBodyByteCount: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
+      promptTokenCanary
+    },
+    usage,
+    llm: { discoveryPlanner: providerMetadata }
+  };
+}
+
+function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
+  const stringArray = (maxItems) => ({
+    type: 'array',
+    items: { type: 'string' },
+    maxItems
+  });
+  const contingentSchema = tournamentStructuredResponseFormat(
+    [
+      ...asArray(evidenceCatalog),
+      { id: CONTINGENT_TARGET_EVIDENCE_REF }
+    ],
+    INITIAL_FAMILY_VARIANT_COUNT
+  ).json_schema.schema;
+  const contingentFamily = asObject(contingentSchema.$defs.family);
+  const contingentDefs = {
+    ...contingentSchema.$defs,
+    family: {
+      ...contingentFamily,
+      properties: {
+        ...asObject(contingentFamily.properties),
+        tacticKey: {
+          type: 'string',
+          pattern: '^[a-z][a-z0-9_]{2,63}$'
+        }
+      },
+      required: [
+        ...asArray(contingentFamily.required),
+        'tacticKey'
+      ]
+    }
+  };
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: {
+          contractVersion: {
+            type: 'string',
+            enum: [OPPORTUNITY_DISCOVERY_PLAN_CONTRACT]
+          },
+          status: {
+            type: 'string',
+            enum: ['planned', 'insufficient_verified_supply']
+          },
+          reason: { type: 'string' },
+          plans: {
+            type: 'array',
+            minItems: 0,
+            maxItems: 2,
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                priority: { type: 'integer', minimum: 1, maximum: 3 },
+                searchMode: {
+                  type: 'string',
+                  enum: [...DISCOVERY_PLAN_SEARCH_MODES]
+                },
+                commercialRole: {
+                  type: 'string',
+                  enum: [...DISCOVERY_PLAN_COMMERCIAL_ROLES]
+                },
+                acquisitionMode: {
+                  type: 'string',
+                  enum: [...ACQUISITION_MODES]
+                },
+                buyer: { type: 'string' },
+                counterparty: { type: 'string' },
+                paidOffer: { type: 'string' },
+                evidenceRefs: stringArray(4),
+                query: { type: 'string' },
+                market: { type: 'string' },
+                targetRoleTerms: stringArray(6),
+                organizationTerms: stringArray(6),
+                jobTitle: { type: 'string' },
+                skills: stringArray(6),
+                acquisitionMechanism: { type: 'string' },
+                conversionDestination: { type: 'string' },
+                paidConversion: { type: 'string' },
+                attributionSignal: { type: 'string' },
+                rationale: { type: 'string' },
+                targetSlot: {
+                  type: 'object',
+                  properties: {
+                    targetNameToken: {
+                      type: 'string',
+                      enum: [CONTINGENT_TARGET_NAME_TOKEN]
+                    },
+                    targetUrlToken: {
+                      type: 'string',
+                      enum: [CONTINGENT_TARGET_URL_TOKEN]
+                    },
+                    evidenceRefToken: {
+                      type: 'string',
+                      enum: [CONTINGENT_TARGET_EVIDENCE_REF]
+                    },
+                    finalTargetKind: {
+                      type: 'string',
+                      enum: ['person', 'organization', 'live_paid_demand']
+                    },
+                    commercialRole: {
+                      type: 'string',
+                      enum: [...DISCOVERY_PLAN_COMMERCIAL_ROLES]
+                    },
+                    resolutionStrategy: {
+                      type: 'string',
+                      enum: [
+                        'single_exact_target',
+                        'organization_then_decision_maker'
+                      ]
+                    },
+                    requiredEvidenceRoles: {
+                      type: 'array',
+                      items: {
+                        type: 'string',
+                        enum: [...COMMERCIAL_DISCOVERY_ROLES]
+                      },
+                      minItems: 1,
+                      maxItems: 7
+                    }
+                  },
+                  required: [
+                    'targetNameToken',
+                    'targetUrlToken',
+                    'evidenceRefToken',
+                    'finalTargetKind',
+                    'commercialRole',
+                    'resolutionStrategy',
+                    'requiredEvidenceRoles'
+                  ],
+                  additionalProperties: false
+                },
+                contingentFinalists: {
+                  type: 'object',
+                  properties: {
+                    seedContract: {
+                      type: 'string',
+                      enum: [SEED_CONTRACT_VERSION]
+                    },
+                    familyA: { $ref: '#/$defs/family' },
+                    familyB: { $ref: '#/$defs/family' },
+                    w: contingentSchema.properties.w
+                  },
+                  required: ['seedContract', 'familyA', 'familyB', 'w'],
+                  additionalProperties: false
+                }
+              },
+              required: [
+                'id',
+                'priority',
+                'searchMode',
+                'commercialRole',
+                'acquisitionMode',
+                'buyer',
+                'counterparty',
+                'paidOffer',
+                'evidenceRefs',
+                'query',
+                'market',
+                'targetRoleTerms',
+                'organizationTerms',
+                'jobTitle',
+                'skills',
+                'acquisitionMechanism',
+                'conversionDestination',
+                'paidConversion',
+                'attributionSignal',
+                'rationale',
+                'targetSlot',
+                'contingentFinalists'
+              ],
+              additionalProperties: false
+            }
+          }
+        },
+        required: ['contractVersion', 'status', 'reason', 'plans'],
+        additionalProperties: false,
+        $defs: contingentDefs
+      }
+    }
+  };
+}
+
+function normalizeOpportunityDiscoveryPlan(
+  value,
+  evidenceCatalog,
+  referenceTime = new Date()
+) {
+  const raw = asObject(value);
+  const knownEvidence = new Set(
+    asArray(evidenceCatalog).map((item) => firstText(asObject(item).id))
+  );
+  knownEvidence.add(CONTINGENT_TARGET_EVIDENCE_REF);
+  const plans = asArray(raw.plans).slice(
+    0,
+    firstText(raw.contractVersion) ===
+      LEGACY_OPPORTUNITY_DISCOVERY_PLAN_CONTRACT
+      ? 3
+      : 2
+  ).map((planValue) => {
+    const plan = asObject(planValue);
+    return {
+      id: truncate(firstText(plan.id), 64),
+      priority: clampInteger(plan.priority, 1, 3, 3),
+      searchMode: firstText(plan.searchMode),
+      commercialRole: firstText(plan.commercialRole),
+      acquisitionMode: firstText(plan.acquisitionMode),
+      buyer: truncate(firstText(plan.buyer), 180),
+      counterparty: truncate(firstText(plan.counterparty), 180),
+      paidOffer: truncate(firstText(plan.paidOffer), 180),
+      evidenceRefs: compactStrings(plan.evidenceRefs)
+        .filter((ref) => knownEvidence.has(ref))
+        .slice(0, 4),
+      query: truncate(firstText(plan.query), 240),
+      market: truncate(firstText(plan.market), 120),
+      targetRoleTerms: compactStrings(plan.targetRoleTerms)
+        .map((item) => truncate(item, 80))
+        .slice(0, 6),
+      organizationTerms: compactStrings(plan.organizationTerms)
+        .map((item) => truncate(item, 80))
+        .slice(0, 6),
+      jobTitle: truncate(firstText(plan.jobTitle), 100),
+      skills: compactStrings(plan.skills)
+        .map((item) => truncate(item, 80))
+        .slice(0, 6),
+      acquisitionMechanism: truncate(
+        firstText(plan.acquisitionMechanism),
+        220
+      ),
+      conversionDestination: truncate(
+        firstText(plan.conversionDestination),
+        220
+      ),
+      paidConversion: truncate(firstText(plan.paidConversion), 180),
+      attributionSignal: truncate(firstText(plan.attributionSignal), 220),
+      rationale: truncate(firstText(plan.rationale), 260)
+      ,
+      targetSlot: normalizeContingentTargetSlot(plan.targetSlot),
+      contingentFinalists: normalizeContingentFinalistBundle(
+        plan.contingentFinalists,
+        knownEvidence,
+        referenceTime
+      )
+    };
+  }).sort((left, right) =>
+    left.priority - right.priority || compareStableText(left.id, right.id)
+  );
+  return {
+    contractVersion: firstText(raw.contractVersion),
+    status: firstText(raw.status),
+    reason: truncate(firstText(raw.reason), 320),
+    plans,
+    webSearchReceipt: Object.keys(asObject(raw.webSearchReceipt)).length > 0
+      ? normalizeOpportunityDiscoveryWebSearchReceipt(
+          raw.webSearchReceipt
+        )
+      : undefined
+  };
+}
+
+function normalizeContingentTargetSlot(value) {
+  const raw = asObject(value);
+  return {
+    targetNameToken: firstText(raw.targetNameToken),
+    targetUrlToken: firstText(raw.targetUrlToken),
+    evidenceRefToken: firstText(raw.evidenceRefToken),
+    finalTargetKind: contractEnum(firstText(raw.finalTargetKind)),
+    commercialRole: contractEnum(firstText(raw.commercialRole)),
+    resolutionStrategy: contractEnum(firstText(raw.resolutionStrategy)),
+    requiredEvidenceRoles: compactStrings(raw.requiredEvidenceRoles)
+      .map(contractEnum)
+      .slice(0, 7)
+  };
+}
+
+function normalizeContingentFinalistBundle(
+  value,
+  knownEvidence,
+  _referenceTime
+) {
+  const raw = asObject(value);
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(raw);
+  } catch {
+    return {};
+  }
+  if (!serialized || Buffer.byteLength(serialized, 'utf8') > 32 * 1_024) {
+    return {};
+  }
+  let clone;
+  try {
+    clone = JSON.parse(serialized);
+  } catch {
+    return {};
+  }
+  if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
+  return clone;
+}
+
+function contingentJSONShapeUnsafe(value, knownEvidence) {
+  let unsafe = false;
+  const visit = (item, key = '') => {
+    if (unsafe) return;
+    if (typeof item === 'string') {
+      if (item.length > 700 || /\{\{(?!TARGET_(?:NAME|URL)\}\})/i.test(item)) {
+        unsafe = true;
+      }
+      return;
+    }
+    if (Array.isArray(item)) {
+      if (item.length > 12) {
+        unsafe = true;
+        return;
+      }
+      if (['e', 'b', 'o', 'a', 'c', 't'].includes(key) &&
+          item.every((entry) => typeof entry === 'string') &&
+          item.some((entry) => !knownEvidence.has(entry))) {
+        unsafe = true;
+        return;
+      }
+      item.forEach((entry) => visit(entry));
+      return;
+    }
+    if (item && typeof item === 'object') {
+      for (const [childKey, child] of Object.entries(item)) {
+        visit(child, childKey);
+      }
+      return;
+    }
+    if (item !== null &&
+        typeof item !== 'number' &&
+        typeof item !== 'boolean') {
+      unsafe = true;
+    }
+  };
+  visit(value);
+  return unsafe;
+}
+
+function opportunityDiscoveryPlanIssue(value) {
+  const plan = asObject(value);
+  const legacy = plan.contractVersion ===
+    LEGACY_OPPORTUNITY_DISCOVERY_PLAN_CONTRACT;
+  if (!legacy &&
+      plan.contractVersion !== OPPORTUNITY_DISCOVERY_PLAN_CONTRACT) {
+    return 'Discovery planner returned the wrong contract version.';
+  }
+  if (!['planned', 'insufficient_verified_supply'].includes(plan.status)) {
+    return 'Discovery planner returned an unsupported status.';
+  }
+  if (!legacy) {
+    const webSearchIssue = opportunityDiscoveryWebSearchReceiptIssue(
+      plan.webSearchReceipt
+    );
+    if (webSearchIssue) return webSearchIssue;
+  }
+  if (plan.status === 'insufficient_verified_supply') {
+    return asArray(plan.plans).length === 0 && firstText(plan.reason)
+      ? ''
+      : 'Insufficient-supply planning must return no outside search plans and a reason.';
+  }
+  const plans = asArray(plan.plans);
+  if ((!legacy && plans.length !== 2) ||
+      (legacy && (plans.length < 2 || plans.length > 3))) {
+    return legacy
+      ? 'Legacy discovery planning requires two or three distinct commercial motions.'
+      : 'Discovery planning requires exactly two distinct commercial motions.';
+  }
+  const ids = new Set();
+  const priorities = new Set();
+  const signatures = new Set();
+  for (const itemValue of plans) {
+    const item = asObject(itemValue);
+    if (!/^[a-z][a-z0-9_-]{2,63}$/.test(firstText(item.id)) ||
+        ids.has(item.id)) {
+      return 'Discovery plans require unique stable ids.';
+    }
+    ids.add(item.id);
+    if (priorities.has(item.priority)) {
+      return 'Discovery plan priorities must be unique.';
+    }
+    priorities.add(item.priority);
+    if (!DISCOVERY_PLAN_SEARCH_MODES.has(item.searchMode) ||
+        !DISCOVERY_PLAN_COMMERCIAL_ROLES.has(item.commercialRole) ||
+        !ACQUISITION_MODES.has(item.acquisitionMode)) {
+      return 'Discovery plan uses an unsupported typed commercial route.';
+    }
+    const signature = `${item.searchMode}\x00${item.commercialRole}\x00${item.acquisitionMode}`;
+    if (signatures.has(signature)) {
+      return 'Discovery plans repeat the same economic search motion.';
+    }
+    signatures.add(signature);
+    for (const field of [
+      'buyer',
+      'counterparty',
+      'paidOffer',
+      'query',
+      'acquisitionMechanism',
+      'conversionDestination',
+      'paidConversion',
+      'attributionSignal',
+      'rationale'
+    ]) {
+      if (!firstText(item[field])) {
+        return `Discovery plan ${item.id} is missing ${field}.`;
+      }
+    }
+    if (item.commercialRole === 'referral_partner' &&
+        comparable(item.buyer) === comparable(item.counterparty)) {
+      return `Discovery plan ${item.id} must keep the end buyer distinct from the prospective referral counterparty.`;
+    }
+    if (asArray(item.evidenceRefs).length === 0) {
+      return `Discovery plan ${item.id} is not grounded in approved evidence.`;
+    }
+    if (item.searchMode === 'active_job_posting') {
+      if (item.commercialRole !== 'paid_demand' ||
+          (!firstText(item.jobTitle) && asArray(item.skills).length === 0)) {
+        return 'Active job searches require paid-demand role and a verified title or skill query.';
+      }
+    } else if (item.commercialRole === 'paid_demand' &&
+        item.searchMode !== 'public_live_demand') {
+      return 'Paid-demand role requires an active job or public live-demand search.';
+    }
+    if (item.searchMode === 'professional_counterparty' &&
+        asArray(item.targetRoleTerms).length === 0) {
+      return 'Professional counterparty search requires bounded professional role terms.';
+    }
+    const targetSearch = compactStrings([
+      item.query,
+      ...asArray(item.targetRoleTerms),
+      ...asArray(item.organizationTerms),
+      item.jobTitle,
+      ...asArray(item.skills)
+    ]).join(' ');
+    if (discoveryPlanTargetsSensitivePerson(targetSearch)) {
+      return 'Discovery plan targets a patient, sensitive consumer, or private-contact trait.';
+    }
+    if (!legacy) {
+      const targetSlotIssue = contingentTargetSlotIssue(item);
+      if (targetSlotIssue) {
+        return `Discovery plan ${item.id} ${targetSlotIssue}`;
+      }
+      const contingentIssue = contingentFinalistBundleIssue(item);
+      if (contingentIssue) {
+        return `Discovery plan ${item.id} ${contingentIssue}`;
+      }
+    }
+  }
+  return '';
+}
+
+function contingentTargetSlotIssue(planValue) {
+  const plan = asObject(planValue);
+  const slot = asObject(plan.targetSlot);
+  if (firstText(slot.targetNameToken) !== CONTINGENT_TARGET_NAME_TOKEN ||
+      firstText(slot.targetUrlToken) !== CONTINGENT_TARGET_URL_TOKEN ||
+      firstText(slot.evidenceRefToken) !==
+        CONTINGENT_TARGET_EVIDENCE_REF ||
+      firstText(slot.commercialRole) !== firstText(plan.commercialRole)) {
+    return 'has an invalid or unbound target slot.';
+  }
+  const kinds = new Set(['person', 'organization', 'live_paid_demand']);
+  const strategies = new Set([
+    'single_exact_target',
+    'organization_then_decision_maker'
+  ]);
+  if (!kinds.has(firstText(slot.finalTargetKind)) ||
+      !strategies.has(firstText(slot.resolutionStrategy))) {
+    return 'has an unsupported target resolution strategy.';
+  }
+  if (slot.resolutionStrategy === 'organization_then_decision_maker' &&
+      slot.finalTargetKind !== 'person') {
+    return 'must resolve a person after the intermediate organization.';
+  }
+  if (plan.searchMode === 'active_job_posting' ||
+      plan.searchMode === 'public_live_demand') {
+    if (slot.finalTargetKind !== 'live_paid_demand' ||
+        slot.resolutionStrategy !== 'single_exact_target') {
+      return 'must bind live paid demand as one exact public target.';
+    }
+  }
+  const expectedRoles = requiredCommercialDiscoveryRolesForSlot(plan);
+  const returnedRoles = compactStrings(slot.requiredEvidenceRoles)
+    .map(contractEnum)
+    .sort(compareStableText);
+  if (stableHash(returnedRoles) !==
+      stableHash([...expectedRoles].sort(compareStableText))) {
+    return 'declares evidence roles that do not match its typed commercial route.';
+  }
+  return '';
+}
+
+function requiredCommercialDiscoveryRolesForSlot(planValue) {
+  const plan = asObject(planValue);
+  if (firstText(plan.commercialRole) === 'referral_partner') {
+    return ['acquisition', 'channel_fit', 'prospective_partner'];
+  }
+  if (firstText(plan.commercialRole) === 'buyer') {
+    return ['defined_buyer'];
+  }
+  return [
+    'acquisition',
+    'channel_fit',
+    'conversion_destination',
+    'defined_buyer',
+    'demand_signal',
+    'paid_conversion',
+    'paid_offer'
+  ];
+}
+
+function contingentFinalistBundleIssue(planValue) {
+  const plan = asObject(planValue);
+  const bundle = asObject(plan.contingentFinalists);
+  if (firstText(bundle.seedContract) !== SEED_CONTRACT_VERSION) {
+    return 'has no supported contingent finalist contract.';
+  }
+  const families = [asObject(bundle.familyA), asObject(bundle.familyB)];
+  if (families.some((family) => Object.keys(family).length === 0)) {
+    return 'must contain exactly two complete contingent finalist families.';
+  }
+  const tacticKeys = new Set();
+  const actionSignatures = new Set();
+  for (const [familyIndex, family] of families.entries()) {
+    if (!firstText(family.l) ||
+        firstText(family.m) !== firstText(plan.acquisitionMode) ||
+        !/^[a-z][a-z0-9_]{2,63}$/.test(firstText(family.tacticKey)) ||
+        tacticKeys.has(firstText(family.tacticKey))) {
+      return 'has duplicate or invalid contingent tactic families.';
+    }
+    tacticKeys.add(firstText(family.tacticKey));
+    const familyRefs = compactStrings(family.e);
+    if (familyRefs.length === 0 ||
+        !familyRefs.includes(CONTINGENT_TARGET_EVIDENCE_REF) ||
+        !familyRefs.some((ref) => /^observation:/i.test(ref)) ||
+        familyRefs.some((ref) =>
+          ref !== CONTINGENT_TARGET_EVIDENCE_REF &&
+          !asArray(plan.evidenceRefs).includes(ref)
+        )) {
+      return 'has contingent families outside its approved supply evidence and target slot.';
+    }
+    const dimensions = asObject(family.d);
+    for (const [dimension, count] of [
+      ['r', 1],
+      ['o', INITIAL_FAMILY_VARIANT_COUNT],
+      ['b', INITIAL_FAMILY_VARIANT_COUNT],
+      ['c', INITIAL_FAMILY_VARIANT_COUNT],
+      ['a', INITIAL_FAMILY_VARIANT_COUNT],
+      ['t', INITIAL_FAMILY_VARIANT_COUNT],
+      ['p', INITIAL_FAMILY_VARIANT_COUNT],
+      ['f', INITIAL_FAMILY_VARIANT_COUNT]
+    ]) {
+      const values = asArray(dimensions[dimension]);
+      if (values.length !== count || values.some((itemValue) => {
+        const item = asObject(itemValue);
+        return !firstText(item.l) ||
+          asArray(item.e).length === 0 ||
+          asArray(item.e).some((ref) => !familyRefs.includes(ref)) ||
+          (dimension === 't' && !firstText(item.q));
+      })) {
+        return `has an incomplete ${dimension} finalist dimension.`;
+      }
+    }
+    for (const actionValue of asArray(dimensions.a)) {
+      const action = firstText(asObject(actionValue).l);
+      if (countExactToken(action, CONTINGENT_TARGET_NAME_TOKEN) !== 1 ||
+          passiveOrObservationalPrimaryAction(action) ||
+          operationOnlyAction(action) ||
+          !revenueAdvancingAction(action)) {
+        return 'must author every active primary action with exactly one target token.';
+      }
+      actionSignatures.add(comparable(action));
+    }
+    const revenue = asObject(asArray(dimensions.r)[0]);
+    const grounding = asObject(revenue.g);
+    const destination = asObject(grounding.d);
+    if (firstText(revenue.v) !== REVENUE_PATH_CONTRACT_VERSION ||
+        !REVENUE_MECHANISMS.has(firstText(revenue.rm)) ||
+        firstText(revenue.a) !== firstText(plan.acquisitionMode) ||
+        !ATTRIBUTION_METHODS.has(firstText(revenue.atm)) ||
+        !incrementalIncomeText(revenue.io) ||
+        !revenueAdvancingAction(revenue.c) ||
+        !observableRevenueText(revenue.o) ||
+        !attributionSignalText(revenue.ats, revenue.atm) ||
+        !conversionDestinationText(revenue.cd) ||
+        !boundedRevenueStopCondition(revenue.st) ||
+        !(nonNegativeInteger(revenue.vm) > 0) ||
+        !firstText(revenue.sb) ||
+        asArray(grounding.b).length === 0 ||
+        asArray(grounding.o).length === 0 ||
+        asArray(grounding.a).length === 0 ||
+        !firstText(destination.l) ||
+        asArray(destination.e).length === 0 ||
+        asArray(grounding.c).length === 0 ||
+        asArray(grounding.t).length === 0) {
+      return `has an incomplete causal revenue path in family ${familyIndex + 1}.`;
+    }
+  }
+  if (actionSignatures.size < 4) {
+    return 'must contain distinct causal primary-action variants across both families.';
+  }
+  const weights = asObject(bundle.w);
+  if (Object.keys(weights).length !== 11 ||
+      Object.values(weights).some((value) => !Number.isFinite(value))) {
+    return 'has incomplete semantic judge weights.';
+  }
+  return '';
+}
+
+function countExactToken(value, token) {
+  const text = firstText(value);
+  if (!text || !token) return 0;
+  return text.split(token).length - 1;
+}
+
+function discoveryPlanTargetsSensitivePerson(value) {
+  const text = comparable(value);
+  return /\b(?:patient|patients|pregnant person|pregnant woman|pregnant women|postpartum parent|postpartum mother|new mother|breastfeeding mother|health condition|medical condition|family status|private email|personal email|mobile phone|home address)\b/.test(
+    text
+  );
+}
+
+function normalizeOpportunityDiscoveryWebSearchReceipt(value) {
+  const raw = asObject(value);
+  const annotationsInput = asArray(raw.annotations);
+  const annotations = [];
+  const seenURLs = new Set();
+  for (const annotationValue of annotationsInput.slice(
+    0,
+    OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS
+  )) {
+    const annotation = asObject(annotationValue);
+    const citation = firstText(annotation.type) === 'url_citation'
+      ? asObject(annotation.url_citation)
+      : annotation;
+    const url = safePublicHTTPSURL(citation.url);
+    // Search snippets often include a practice or employer's public contact
+    // details beside an otherwise useful professional fact. Strip those
+    // tokens before truncation, hashing, or persistence so the safe remainder
+    // survives without ever retaining the raw contact value.
+    const title = truncate(
+      redactCommercialDiscoveryContactTokens(citation.title),
+      180
+    );
+    const content = truncate(
+      redactCommercialDiscoveryContactTokens(citation.content),
+      700
+    );
+    if (!url || !title || !content ||
+        seenURLs.has(comparableURL(url)) ||
+        commercialDiscoveryContainsPrivateContact(title) ||
+        commercialDiscoveryContainsPrivateContact(content)) {
+      continue;
+    }
+    seenURLs.add(comparableURL(url));
+    const contentHash = rawSHA256(content);
+    annotations.push({
+      id: `citation:${stableHash([
+        comparableURL(url),
+        title,
+        contentHash
+      ]).slice(0, 24)}`,
+      url,
+      title,
+      content,
+      contentHash
+    });
+  }
+  return {
+    contractVersion: OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTRACT,
+    provider: OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER,
+    operation: OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION,
+    engine: OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE,
+    requestHash: /^[a-f0-9]{64}$/i.test(firstText(raw.requestHash))
+      ? firstText(raw.requestHash).toLowerCase()
+      : '',
+    maxResults: OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS,
+    fixedFeeMicros:
+      OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
+    injectedContextTokenReserve:
+      OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
+    attempted: raw.attempted === true,
+    resultCount: annotations.length,
+    estimatedSpendMicros:
+      OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
+    actualSpendMicros: 0,
+    costIncludedInLLMReceipt: true,
+    includedSpendMicros: raw.attempted === true
+      ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS
+      : 0,
+    creditsUsed: raw.attempted === true ? 1 : 0,
+    observedAt: validISOString(raw.observedAt),
+    annotations
+  };
+}
+
+function opportunityDiscoveryWebSearchReceiptIssue(value) {
+  const receipt = asObject(value);
+  if (receipt.contractVersion !==
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTRACT ||
+      receipt.provider !== OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER ||
+      receipt.operation !== OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION ||
+      receipt.engine !== OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE ||
+      !/^[a-f0-9]{64}$/.test(firstText(receipt.requestHash)) ||
+      receipt.maxResults !== OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS ||
+      receipt.fixedFeeMicros !==
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS ||
+      receipt.injectedContextTokenReserve !==
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE ||
+      receipt.attempted !== true ||
+      receipt.estimatedSpendMicros !==
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS ||
+      receipt.actualSpendMicros !== 0 ||
+      receipt.costIncludedInLLMReceipt !== true ||
+      receipt.includedSpendMicros !==
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS ||
+      receipt.creditsUsed !== 1 ||
+      !validISOString(receipt.observedAt) ||
+      receipt.resultCount !== asArray(receipt.annotations).length ||
+      receipt.resultCount > OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS) {
+    return 'The forced Exa web-search receipt failed its exact accounting or request-binding contract.';
+  }
+  const ids = new Set();
+  const urls = new Set();
+  for (const annotationValue of asArray(receipt.annotations)) {
+    const annotation = asObject(annotationValue);
+    const url = safePublicHTTPSURL(annotation.url);
+    if (!/^citation:[a-f0-9]{24}$/.test(firstText(annotation.id)) ||
+        !url || !firstText(annotation.title) ||
+        !firstText(annotation.content) ||
+        commercialDiscoveryContainsPrivateContact(annotation.title) ||
+        commercialDiscoveryContainsPrivateContact(annotation.content) ||
+        !/^[a-f0-9]{64}$/.test(firstText(annotation.contentHash)) ||
+        rawSHA256(firstText(annotation.content)) !== annotation.contentHash ||
+        ids.has(annotation.id) || urls.has(comparableURL(url))) {
+      return 'The forced Exa web-search receipt retained an invalid or duplicate public citation.';
+    }
+    ids.add(annotation.id);
+    urls.add(comparableURL(url));
+  }
+  return '';
+}
+
+function safePublicHTTPSURL(value) {
+  const url = safePublicURL(value);
+  if (!url) return '';
+  try {
+    return new URL(url).protocol === 'https:' ? url : '';
+  } catch {
+    return '';
+  }
+}
+
+function rawSHA256(value) {
+  return createHash('sha256').update(String(value), 'utf8').digest('hex');
 }
 
 // Patterns run against comparable() text: lowercase ASCII words separated by
@@ -465,11 +1582,32 @@ async function runOpportunityTournamentCore({
     payload.commercialDiscoveryEvidence,
     now
   );
+  const includeSystemAttributionCapability =
+    firstText(
+      asObject(asObject(payload.commercialDiscoveryEvidence).plan)
+        .contractVersion
+    ) === OPPORTUNITY_DISCOVERY_PLAN_CONTRACT;
+  const discoveryPlanSupplyEvidenceCatalog =
+    commercialDiscovery.plan?.present === true
+      ? buildEvidenceCatalog(payload, context, now, {
+          commercialDiscovery: {
+            present: false,
+            valid: false,
+            evidence: [],
+            candidates: []
+          },
+          includeSystemAttributionCapability
+        })
+      : [];
+  const proposedCommercialMotions = normalizeProposedCommercialMotions(
+    commercialDiscovery.plan,
+    discoveryPlanSupplyEvidenceCatalog
+  );
   const evidenceCatalog = buildEvidenceCatalog(
     payload,
     context,
     now,
-    { commercialDiscovery }
+    { commercialDiscovery, includeSystemAttributionCapability }
   );
   let promptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
@@ -521,6 +1659,8 @@ async function runOpportunityTournamentCore({
         commercialDiscovery.evidence.length,
       commercialDiscoveryCandidateCount:
         commercialDiscovery.candidates.length,
+      proposedCommercialMotionCount:
+        proposedCommercialMotions.motions.length,
       promptEvidenceCount: promptEvidenceCatalog.length,
       promptEvidenceOmittedCount: Math.max(
         0,
@@ -538,6 +1678,11 @@ async function runOpportunityTournamentCore({
       memory: 'Return attributable hypotheses and evidence references to ProfileScribe.',
       commercialDiscovery:
         commercialDiscoveryPublicTrace(commercialDiscovery),
+      proposedCommercialMotions:
+        projectProposedCommercialMotionsForPrompt(
+          proposedCommercialMotions,
+          evidenceCatalog
+        ),
       sideEffects: zeroSideEffects()
     }
   };
@@ -607,6 +1752,101 @@ async function runOpportunityTournamentCore({
     };
   }
 
+  const contingentFinalists =
+    materializeContingentFinalistsFromDiscovery({
+      commercialDiscovery,
+      evidenceCatalog,
+      referenceTime: timestamp
+    });
+  const hasV2ContingentPlan =
+    commercialDiscovery.plan?.present === true &&
+    firstText(commercialDiscovery.plan.contractVersion) ===
+      OPPORTUNITY_DISCOVERY_PLAN_CONTRACT;
+  const useContingentFinalists = contingentFinalists.valid === true;
+  base.trace.contingentFinalists = contingentFinalists.trace;
+  base.searchSpace.contingentFinalistSource = useContingentFinalists
+    ? 'discovery_planner_call_1'
+    : 'not_materialized';
+  const currentAlgorithm =
+    algorithmVersion === OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION;
+  const explicitLegacyAlgorithm =
+    LEGACY_OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSIONS.has(
+      algorithmVersion
+    );
+  if (!currentAlgorithm && !explicitLegacyAlgorithm) {
+    return {
+      status: 'skipped',
+      summary:
+        'The opportunity tournament algorithm version is unsupported; no provider call was made.',
+      ...base,
+      nextExperiment: null,
+      searchSpace: {
+        ...base.searchSpace,
+        modelCalls: 0,
+        contingentFinalists: contingentFinalists.trace
+      },
+      gate: researchOnlyGate(
+        'technical_recovery',
+        'Only the current v6 outside-target workflow or the explicit v5 replay path is recognized.'
+      )
+    };
+  }
+  if (currentAlgorithm && !hasV2ContingentPlan) {
+    return {
+      status: 'skipped',
+      summary:
+        'The v6 tournament requires a valid, source-bindable outside-target discovery plan before recommendation.',
+      ...base,
+      nextExperiment: null,
+      searchSpace: {
+        ...base.searchSpace,
+        modelCalls: 0,
+        contingentFinalists: contingentFinalists.trace
+      },
+      gate: researchOnlyGate(
+        'technical_recovery',
+        'The current algorithm cannot fall back to the legacy generator or an owned-asset-only winner when opportunity_discovery_plan_v2 is absent.'
+      )
+    };
+  }
+  if (hasV2ContingentPlan && !useContingentFinalists) {
+    const technicalFailure = [
+      'provider_unavailable',
+      'provider_failed',
+      'invalid_discovery_envelope',
+      'invalid_contingent_contract',
+      'target_source_binding_failed',
+      'exact_target_not_found'
+    ].includes(firstText(contingentFinalists.cause));
+    return {
+      status: 'skipped',
+      summary: technicalFailure
+        ? 'The bounded outside-discovery or contingent-finalist contract could not be completed safely.'
+        : 'The completed bounded outside search found no exact public target for the selected commercial motion.',
+      ...base,
+      nextExperiment: null,
+      searchSpace: {
+        ...base.searchSpace,
+        modelCalls: 0,
+        contingentFinalists: contingentFinalists.trace
+      },
+      gate: researchOnlyGate(
+        technicalFailure
+          ? 'technical_recovery'
+          : 'technical_recovery',
+        technicalFailure
+          ? firstText(
+              contingentFinalists.reason,
+              'Outside discovery failed its exact provider or contract boundary.'
+            )
+          : firstText(
+              contingentFinalists.reason,
+              'The target result could not be classified safely.'
+            )
+      )
+    };
+  }
+
   const initialEnvelope = boundedStrategyGenerationRequest({
     objective,
     constraints,
@@ -614,6 +1854,7 @@ async function runOpportunityTournamentCore({
     evidenceCatalog,
     initialPromptEvidenceCatalog: promptEvidenceCatalog,
     commercialEvidenceGraph,
+    proposedCommercialMotions,
     priorOutcomes,
     model,
     budget,
@@ -630,6 +1871,8 @@ async function runOpportunityTournamentCore({
   promptEvidenceHash = stableHash(promptEvidenceCatalog);
   promptCommercialEvidenceGraph =
     initialEnvelope.promptCommercialEvidenceGraph;
+  const promptProposedCommercialMotions =
+    initialEnvelope.promptProposedCommercialMotions;
   base.searchSpace.promptEvidenceCount = promptEvidenceCatalog.length;
   base.searchSpace.promptEvidenceOmittedCount = Math.max(
     0,
@@ -646,7 +1889,7 @@ async function runOpportunityTournamentCore({
     initialProviderSpendPreflight.callSpendCeilingMicros;
   const initialProviderEnvelopeIssue =
     providerPromptEnvelopeIssue(initialProviderSpendPreflight);
-  if (initialProviderEnvelopeIssue) {
+  if (!useContingentFinalists && initialProviderEnvelopeIssue) {
     const serializationFailure =
       initialProviderEnvelopeIssue ===
         'provider_request_serialization';
@@ -679,7 +1922,7 @@ async function runOpportunityTournamentCore({
       )
     };
   }
-  if (budget.hardStop &&
+  if (!useContingentFinalists && budget.hardStop &&
       initialCallSpendCeilingMicros > budget.maxLLMSpendMicros) {
     return {
       status: 'skipped',
@@ -708,7 +1951,15 @@ async function runOpportunityTournamentCore({
   let completion;
   let initialTruncationError = null;
   try {
-    completion = await completeJSON(initialCompletionRequest);
+    completion = useContingentFinalists
+      ? {
+          data: contingentFinalists.data,
+          diagnostics: {
+            finishReason: 'planner_materialized',
+            nativeFinishReason: 'planner_materialized'
+          }
+        }
+      : await completeJSON(initialCompletionRequest);
   } catch (error) {
     if (openRouterFailureCode(error) ===
         'openrouter_truncated_structured_output' &&
@@ -773,14 +2024,39 @@ async function runOpportunityTournamentCore({
           ? 'openrouter_truncated_structured_output'
           : undefined
       });
-  const providerMetadataEntries = [providerMetadata];
-  const llmTrace = {
-    strategyGeneratorJudge: providerMetadata
-  };
-  const initialPromptTokenCanary = providerPromptTokenCanary(
-    initialProviderSpendPreflight,
-    providerMetadata.openRouterUsage
-  );
+  const providerMetadataEntries = useContingentFinalists
+    ? []
+    : [providerMetadata];
+  const llmTrace = useContingentFinalists
+    ? {
+        contingentFinalistGenerator: {
+          provider: 'openrouter',
+          purpose: 'opportunity_tournament_contingent_generation',
+          structuredOutputContract:
+            OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'completed_upstream',
+          source: 'discovery_planner_call_1',
+          motionId: firstText(contingentFinalists.motionId),
+          targetCandidateId: firstText(contingentFinalists.candidateId),
+          motionIds: compactStrings(contingentFinalists.motionIds),
+          targetCandidateIds: compactStrings(
+            contingentFinalists.candidateIds
+          ),
+          usageIncludedByControlPlane: true
+        }
+      }
+    : {
+        strategyGeneratorJudge: providerMetadata
+      };
+  const initialPromptTokenCanary = useContingentFinalists
+    ? {
+        withinCeiling: true,
+        source: 'upstream_planner_receipt'
+      }
+    : providerPromptTokenCanary(
+        initialProviderSpendPreflight,
+        providerMetadata.openRouterUsage
+      );
   let usage = aggregateUsage(providerMetadataEntries, budget);
   if (budget.hardStop && usage.reportedCostMicros > budget.maxLLMSpendMicros) {
     return {
@@ -801,9 +2077,18 @@ async function runOpportunityTournamentCore({
 
   let seedSet = normalizeSeedSet(
     completion?.data,
-    providerValidationEvidenceCatalog,
+    useContingentFinalists
+      ? evidenceCatalog.filter((item) =>
+          !/^source:/i.test(firstText(item.id))
+        )
+      : providerValidationEvidenceCatalog,
     timestamp
   );
+  const activeValidationEvidenceCatalog = useContingentFinalists
+    ? evidenceCatalog.filter((item) =>
+        !/^source:/i.test(firstText(item.id))
+      )
+    : providerValidationEvidenceCatalog;
   generatedEvidenceExperiment = rehydrateGeneratedExperimentAsset(
     normalizeGeneratedEvidenceExperiment(
       completion?.data?.evidenceExperiment,
@@ -821,7 +2106,7 @@ async function runOpportunityTournamentCore({
     : structuredSeedSetShapeIssue(seedSet);
   let terminalStructuredIssue = initialShapeIssue;
   const structuredRepair = {
-    authorized: budget.maxLLMCalls >= 2,
+    authorized: !useContingentFinalists && budget.maxLLMCalls >= 2,
     attempted: false,
     succeeded: false,
     initialIssue: initialShapeIssue?.code || '',
@@ -830,7 +2115,9 @@ async function runOpportunityTournamentCore({
       nonNegativeInteger(seedSet.familyWrapperCount) || 0,
     initialValidStrategyFamilyCount:
       nonNegativeInteger(seedSet.validStrategyFamilyCount) || 0,
-    initialCallSpendCeilingMicros,
+    initialCallSpendCeilingMicros: useContingentFinalists
+      ? 0
+      : initialCallSpendCeilingMicros,
     initialFixedRequestFeeCeilingMicros:
       initialProviderSpendPreflight.fixedRequestFeeCeilingMicros,
     initialPromptTokenCanary
@@ -1171,6 +2458,29 @@ async function runOpportunityTournamentCore({
       };
     }
   }
+  if (useContingentFinalists && terminalStructuredIssue) {
+    structuredRepair.failure = 'upstream_contingent_contract_incomplete';
+    structuredRepair.finalIssue = terminalStructuredIssue.code;
+    return {
+      status: 'skipped',
+      summary:
+        'The first AI stage did not preserve two complete source-bindable commercial finalists.',
+      ...base,
+      nextExperiment: null,
+      llm: llmTrace,
+      usage,
+      searchSpace: {
+        ...base.searchSpace,
+        ...seedSetShapeSearchTrace(seedSet),
+        modelCalls: usage.calls,
+        structuredRepair
+      },
+      gate: researchOnlyGate(
+        'technical_recovery',
+        'The v2 contingent finalist contract was incomplete after exact target binding; missing market evidence was not inferred and no repair or generator call was substituted.'
+      )
+    };
+  }
   if (terminalStructuredIssue?.code === 'output_length_truncated') {
     structuredRepair.failure = structuredRepair.failure ||
       (structuredRepair.attempted
@@ -1322,6 +2632,7 @@ async function runOpportunityTournamentCore({
 
   const requiresCommercialCritic =
     searchContracts.revenuePathContract === REVENUE_PATH_CONTRACT_VERSION;
+  const requiredDownstreamLLMCalls = useContingentFinalists ? 1 : 2;
   let commercialCritic = {
     contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
     contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
@@ -1335,7 +2646,7 @@ async function runOpportunityTournamentCore({
     reason: requiresCommercialCritic
       ? 'A bounded comparative critic has not run.'
       : 'Legacy revenue-path contracts do not use the v5 comparative critic.',
-    cause: budget.maxLLMCalls < 2
+    cause: budget.maxLLMCalls < requiredDownstreamLLMCalls
       ? 'critic_call_not_budgeted'
       : structuredRepair.attempted
         ? 'structured_repair_consumed_second_call'
@@ -1344,7 +2655,7 @@ async function runOpportunityTournamentCore({
   const expanded = expandAndJudge({
     objective,
     constraints,
-    evidenceCatalog: providerValidationEvidenceCatalog,
+    evidenceCatalog: activeValidationEvidenceCatalog,
     priorOutcomes,
     seedSet,
     weights: normalizeJudgeWeights(
@@ -1396,19 +2707,27 @@ async function runOpportunityTournamentCore({
   if (initialHypotheses.length < 2) {
     return {
       status: 'skipped',
-      summary: 'The tournament retained fewer than two grounded strategies.',
+      summary: useContingentFinalists
+        ? 'The first AI stage did not yield two complete deterministic finalists after exact target binding.'
+        : 'The tournament retained fewer than two grounded strategies.',
       ...base,
       hypotheses: initialHypotheses.map(publicHypothesis),
-      nextExperiment: nextExperimentFor([
-        ...Object.keys(expanded.revenueRejectionReasons),
-        'second_grounded_finalist'
-      ]),
+      nextExperiment: useContingentFinalists
+        ? null
+        : nextExperimentFor([
+            ...Object.keys(expanded.revenueRejectionReasons),
+            'second_grounded_finalist'
+          ]),
       searchSpace: searchSpaceFor(initialHypotheses),
       llm: llmTrace,
       usage,
       gate: researchOnlyGate(
-        'needs_more_approved_evidence',
-        'A completed tournament requires a distinct winner and runner-up grounded in approved evidence.'
+        useContingentFinalists
+          ? 'technical_recovery'
+          : 'needs_more_approved_evidence',
+        useContingentFinalists
+          ? 'Call 1 returned fewer than two complete finalists after deterministic causal validation; no market-evidence gap or repair call was substituted.'
+          : 'A completed tournament requires a distinct winner and runner-up grounded in approved evidence.'
       )
     };
   }
@@ -1421,13 +2740,20 @@ async function runOpportunityTournamentCore({
     );
     const deterministicExcludedCount =
       initialHypotheses.length - deterministicFinalists.length;
-    if (deterministicFinalists.length < 2) {
+    const deterministicFinalistFamilyCount = new Set(
+      deterministicFinalists.map((hypothesis) =>
+        firstText(hypothesis._strategyFamily)
+      ).filter(Boolean)
+    ).size;
+    if (deterministicFinalists.length < 2 ||
+        deterministicFinalistFamilyCount < 2) {
       commercialCritic = {
         ...commercialCritic,
         cause: 'insufficient_deterministic_finalists',
         reason:
-          'Fewer than two finalist motions passed the deterministic active, causal, incremental-revenue gate; no invalid or passive family was sent to the critic.',
-        deterministicExcludedCount
+          'Fewer than two family-diverse finalist motions passed the deterministic active, causal, incremental-revenue gate; no invalid, passive, or same-family-only set was sent to the critic.',
+        deterministicExcludedCount,
+        deterministicFinalistFamilyCount
       };
       initialHypotheses = deterministicFinalists;
       return {
@@ -1436,21 +2762,27 @@ async function runOpportunityTournamentCore({
           'The tournament retained fewer than two active causal revenue finalists before critic review.',
         ...base,
         hypotheses: initialHypotheses.map(publicHypothesis),
-        nextExperiment: nextExperimentFor([
-          'active_causal_revenue_finalist',
-          'second_grounded_finalist'
-        ]),
+        nextExperiment: useContingentFinalists
+          ? null
+          : nextExperimentFor([
+              'active_causal_revenue_finalist',
+              'second_grounded_finalist'
+            ]),
         searchSpace: searchSpaceFor(initialHypotheses),
         llm: llmTrace,
         usage,
         gate: researchOnlyGate(
-          'needs_more_approved_evidence',
-          'Passive, operational, or non-causal motions were rejected before the independent critic.'
+          useContingentFinalists
+            ? 'technical_recovery'
+            : 'needs_more_approved_evidence',
+          useContingentFinalists
+            ? 'Call 1 returned fewer than two complete active causal finalists; this is an AI-contract failure, not evidence that the market is missing.'
+            : 'Passive, operational, or non-causal motions were rejected before the independent critic.'
         )
       };
     }
     if (terminalStructuredIssue ||
-        budget.maxLLMCalls < 2 ||
+        budget.maxLLMCalls < requiredDownstreamLLMCalls ||
         usage.calls >= budget.maxLLMCalls) {
       commercialCritic = {
         ...commercialCritic,
@@ -1499,11 +2831,14 @@ async function runOpportunityTournamentCore({
       objective,
       commercialContext,
       commercialEvidenceGraph: promptCommercialEvidenceGraph,
+      proposedCommercialMotions: promptProposedCommercialMotions,
       finalists: criticFinalists,
       model,
       budget,
       usage,
-      completedRequests: [initialCompletionRequest],
+      completedRequests: useContingentFinalists
+        ? []
+        : [initialCompletionRequest],
       completeJSON
     });
     commercialCritic = {
@@ -1607,7 +2942,7 @@ async function runOpportunityTournamentCore({
     ),
     ...normalizeModelExtractedCandidates(
       completion?.data?.candidates,
-      providerValidationEvidenceCatalog
+      activeValidationEvidenceCatalog
     )
   ];
   const ownedInboundAssetValues = synthesizeOwnedInboundAssetCandidates(
@@ -1647,7 +2982,7 @@ async function runOpportunityTournamentCore({
         ...externallyGroundedCandidateValues,
         ...normalizeSeedMentionedOrganizationCandidates(
           seedSet,
-          providerValidationEvidenceCatalog
+          activeValidationEvidenceCatalog
         ),
         ...ownedInboundAssetValues
       ];
@@ -1726,15 +3061,21 @@ async function runOpportunityTournamentCore({
       ...base,
       hypotheses: initialHypotheses.map(publicHypothesis),
       candidates: provisionalCandidates,
-      nextExperiment: nextExperimentFor([
-        'family_diverse_revenue_path'
-      ]),
+      nextExperiment: useContingentFinalists
+        ? null
+        : nextExperimentFor([
+            'family_diverse_revenue_path'
+          ]),
       searchSpace: searchSpaceFor(initialHypotheses),
       llm: llmTrace,
       usage,
       gate: researchOnlyGate(
-        'needs_more_approved_evidence',
-        'A completed tournament requires a candidate-grounded winner and a lower-ranked runner-up from a different complete strategy family.'
+        useContingentFinalists
+          ? 'technical_recovery'
+          : 'needs_more_approved_evidence',
+        useContingentFinalists
+          ? 'Call 1 did not preserve two family-diverse complete commercial finalists after deterministic binding; no market-evidence gap was inferred.'
+          : 'A completed tournament requires a candidate-grounded winner and a lower-ranked runner-up from a different complete strategy family.'
       )
     };
   }
@@ -1761,15 +3102,21 @@ async function runOpportunityTournamentCore({
       summary: 'The best candidate-grounded strategy had no distinct runner-up.',
       ...base,
       hypotheses: publicHypotheses,
-      nextExperiment: nextExperimentFor([
-        'distinct_runner_up'
-      ]),
+      nextExperiment: useContingentFinalists
+        ? null
+        : nextExperimentFor([
+            'distinct_runner_up'
+          ]),
       searchSpace,
       llm: llmTrace,
       usage,
       gate: researchOnlyGate(
-        'needs_more_approved_evidence',
-        'A completed tournament requires a candidate-grounded winner and a distinct lower-ranked runner-up.'
+        useContingentFinalists
+          ? 'technical_recovery'
+          : 'needs_more_approved_evidence',
+        useContingentFinalists
+          ? 'Call 1 did not preserve two distinct candidate-grounded finalists; this is a contract recovery, not missing market evidence.'
+          : 'A completed tournament requires a candidate-grounded winner and a distinct lower-ranked runner-up.'
       )
     };
   }
@@ -1861,6 +3208,528 @@ function publicHypothesis(hypothesis) {
   return value;
 }
 
+function normalizePersistedOpportunityDiscoveryPlan(value) {
+  const raw = asObject(value);
+  const present = Object.keys(raw).length > 0;
+  const base = {
+    present,
+    valid: false,
+    contractVersion: firstText(raw.contractVersion),
+    status: firstText(raw.status),
+    reason: truncate(firstText(raw.reason), 320),
+    evidenceHash: /^[a-f0-9]{64}$/i.test(firstText(raw.evidenceHash))
+      ? firstText(raw.evidenceHash).toLowerCase()
+      : '',
+    plans: [],
+    sideEffectsPerformed:
+      nonNegativeInteger(raw.sideEffectsPerformed) || 0,
+    rejectedReason: ''
+  };
+  if (!present) return base;
+  const rawPlans = asArray(raw.plans);
+  const declaredEvidenceRefs = compactStrings(rawPlans.flatMap(
+    (planValue) => asArray(asObject(planValue).evidenceRefs)
+  ));
+  const normalized = normalizeOpportunityDiscoveryPlan(
+    raw,
+    declaredEvidenceRefs.map((id) => ({ id }))
+  );
+  const normalizedPlanRefsAreExact = normalized.plans.every(
+    (plan, index) => {
+      const requested = compactStrings(
+        asObject(rawPlans[index]).evidenceRefs
+      );
+      return requested.length === plan.evidenceRefs.length &&
+        requested.every((ref) => plan.evidenceRefs.includes(ref));
+    }
+  );
+  const issue = opportunityDiscoveryPlanIssue(normalized) ||
+    (!base.evidenceHash
+      ? 'Discovery plan evidenceHash must be SHA-256.'
+      : '') ||
+    (raw.sideEffectsPerformed !== 0
+      ? 'Discovery plan cannot perform side effects.'
+      : '') ||
+    (rawPlans.length > 3 || rawPlans.length !== normalized.plans.length ||
+      !normalizedPlanRefsAreExact
+      ? 'Discovery plan shape changed during normalization.'
+      : '');
+  return {
+    ...base,
+    ...normalized,
+    present: true,
+    valid: !issue,
+    evidenceHash: base.evidenceHash,
+    sideEffectsPerformed: base.sideEffectsPerformed,
+    rejectedReason: truncate(issue, 320)
+  };
+}
+
+function materializeContingentFinalistsFromDiscovery({
+  commercialDiscovery,
+  evidenceCatalog,
+  referenceTime
+}) {
+  const discovery = asObject(commercialDiscovery);
+  const plan = asObject(discovery.plan);
+  const baseTrace = {
+    contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+    source: 'discovery_planner_call_1',
+    materialized: false,
+    motionId: firstText(discovery.motion),
+    targetNameToken: CONTINGENT_TARGET_NAME_TOKEN,
+    targetUrlToken: CONTINGENT_TARGET_URL_TOKEN,
+    targetEvidenceRefToken: CONTINGENT_TARGET_EVIDENCE_REF,
+    deterministicBindingOnly: true,
+    publishableProseComposedByApplication: false
+  };
+  const fail = (cause, reason, extra = {}) => ({
+    valid: false,
+    cause,
+    reason,
+    trace: {
+      ...baseTrace,
+      ...extra,
+      cause,
+      reason: truncate(reason, 320)
+    }
+  });
+  if (plan.present !== true ||
+      firstText(plan.contractVersion) !==
+        OPPORTUNITY_DISCOVERY_PLAN_CONTRACT) {
+    return fail('no_v2_contingent_plan',
+      'No v2 contingent commercial plan was available.');
+  }
+  if (plan.valid !== true) {
+    return fail('invalid_contingent_contract',
+      firstText(plan.rejectedReason,
+        'The persisted contingent commercial plan was invalid.'));
+  }
+  if (firstText(discovery.status) === 'provider_unavailable') {
+    return fail('provider_unavailable',
+      'The bounded outside-discovery provider was unavailable.');
+  }
+  if (['failed', 'unknown'].includes(firstText(discovery.status))) {
+    return fail('provider_failed',
+      'The bounded outside-discovery provider did not return a claim-fenced result.');
+  }
+  if (discovery.valid !== true) {
+    return fail('invalid_discovery_envelope',
+      'The outside-discovery envelope failed local validation.');
+  }
+  if (firstText(discovery.status) !== 'found') {
+    return fail('exact_target_not_found',
+      'No exact public target was found for the bounded commercial motions.');
+  }
+  const plannedMotions = asArray(plan.plans).map(asObject);
+  if (!plannedMotions.some((item) =>
+    firstText(item.id) === firstText(discovery.motion)
+  )) {
+    return fail('invalid_contingent_contract',
+      'The found provider result did not bind to one exact planned motion.');
+  }
+  const factByRef = new Map(asArray(discovery.evidence).map((factValue) => {
+    const fact = asObject(factValue);
+    return [firstText(fact.evidenceRef), fact];
+  }));
+  const bindings = plannedMotions
+    .map((motion) => bindContingentMotionTarget({
+      motion,
+      candidates: discovery.candidates,
+      factByRef
+    }))
+    .filter((binding) => binding.valid === true);
+  if (bindings.length === 0) {
+    return fail('target_source_binding_failed',
+      'No exact candidate satisfied a planned target kind and its required provider evidence roles.', {
+        attemptedMotionIds: plannedMotions.map((motion) =>
+          firstText(motion.id)
+        )
+      });
+  }
+  // Compare distinct economic motions when both have a valid exact target.
+  // If only one motion binds, retain its two AI-authored tactic families so a
+  // complete critic comparison remains possible without composing new prose.
+  const selectedBindings = bindings.slice(0, 2);
+  const materialized = selectedBindings.length >= 2
+    ? {
+        seedContract: SEED_CONTRACT_VERSION,
+        familyA: asObject(selectedBindings[0].materialized).familyA,
+        familyB: asObject(selectedBindings[1].materialized).familyA,
+        w: asObject(selectedBindings[0].materialized).w
+      }
+    : selectedBindings[0].materialized;
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(materialized);
+  } catch {
+    return fail('invalid_contingent_contract',
+      'The contingent finalists could not be serialized after target binding.');
+  }
+  if (!serialized ||
+      serialized.includes(CONTINGENT_TARGET_NAME_TOKEN) ||
+      serialized.includes(CONTINGENT_TARGET_URL_TOKEN) ||
+      serialized.includes(CONTINGENT_TARGET_EVIDENCE_REF)) {
+    return fail('invalid_contingent_contract',
+      'One or more typed target placeholders remained unresolved.');
+  }
+  const actionLabels = [
+    ...asArray(asObject(asObject(materialized.familyA).d).a),
+    ...asArray(asObject(asObject(materialized.familyB).d).a)
+  ].map((item) => firstText(asObject(item).l));
+  const boundTargetNames = selectedBindings.map((binding) =>
+    firstText(binding.targetName)
+  );
+  if (actionLabels.length !== 4 ||
+      (selectedBindings.length >= 2
+        ? actionLabels.slice(0, 2).some((action) =>
+            !exactTextContains(action, boundTargetNames[0])
+          ) || actionLabels.slice(2).some((action) =>
+            !exactTextContains(action, boundTargetNames[1])
+          )
+        : actionLabels.some((action) =>
+            !exactTextContains(action, boundTargetNames[0])
+          ))) {
+    return fail('invalid_contingent_contract',
+      'Every AI-authored primary action must contain the exact bound target after substitution.');
+  }
+  const normalizedSeedSet = normalizeSeedSet(
+    materialized,
+    asArray(evidenceCatalog).filter((item) =>
+      !/^source:/i.test(firstText(asObject(item).id))
+    ),
+    referenceTime
+  );
+  const shapeIssue = structuredSeedSetShapeIssue(normalizedSeedSet);
+  if (shapeIssue) {
+    return fail('invalid_contingent_contract',
+      `The bound contingent finalist bundle failed ${shapeIssue.code}.`, {
+        shapeIssue: shapeIssue.code
+      });
+  }
+  return {
+    valid: true,
+    cause: '',
+    reason: '',
+    data: materialized,
+    motionId: firstText(selectedBindings[0].motion.id),
+    candidateId: firstText(selectedBindings[0].candidate.id),
+    motionIds: selectedBindings.map((binding) =>
+      firstText(binding.motion.id)
+    ),
+    candidateIds: selectedBindings.map((binding) =>
+      firstText(binding.candidate.id)
+    ),
+    trace: {
+      ...baseTrace,
+      materialized: true,
+      motionId: firstText(selectedBindings[0].motion.id),
+      candidateId: firstText(selectedBindings[0].candidate.id),
+      motionIds: selectedBindings.map((binding) =>
+        firstText(binding.motion.id)
+      ),
+      candidateIds: selectedBindings.map((binding) =>
+        firstText(binding.candidate.id)
+      ),
+      targetKind: firstText(
+        asObject(selectedBindings[0].motion.targetSlot).finalTargetKind
+      ),
+      commercialRole: firstText(
+        selectedBindings[0].motion.commercialRole
+      ),
+      resolutionStrategy: firstText(
+        asObject(selectedBindings[0].motion.targetSlot).resolutionStrategy
+      ),
+      targetKinds: selectedBindings.map((binding) =>
+        firstText(asObject(binding.motion.targetSlot).finalTargetKind)
+      ),
+      commercialRoles: selectedBindings.map((binding) =>
+        firstText(binding.motion.commercialRole)
+      ),
+      resolutionStrategies: selectedBindings.map((binding) =>
+        firstText(asObject(binding.motion.targetSlot).resolutionStrategy)
+      ),
+      boundEvidenceRefs: compactStrings(selectedBindings.flatMap(
+        (binding) => binding.evidenceRefs
+      )),
+      distinctMotionComparison: selectedBindings.length >= 2,
+      familyCount: 2,
+      primaryActionCount: actionLabels.length,
+      exactTargetPresentInEveryPrimaryAction: true
+    }
+  };
+}
+
+function bindContingentMotionTarget({
+  motion: motionValue,
+  candidates: candidateValues,
+  factByRef
+}) {
+  const motion = asObject(motionValue);
+  const slot = asObject(motion.targetSlot);
+  const expectedRoles = requiredCommercialDiscoveryRolesForSlot(motion);
+  const candidate = asArray(candidateValues).map(asObject).find(
+    (candidateValue) => {
+      if (firstText(candidateValue.commercialRole) !==
+          firstText(motion.commercialRole) ||
+          firstText(candidateValue.motionId) !== firstText(motion.id) ||
+          candidateValue.exactNamedCandidate !== true ||
+          candidateValue.identityResolved !== true) {
+        return false;
+      }
+      const facts = compactStrings(candidateValue.evidenceRefs)
+        .map((ref) => factByRef.get(ref))
+        .filter(Boolean);
+      if (facts.length === 0 || facts.some((fact) =>
+        firstText(asObject(fact).motionId) !== firstText(motion.id)
+      )) return false;
+      const roles = new Set(facts.flatMap((fact) =>
+        compactStrings(asObject(fact).roles).map(contractEnum)
+      ));
+      if (expectedRoles.some((role) => !roles.has(role))) return false;
+      const kind = contractEnum(firstText(candidateValue.kind));
+      if (slot.finalTargetKind === 'live_paid_demand') {
+        return /(?:job_posting|live_demand|paid_opportunity|public_rfp|contract_opportunity|marketplace_request|sponsorship_request)/.test(
+          kind
+        ) && facts.some((fact) =>
+          firstText(asObject(fact).kind) ===
+            'verified_external_live_demand'
+        );
+      }
+      if (slot.finalTargetKind === 'person' &&
+          !/\b(?:person|professional|decision_maker|individual)\b/.test(
+            kind.replaceAll('_', ' ')
+          )) {
+        return false;
+      }
+      if (slot.resolutionStrategy ===
+          'organization_then_decision_maker') {
+        const organization = firstText(candidateValue.organization);
+        return Boolean(organization) &&
+          organization !== firstText(candidateValue.displayLabel) &&
+          facts.some((fact) => exactTextContains(
+            `${firstText(asObject(fact).label)} ${
+              firstText(asObject(fact).summary)
+            }`,
+            organization
+          ));
+      }
+      if (slot.finalTargetKind === 'organization') {
+        const organization = firstText(
+          candidateValue.organization,
+          candidateValue.displayLabel
+        );
+        return Boolean(organization) && facts.some((fact) => exactTextContains(
+          `${firstText(asObject(fact).label)} ${
+            firstText(asObject(fact).summary)
+          }`,
+          organization
+        ));
+      }
+      return true;
+    }
+  );
+  if (!candidate) return { valid: false };
+  const evidenceRefs = compactStrings(candidate.evidenceRefs)
+    .filter((ref) => factByRef.has(ref));
+  const targetName = slot.finalTargetKind === 'organization'
+    ? firstText(candidate.organization, candidate.displayLabel)
+    : firstText(candidate.displayLabel);
+  const targetURL = safePublicHTTPSURL(candidate.publicUrl);
+  if (!targetName || !targetURL || evidenceRefs.length === 0 ||
+      commercialDiscoveryContainsPrivateContact(targetName)) {
+    return { valid: false };
+  }
+  const materialized = bindContingentTargetTokens(
+    motion.contingentFinalists,
+    { targetName, targetURL, evidenceRefs }
+  );
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(materialized);
+  } catch {
+    return { valid: false };
+  }
+  if (!serialized ||
+      serialized.includes(CONTINGENT_TARGET_NAME_TOKEN) ||
+      serialized.includes(CONTINGENT_TARGET_URL_TOKEN) ||
+      serialized.includes(CONTINGENT_TARGET_EVIDENCE_REF)) {
+    return { valid: false };
+  }
+  const actionLabels = [
+    ...asArray(asObject(asObject(materialized.familyA).d).a),
+    ...asArray(asObject(asObject(materialized.familyB).d).a)
+  ].map((item) => firstText(asObject(item).l));
+  if (actionLabels.length !== 4 || actionLabels.some((action) =>
+    !exactTextContains(action, targetName)
+  )) {
+    return { valid: false };
+  }
+  return {
+    valid: true,
+    motion,
+    candidate,
+    materialized,
+    targetName,
+    targetURL,
+    evidenceRefs
+  };
+}
+
+function bindContingentTargetTokens(value, bindingValue) {
+  const binding = asObject(bindingValue);
+  const bind = (item) => {
+    if (typeof item === 'string') {
+      if (item === CONTINGENT_TARGET_EVIDENCE_REF) {
+        return compactStrings(binding.evidenceRefs);
+      }
+      return item
+        .replaceAll(CONTINGENT_TARGET_NAME_TOKEN, firstText(binding.targetName))
+        .replaceAll(CONTINGENT_TARGET_URL_TOKEN, firstText(binding.targetURL));
+    }
+    if (Array.isArray(item)) {
+      return item.flatMap((entry) => {
+        const bound = bind(entry);
+        return Array.isArray(bound) ? bound : [bound];
+      });
+    }
+    if (item && typeof item === 'object') {
+      return Object.fromEntries(Object.entries(item).map(([key, child]) => [
+        key,
+        bind(child)
+      ]));
+    }
+    return item;
+  };
+  return bind(value);
+}
+
+/**
+ * Projects planner output into an explicitly unverified hypothesis channel.
+ * Planner motions never enter the evidence catalog or verified commercial
+ * graph. Their supply references must still bind to the exact pre-discovery
+ * evidence snapshot that the planner saw.
+ */
+export function normalizeProposedCommercialMotions(
+  planValue,
+  supplyEvidenceCatalogValue
+) {
+  const plan = asObject(planValue);
+  const supplyEvidenceCatalog = asArray(supplyEvidenceCatalogValue)
+    .map(asObject)
+    .filter((item) =>
+      item.providerAttestedCommercialDiscovery !== true &&
+      !/^external_discovery:/i.test(firstText(item.id))
+    );
+  const supplyEvidenceByID = new Map(supplyEvidenceCatalog.map((item) => [
+    firstText(item.id),
+    item
+  ]));
+  const evidenceHashMatches = Boolean(
+    plan.valid === true &&
+    firstText(plan.evidenceHash) &&
+    firstText(plan.evidenceHash) === stableHash(supplyEvidenceCatalog)
+  );
+  const base = {
+    contractVersion: firstText(plan.contractVersion) ===
+      LEGACY_OPPORTUNITY_DISCOVERY_PLAN_CONTRACT
+      ? LEGACY_PROPOSED_COMMERCIAL_MOTIONS_CONTRACT
+      : PROPOSED_COMMERCIAL_MOTIONS_CONTRACT,
+    sourceContractVersion: firstText(plan.contractVersion),
+    status: plan.present !== true
+      ? 'not_available'
+      : plan.valid !== true
+        ? 'invalid'
+        : firstText(plan.status) === 'insufficient_verified_supply'
+          ? 'insufficient_verified_supply'
+          : evidenceHashMatches
+            ? 'proposed_unverified'
+            : 'stale_or_mismatched_supply',
+    evidenceStatus: 'not_evidence',
+    outsideFactStatus: 'unverified',
+    evidenceHashMatches,
+    motions: []
+  };
+  if (base.status !== 'proposed_unverified') return base;
+  const motions = asArray(plan.plans).flatMap((planValue) => {
+    const motion = asObject(planValue);
+    const evidenceRefs = compactStrings(motion.evidenceRefs);
+    if (evidenceRefs.length === 0 || evidenceRefs.some((ref) =>
+      !supplyEvidenceByID.has(ref)
+    )) {
+      return [];
+    }
+    return [{
+      id: firstText(motion.id),
+      priority: clampInteger(motion.priority, 1, 3, 3),
+      searchMode: firstText(motion.searchMode),
+      commercialRole: firstText(motion.commercialRole),
+      acquisitionMode: firstText(motion.acquisitionMode),
+      buyerRole: firstText(motion.buyer),
+      counterpartyRole: firstText(motion.counterparty),
+      paidOffer: firstText(motion.paidOffer),
+      evidenceRefs,
+      acquisitionMechanism: firstText(motion.acquisitionMechanism),
+      conversionDestination: firstText(motion.conversionDestination),
+      paidConversion: firstText(motion.paidConversion),
+      attributionSignal: firstText(motion.attributionSignal),
+      rationale: firstText(motion.rationale),
+      targetSlot: asObject(motion.targetSlot),
+      contingentFinalists: asObject(motion.contingentFinalists),
+      hypothesisOnly: true,
+      verifiedOutsideFacts: false,
+      exactTargetRequired: true
+    }];
+  });
+  return {
+    ...base,
+    motions
+  };
+}
+
+function projectProposedCommercialMotionsForPrompt(
+  value,
+  promptEvidenceCatalogValue
+) {
+  const proposed = asObject(value);
+  const promptEvidenceRefs = new Set(asArray(promptEvidenceCatalogValue)
+    .map((item) => firstText(asObject(item).id))
+    .filter(Boolean));
+  const motions = asArray(proposed.motions).filter((motionValue) =>
+    compactStrings(asObject(motionValue).evidenceRefs).every((ref) =>
+      promptEvidenceRefs.has(ref)
+    )
+  ).map((motionValue) => {
+    const motion = asObject(motionValue);
+    const {
+      contingentFinalists: _contingentFinalists,
+      ...promptMotion
+    } = motion;
+    return {
+      ...promptMotion,
+      contingentFinalistFamilyCount:
+        Object.keys(asObject(motion.contingentFinalists)).length > 0
+          ? 2
+          : 0
+    };
+  });
+  return {
+    contractVersion: firstText(proposed.contractVersion),
+    sourceContractVersion: firstText(proposed.sourceContractVersion),
+    status: firstText(proposed.status),
+    evidenceStatus: 'not_evidence',
+    outsideFactStatus: 'unverified',
+    evidenceHashMatches: proposed.evidenceHashMatches === true,
+    exactTargetRule:
+      'Any outside target, live demand, relationship, permission, or exact name requires separate approved or provider-attested evidenceCatalog support.',
+    motions,
+    omittedMotionCount: Math.max(
+      0,
+      asArray(proposed.motions).length - motions.length
+    )
+  };
+}
+
 export function normalizeCommercialDiscoveryEvidence(
   value,
   referenceTime = new Date()
@@ -1894,6 +3763,7 @@ export function normalizeCommercialDiscoveryEvidence(
     sideEffectsPerformed:
       nonNegativeInteger(raw.sideEffectsPerformed) || 0,
     discoveredAt: validISOString(raw.discoveredAt),
+    plan: normalizePersistedOpportunityDiscoveryPlan(raw.plan),
     attempts: [],
     evidence: [],
     candidates: [],
@@ -1908,7 +3778,8 @@ export function normalizeCommercialDiscoveryEvidence(
     reject('invalid_status');
     return base;
   }
-  if (!base.queryHash ||
+  const providerUnavailable = base.status === 'provider_unavailable';
+  if ((!providerUnavailable && !base.queryHash) ||
       !base.patientTargetingExcluded ||
       base.sideEffectsPerformed !== 0 ||
       !base.discoveredAt ||
@@ -1921,11 +3792,15 @@ export function normalizeCommercialDiscoveryEvidence(
       base.providersAttempted.some((provider) =>
         !COMMERCIAL_DISCOVERY_PROVIDERS.has(provider)
       ) ||
-      base.providersAttempted.length !== base.providerCalls) {
+      base.providersAttempted.length > base.providerCalls ||
+      (base.providerCalls > 0 && base.providersAttempted.length === 0)) {
     reject('invalid_envelope');
     return base;
   }
-  const providerUnavailable = base.status === 'provider_unavailable';
+  if (base.plan.present && !base.plan.valid) {
+    reject('invalid_discovery_plan');
+    return base;
+  }
   if ((providerUnavailable && (
     base.attempted ||
     base.providerCalls !== 0 ||
@@ -1956,14 +3831,20 @@ export function normalizeCommercialDiscoveryEvidence(
       reject(attempt ? 'duplicate_attempt' : 'invalid_attempt');
       continue;
     }
-    if (attempt.queryHash !== base.queryHash ||
-        !base.providersAttempted.includes(attempt.provider) ||
-        !/^people_data_labs_/.test(attempt.provider)) {
+    if (!base.providersAttempted.includes(attempt.provider) ||
+        !COMMERCIAL_DISCOVERY_ATTEMPT_OPERATIONS
+          .get(attempt.provider)?.has(attempt.operation)) {
       reject('attempt_ledger_mismatch');
       continue;
     }
     attemptIDs.add(attempt.id);
     base.attempts.push(attempt);
+  }
+  if (base.attempts.length > 0 &&
+      commercialDiscoveryAttemptLedgerHash(base.attempts) !==
+        base.queryHash) {
+    reject('attempt_ledger_hash_mismatch');
+    return base;
   }
   if (asArray(raw.attempts).length > MAX_COMMERCIAL_DISCOVERY_ATTEMPTS ||
       base.attempts.length !== asArray(raw.attempts).length ||
@@ -1984,7 +3865,7 @@ export function normalizeCommercialDiscoveryEvidence(
   const ledgerProviders = new Set(base.attempts.map((item) =>
     comparable(item.provider)
   ));
-  if (attemptedProviders.size === 0 ||
+  if ((!providerUnavailable && attemptedProviders.size === 0) ||
       [...ledgerProviders].some((provider) =>
         !attemptedProviders.has(provider)
       )) {
@@ -2004,13 +3885,26 @@ export function normalizeCommercialDiscoveryEvidence(
     };
   }
 
+  const allowedMotionIds = new Set(
+    base.plan.present === true && base.plan.valid === true
+      ? asArray(base.plan.plans)
+          .map((motionValue) => firstText(asObject(motionValue).id))
+          .filter(Boolean)
+      : compactStrings([base.motion])
+  );
+  if (allowedMotionIds.size === 0 ||
+      !allowedMotionIds.has(base.motion)) {
+    reject('invalid_discovery_motion');
+    return base;
+  }
   const evidenceByID = new Map();
   for (const factValue of asArray(raw.evidence)
     .slice(0, MAX_COMMERCIAL_DISCOVERY_EVIDENCE)) {
     const fact = normalizeCommercialDiscoveryFact(
       factValue,
       referenceDate,
-      attemptedProviders
+      attemptedProviders,
+      allowedMotionIds
     );
     if (!fact || evidenceByID.has(fact.evidenceRef)) {
       reject(fact ? 'duplicate_evidence_ref' : 'invalid_evidence');
@@ -2023,14 +3917,14 @@ export function normalizeCommercialDiscoveryEvidence(
     reject('evidence_limit_exceeded');
   }
   if (base.evidence.some((fact) =>
-    /^people_data_labs_/.test(fact.provider) &&
+    ledgerProviders.has(comparable(fact.provider)) &&
     !base.attempts.some((attempt) =>
       attempt.provider === fact.provider &&
       attempt.status === 'succeeded' &&
       attempt.resultCount > 0
     )
   )) {
-    reject('paid_evidence_without_succeeded_attempt');
+    reject('claim_fenced_evidence_without_succeeded_attempt');
     return base;
   }
 
@@ -2040,7 +3934,8 @@ export function normalizeCommercialDiscoveryEvidence(
     const candidate = normalizeCommercialDiscoveryCandidate(
       candidateValue,
       evidenceByID,
-      attemptedProviders
+      attemptedProviders,
+      allowedMotionIds
     );
     if (!candidate || candidateIDs.has(candidate.id)) {
       reject(candidate ? 'duplicate_candidate_id' : 'invalid_candidate');
@@ -2064,6 +3959,22 @@ export function normalizeCommercialDiscoveryEvidence(
     ...base,
     valid: true
   };
+}
+
+/**
+ * SHA-256 over UTF-8 compact JSON for the ordered exact ledger tuples:
+ * [[provider, operation, queryHash], ...]. The order is semantically binding;
+ * a one-attempt ledger uses the same one-element array representation.
+ */
+export function commercialDiscoveryAttemptLedgerHash(attemptsValue) {
+  return stableHash(asArray(attemptsValue).map((attemptValue) => {
+    const attempt = asObject(attemptValue);
+    return [
+      firstText(attempt.provider),
+      contractEnum(firstText(attempt.operation)),
+      firstText(attempt.queryHash).toLowerCase()
+    ];
+  }));
 }
 
 function normalizeCommercialDiscoveryAttempt(value) {
@@ -2108,9 +4019,11 @@ function normalizeCommercialDiscoveryAttempt(value) {
 function normalizeCommercialDiscoveryFact(
   value,
   referenceDate,
-  attemptedProviders
+  attemptedProviders,
+  allowedMotionIds
 ) {
   const raw = asObject(value);
+  const motionId = truncate(firstText(raw.motionId), 80);
   const evidenceRef = firstText(raw.evidenceRef);
   const kind = contractEnum(firstText(raw.kind));
   const label = truncate(firstText(raw.label), 180);
@@ -2123,7 +4036,10 @@ function normalizeCommercialDiscoveryFact(
     COMMERCIAL_DISCOVERY_ROLES.has(role)
   );
   const observedAt = validISOString(raw.observedAt);
-  if (!/^external_discovery:[a-f0-9]{24}$/.test(
+  if (!/^[a-z][a-z0-9_-]{2,79}$/.test(motionId) ||
+      !(allowedMotionIds instanceof Set) ||
+      !allowedMotionIds.has(motionId) ||
+      !/^external_discovery:[a-f0-9]{24}$/.test(
     evidenceRef
   ) ||
       !COMMERCIAL_DISCOVERY_KINDS.has(kind) ||
@@ -2142,23 +4058,21 @@ function normalizeCommercialDiscoveryFact(
       commercialDiscoveryContainsPrivateContact(summary)) {
     return null;
   }
+  if (!commercialDiscoveryProviderFactRolesValid(
+    provider,
+    kind,
+    roles
+  )) {
+    return null;
+  }
   const observedDate = new Date(observedAt);
   const age = referenceDate.getTime() - observedDate.getTime();
   if (age < -MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS ||
       age > MAX_COMMERCIAL_DISCOVERY_FACT_AGE_MS) {
     return null;
   }
-  const personIdentityOnly =
-    provider === 'people_data_labs_person_search';
-  if (personIdentityOnly && roles.some((role) => [
-    'paid_offer',
-    'paid_conversion',
-    'demand_signal',
-    'conversion_destination'
-  ].includes(role))) {
-    return null;
-  }
   return {
+    motionId,
     evidenceRef,
     kind,
     label,
@@ -2172,12 +4086,56 @@ function normalizeCommercialDiscoveryFact(
   };
 }
 
+function commercialDiscoveryProviderFactRolesValid(
+  provider,
+  kind,
+  rolesValue
+) {
+  const roles = new Set(compactStrings(rolesValue));
+  const paidDemandOnlyRoles = [
+    'conversion_destination',
+    'demand_signal',
+    'paid_conversion',
+    'paid_offer'
+  ];
+  const identityOnlyProvider =
+    provider === 'people_data_labs_person_search';
+  const liveDemandOnlyProvider =
+    provider === 'people_data_labs_job_posting_search';
+  const publicIdentityProvider = [
+    'google_places',
+    'github_search'
+  ].includes(provider);
+  if ((identityOnlyProvider || publicIdentityProvider) &&
+      kind !== 'verified_external_professional_target') {
+    return false;
+  }
+  if (liveDemandOnlyProvider &&
+      kind !== 'verified_external_live_demand') {
+    return false;
+  }
+  if (kind === 'verified_external_professional_target') {
+    return !paidDemandOnlyRoles.some((role) => roles.has(role));
+  }
+  if (kind === 'verified_external_live_demand') {
+    // In particular, a Brave identity result cannot upgrade itself into paid
+    // demand through its prose or provider name. The normalized application
+    // fact must explicitly carry the complete live-demand role set.
+    return [...COMMERCIAL_DISCOVERY_LIVE_DEMAND_ROLES].every((role) =>
+      roles.has(role)
+    );
+  }
+  return false;
+}
+
 function normalizeCommercialDiscoveryCandidate(
   value,
   evidenceByID,
-  attemptedProviders
+  attemptedProviders,
+  allowedMotionIds
 ) {
   const raw = asObject(value);
+  const motionId = truncate(firstText(raw.motionId), 80);
   const id = truncate(firstText(raw.id), 160);
   const kind = contractEnum(firstText(raw.kind));
   const displayLabel = truncate(firstText(raw.displayLabel), 180);
@@ -2190,7 +4148,10 @@ function normalizeCommercialDiscoveryCandidate(
   const evidenceRefs = compactStrings(raw.evidenceRefs)
     .filter((ref) => evidenceByID.has(ref))
     .slice(0, 8);
-  if (!/^candidate:external:[a-f0-9]{24}$/.test(id) ||
+  if (!/^[a-z][a-z0-9_-]{2,79}$/.test(motionId) ||
+      !(allowedMotionIds instanceof Set) ||
+      !allowedMotionIds.has(motionId) ||
+      !/^candidate:external:[a-f0-9]{24}$/.test(id) ||
       !kind ||
       !concreteCandidateLabel(displayLabel) ||
       !provider ||
@@ -2210,6 +4171,7 @@ function normalizeCommercialDiscoveryCandidate(
     asObject(evidenceByID.get(ref))
   );
   if (evidenceValues.some((fact) =>
+    fact.motionId !== motionId ||
     fact.provider !== provider ||
     !exactTextContains(
       `${firstText(fact.label)} ${firstText(fact.summary)}`,
@@ -2254,6 +4216,7 @@ function normalizeCommercialDiscoveryCandidate(
       verified: path.verified === true
     }));
   return compact({
+    motionId,
     id,
     kind,
     displayLabel,
@@ -2278,6 +4241,18 @@ function commercialDiscoveryContainsPrivateContact(value) {
     /(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b/.test(text);
 }
 
+function redactCommercialDiscoveryContactTokens(value) {
+  return firstText(value)
+    .replace(/\b(?:mailto|tel|sms):[^\s<>"']+/gi, ' ')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, ' ')
+    .replace(/(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b/g, ' ')
+    .replace(/\b(?:work_email|mobile_phone|phone_numbers?)\b/gi, ' ')
+    .replace(/@[A-Z0-9_][A-Z0-9_.-]*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s|,;:\-]+|[\s|,;:\-]+$/g, '')
+    .trim();
+}
+
 function commercialDiscoveryPublicTrace(value) {
   const discovery = asObject(value);
   return compact({
@@ -2297,6 +4272,27 @@ function commercialDiscoveryPublicTrace(value) {
       discovery.patientTargetingExcluded === true,
     sideEffectsPerformed:
       nonNegativeInteger(discovery.sideEffectsPerformed) || 0,
+    plan: discovery.plan?.present === true
+      ? compact({
+          contractVersion: firstText(discovery.plan.contractVersion),
+          valid: discovery.plan.valid === true,
+          status: firstText(discovery.plan.status),
+          evidenceHash: firstText(discovery.plan.evidenceHash),
+          hypothesisStatus: 'proposed_unverified',
+          evidenceStatus: 'not_evidence',
+          planIds: asArray(discovery.plan.plans).map((planValue) =>
+            firstText(asObject(planValue).id)
+          ),
+          commercialRoles: compactStrings(asArray(
+            discovery.plan.plans
+          ).map((planValue) =>
+            firstText(asObject(planValue).commercialRole)
+          )),
+          sideEffectsPerformed:
+            nonNegativeInteger(discovery.plan.sideEffectsPerformed) || 0,
+          rejectedReason: firstText(discovery.plan.rejectedReason)
+        })
+      : undefined,
     attempts: asArray(discovery.attempts).map((attemptValue) => {
       const attempt = asObject(attemptValue);
       return compact({
@@ -2530,7 +4526,14 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
     const evidenceCatalog = buildEvidenceCatalog(
       payload,
       asObject(args.context),
-      args.now || new Date()
+      args.now || new Date(),
+      {
+        includeSystemAttributionCapability:
+          firstText(
+            asObject(asObject(payload.commercialDiscoveryEvidence).plan)
+              .contractVersion
+          ) === OPPORTUNITY_DISCOVERY_PLAN_CONTRACT
+      }
     );
     const fallbackExperiment = revenueEvidenceExperiment({
       objective,
@@ -2567,9 +4570,9 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
     };
   }
   const coherentExperiment = asObject(coherent.nextExperiment);
-  const technicalRecovery = /^strategy_generation_/i.test(
-    firstText(coherentExperiment.kind)
-  );
+  const technicalRecovery =
+    firstText(asObject(coherent.gate).decision) === 'technical_recovery' ||
+    /^strategy_generation_/i.test(firstText(coherentExperiment.kind));
   const resultType = gate.passed
     ? 'immediate_revenue_action'
     : technicalRecovery
@@ -2832,6 +4835,9 @@ export function buildEvidenceCatalog(
       commercialDiscoveryProvider: truncate(firstText(
         asObject(origin).commercialDiscoveryProvider
       ), 100),
+      commercialDiscoveryMotionId: truncate(firstText(
+        asObject(origin).commercialDiscoveryMotionId
+      ), 80),
       commercialDiscoveryProvenance: truncate(firstText(
         asObject(origin).commercialDiscoveryProvenance
       ), 100),
@@ -2986,6 +4992,23 @@ export function buildEvidenceCatalog(
       summary: firstText(value.summary, value.body)
     }, 'source_backed_timeline');
   }
+  // This capability is part of ProfileScribe's verified control plane, not a
+  // caller assertion or a source observation. It allows a recommendation to
+  // specify how a future paid outcome will be attributed without pretending
+  // the user already has a CRM or referral-source field. Its typed role is
+  // intentionally locked to attribution below and cannot ground any other
+  // element of the commercial path.
+  if (options.includeSystemAttributionCapability === true &&
+      !seen.has(PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY.id)) {
+    seen.add(PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY.id);
+    catalog.push({
+      ...PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY,
+      systemCapabilityRoles: [
+        ...PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY.systemCapabilityRoles
+      ],
+      aliases: []
+    });
+  }
   if (commercialDiscovery.valid === true) {
     for (const factValue of asArray(commercialDiscovery.evidence)) {
       const fact = asObject(factValue);
@@ -3004,6 +5027,7 @@ export function buildEvidenceCatalog(
         confidence: 'high'
       }, 'verified_external_professional_target', undefined, {
         providerAttestedCommercialDiscovery: true,
+        commercialDiscoveryMotionId: firstText(fact.motionId),
         commercialDiscoveryProvider: firstText(fact.provider),
         commercialDiscoveryProvenance: firstText(fact.provenance),
         commercialDiscoveryKind: firstText(fact.kind),
@@ -3475,9 +5499,13 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
       ]).join(' ');
       const providerAttestedDiscovery =
         evidence.providerAttestedCommercialDiscovery === true;
+      const systemAttributionCapability =
+        verifiedSystemAttributionCapabilityEvidence(evidence);
       const roles = providerAttestedDiscovery
         ? commercialDiscoveryGraphRoles(evidence)
-        : commercialEvidenceRoles(text);
+        : systemAttributionCapability
+          ? ['attribution']
+          : commercialEvidenceRoles(text);
       if (firstText(evidence.revenueAssetRole) === 'informational_only') {
         for (const role of [
           'paid_offer',
@@ -3510,16 +5538,23 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
         channelFitChannels,
         observedAt: firstText(evidence.observedAt),
         approved: evidence.approvedSourceObservation === true ||
-          providerAttestedDiscovery,
+          providerAttestedDiscovery || systemAttributionCapability,
         provenance: providerAttestedDiscovery
           ? COMMERCIAL_DISCOVERY_PROVENANCE
+          : systemAttributionCapability
+            ? PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY
+                .systemCapabilityProvenance
           : evidence.approvedSourceObservation === true
             ? 'approved_source_observation'
             : 'profile_or_caller_fact',
-        ownerControlled: evidence.profileControlledSource === true,
+        ownerControlled: evidence.profileControlledSource === true ||
+          systemAttributionCapability,
         revenueAssetRole: firstText(evidence.revenueAssetRole),
         provider: providerAttestedDiscovery
           ? firstText(evidence.commercialDiscoveryProvider)
+          : undefined,
+        commercialDiscoveryMotionId: providerAttestedDiscovery
+          ? firstText(evidence.commercialDiscoveryMotionId)
           : undefined,
         providerProvenance: providerAttestedDiscovery
           ? firstText(evidence.commercialDiscoveryProvenance)
@@ -3532,6 +5567,16 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
           : undefined,
         prospectiveExternalTarget: providerAttestedDiscovery
           ? true
+          : undefined,
+        verifiedSystemCapability: systemAttributionCapability
+          ? true
+          : undefined,
+        systemCapabilitySource: systemAttributionCapability
+          ? PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY
+              .systemCapabilitySource
+          : undefined,
+        systemCapabilityRoles: systemAttributionCapability
+          ? ['attribution']
           : undefined
       });
     });
@@ -3668,6 +5713,9 @@ function projectCommercialEvidenceGraphForPrompt(
       revenueAssetRole: firstText(node.revenueAssetRole),
       provenance: firstText(node.provenance),
       provider: truncate(firstText(node.provider), descriptiveChars),
+      commercialDiscoveryMotionId: truncate(firstText(
+        node.commercialDiscoveryMotionId
+      ), 80),
       providerProvenance: truncate(firstText(
         node.providerProvenance
       ), descriptiveChars),
@@ -3679,6 +5727,14 @@ function projectCommercialEvidenceGraphForPrompt(
       ),
       prospectiveExternalTarget:
         node.prospectiveExternalTarget === true ? true : undefined,
+      verifiedSystemCapability:
+        node.verifiedSystemCapability === true ? true : undefined,
+      systemCapabilitySource: truncate(firstText(
+        node.systemCapabilitySource
+      ), descriptiveChars),
+      systemCapabilityRoles: compactStrings(
+        node.systemCapabilityRoles
+      ),
       location: truncate(firstText(node.location),
         compactProjection ? 64 : 96),
       availability: truncate(firstText(node.availability),
@@ -3850,6 +5906,22 @@ function commercialEvidenceRoles(value) {
     roles.push('timing_constraint');
   }
   return compactStrings(roles);
+}
+
+function verifiedSystemAttributionCapabilityEvidence(value) {
+  const evidence = asObject(value);
+  return evidence.id ===
+      PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID &&
+    evidence.type ===
+      PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY.type &&
+    evidence.verifiedSystemCapability === true &&
+    evidence.systemCapabilitySource ===
+      PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY.systemCapabilitySource &&
+    evidence.systemCapabilityProvenance ===
+      PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY
+        .systemCapabilityProvenance &&
+    compactStrings(evidence.systemCapabilityRoles).length === 1 &&
+    compactStrings(evidence.systemCapabilityRoles)[0] === 'attribution';
 }
 
 function commercialChannelFitChannels(value, allowedChannelsValue) {
@@ -4024,6 +6096,7 @@ function boundedStrategyGenerationRequest({
   evidenceCatalog,
   initialPromptEvidenceCatalog,
   commercialEvidenceGraph,
+  proposedCommercialMotions,
   priorOutcomes,
   model,
   budget,
@@ -4092,12 +6165,18 @@ function boundedStrategyGenerationRequest({
         promptEvidenceCatalog,
         { compactProjection: profile.compactGraph }
       );
+    const promptProposedCommercialMotions =
+      projectProposedCommercialMotionsForPrompt(
+        proposedCommercialMotions,
+        promptEvidenceCatalog
+      );
     const prompt = seedAndJudgePrompt({
       objective,
       constraints,
       commercialContext,
       evidenceCatalog: promptEvidenceCatalog,
       commercialEvidenceGraph: promptCommercialEvidenceGraph,
+      proposedCommercialMotions: promptProposedCommercialMotions,
       priorOutcomes,
       maxSeedsPerDimension
     });
@@ -4131,6 +6210,7 @@ function boundedStrategyGenerationRequest({
       profile: profile.name,
       promptEvidenceCatalog,
       promptCommercialEvidenceGraph,
+      promptProposedCommercialMotions,
       prompt,
       request,
       preflight,
@@ -4454,6 +6534,9 @@ function compactPromptEvidenceCatalog(
         commercialDiscoveryProvider: truncate(firstText(
           item.commercialDiscoveryProvider
         ), coreMetadataOnly ? 64 : 100),
+        commercialDiscoveryMotionId: truncate(firstText(
+          item.commercialDiscoveryMotionId
+        ), 80),
         commercialDiscoveryProvenance: truncate(firstText(
           item.commercialDiscoveryProvenance
         ), coreMetadataOnly ? 64 : 100),
@@ -4462,6 +6545,17 @@ function compactPromptEvidenceCatalog(
         ), coreMetadataOnly ? 64 : 100),
         commercialDiscoveryRoles: compactStrings(
           item.commercialDiscoveryRoles
+        ),
+        verifiedSystemCapability:
+          item.verifiedSystemCapability === true ? true : undefined,
+        systemCapabilitySource: truncate(firstText(
+          item.systemCapabilitySource
+        ), coreMetadataOnly ? 64 : 100),
+        systemCapabilityProvenance: truncate(firstText(
+          item.systemCapabilityProvenance
+        ), coreMetadataOnly ? 64 : 100),
+        systemCapabilityRoles: compactStrings(
+          item.systemCapabilityRoles
         ),
         revenueAssetRole: firstText(item.revenueAssetRole)
       });
@@ -4867,9 +6961,19 @@ function seedAndJudgePrompt({
   commercialContext,
   evidenceCatalog,
   commercialEvidenceGraph,
+  proposedCommercialMotions,
   priorOutcomes,
   maxSeedsPerDimension
 }) {
+  const proposedMotions = asObject(proposedCommercialMotions);
+  const hasProposedMotions =
+    firstText(proposedMotions.status) === 'proposed_unverified' &&
+    asArray(proposedMotions.motions).length > 0;
+  const proposedMotionInstructions = hasProposedMotions
+    ? `
+proposedCommercialMotions contains unverified planner hypotheses about causal searches, never verified evidence or outside-world facts. It may suggest a buyer role, distinct counterparty role, paid offer, acquisition mechanism, conversion destination, paid conversion, and attribution signal worth evaluating. It cannot ground or raise evidence strength for any buyer, exact target, demand signal, relationship, permission, reachability, affiliation, or exact name. Every such claim still requires its own exact evidenceCatalog support.
+Preserve the planner's end-buyer and counterparty role distinction when considering a motion. A proposed counterparty is only a role archetype until separate provider-attested evidence resolves an exact target; never copy a planner-only name or organization into candidates or present it as verified.`
+    : '';
   const system = `You are ProfileScribe's research-only opportunity strategist and semantic judge.
 Generate compact incremental-income strategy dimensions grounded only in the supplied professional evidence.
 Internally compare multiple plausible evidence-grounded acquisition-to-payment paths, then emit only the strongest two coherent families. Do not expose private analysis or intermediate alternatives.
@@ -4880,7 +6984,7 @@ Treat experience with a past endDate as historical proof, never as a current rol
 Do not recommend applying for, enrolling in, or creating a capability when the evidence says that capability already exists. Treat the existing capability as proof or supporting context for a paid acquisition/conversion path. Any verification of that capability belongs only in supportingBottleneck and must never be the primary action.
 Use only exact evidence IDs from evidenceCatalog. Unknown evidence IDs will be discarded.
 Treat evidenceCatalog.revenueAssetRole as a deterministic eligibility signal. A current_owner_paid_conversion_asset is a current owner-controlled paid or reimbursable offer destination and must be preferred over adjacent articles or other informational evidence. informational_only evidence may support expertise but must never ground a paid offer, conversion destination, paid conversion, or evidenceExperiment asset.
-Evidence with providerAttestedCommercialDiscovery=true is app-validated, read-only public professional discovery. Use it only for its exact commercialDiscoveryRoles. It may establish an exact prospective target, public professional identity, role, organization, market, channel fit, or—only for a verified live paid-demand record—the current compensated demand and application path explicitly stated in that evidence. It never proves a warm relationship, permission to contact, willingness to refer, buyer intent, private contact data, or an existing affiliation.
+Evidence with providerAttestedCommercialDiscovery=true is app-validated, read-only public professional discovery. Use it only for its exact commercialDiscoveryRoles. It may establish an exact prospective target, public professional identity, role, organization, market, channel fit, or—only for a verified live paid-demand record—the current compensated demand and application path explicitly stated in that evidence. It never proves a warm relationship, permission to contact, willingness to refer, buyer intent, private contact data, or an existing affiliation.${proposedMotionInstructions}
 For a referral-partner path, keep the end buyer distinct from the prospective professional partner. Cite the discovered partner in the channel/acquisition grounding, describe it as prospective, and never put the partner's exact name in the buyer label unless that organization is actually the payer.
 For a compensated-role path, a current paid-demand record may ground the employer buyer, compensated offer, platform-discovery route, and distinct application page. A public job record authorizes no application or form submission.
 You may extract up to eight compact named person or organization candidates only when each exact name appears verbatim in cited evidence. Do not return contact details or URLs; return no candidate rather than infer or complete an identity.
@@ -4908,12 +7012,17 @@ Return only JSON.`;
     commercialContext,
     evidenceCatalog,
     commercialEvidenceGraph,
+    ...(hasProposedMotions
+      ? { proposedCommercialMotions: proposedMotions }
+      : {}),
     priorOutcomes,
     outputContract: compactTournamentOutputContract(
       INITIAL_FAMILY_VARIANT_COUNT,
       maxSeedsPerDimension
     ),
-    hardRules: compactTournamentHardRules()
+    hardRules: compactTournamentHardRules({
+      includeProposedMotions: hasProposedMotions
+    })
   });
   return { system, user };
 }
@@ -4955,12 +7064,16 @@ function compactTournamentOutputContract(
   };
 }
 
-function compactTournamentHardRules() {
+function compactTournamentHardRules(optionsValue = {}) {
+  const options = asObject(optionsValue);
   return [
     'Return exactly two coherent families; construct each r path first, use one acquisition mode end to end, and derive every other item from it.',
     'Use only evidenceCatalog IDs. Family e contains every ID cited by its items. Each item cites only IDs in its own family, and each family includes an approved observation:* anchor.',
     'Ground the buyer, current paid offer, acquisition, distinct destination, paid conversion, and attribution record; never invent demand or an outside target.',
     'Provider-attested discovery may ground only its typed commercialDiscoveryRoles. A referral target is prospective and is not the end buyer; a person/company record never proves warmness, willingness, permission, or demand.',
+    ...(options.includeProposedMotions === true
+      ? ['proposedCommercialMotions are unverified hypotheses, not evidence. Preserve buyerRole versus counterpartyRole, but never use a motion to verify an outside target, demand, relationship, permission, reachability, exact name, or any causal paid-path field.']
+      : []),
     'Only a verified live paid-demand record may ground compensated-role demand or an application destination, and it never authorizes application submission.',
     'Inbound names discovery separately from destination. Operations, research, scheduling, content, and verification may appear only in sb, never as the revenue action.',
     'The primary action is active, causal, and incremental. Reject monitoring, observing, measuring, reviewing, recording, auditing, checking, or verifying as the primary action.',
@@ -4983,11 +7096,18 @@ function seedAndJudgeRepairPrompt({
   } catch {
     originalTask = {};
   }
+  const proposedMotions = asObject(originalTask.proposedCommercialMotions);
+  const hasProposedMotions =
+    firstText(proposedMotions.status) === 'proposed_unverified' &&
+    asArray(proposedMotions.motions).length > 0;
+  const proposedMotionInstructions = hasProposedMotions
+    ? '\nPlanner-authored proposedCommercialMotions remain unverified hypotheses and are not evidence. Preserve their buyer/counterparty role distinction, but require exact evidenceCatalog support for every outside target, demand, relationship, permission, reachability, exact name, and paid-path claim.'
+    : '';
   const system = `You are ProfileScribe's bounded structured-output repair strategist.
 Generate a fresh compact replacement from the supplied objective and evidence. Do not reconstruct, quote, or continue the prior response.
 Return exactly two complete source-grounded incremental-income families plus one review-first evidence experiment. This is research only: no outreach, publishing, advertising, form submission, or provider write.
 Use exact evidence IDs only. Prefer current_owner_paid_conversion_asset for an inbound paid offer/destination; informational_only is never an offer anchor.
-Provider-attested commercial discovery is usable only for its typed roles: referral targets remain prospective and distinct from the buyer, while only verified live paid-demand evidence may ground a compensated role and application path. Never infer warmness, willingness, permission, or private contact data.
+Provider-attested commercial discovery is usable only for its typed roles: referral targets remain prospective and distinct from the buyer, while only verified live paid-demand evidence may ground a compensated role and application path. Never infer warmness, willingness, permission, or private contact data.${proposedMotionInstructions}
 An acquisition mechanism is distinct from its conversion destination. A valid path ends in a durable paid event with an attribution record.
 Return only the strict compact JSON once.`;
   const user = JSON.stringify({
@@ -4998,12 +7118,17 @@ Return only the strict compact JSON once.`;
     commercialContext: originalTask.commercialContext,
     evidenceCatalog: originalTask.evidenceCatalog,
     commercialEvidenceGraph: originalTask.commercialEvidenceGraph,
+    ...(hasProposedMotions
+      ? { proposedCommercialMotions: proposedMotions }
+      : {}),
     priorOutcomes: originalTask.priorOutcomes,
     repairIssue: issue,
     outputContract: compactTournamentOutputContract(
       REPAIR_FAMILY_VARIANT_COUNT
     ),
-    hardRules: compactTournamentHardRules()
+    hardRules: compactTournamentHardRules({
+      includeProposedMotions: hasProposedMotions
+    })
   });
   return { system, user };
 }
@@ -5147,6 +7272,14 @@ function providerCallSpendPreflight(requestValue, budgetValue) {
   };
   const maxLLMSpendMicros =
     nonNegativeInteger(budget.maxLLMSpendMicros) || 0;
+  const injectedContextTokenReserve = Math.min(
+    1_047_576,
+    nonNegativeInteger(request.additionalPromptTokenReserve) || 0
+  );
+  const fixedToolFeeMicros = Math.min(
+    1_000_000,
+    nonNegativeInteger(request.fixedToolFeeMicros) || 0
+  );
   let serializedRequest;
   let requestByteCount;
   try {
@@ -5157,10 +7290,14 @@ function providerCallSpendPreflight(requestValue, budgetValue) {
       serializationSucceeded: false,
       requestBodyByteCount: 0,
       promptTokenCeiling: 0,
+      injectedContextTokenReserve,
+      serializedPromptTokenCeiling: 0,
       outputTokenCeiling: nonNegativeInteger(request.maxTokens) || 0,
       fixedRequestFeeCeilingMicros: Math.ceil(
         price.request * 1_000_000
       ),
+      fixedToolFeeMicros,
+      requestBodySha256: '',
       callSpendCeilingMicros: maxLLMSpendMicros + 1
     };
   }
@@ -5168,8 +7305,16 @@ function providerCallSpendPreflight(requestValue, budgetValue) {
   // supplied. The fixed reserve covers chat/schema framing not represented by
   // user-visible strings. Price-per-million USD multiplied by tokens is the
   // same numeric unit as micro-USD.
-  const promptTokenCeiling =
+  const serializedPromptTokenCeiling =
     requestByteCount + OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
+  // Forced web search can inject provider-owned context after serialization.
+  // For the pinned GPT-4.1-mini route, use its complete native context window
+  // as the absolute prompt ceiling instead of adding it to the serialized
+  // request (which would claim an impossible over-context request).
+  const promptTokenCeiling = Math.max(
+    serializedPromptTokenCeiling,
+    injectedContextTokenReserve
+  );
   const outputTokenCeiling =
     nonNegativeInteger(request.maxTokens) || 0;
   const fixedRequestFeeCeilingMicros = Math.ceil(
@@ -5178,13 +7323,20 @@ function providerCallSpendPreflight(requestValue, budgetValue) {
   return {
     serializationSucceeded: true,
     requestBodyByteCount: requestByteCount,
+    requestBodySha256: createHash('sha256')
+      .update(serializedRequest, 'utf8')
+      .digest('hex'),
+    injectedContextTokenReserve,
+    serializedPromptTokenCeiling,
     promptTokenCeiling,
     outputTokenCeiling,
     fixedRequestFeeCeilingMicros,
+    fixedToolFeeMicros,
     callSpendCeilingMicros:
       Math.ceil(promptTokenCeiling * price.prompt) +
       Math.ceil(outputTokenCeiling * price.completion) +
-      fixedRequestFeeCeilingMicros
+      fixedRequestFeeCeilingMicros +
+      fixedToolFeeMicros
   };
 }
 
@@ -5223,6 +7375,10 @@ function providerPromptTokenCanary(preflightValue, usageValue) {
     requestBodyByteCount:
       nonNegativeInteger(preflight.requestBodyByteCount) || 0,
     framingTokenReserve: OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
+    injectedContextTokenReserve:
+      nonNegativeInteger(preflight.injectedContextTokenReserve) || 0,
+    serializedPromptTokenCeiling:
+      nonNegativeInteger(preflight.serializedPromptTokenCeiling) || 0,
     promptTokenCeiling,
     reportedPromptTokens,
     withinCeiling: reportedPromptTokens === undefined
@@ -5589,14 +7745,22 @@ function commercialCriticPrompt({
   objective,
   commercialContext,
   commercialEvidenceGraph,
+  proposedCommercialMotions,
   finalists
 }) {
+  const proposedMotions = asObject(proposedCommercialMotions);
+  const hasProposedMotions =
+    firstText(proposedMotions.status) === 'proposed_unverified' &&
+    asArray(proposedMotions.motions).length > 0;
+  const proposedMotionInstructions = hasProposedMotions
+    ? '\nTreat proposedCommercialMotions only as unverified planner hypotheses, never evidence. They may help compare whether a finalist preserves a proposed buyer role, distinct counterparty role, paid offer, acquisition mechanism, conversion destination, paid conversion, and attribution signal, but they cannot increase evidence strength or reachability and cannot verify an outside target, demand signal, relationship, permission, affiliation, or exact name. Reject any finalist whose exact target or causal paid path is supported only by a planner motion rather than the verified commercialEvidenceGraph.'
+    : '';
   const system = `You are ProfileScribe's independent commercial-motion critic.
 Compare and rank exactly the supplied deterministically valid finalist motions. This is research only and authorizes no execution.
 For every finalist, assess incremental revenue, evidence strength, buyer reachability, paid-outcome probability, a numeric 1-to-30-day time to first dollar, recurring value, cost, effort, and uncertainty. Order selectedOrdering by higher paid-outcome probability first, then higher expectedGrossIncomeMicros, recurring before repeatable before one-time value, fewer timeToFirstDollarDays, stronger reachability, stronger evidence, lower cost, lower effort, and lower uncertainty. Only an exact tie across those fields may use your remaining commercial judgment.
 Accept only finalists whose primary action actively and causally creates qualified demand or advances a paid conversion, whose income is counterfactually incremental, whose buyer and paid offer are grounded, whose acquisition is distinct from destination, and whose paid outcome has durable attribution plus a numeric stop.
 The deterministic pre-filter has already excluded passive and operational motions. If one appears anyway, reject it; never reward monitoring, measuring, profile work, content work, or administration.
-Treat commercialContext only as permission/channel capability. A connected channel never proves buyer demand, fit, or reachability.
+Treat commercialContext only as permission/channel capability. A connected channel never proves buyer demand, fit, or reachability.${proposedMotionInstructions}
 Return one complete comparison per supplied finalist plus an exact selected ordering. Do not rewrite the strategies and do not return outreach or publishing copy. Return only strict JSON.`;
   const user = JSON.stringify({
     task:
@@ -5605,6 +7769,9 @@ Return one complete comparison per supplied finalist plus an exact selected orde
     objective,
     commercialContext,
     commercialEvidenceGraph,
+    ...(hasProposedMotions
+      ? { proposedCommercialMotions: proposedMotions }
+      : {}),
     finalists: commercialCriticFinalists(finalists)
   });
   return { system, user };
@@ -6070,6 +8237,7 @@ async function runCommercialCritic({
   objective,
   commercialContext,
   commercialEvidenceGraph,
+  proposedCommercialMotions,
   finalists,
   model,
   budget,
@@ -6081,6 +8249,7 @@ async function runCommercialCritic({
     objective,
     commercialContext,
     commercialEvidenceGraph,
+    proposedCommercialMotions,
     finalists
   });
   const promptHash = stableHash(prompt);
@@ -10483,6 +12652,20 @@ function revenuePathGroundingReasons(
     attribution: compactStrings(grounding.attributionEvidenceRefs)
   };
   const reasons = new Set();
+  const systemAttributionRefs = new Set(
+    [...evidenceByID.entries()]
+      .filter(([, evidence]) =>
+        verifiedSystemAttributionCapabilityEvidence(evidence)
+      )
+      .map(([ref]) => ref)
+  );
+  for (const [name, refs] of Object.entries(groups)) {
+    if (name !== 'attribution' && refs.some((ref) =>
+      systemAttributionRefs.has(ref)
+    )) {
+      reasons.add(`system_attribution_capability_misused_as_${name}`);
+    }
+  }
   for (const [name, refs] of Object.entries(groups)) {
     if (refs.length === 0 ||
         refs.some((ref) =>
@@ -11110,14 +13293,23 @@ function commercialDiscoverySupportsRevenueRole(
   const roles = new Set(
     compactStrings(evidence.commercialDiscoveryRoles).map(contractEnum)
   );
-  if (mechanism !== 'compensated_role' ||
+  if (!REVENUE_MECHANISMS.has(mechanism) ||
       !roles.has('demand_signal')) {
     return false;
   }
-  if (role === 'paid_offer') return roles.has('paid_offer');
+  const evidenceText = compactStrings([
+    evidence.label,
+    evidence.summary,
+    evidence.url
+  ]).join(' ');
+  if (role === 'paid_offer') {
+    return roles.has('paid_offer') &&
+      revenueMechanismEvidenceText(mechanism, evidenceText);
+  }
   if (role === 'paid_conversion') {
     return roles.has('paid_conversion') &&
-      roles.has('conversion_destination');
+      roles.has('conversion_destination') &&
+      paidConversionEvidenceText(evidenceText, mechanism);
   }
   return false;
 }
@@ -11881,8 +14073,9 @@ function commercialDiscoveryCandidateGroundsHypothesis(
       roles.has('demand_signal');
   });
   if (commercialRole === 'paid_demand') {
-    return firstText(revenuePath.revenueMechanism) ===
-        'compensated_role' &&
+    return REVENUE_MECHANISMS.has(
+      firstText(revenuePath.revenueMechanism)
+    ) &&
       paidDemandEvidence.some((item) => candidateRefs.includes(item.id)) &&
       intersects(candidateRefs, buyerRefs) &&
       intersects(candidateRefs, buyerGroundingRefs) &&
@@ -11943,8 +14136,9 @@ function candidateActionableForHypothesis(
     const paidRoleCandidate =
       candidate.providerAttestedCommercialDiscovery === true &&
       ['paid_demand', 'hiring_manager'].includes(commercialRole) &&
-      firstText(hypothesis?.revenuePath?.revenueMechanism) ===
-        'compensated_role';
+      REVENUE_MECHANISMS.has(
+        firstText(hypothesis?.revenuePath?.revenueMechanism)
+      );
     return (
       ownedInboundAssetCandidate(candidate) || paidRoleCandidate
     ) && candidate.identityResolved === true;
@@ -12028,6 +14222,7 @@ function evidenceQuality(item) {
   if (value.confidence === 'high') score += 3;
   if (/\b(source evidence|source extract|explicit fact|project|experience|current focus)\b/.test(type)) score += 4;
   if (type === 'profile fact') score += 1;
+  if (verifiedSystemAttributionCapabilityEvidence(value)) score += 4;
   return score;
 }
 

@@ -65,7 +65,9 @@
         { "name": "payload.tournamentId", "type": "string", "required": true },
         { "name": "payload.objective", "type": "object", "required": true },
         { "name": "payload.budget", "type": "object", "required": true },
-        { "name": "payload.budget.maxLLMCalls", "type": "integer", "description": "At most two calls: generator plus mandatory critic on a successful v5 path, or generator plus one bounded full-response repair with no accepted winner." },
+        { "name": "payload.budget.maxLLMCalls", "type": "integer", "description": "V6 authorizes one rig call per stage: one complete contingent-finalist/search planner call when discoveryPlanningOnly=true, then one critic-only call after app-validated target discovery. No downstream generator or repair call is authorized." },
+        { "name": "payload.discoveryPlanningOnly", "type": "boolean", "description": "Runs v6 call 1: two complete contingent motions plus the forced read-only Exa search." },
+        { "name": "payload.commercialDiscoveryEvidence", "type": "object", "description": "Claim-fenced outside target evidence whose fact/candidate motion IDs must belong to the persisted plan and match one another. When both motions bind, one complete family from each enters the critic." },
         { "name": "payload.evidenceSnapshot", "type": "object" },
         { "name": "payload.priorOutcomes", "type": "array" },
         { "name": "payload.candidates", "type": "array" },
@@ -73,8 +75,29 @@
       ]
     },
     {
+      "name": "profile-scribe.opportunity-discovery-plan-result",
+      "version": "1.0.0",
+      "description": "V6 call-1 receipt containing two complete contingent commercial motions, one forced Exa search receipt, and no execution authority.",
+      "fields": [
+        { "name": "status", "type": "enum", "required": true, "values": ["completed", "skipped"] },
+        { "name": "jobId", "type": "string", "required": true },
+        { "name": "jobKind", "type": "enum", "required": true, "values": ["opportunity_tournament"] },
+        { "name": "artifactType", "type": "enum", "required": true, "values": ["opportunity_discovery_plan"] },
+        { "name": "artifactId", "type": "string", "required": true },
+        { "name": "metadata.algorithmVersion", "type": "enum", "required": true, "values": ["cheap_tournament_v6"] },
+        { "name": "metadata.discoveryPlan", "type": "object", "required": true },
+        { "name": "metadata.discoveryPlan.contractVersion", "type": "enum", "required": true, "values": ["opportunity_discovery_plan_v2"] },
+        { "name": "metadata.discoveryPlan.plans", "type": "array", "required": true },
+        { "name": "metadata.discoveryPlan.webSearchReceipt", "type": "object" },
+        { "name": "metadata.discoveryPlan.webSearchReceipt.contractVersion", "type": "enum", "values": ["openrouter_exa_web_search_v1"] },
+        { "name": "metadata.discoveryPlan.preflight", "type": "object", "required": true },
+        { "name": "metadata.discoveryPlan.sideEffectsPerformed", "type": "integer", "required": true },
+        { "name": "metadata.usage", "type": "object", "required": true }
+      ]
+    },
+    {
       "name": "profile-scribe.opportunity-tournament-result",
-      "version": "3.1.0",
+      "version": "4.0.0",
       "description": "Compact incremental-income tournament receipt stored by the ProfileScribe worker; it authorizes no outreach, enrichment, publishing, or provider write.",
       "fields": [
         { "name": "status", "type": "enum", "required": true, "values": ["completed", "skipped"] },
@@ -82,7 +105,7 @@
         { "name": "jobKind", "type": "enum", "required": true, "values": ["opportunity_tournament"] },
         { "name": "artifactType", "type": "enum", "required": true, "values": ["opportunity_tournament_result"] },
         { "name": "artifactId", "type": "string", "required": true },
-        { "name": "metadata.algorithmVersion", "type": "enum", "required": true, "values": ["cheap_tournament_v5"] },
+        { "name": "metadata.algorithmVersion", "type": "enum", "required": true, "values": ["cheap_tournament_v6"] },
         { "name": "metadata.objective", "type": "object", "required": true },
         { "name": "metadata.commercialEvidenceGraph", "type": "object", "required": true },
         { "name": "metadata.commercialEvidenceGraphHash", "type": "string", "required": true },

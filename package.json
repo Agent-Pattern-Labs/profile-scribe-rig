@@ -9,7 +9,7 @@
   },
   "scripts": {
     "sync": "node bin/sync.mjs",
-    "verify": "npm run smoke:config && npm run smoke:source-ids && npm run smoke:topic-guard && npm run smoke:quality-gate && npm run smoke:openrouter-usage && npm run smoke:openrouter-exits && npm run smoke:timeline-brief && npm run smoke:source-opportunities && npm run smoke:evidence-opportunities && npm run smoke:rewrite-latest-post && npm run smoke:agent-chat && npm run smoke:opportunity-tournament && npm run smoke:opportunity-tournament-v2",
+    "verify": "npm run smoke:config && npm run smoke:source-ids && npm run smoke:topic-guard && npm run smoke:quality-gate && npm run smoke:openrouter-usage && npm run smoke:openrouter-exits && npm run smoke:timeline-brief && npm run smoke:source-opportunities && npm run smoke:evidence-opportunities && npm run smoke:rewrite-latest-post && npm run smoke:agent-chat && npm run smoke:opportunity-tournament && npm run smoke:opportunity-tournament-v2 && npm run smoke:opportunity-discovery-planner",
     "smoke:config": "node scripts/smoke-config.mjs",
     "smoke:source-ids": "node scripts/smoke-run-job-source-ids.mjs",
     "smoke:topic-guard": "node scripts/smoke-run-job-topic-guard.mjs",
@@ -23,6 +23,7 @@
     "smoke:agent-chat": "node scripts/smoke-run-job-agent-chat.mjs",
     "smoke:opportunity-tournament": "node scripts/smoke-run-job-opportunity-tournament.mjs",
     "smoke:opportunity-tournament-v2": "node scripts/smoke-opportunity-tournament-v2.mjs",
+    "smoke:opportunity-discovery-planner": "node scripts/smoke-opportunity-discovery-planner.mjs",
     "plan": "iso plan .",
     "build:config": "iso build .",
     "lint:agentmd": "agentmd lint iso/instructions.md",

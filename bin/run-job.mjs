@@ -6,10 +6,12 @@ import { createHash } from 'crypto';
 import {
   OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
   OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION,
+  OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
   OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT,
   OPPORTUNITY_TOURNAMENT_RESULT_CONTRACT,
   REVENUE_GATE_VERSION,
   REVENUE_PATH_CONTRACT_VERSION,
+  runOpportunityDiscoveryPlanner,
   runOpportunityTournament,
   serializeOpenRouterJSONRequestBody
 } from './opportunity-tournament.mjs';
@@ -27,7 +29,7 @@ Environment:
   OPENROUTER_API_KEY                   Optional OpenRouter key for native rig drafting/interviews
   PROFILESCRIBE_RIG_OPENROUTER_MODEL   Optional OpenRouter model override for non-draft native tasks
   PROFILESCRIBE_RIG_DRAFT_MODEL        Optional OpenRouter model override for final post drafting
-  PROFILESCRIBE_RIG_TOURNAMENT_MODEL   Optional OpenRouter model override for opportunity tournaments
+  PROFILESCRIBE_RIG_TOURNAMENT_MODEL   Must be openai/gpt-4.1-mini when set; other tournament routes fail closed
   PROFILESCRIBE_APP_URL                Optional public ProfileScribe base URL for internal profile candidates
   PROFILESCRIBE_RIG_DRAFTER_COMMAND    Optional command that receives context JSON and returns draft JSON
   PROFILESCRIBE_RIG_REWRITE_COMMAND    Optional command that receives rewrite context JSON and returns draft JSON
@@ -537,6 +539,15 @@ async function runOpportunityTournamentJob(job, options) {
     OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION
   );
   const model = openRouterTournamentModel();
+  if (payload.discoveryPlanningOnly === true) {
+    return await runOpportunityDiscoveryPlanningJob(
+      job,
+      options,
+      model,
+      tournamentId,
+      algorithmVersion
+    );
+  }
   if (options.dryRun) {
     return {
       ...skipped(job, 'dry run: opportunity tournament would perform research and return one reviewable recommendation', {
@@ -839,7 +850,10 @@ async function runOpportunityTournamentJob(job, options) {
         ],
         notes: [
           'research_only',
-          object(tournament.usage).calls > 1
+          object(tournament.searchSpace).contingentFinalistSource ===
+              'discovery_planner_call_1'
+            ? 'call_2_commercial_critic_after_upstream_generator_search'
+            : object(tournament.usage).calls > 1
             ? object(object(tournament.searchSpace).commercialCritic).attempted
               ? 'two_bounded_llm_calls_generator_and_critic'
               : object(object(tournament.searchSpace).structuredRepair).attempted
@@ -847,11 +861,171 @@ async function runOpportunityTournamentJob(job, options) {
                 : 'two_bounded_llm_calls'
             : 'one_bounded_llm_call',
           'deterministic_expansion',
-          'no_pdl',
+          ...(object(tournament.searchSpace).contingentFinalistSource ===
+              'discovery_planner_call_1'
+            ? ['folded_exa_web_search_in_generator']
+            : []),
+          ...(object(tournament.searchSpace).contingentFinalistSource ===
+              'discovery_planner_call_1'
+            ? ['outside_target_discovery_completed_upstream']
+            : ['no_pdl']),
           'no_outreach',
           'no_publish'
         ]
       }
+    }
+  };
+}
+
+async function runOpportunityDiscoveryPlanningJob(
+  job,
+  options,
+  model,
+  tournamentId,
+  algorithmVersion
+) {
+  const payload = object(job.payload);
+  if (options.dryRun) {
+    return skipped(
+      job,
+      'dry run: opportunity discovery planner performed no model or provider call',
+      {
+        tournamentId,
+        algorithmVersion,
+        discoveryPlan: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'blocked',
+          reason: 'Dry run authorized no model call.',
+          evidenceHash: '',
+          plans: [],
+          usage: {
+            provider: 'openrouter',
+            calls: 0,
+            successfulCalls: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            reportedCostMicros: 0,
+            costReporting: 'complete'
+          },
+          sideEffectsPerformed: 0
+        },
+        usage: {
+          provider: 'openrouter',
+          calls: 0,
+          successfulCalls: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          reportedCostMicros: 0,
+          costReporting: 'complete'
+        }
+      }
+    );
+  }
+  if (!openRouterApiKey()) {
+    return skipped(
+      job,
+      'Opportunity discovery planning requires OPENROUTER_API_KEY; no keyword route was substituted.',
+      {
+        tournamentId,
+        algorithmVersion,
+        discoveryPlan: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'blocked',
+          reason: 'OPENROUTER_API_KEY is not configured.',
+          evidenceHash: '',
+          plans: [],
+          usage: {
+            provider: 'openrouter',
+            calls: 0,
+            successfulCalls: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            reportedCostMicros: 0,
+            costReporting: 'complete'
+          },
+          sideEffectsPerformed: 0
+        },
+        usage: {
+          provider: 'openrouter',
+          calls: 0,
+          successfulCalls: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          reportedCostMicros: 0,
+          costReporting: 'complete'
+        }
+      }
+    );
+  }
+
+  const hasEvidenceSnapshot =
+    Object.keys(object(payload.evidenceSnapshot)).length > 0;
+  const context = hasEvidenceSnapshot
+    ? {}
+    : await loadOpportunityTournamentContext({
+        ...payload,
+        topic: firstNonEmpty(
+          object(payload.objective).outcome,
+          object(payload.objective).desiredOutcome,
+          payload.outcome,
+          'professional opportunity'
+        )
+      });
+  const discoveryPlan = await runOpportunityDiscoveryPlanner({
+    job,
+    context,
+    model,
+    completeJSON: async (request) => {
+      try {
+        const completion = await callOpenRouterJSON(request);
+        rememberRunLLMMetadata('opportunityDiscoveryPlanner', {
+          provider: 'openrouter',
+          model,
+          status: 'completed',
+          openRouterUsage: completion.usage,
+          openRouterDiagnostics: completion.diagnostics
+        });
+        return completion;
+      } catch (error) {
+        rememberRunLLMMetadata('opportunityDiscoveryPlanner', {
+          provider: 'openrouter',
+          model,
+          status: 'failed',
+          error: openRouterFailureCode(error),
+          openRouterUsage: openRouterFailureUsage(error),
+          openRouterDiagnostics: error?.openRouterDiagnostics
+        });
+        throw error;
+      }
+    }
+  });
+  const planned = discoveryPlan.status === 'planned' ||
+    discoveryPlan.status === 'insufficient_verified_supply';
+  return {
+    status: planned ? 'completed' : 'skipped',
+    jobId: text(job.id),
+    jobKind: text(job.kind),
+    summary: planned
+      ? 'Generated complete contingent commercial finalists and executed one bounded, read-only Exa web search; no outreach or publishing occurred.'
+      : firstNonEmpty(
+          discoveryPlan.reason,
+          'The bounded opportunity discovery planner could not produce a valid plan.'
+        ),
+    artifactType: 'opportunity_discovery_plan',
+    artifactId: tournamentId,
+    metadata: {
+      tournamentId,
+      algorithmVersion,
+      discoveryPlan,
+      usage: object(discoveryPlan.usage),
+      researchOnly: true,
+      sideEffectsPerformed: 0,
+      outreachQueued: false,
+      publishQueued: false
     }
   };
 }
@@ -2882,6 +3056,19 @@ async function callOpenRouterJSON({
   const rawContent = typeof choice?.message?.content === 'string'
     ? choice.message.content
     : '';
+  const annotations = arrayOfObjects(choice?.message?.annotations)
+    .slice(0, 5)
+    .map((annotation) => {
+      const citation = object(annotation.url_citation);
+      return {
+        type: text(annotation.type),
+        url_citation: {
+          url: text(citation.url),
+          title: text(citation.title),
+          content: truncate(citation.content, 1_200)
+        }
+      };
+    });
   const diagnostics = openRouterResponseDiagnostics(choice, rawContent);
   if (envelope?.error) {
     throw openRouterProviderError(
@@ -2932,7 +3119,8 @@ async function callOpenRouterJSON({
     data,
     usage,
     generationId: text(envelope?.id),
-    diagnostics
+    diagnostics,
+    annotations
   };
 }
 
@@ -3238,8 +3426,15 @@ function openRouterDraftModel() {
 }
 
 function openRouterTournamentModel() {
-  return text(process.env.PROFILESCRIBE_RIG_TOURNAMENT_MODEL) ||
-    DEFAULT_OPENROUTER_TOURNAMENT_MODEL;
+  const configured = text(process.env.PROFILESCRIBE_RIG_TOURNAMENT_MODEL);
+  if (configured && configured !== DEFAULT_OPENROUTER_TOURNAMENT_MODEL) {
+    throw new Error(
+      `Unsupported opportunity tournament model ${configured}; ` +
+      `${DEFAULT_OPENROUTER_TOURNAMENT_MODEL} is required for the pinned ` +
+      'structured-output, context, and price contract.'
+    );
+  }
+  return DEFAULT_OPENROUTER_TOURNAMENT_MODEL;
 }
 
 function configuredProfileScribePublicBaseURL() {

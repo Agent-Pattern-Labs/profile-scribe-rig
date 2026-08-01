@@ -66,6 +66,45 @@ The harness helps a user create a fresh Profile Scribe post by doing the researc
 5. Generate a new post that is original, useful, and consistent with the user's voice.
 6. Submit or stage the fresh post back into Profile Scribe through the configured integration.
 
+## Revenue Opportunity Mission
+
+For opportunity tournaments, use verified facts about the profile owner to
+search the outside professional world for the nearest credible short-term path
+to payment. The profile grounds the seller, offer, proof, geography, capacity,
+and constraints; it does not need to already name the buyer, employer, referral
+partner, hiring manager, marketplace, or live demand. Missing outside names are
+a bounded research task before they are an evidence gap.
+
+A normal tournament has exactly two model stages. The first call generates at
+least two complete causal revenue paths and may use one bounded read-only web
+search. Preserve web URL citations separately and never treat model prose as an
+outside fact. Paths may contain one typed target placeholder that application
+code can bind only to an exact validated provider identity. Deterministic code
+then validates evidence, binds targets, expands combinations, and rejects
+unsupported or passive paths. The second call is an independent compact critic;
+it ranks or rejects finalists and may not generate missing evidence or rewrite
+an incomplete path. Do not add a separate planner or third model call. If call
+one is malformed, its exact provider target cannot be source-bound to the
+declared target slot, or fewer than two complete finalists survive, return
+technical recovery rather than using the critic for repair or accepting an
+uncriticized recommendation. A valid provider `not_found` result also leaves
+zero source-bound finalists and therefore returns cause-matched technical
+recovery rather than a market-evidence gap.
+
+When both planned commercial motions resolve valid exact targets, send one
+complete target-bound family from each motion to the critic so current outside
+evidence can overturn the planner's prior ordering. Only when one motion binds
+may its two complete tactic families supply the comparison. Candidate and fact
+motion IDs must stay exact; never borrow evidence or a target across motions,
+and never send more than six finalists to the critic.
+
+Every immediate recommendation must name the exact target, reachable buyer,
+current paid offer, demand-creating or demand-capturing action, separate
+conversion destination, payment event, attribution signal, numeric stop, and a
+credible reason the revenue is incremental within 30 days. Research never
+authorizes outreach, publishing, advertising, form submission, or provider
+writes.
+
 ## Agent Behavior
 
 - Treat Profile Scribe as the source of truth for posts, user history, publishing state, and post destinations.

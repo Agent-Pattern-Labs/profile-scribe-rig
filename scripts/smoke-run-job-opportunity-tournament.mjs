@@ -407,7 +407,7 @@ function verifySuccessfulTournament(receipt, job, calls) {
   assertEqual(
     metadata.algorithmVersion,
     'cheap_tournament_v5',
-    'success path lost the v5 algorithm binding'
+    'explicit legacy replay lost its v5 algorithm binding'
   );
   assert(
     /^[a-f0-9]{64}$/.test(metadata.commercialEvidenceGraphHash || ''),
@@ -821,7 +821,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'test/opportunity-tournament-v5',
+          'openai/gpt-4.1-mini',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test'
       },
       stdio: ['ignore', 'pipe', 'pipe']

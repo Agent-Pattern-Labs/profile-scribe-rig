@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
+
 import {
   buildEvidenceCatalog,
+  commercialDiscoveryAttemptLedgerHash,
   normalizeCommercialDiscoveryEvidence,
+  normalizeProposedCommercialMotions,
   providerCallSpendCeilingMicros,
-  runOpportunityTournament,
+  runOpportunityTournament as runOpportunityTournamentImplementation,
   serializeOpenRouterJSONRequestBody
 } from '../bin/opportunity-tournament.mjs';
 
@@ -15,6 +19,39 @@ const usage = {
   total_tokens: 2100,
   cost: 0.0042
 };
+
+// This suite preserves the pre-v6 generator/repair behavior as an explicit
+// replay contract. Current v6 behavior is exercised by the discovery-planner
+// smoke and by verifyV6RequiresMaterializedOutsideTarget below.
+function runOpportunityTournament(argsValue) {
+  return runOpportunityTournamentImplementation({
+    ...argsValue,
+    job: {
+      ...argsValue.job,
+      payload: {
+        ...argsValue.job?.payload,
+        algorithmVersion:
+          argsValue.job?.payload?.algorithmVersion ||
+          'cheap_tournament_v5'
+      }
+    }
+  });
+}
+
+function stableFixtureHash(value) {
+  const stableJSON = (item) => {
+    if (Array.isArray(item)) {
+      return `[${item.map(stableJSON).join(',')}]`;
+    }
+    if (item && typeof item === 'object') {
+      return `{${Object.keys(item).sort().map((key) =>
+        `${JSON.stringify(key)}:${stableJSON(item[key])}`
+      ).join(',')}}`;
+    }
+    return JSON.stringify(item);
+  };
+  return createHash('sha256').update(stableJSON(value)).digest('hex');
+}
 const businessExperimentFieldNames = [
   'knownFact',
   'buyer',
@@ -270,6 +307,7 @@ for (const domain of domains) {
   }
 }
 
+await verifyV6RequiresMaterializedOutsideTarget();
 await verifyAcquisitionFamilyMismatch();
 await verifyTypedAcquisitionModeAllowsNeutralLabels();
 await verifyTypedFamilyTimingFallbackPreservesBusinessGates();
@@ -277,6 +315,8 @@ await verifySaaSTimingRepair();
 await verifyNoncurrentWarmReferralRejected();
 await verifyFreshFormerCustomerAcquisitionAccepted();
 verifyCommercialDiscoveryPDLReferralEnvelopeNormalization();
+verifyClaimFencedBraveDiscoveryRoleNormalization();
+await verifyDiscoveryPlanStaysUnverifiedDownstream();
 await verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct();
 await verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole();
 await verifyUnsafeGeneratedExperimentRejected();
@@ -348,6 +388,9 @@ async function runDomain(domain, options = {}) {
       kind: 'opportunity_tournament',
       payload: {
         tournamentId: `tournament-${domain.name}`,
+        ...(options.algorithmVersion
+          ? { algorithmVersion: options.algorithmVersion }
+          : {}),
         researchOnly: true,
         objective: {
           outcome: `Generate one new attributed ${domain.outcome}.`,
@@ -371,16 +414,45 @@ async function runDomain(domain, options = {}) {
     },
     model: 'test/v2',
     now,
-    completeJSON: completionWithCritic(
-      response,
-      `gen-${domain.name}`,
-      {
-        reverseOrdering: options.reverseCritic === true,
-        criticEstimate: options.criticEstimate,
-        inspectCriticRequest: options.inspectCriticRequest
-      }
-    )
+    completeJSON: async (request) => {
+      options.onProviderCall?.(request);
+      return completionWithCritic(
+        response,
+        `gen-${domain.name}`,
+        {
+          reverseOrdering: options.reverseCritic === true,
+          criticEstimate: options.criticEstimate,
+          inspectCriticRequest: options.inspectCriticRequest
+        }
+      )(request);
+    }
   });
+}
+
+async function verifyV6RequiresMaterializedOutsideTarget() {
+  let providerCalls = 0;
+  const result = await runDomain(
+    domains.find((item) => item.name === 'saas'),
+    {
+      algorithmVersion: 'cheap_tournament_v6',
+      onProviderCall: () => { providerCalls += 1; }
+    }
+  );
+  if (result.status !== 'skipped' ||
+      result.result?.resultType !== 'technical_recovery' ||
+      result.gate?.decision !== 'technical_recovery' ||
+      result.winner !== null ||
+      result.nextExperiment !== null ||
+      result.searchSpace?.modelCalls !== 0 ||
+      result.searchSpace?.structuredRepair?.attempted === true ||
+      providerCalls !== 0) {
+    throw new Error(
+      `v6 accepted or called a legacy owned-asset-only path: ${JSON.stringify({
+        providerCalls,
+        result
+      })}`
+    );
+  }
 }
 
 function completionWithCritic(
@@ -664,6 +736,9 @@ function commercialDiscoveryFixture({
         completedAt: '2026-07-30T11:00:00Z'
       }]
     : [];
+  const envelopeQueryHash = paidAttempts.length > 0
+    ? commercialDiscoveryAttemptLedgerHash(paidAttempts)
+    : queryHash;
   return {
     contractVersion: 'commercial_discovery_evidence_v1',
     status: 'found',
@@ -671,7 +746,7 @@ function commercialDiscoveryFixture({
     motion,
     buyerArchetype,
     market,
-    queryHash,
+    queryHash: envelopeQueryHash,
     providersAttempted: [provider],
     providerCalls: 1,
     paidProviderCalls,
@@ -681,8 +756,14 @@ function commercialDiscoveryFixture({
     sideEffectsPerformed: 0,
     discoveredAt: '2026-07-30T11:00:00Z',
     attempts: paidAttempts,
-    evidence,
-    candidates
+    evidence: evidence.map((item) => ({
+      ...item,
+      motionId: motion
+    })),
+    candidates: candidates.map((item) => ({
+      ...item,
+      motionId: motion
+    }))
   };
 }
 
@@ -760,6 +841,413 @@ function verifyCommercialDiscoveryPDLReferralEnvelopeNormalization() {
       !inFlight.rejectedReasons?.invalid_attempt_ledger) {
     throw new Error(
       `PDL referral envelope did not normalize as paid, terminal, prospective discovery: ${JSON.stringify(normalized)}`
+    );
+  }
+}
+
+function verifyClaimFencedBraveDiscoveryRoleNormalization() {
+  const provider = 'brave_web_search';
+  const identityRef = 'external_discovery:111111111111111111111111';
+  const identityCandidate = 'candidate:external:222222222222222222222222';
+  const identityURL = 'https://acme-identity.example/about';
+  const identityEnvelope = commercialDiscoveryFixture({
+    id: 'attempt-brave-identity',
+    provider,
+    operation: 'planned_brave_web_search',
+    queryHash: '1'.repeat(64),
+    motion: 'professional-counterparty',
+    buyerArchetype: 'Organizations buying workflow automation',
+    market: 'United States',
+    paidProviderCalls: 1,
+    evidence: [{
+      evidenceRef: identityRef,
+      kind: 'verified_external_professional_target',
+      label: 'Acme Systems',
+      summary:
+        'Acme Systems is a current public professional organization returned by the bounded web search. This identity record does not attest live paid demand, buyer intent, permission, or a relationship.',
+      url: identityURL,
+      provider,
+      provenance: 'read_only_professional_provider',
+      roles: ['defined_buyer', 'acquisition', 'channel_fit'],
+      verified: true,
+      observedAt: '2026-07-30T11:00:00Z'
+    }],
+    candidates: [{
+      id: identityCandidate,
+      kind: 'organization',
+      displayLabel: 'Acme Systems',
+      organization: 'Acme Systems',
+      role: 'Professional organization',
+      market: 'United States',
+      publicUrl: identityURL,
+      provider,
+      commercialRole: 'buyer',
+      evidenceRefs: [identityRef],
+      contactPaths: [],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }]
+  });
+  const identity = normalizeCommercialDiscoveryEvidence(
+    identityEnvelope,
+    now
+  );
+  const identitySelfAttestedAsDemand = normalizeCommercialDiscoveryEvidence({
+    ...identityEnvelope,
+    evidence: identityEnvelope.evidence.map((fact) => ({
+      ...fact,
+      roles: [
+        'acquisition',
+        'channel_fit',
+        'conversion_destination',
+        'defined_buyer',
+        'demand_signal',
+        'paid_conversion',
+        'paid_offer'
+      ]
+    })),
+    candidates: identityEnvelope.candidates.map((candidate) => ({
+      ...candidate,
+      commercialRole: 'paid_demand'
+    }))
+  }, now);
+
+  const liveRef = 'external_discovery:333333333333333333333333';
+  const liveCandidate = 'candidate:external:444444444444444444444444';
+  const liveURL = 'https://acme-demand.example/rfp/workflow-automation';
+  const attempts = [{
+    id: 'attempt-brave-demand-one',
+    provider,
+    operation: 'planned_brave_web_search',
+    queryHash: '2'.repeat(64),
+    status: 'not_found',
+    estimatedSpendMicros: 10_000,
+    actualSpendMicros: 10_000,
+    creditsUsed: 1,
+    resultCount: 0,
+    reservedAt: '2026-07-30T10:59:55Z',
+    updatedAt: '2026-07-30T10:59:57Z',
+    completedAt: '2026-07-30T10:59:57Z'
+  }, {
+    id: 'attempt-brave-demand-two',
+    provider,
+    operation: 'planned_brave_web_search',
+    queryHash: '3'.repeat(64),
+    status: 'succeeded',
+    estimatedSpendMicros: 10_000,
+    actualSpendMicros: 10_000,
+    creditsUsed: 1,
+    resultCount: 1,
+    reservedAt: '2026-07-30T10:59:58Z',
+    updatedAt: '2026-07-30T11:00:00Z',
+    completedAt: '2026-07-30T11:00:00Z'
+  }];
+  const liveEnvelope = {
+    contractVersion: 'commercial_discovery_evidence_v1',
+    status: 'found',
+    attempted: true,
+    motion: 'public-live-demand',
+    buyerArchetype: 'Organizations buying workflow automation',
+    market: 'United States',
+    queryHash: commercialDiscoveryAttemptLedgerHash(attempts),
+    providersAttempted: [provider],
+    providerCalls: 2,
+    paidProviderCalls: 2,
+    creditsUsed: 2,
+    resultCount: 1,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    discoveredAt: '2026-07-30T11:00:00Z',
+    attempts,
+    evidence: [{
+      motionId: 'public-live-demand',
+      evidenceRef: liveRef,
+      kind: 'verified_external_live_demand',
+      label: 'Acme Systems workflow automation RFP',
+      summary:
+        'Acme Systems published a current paid workflow automation RFP. Public web discovery reaches the RFP response page, one signed paid contract is the conversion, and the contract record source field stores the RFP identifier.',
+      url: liveURL,
+      provider,
+      provenance: 'read_only_professional_provider',
+      roles: [
+        'acquisition',
+        'channel_fit',
+        'conversion_destination',
+        'defined_buyer',
+        'demand_signal',
+        'paid_conversion',
+        'paid_offer'
+      ],
+      verified: true,
+      observedAt: '2026-07-30T11:00:00Z'
+    }],
+    candidates: [{
+      motionId: 'public-live-demand',
+      id: liveCandidate,
+      kind: 'public_live_demand',
+      displayLabel: 'Acme Systems',
+      organization: 'Acme Systems',
+      role: 'Workflow automation RFP issuer',
+      market: 'United States',
+      publicUrl: liveURL,
+      provider,
+      commercialRole: 'paid_demand',
+      evidenceRefs: [liveRef],
+      contactPaths: [],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }]
+  };
+  const live = normalizeCommercialDiscoveryEvidence(liveEnvelope, now);
+  const reorderedHash = commercialDiscoveryAttemptLedgerHash(
+    [...attempts].reverse()
+  );
+  if (identity.valid !== true ||
+      identity.attempts?.length !== 1 ||
+      identity.evidence?.[0]?.roles?.includes('demand_signal') ||
+      identitySelfAttestedAsDemand.valid !== false ||
+      !identitySelfAttestedAsDemand.rejectedReasons?.invalid_evidence ||
+      live.valid !== true ||
+      live.providerCalls !== 2 ||
+      live.paidProviderCalls !== 2 ||
+      live.attempts?.length !== 2 ||
+      live.candidates?.[0]?.commercialRole !== 'paid_demand' ||
+      live.queryHash !== commercialDiscoveryAttemptLedgerHash(attempts) ||
+      reorderedHash === live.queryHash) {
+    throw new Error(
+      `claim-fenced Brave discovery did not preserve provider roles and ordered aggregate hashing: ${JSON.stringify({ identity, identitySelfAttestedAsDemand, live })}`
+    );
+  }
+}
+
+async function verifyDiscoveryPlanStaysUnverifiedDownstream() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  const evidenceRef = 'observation:obs-planner-downstream';
+  const payload = {
+    researchOnly: true,
+    objective: {
+      outcome: `Generate one new attributed ${domain.outcome}.`,
+      successMetric: domain.outcome
+    },
+    budget: {
+      maxHypotheses: 128,
+      maxFinalists: 8,
+      maxLLMCalls: 2,
+      maxOutputTokens: 8000
+    },
+    commercialContext: {
+      allowedChannels: ['organic search']
+    },
+    evidenceSnapshot: {
+      profile: {
+        identity: {
+          fullName: 'Planner Boundary Owner',
+          website: 'https://planner-boundary.example/'
+        }
+      },
+      sources: [{
+        id: 'src-planner-downstream',
+        url: 'https://planner-boundary.example/',
+        status: 'monitoring',
+        trustLevel: 'high'
+      }],
+      sourceEvidence: [{
+        observationId: 'obs-planner-downstream',
+        sourceId: 'src-planner-downstream',
+        kind: 'service-page',
+        title: domain.destination,
+        summary: domain.sourceSummary,
+        url: 'https://planner-boundary.example/pricing',
+        observedAt: '2026-07-29T12:00:00Z',
+        current: true,
+        status: 'active',
+        confidence: 'high'
+      }]
+    }
+  };
+  const supplyCatalog = buildEvidenceCatalog(payload, {}, now, {
+    commercialDiscovery: {
+      present: false,
+      valid: false,
+      evidence: [],
+      candidates: []
+    }
+  });
+  const plan = {
+    contractVersion: 'opportunity_discovery_plan_v1',
+    status: 'planned',
+    reason: 'Two causal searches are worth bounded review.',
+    evidenceHash: stableFixtureHash(supplyCatalog),
+    plans: [{
+      id: 'buyer_counterparty_search',
+      priority: 1,
+      searchMode: 'professional_counterparty',
+      commercialRole: 'buyer',
+      acquisitionMode: 'permissioned_outreach',
+      buyer: 'Operations teams buying workflow automation',
+      counterparty: 'Hypothetical Workflow Buyer LLC',
+      paidOffer: domain.offer,
+      evidenceRefs: [evidenceRef],
+      query: 'workflow automation budget owner operations team',
+      market: 'United States',
+      targetRoleTerms: ['operations director', 'automation budget owner'],
+      organizationTerms: ['workflow operations organization'],
+      jobTitle: '',
+      skills: ['workflow automation'],
+      acquisitionMechanism:
+        'One review-first permissioned path to a verified budget owner',
+      conversionDestination: domain.destination,
+      paidConversion: domain.outcome,
+      attributionSignal: domain.attribution,
+      rationale:
+        'The paid software offer suggests evaluating a defined organizational buyer role.'
+    }, {
+      id: 'public_demand_search',
+      priority: 2,
+      searchMode: 'public_live_demand',
+      commercialRole: 'paid_demand',
+      acquisitionMode: 'inbound',
+      buyer: 'Organizations publicly requesting workflow automation',
+      counterparty: 'Public paid-demand issuer',
+      paidOffer: domain.offer,
+      evidenceRefs: [evidenceRef],
+      query: 'current paid workflow automation request RFP',
+      market: 'United States',
+      targetRoleTerms: [],
+      organizationTerms: ['operations organization'],
+      jobTitle: '',
+      skills: ['workflow automation'],
+      acquisitionMechanism: 'Public live-demand discovery',
+      conversionDestination: domain.destination,
+      paidConversion: domain.outcome,
+      attributionSignal: domain.attribution,
+      rationale:
+        'A current paid-demand page would provide a separate acquisition signal.'
+    }],
+    sideEffectsPerformed: 0
+  };
+  payload.commercialDiscoveryEvidence = {
+    contractVersion: 'commercial_discovery_evidence_v1',
+    status: 'provider_unavailable',
+    attempted: false,
+    motion: plan.plans[0].id,
+    buyerArchetype: plan.plans[0].buyer,
+    market: plan.plans[0].market,
+    providersAttempted: [],
+    providerCalls: 0,
+    paidProviderCalls: 0,
+    creditsUsed: 0,
+    resultCount: 0,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    discoveredAt: '2026-07-30T11:00:00Z',
+    attempts: [],
+    plan,
+    evidence: [],
+    candidates: []
+  };
+  const normalizedDiscovery = normalizeCommercialDiscoveryEvidence(
+    payload.commercialDiscoveryEvidence,
+    now
+  );
+  const normalizedMotions = normalizeProposedCommercialMotions(
+    normalizedDiscovery.plan,
+    supplyCatalog
+  );
+  const tamperedMotions = normalizeProposedCommercialMotions({
+    ...normalizedDiscovery.plan,
+    plans: normalizedDiscovery.plan.plans.map((motion, index) =>
+      index === 0
+        ? { ...motion, evidenceRefs: [...motion.evidenceRefs, 'planner:invented-target'] }
+        : motion
+    )
+  }, supplyCatalog);
+  const response = strictV2Response(domain, evidenceRef);
+  const requests = [];
+  const complete = completionWithCritic(
+    response,
+    'gen-planner-boundary'
+  );
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-planner-boundary',
+      payload
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      requests.push(request);
+      return complete(request);
+    }
+  });
+  const generatorRequest = requests.find((request) =>
+    request.responseFormat?.json_schema?.name ===
+      'opportunity_tournament_commercial_v2'
+  );
+  const criticRequest = requests.find((request) =>
+    request.responseFormat?.json_schema?.name ===
+      'opportunity_tournament_critic_v1'
+  );
+  const generatorPrompt = JSON.parse(generatorRequest?.user || '{}');
+  const criticPrompt = JSON.parse(criticRequest?.user || '{}');
+  const generatorMotions = generatorPrompt.proposedCommercialMotions;
+  const criticMotions = criticPrompt.proposedCommercialMotions;
+  const firstMotion = generatorMotions?.motions?.[0] || {};
+  const verifiedPromptText = JSON.stringify({
+    evidenceCatalog: generatorPrompt.evidenceCatalog,
+    commercialEvidenceGraph: generatorPrompt.commercialEvidenceGraph
+  });
+  const resultGraphText = JSON.stringify(result.commercialEvidenceGraph);
+  if (normalizedDiscovery.valid !== true ||
+      normalizedDiscovery.plan?.valid !== true ||
+      normalizedMotions.status !== 'proposed_unverified' ||
+      normalizedMotions.motions?.length !== 2 ||
+      tamperedMotions.motions?.some((motion) =>
+        motion.id === 'buyer_counterparty_search'
+      ) ||
+      result.status !== 'completed' ||
+      requests.length !== 2 ||
+      generatorMotions?.contractVersion !==
+        'proposed_commercial_motions_v1' ||
+      generatorMotions?.status !== 'proposed_unverified' ||
+      generatorMotions?.evidenceStatus !== 'not_evidence' ||
+      generatorMotions?.outsideFactStatus !== 'unverified' ||
+      generatorMotions?.evidenceHashMatches !== true ||
+      generatorMotions?.motions?.length !== 2 ||
+      firstMotion.buyerRole !==
+        'Operations teams buying workflow automation' ||
+      firstMotion.counterpartyRole !==
+        'Hypothetical Workflow Buyer LLC' ||
+      firstMotion.paidOffer !== domain.offer ||
+      !firstMotion.acquisitionMechanism ||
+      !firstMotion.conversionDestination ||
+      !firstMotion.paidConversion ||
+      !firstMotion.attributionSignal ||
+      firstMotion.hypothesisOnly !== true ||
+      firstMotion.verifiedOutsideFacts !== false ||
+      firstMotion.exactTargetRequired !== true ||
+      criticMotions?.status !== 'proposed_unverified' ||
+      criticMotions?.motions?.length !== 2 ||
+      !/unverified planner hypotheses/i.test(
+        generatorRequest?.system || ''
+      ) ||
+      !/unverified planner hypotheses/i.test(
+        criticRequest?.system || ''
+      ) ||
+      verifiedPromptText.includes('buyer_counterparty_search') ||
+      verifiedPromptText.includes('Hypothetical Workflow Buyer LLC') ||
+      resultGraphText.includes('buyer_counterparty_search') ||
+      resultGraphText.includes('Hypothetical Workflow Buyer LLC') ||
+      result.candidates?.some((candidate) =>
+        /Hypothetical Workflow Buyer LLC/i.test(candidate.displayLabel || '')
+      ) ||
+      result.trace?.commercialDiscovery?.plan?.evidenceStatus !==
+        'not_evidence' ||
+      result.trace?.proposedCommercialMotions?.status !==
+        'proposed_unverified' ||
+      result.searchSpace?.proposedCommercialMotionCount !== 2) {
+    throw new Error(
+      `planner hypotheses crossed the verified-evidence boundary: ${JSON.stringify({ normalizedDiscovery, normalizedMotions, tamperedMotions, result, generatorPrompt, criticPrompt })}`
     );
   }
 }
@@ -1875,7 +2363,7 @@ async function verifyPriorOutcomePolarityAndDedup() {
       tournamentId: 'opturn-prior-polarity',
       hypothesisId: 'hyp-prior-polarity',
       actionId: 'action-prior-polarity',
-      algorithmVersion: 'cheap_tournament_v5'
+      algorithmVersion: 'cheap_tournament_v6'
     }
   };
   const [baseline, won, lost, duplicateWon] = await Promise.all([
