@@ -973,7 +973,8 @@ function normalizeOpportunityDiscoveryPlan(
       contingentFinalists: normalizeContingentFinalistBundle(
         plan.contingentFinalists,
         knownEvidence,
-        referenceTime
+        referenceTime,
+        plan
       )
     };
   }).sort((left, right) =>
@@ -1015,7 +1016,8 @@ function normalizeContingentTargetSlot(value, planValue) {
 function normalizeContingentFinalistBundle(
   value,
   knownEvidence,
-  _referenceTime
+  _referenceTime,
+  planValue
 ) {
   const raw = asObject(value);
   let serialized = '';
@@ -1032,6 +1034,26 @@ function normalizeContingentFinalistBundle(
     clone = JSON.parse(serialized);
   } catch {
     return {};
+  }
+  if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
+  const plan = asObject(planValue);
+  const planEvidenceRefs = compactStrings(plan.evidenceRefs)
+    .filter((ref) => knownEvidence.has(ref) &&
+      ref !== CONTINGENT_TARGET_EVIDENCE_REF)
+    .slice(0, 4);
+  if (planEvidenceRefs.some((ref) => /^observation:/i.test(ref))) {
+    for (const familyKey of ['familyA', 'familyB']) {
+      const family = asObject(clone[familyKey]);
+      if (Object.keys(family).length === 0) continue;
+      // family.e is only the aggregate containment index for evidence the
+      // plan already declared plus its unresolved target slot. Canonicalizing
+      // this index does not author or broaden a child claim: every child ref,
+      // provider role, and causal field is still independently validated.
+      family.e = [
+        CONTINGENT_TARGET_EVIDENCE_REF,
+        ...planEvidenceRefs
+      ];
+    }
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   return clone;

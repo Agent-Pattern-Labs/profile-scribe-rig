@@ -280,6 +280,9 @@ for (const scenario of cases) {
         responseData.plans[0].targetSlot.requiredEvidenceRoles = [
           'defined_buyer'
         ];
+        responseData.plans[0].contingentFinalists.familyA.e = [
+          'target:evidence'
+        ];
       }
       const responseBytes = Buffer.byteLength(
         JSON.stringify(responseData),
@@ -396,7 +399,13 @@ for (const scenario of cases) {
     if (normalizedMotion.targetSlot?.commercialRole !==
           normalizedMotion.commercialRole ||
         JSON.stringify(normalizedMotion.targetSlot?.requiredEvidenceRoles) !==
-          JSON.stringify(expectedRoles)) {
+          JSON.stringify(expectedRoles) ||
+        !normalizedMotion.contingentFinalists?.familyA?.e?.includes(
+          evidenceRef
+        ) ||
+        !normalizedMotion.contingentFinalists?.familyA?.e?.includes(
+          'target:evidence'
+        )) {
       throw new Error(
         `call-1 structural binding drift was not canonicalized: ${JSON.stringify(normalizedMotion)}`
       );
