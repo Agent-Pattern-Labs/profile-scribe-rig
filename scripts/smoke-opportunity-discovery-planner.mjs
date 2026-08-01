@@ -16,7 +16,10 @@ const usage = {
   total_tokens: 1550,
   cost: 0.0065
 };
-const MAX_REPRESENTATIVE_PLANNER_RESPONSE_BYTES = 18 * 1024;
+const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 28 * 1024;
+const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 26 * 1024;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 8_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 556_831;
 let largestPlannerResponseBytes = 0;
 let largestPlannerRequestBytes = 0;
 let largestPlannerContractBytes = 0;
@@ -292,9 +295,9 @@ for (const scenario of cases) {
         largestPlannerResponseBytes,
         responseBytes
       );
-      if (responseBytes > MAX_REPRESENTATIVE_PLANNER_RESPONSE_BYTES) {
+      if (responseBytes > DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES) {
         throw new Error(
-          `${scenario.name}: valid call-1 response is ${responseBytes} bytes, outside the conservative 6,000-token envelope`
+          `${scenario.name}: valid call-1 response is ${responseBytes} bytes, above the 26 KiB compact-response target`
         );
       }
       return {
@@ -324,6 +327,10 @@ for (const scenario of cases) {
       requestSeen.plugins?.[0]?.id !== 'web' ||
       requestSeen.plugins?.[0]?.engine !== 'exa' ||
       requestSeen.plugins?.[0]?.max_results !== 5 ||
+      requestSeen.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
+      !requestSeen.system?.includes(
+        'Keep the complete JSON response at or below 26 KiB.'
+      ) ||
       result.status !== 'planned' ||
       result.contractVersion !== OPPORTUNITY_DISCOVERY_PLAN_CONTRACT ||
       result.plans.length !== 2 ||
@@ -348,12 +355,17 @@ for (const scenario of cases) {
       result.webSearchReceipt?.injectedContextTokenReserve !== 1_047_576 ||
       result.webSearchReceipt?.costIncludedInLLMReceipt !== true ||
       result.preflight?.promptTokenCeiling !== 1_047_576 ||
-      result.preflight?.callSpendCeilingMicros !== 553_631 ||
+      result.preflight?.outputTokenCeiling !==
+        DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
+      result.preflight?.fixedRequestFeeCeilingMicros !== 120_000 ||
+      result.preflight?.fixedToolFeeMicros !== 5_000 ||
+      result.preflight?.callSpendCeilingMicros !==
+        DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS ||
       !(result.preflight?.responseBodyByteCount > 0) ||
       result.preflight?.responseBodyByteCount >
-        MAX_REPRESENTATIVE_PLANNER_RESPONSE_BYTES ||
+        DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES ||
       result.preflight?.maxResponseBodyByteCount !==
-        MAX_REPRESENTATIVE_PLANNER_RESPONSE_BYTES ||
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `${scenario.name}: generic discovery plan failed ${JSON.stringify(result)}`
@@ -457,6 +469,92 @@ for (const scenario of cases) {
   }
 }
 
+const envelopeScenario = cases[0];
+const envelopeJob = plannerJob(envelopeScenario);
+const envelopeCatalog = buildEvidenceCatalog(envelopeJob.payload, {}, now, {
+  includeSystemAttributionCapability: true
+});
+const envelopeEvidenceRef = envelopeCatalog.find((item) =>
+  typeof item.id === 'string' && item.id.startsWith('observation:')
+)?.id;
+if (!envelopeEvidenceRef) {
+  throw new Error('planner response-envelope fixture produced no evidence id');
+}
+
+function plannerResponseAtByteCount(byteCount) {
+  const response = {
+    contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+    status: 'planned',
+    reason: '',
+    plans: envelopeScenario.plans(envelopeEvidenceRef)
+  };
+  const baseBytes = Buffer.byteLength(JSON.stringify(response), 'utf8');
+  if (baseBytes > byteCount) {
+    throw new Error(
+      `planner response-envelope fixture exceeds target: ${baseBytes} > ${byteCount}`
+    );
+  }
+  response.reason = 'r'.repeat(byteCount - baseBytes);
+  return response;
+}
+
+async function runPlannerResponseEnvelopeCase(byteCount) {
+  return runOpportunityDiscoveryPlanner({
+    job: envelopeJob,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => ({
+      data: plannerResponseAtByteCount(byteCount),
+      usage,
+      generationId: `generation-envelope-${byteCount}`,
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: byteCount,
+        contentSha256: 'e'.repeat(64)
+      },
+      annotations: [{
+        type: 'url_citation',
+        url_citation: {
+          url: 'https://market.example/response-envelope',
+          title: 'Current public professional result',
+          content: 'Current public professional organization for review.'
+        }
+      }]
+    })
+  });
+}
+
+const withinResponseMarginBytes = 27 * 1024;
+const withinResponseMargin = await runPlannerResponseEnvelopeCase(
+  withinResponseMarginBytes
+);
+if (withinResponseMargin.status !== 'planned' ||
+    withinResponseMargin.preflight?.responseBodyByteCount !==
+      withinResponseMarginBytes ||
+    withinResponseMargin.preflight?.maxResponseBodyByteCount !==
+      MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
+  throw new Error(
+    `planner rejected its bounded response margin: ${JSON.stringify(withinResponseMargin)}`
+  );
+}
+
+const overflowResponseBytes = MAX_DISCOVERY_PLANNER_RESPONSE_BYTES + 1;
+const overflowResponse = await runPlannerResponseEnvelopeCase(
+  overflowResponseBytes
+);
+if (overflowResponse.status !== 'blocked' ||
+    overflowResponse.reason !==
+      'Discovery planner response exceeded its bounded structured-output envelope.' ||
+    overflowResponse.preflight?.responseBodyByteCount !==
+      overflowResponseBytes ||
+    overflowResponse.preflight?.maxResponseBodyByteCount !==
+      MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
+  throw new Error(
+    `planner did not enforce its 28 KiB response gate: ${JSON.stringify(overflowResponse)}`
+  );
+}
+
 const unsafeScenario = cases[0];
 const unsafeJob = plannerJob(unsafeScenario);
 const unsafeCatalog = buildEvidenceCatalog(unsafeJob.payload, {}, now, {
@@ -543,7 +641,7 @@ await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTwoStageTargetBinding();
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest valid call-1 response ${largestPlannerResponseBytes} bytes / <=${Math.ceil(largestPlannerResponseBytes / 3)} conservative JSON tokens)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest representative response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyOneMotionWithTwoCausalFamilies(job, evidenceRef) {
@@ -1731,7 +1829,7 @@ function plannerJob(scenario) {
         maxSpendMicros: 1_000_000,
         maxLLMSpendMicros: 560_000,
         maxLLMCalls: 1,
-        maxOutputTokens: 6_000,
+        maxOutputTokens: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
         hardStop: true
       },
       evidenceSnapshot: {
