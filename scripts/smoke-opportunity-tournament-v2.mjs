@@ -283,6 +283,8 @@ await verifyUnsafeGeneratedExperimentRejected();
 await verifyCompletedExternalExecutionRejected();
 await verifyInsufficientGroundedFinalistCause();
 await verifyCriticReorderingControlsWinner();
+await verifyCriticNearestCashOrderingFailsClosed();
+await verifyCriticNearestCashStrictTypesFailClosed();
 await verifyPriorOutcomePolarityAndDedup();
 await verifyInvalidSeedContractsRejected();
 await verifyLengthFinishedStructuredRepair();
@@ -338,6 +340,7 @@ async function runDomain(domain, options = {}) {
     }]
   };
   const response = strictV2Response(domain, ref);
+  options.mutateGeneratorResponse?.(response);
   return runOpportunityTournament({
     job: {
       id: `job-${domain.name}`,
@@ -370,7 +373,11 @@ async function runDomain(domain, options = {}) {
     completeJSON: completionWithCritic(
       response,
       `gen-${domain.name}`,
-      { reverseOrdering: options.reverseCritic === true }
+      {
+        reverseOrdering: options.reverseCritic === true,
+        criticEstimate: options.criticEstimate,
+        inspectCriticRequest: options.inspectCriticRequest
+      }
     )
   });
 }
@@ -383,6 +390,7 @@ function completionWithCritic(
   return async (request) => {
     if (request.responseFormat?.json_schema?.name ===
         'opportunity_tournament_critic_v1') {
+      options.inspectCriticRequest?.(request);
       const prompt = JSON.parse(request.user);
       const finalists = prompt.finalists || [];
       const orderedFinalists = options.reverseOrdering === true
@@ -390,31 +398,41 @@ function completionWithCritic(
         : finalists;
       const selectedOrdering = orderedFinalists
         .map((item) => item.finalistId);
+      const comparisons = finalists.map((item, index) => {
+        const estimate = options.criticEstimate?.({
+          item,
+          index,
+          finalists
+        }) || {};
+        return {
+          finalistId: item.finalistId,
+          verdict: 'accept',
+          activeRevenueAction: true,
+          causalAcquisitionPath: true,
+          incrementalRevenueOutcome: true,
+          incrementalRevenue: 'strong',
+          evidenceStrength: estimate.evidenceStrength ?? 'strong',
+          reachability: estimate.reachability ?? 'moderate',
+          timeToFirstDollar: 'moderate',
+          paidOutcomeProbability:
+            estimate.paidOutcomeProbability ?? 0.35,
+          timeToFirstDollarDays:
+            estimate.timeToFirstDollarDays ?? 14,
+          recurringValue: estimate.recurringValue ?? 'repeatable',
+          cost: estimate.cost ?? 'low',
+          effort: estimate.effort ?? 'moderate',
+          uncertainty: estimate.uncertainty ?? 'moderate',
+          reasonCode: 'active_incremental_path',
+          reason:
+            'The grounded motion actively advances an attributable paid conversion.'
+        };
+      });
       return {
         data: {
           criticContract: 'opportunity_tournament_critic_v1',
           selectedOrdering,
           selectedFinalistId: selectedOrdering[0],
-          comparisons: finalists.map((item) => ({
-            finalistId: item.finalistId,
-            verdict: 'accept',
-            activeRevenueAction: true,
-            causalAcquisitionPath: true,
-            incrementalRevenueOutcome: true,
-            incrementalRevenue: 'strong',
-            evidenceStrength: 'strong',
-            reachability: 'moderate',
-            timeToFirstDollar: 'moderate',
-            paidOutcomeProbability: 0.35,
-            timeToFirstDollarDays: 14,
-            recurringValue: 'repeatable',
-            cost: 'low',
-            effort: 'moderate',
-            uncertainty: 'moderate',
-            reasonCode: 'active_incremental_path',
-            reason:
-              'The grounded motion actively advances an attributable paid conversion.'
-          })),
+          comparisons,
           reason:
             'Ranked the grounded finalists by incremental revenue, evidence, reachability, time, cost, effort, and uncertainty.'
         },
@@ -1680,19 +1698,159 @@ async function verifyInsufficientGroundedFinalistCause() {
 
 async function verifyCriticReorderingControlsWinner() {
   const domain = { ...domains.find((item) => item.name === 'saas') };
-  const result = await runDomain(domain, { reverseCritic: true });
+  const result = await runDomain(domain, {
+    reverseCritic: true,
+    criticEstimate: ({ index }) => ({
+      paidOutcomeProbability: 0.2 + (index * 0.05),
+      timeToFirstDollarDays: 20 - index,
+      recurringValue: 'repeatable'
+    })
+  });
   if (result.status !== 'completed' ||
       result.winner?.hypothesisId !==
         result.searchSpace?.commercialCritic?.selectedOrdering?.[0] ||
       !(result.winner?.score?.total < result.runnerUp?.score?.total) ||
+      !(result.winner?.paidOutcomeProbability >
+        result.runnerUp?.paidOutcomeProbability) ||
       !/independent commercial critic ranked it ahead/i.test(
         result.winner?.whyOverRunnerUp || ''
       ) ||
       !/critic ordering, not that score alone/i.test(
         result.winner?.whyOverRunnerUp || ''
+      ) ||
+      !/paid-outcome probability \d+(?:\.\d+)?% vs \d+(?:\.\d+)?%/i.test(
+        result.winner?.whyOverRunnerUp || ''
+      ) ||
+      !/expected gross value [\d,.]+ USD vs [\d,.]+ USD/i.test(
+        result.winner?.whyOverRunnerUp || ''
+      ) ||
+      !/recurring class repeatable vs repeatable/i.test(
+        result.winner?.whyOverRunnerUp || ''
+      ) ||
+      !/time to first dollar \d+ vs \d+ days/i.test(
+        result.winner?.whyOverRunnerUp || ''
+      ) ||
+      !/decisive priority was paid-outcome probability/i.test(
+        result.winner?.whyOverRunnerUp || ''
       )) {
     throw new Error(
       `critic reordering did not control the exact winner or produced a false score claim: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyCriticNearestCashOrderingFailsClosed() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  const worseFirstScenarios = [{
+    label: 'paid-outcome probability',
+    criticEstimate: ({ index }) => ({
+      paidOutcomeProbability: index === 0 ? 0.2 : 0.8
+    })
+  }, {
+    label: 'recurring value',
+    criticEstimate: ({ index }) => ({
+      recurringValue: index === 0 ? 'one_time' : 'recurring'
+    })
+  }, {
+    label: 'numeric days to first dollar',
+    criticEstimate: ({ index }) => ({
+      timeToFirstDollarDays: index === 0 ? 24 : 6
+    })
+  }, {
+    label: 'reachability',
+    criticEstimate: ({ index }) => ({
+      reachability: index === 0 ? 'weak' : 'strong'
+    })
+  }, {
+    label: 'evidence strength',
+    criticEstimate: ({ index }) => ({
+      evidenceStrength: index === 0 ? 'weak' : 'strong'
+    })
+  }, {
+    label: 'cost',
+    criticEstimate: ({ index }) => ({
+      cost: index === 0 ? 'high' : 'low'
+    })
+  }, {
+    label: 'effort',
+    criticEstimate: ({ index }) => ({
+      effort: index === 0 ? 'high' : 'low'
+    })
+  }, {
+    label: 'uncertainty',
+    criticEstimate: ({ index }) => ({
+      uncertainty: index === 0 ? 'high' : 'low'
+    })
+  }];
+  for (const scenario of worseFirstScenarios) {
+    const result = await runDomain(domain, {
+      criticEstimate: scenario.criticEstimate
+    });
+    assertNearestCashCriticContractRecovery(result, scenario.label);
+  }
+
+  const expectedValueResult = await runDomain(domain, {
+    mutateGeneratorResponse: (response) => {
+      response.familyA.d.revenuePaths[0].vm = 100_000;
+      response.familyB.d.revenuePaths[0].vm = 500_000;
+    }
+  });
+  assertNearestCashCriticContractRecovery(
+    expectedValueResult,
+    'expected gross value'
+  );
+}
+
+async function verifyCriticNearestCashStrictTypesFailClosed() {
+  const domain = { ...domains.find((item) => item.name === 'saas') };
+  let paidProbabilitySchema;
+  const wrongPrimitiveResult = await runDomain(domain, {
+    criticEstimate: () => ({
+      paidOutcomeProbability: '0.35',
+      timeToFirstDollarDays: '14',
+      recurringValue: 2
+    }),
+    inspectCriticRequest: (request) => {
+      paidProbabilitySchema =
+        request.responseFormat?.json_schema?.schema?.properties
+          ?.comparisons?.items?.properties?.paidOutcomeProbability;
+    }
+  });
+  assertNearestCashCriticContractRecovery(
+    wrongPrimitiveResult,
+    'strict nearest-cash primitive types'
+  );
+  if (paidProbabilitySchema?.minimum !== 0.000001 ||
+      paidProbabilitySchema?.maximum !== 1 ||
+      'exclusiveMinimum' in (paidProbabilitySchema || {})) {
+    throw new Error(
+      `critic paid-outcome schema did not use the provider-supported positive numeric bound: ${JSON.stringify(paidProbabilitySchema)}`
+    );
+  }
+
+  const zeroProbabilityResult = await runDomain(domain, {
+    criticEstimate: () => ({ paidOutcomeProbability: 0 })
+  });
+  assertNearestCashCriticContractRecovery(
+    zeroProbabilityResult,
+    'zero paid-outcome probability'
+  );
+}
+
+function assertNearestCashCriticContractRecovery(result, label) {
+  if (result.status !== 'skipped' ||
+      result.winner !== null ||
+      result.searchSpace?.commercialCritic?.attempted !== true ||
+      result.searchSpace?.commercialCritic?.valid !== false ||
+      result.searchSpace?.commercialCritic?.cause !==
+        'critic_contract_invalid' ||
+      result.nextExperiment?.kind !==
+        'strategy_generation_critic_contract_recovery' ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `${label} did not fail closed as a nearest-cash critic contract error: ${JSON.stringify(result)}`
     );
   }
 }

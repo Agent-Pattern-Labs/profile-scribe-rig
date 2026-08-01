@@ -163,6 +163,21 @@ const ATTRIBUTION_METHODS = new Set([
 ]);
 const OWNED_INBOUND_ASSET_KIND = 'owned_inbound_asset';
 const SYNTHESIZED_OWNED_INBOUND_ASSETS = new WeakSet();
+const COMMERCIAL_CRITIC_RECURRING_VALUE_PRIORITY = new Map([
+  ['one_time', 1],
+  ['repeatable', 2],
+  ['recurring', 3]
+]);
+const COMMERCIAL_CRITIC_STRENGTH_PRIORITY = new Map([
+  ['weak', 1],
+  ['moderate', 2],
+  ['strong', 3]
+]);
+const COMMERCIAL_CRITIC_BURDEN_PRIORITY = new Map([
+  ['high', 1],
+  ['moderate', 2],
+  ['low', 3]
+]);
 const COMMERCIAL_DISCOVERY_PROVENANCE =
   'provider_attested_commercial_discovery';
 const COMMERCIAL_DISCOVERY_STATUSES = new Set([
@@ -5218,7 +5233,7 @@ function commercialCriticPrompt({
 }) {
   const system = `You are ProfileScribe's independent commercial-motion critic.
 Compare and rank exactly the supplied deterministically valid finalist motions. This is research only and authorizes no execution.
-For every finalist, assess incremental revenue, evidence strength, buyer reachability, paid-outcome probability, a numeric 1-to-30-day time to first dollar, recurring value, cost, effort, and uncertainty. Rank the best causal commercial motion first.
+For every finalist, assess incremental revenue, evidence strength, buyer reachability, paid-outcome probability, a numeric 1-to-30-day time to first dollar, recurring value, cost, effort, and uncertainty. Order selectedOrdering by higher paid-outcome probability first, then higher expectedGrossIncomeMicros, recurring before repeatable before one-time value, fewer timeToFirstDollarDays, stronger reachability, stronger evidence, lower cost, lower effort, and lower uncertainty. Only an exact tie across those fields may use your remaining commercial judgment.
 Accept only finalists whose primary action actively and causally creates qualified demand or advances a paid conversion, whose income is counterfactually incremental, whose buyer and paid offer are grounded, whose acquisition is distinct from destination, and whose paid outcome has durable attribution plus a numeric stop.
 The deterministic pre-filter has already excluded passive and operational motions. If one appears anyway, reject it; never reward monitoring, measuring, profile work, content work, or administration.
 Treat commercialContext only as permission/channel capability. A connected channel never proves buyer demand, fit, or reachability.
@@ -5266,7 +5281,7 @@ function commercialCriticResponseFormat(finalistsValue) {
       },
       paidOutcomeProbability: {
         type: 'number',
-        minimum: 0,
+        minimum: 0.000001,
         maximum: 1
       },
       timeToFirstDollarDays: {
@@ -5451,6 +5466,109 @@ function commercialConstraintGate(hypothesisValue, graphValue) {
   };
 }
 
+function commercialCriticNearestCashEstimate(itemValue, finalistValue) {
+  const item = asObject(itemValue);
+  const finalist = asObject(finalistValue);
+  const paidOutcomeProbability = item.paidOutcomeProbability;
+  const timeToFirstDollarDays = item.timeToFirstDollarDays;
+  const recurringValue = item.recurringValue;
+  const expectedGrossIncomeMicros = finalist.expectedValueMicros;
+  const reachability = item.reachability;
+  const evidenceStrength = item.evidenceStrength;
+  const cost = item.cost;
+  const effort = item.effort;
+  const uncertainty = item.uncertainty;
+  const valid =
+    typeof paidOutcomeProbability === 'number' &&
+    Number.isFinite(paidOutcomeProbability) &&
+    paidOutcomeProbability > 0 &&
+    paidOutcomeProbability <= 1 &&
+    typeof timeToFirstDollarDays === 'number' &&
+    Number.isInteger(timeToFirstDollarDays) &&
+    timeToFirstDollarDays >= 1 &&
+    timeToFirstDollarDays <= 30 &&
+    typeof expectedGrossIncomeMicros === 'number' &&
+    Number.isSafeInteger(expectedGrossIncomeMicros) &&
+    expectedGrossIncomeMicros > 0 &&
+    typeof recurringValue === 'string' &&
+    COMMERCIAL_CRITIC_RECURRING_VALUE_PRIORITY.has(recurringValue) &&
+    typeof reachability === 'string' &&
+    COMMERCIAL_CRITIC_STRENGTH_PRIORITY.has(reachability) &&
+    typeof evidenceStrength === 'string' &&
+    COMMERCIAL_CRITIC_STRENGTH_PRIORITY.has(evidenceStrength) &&
+    typeof cost === 'string' &&
+    COMMERCIAL_CRITIC_BURDEN_PRIORITY.has(cost) &&
+    typeof effort === 'string' &&
+    COMMERCIAL_CRITIC_BURDEN_PRIORITY.has(effort) &&
+    typeof uncertainty === 'string' &&
+    COMMERCIAL_CRITIC_BURDEN_PRIORITY.has(uncertainty);
+  return {
+    valid,
+    paidOutcomeProbability,
+    expectedGrossIncomeMicros,
+    recurringValue,
+    timeToFirstDollarDays,
+    reachability,
+    evidenceStrength,
+    cost,
+    effort,
+    uncertainty
+  };
+}
+
+function commercialCriticNearestCashPriorityValues(estimateValue) {
+  const estimate = asObject(estimateValue);
+  return [
+    ['paid-outcome probability', estimate.paidOutcomeProbability],
+    ['expected gross value', estimate.expectedGrossIncomeMicros],
+    [
+      'recurring-value class',
+      COMMERCIAL_CRITIC_RECURRING_VALUE_PRIORITY.get(
+        estimate.recurringValue
+      )
+    ],
+    ['time to first dollar', -estimate.timeToFirstDollarDays],
+    [
+      'reachability',
+      COMMERCIAL_CRITIC_STRENGTH_PRIORITY.get(estimate.reachability)
+    ],
+    [
+      'evidence strength',
+      COMMERCIAL_CRITIC_STRENGTH_PRIORITY.get(
+        estimate.evidenceStrength
+      )
+    ],
+    ['cost', COMMERCIAL_CRITIC_BURDEN_PRIORITY.get(estimate.cost)],
+    ['effort', COMMERCIAL_CRITIC_BURDEN_PRIORITY.get(estimate.effort)],
+    [
+      'uncertainty',
+      COMMERCIAL_CRITIC_BURDEN_PRIORITY.get(estimate.uncertainty)
+    ]
+  ];
+}
+
+function compareCommercialCriticNearestCash(leftValue, rightValue) {
+  const left = commercialCriticNearestCashPriorityValues(leftValue);
+  const right = commercialCriticNearestCashPriorityValues(rightValue);
+  for (let index = 0; index < left.length; index += 1) {
+    const leftScore = left[index][1];
+    const rightScore = right[index][1];
+    if (leftScore === rightScore) continue;
+    return leftScore > rightScore ? -1 : 1;
+  }
+  return 0;
+}
+
+function commercialCriticNearestCashDecisivePriority(
+  winnerValue,
+  runnerUpValue
+) {
+  const winner = commercialCriticNearestCashPriorityValues(winnerValue);
+  const runnerUp = commercialCriticNearestCashPriorityValues(runnerUpValue);
+  return winner.find((item, index) => item[1] !== runnerUp[index][1])
+    ?.[0] || 'an exact nearest-cash tie resolved by critic judgment';
+}
+
 function normalizeCommercialCritic(
   value,
   finalistsValue,
@@ -5465,15 +5583,30 @@ function normalizeCommercialCritic(
   const values = asArray(raw.comparisons).map(asObject);
   const returnedIDs = values.map((item) => firstText(item.finalistId));
   const ordering = compactStrings(raw.selectedOrdering);
-  const commercialEstimateShapeValid = values.every((item) => {
-    const probability = Number(item.paidOutcomeProbability);
-    const days = Number(item.timeToFirstDollarDays);
-    return Number.isFinite(probability) && probability > 0 &&
-      probability <= 1 && Number.isInteger(days) && days >= 1 &&
-      days <= 30 && ['one_time', 'repeatable', 'recurring'].includes(
-        firstText(item.recurringValue)
-      );
-  });
+  const nearestCashEstimates = values.map((item) => ({
+    finalistId: firstText(item.finalistId),
+    ...commercialCriticNearestCashEstimate(
+      item,
+      finalistByID.get(firstText(item.finalistId))
+    )
+  }));
+  const nearestCashEstimateByID = new Map(nearestCashEstimates.map(
+    (estimate) => [estimate.finalistId, estimate]
+  ));
+  const commercialEstimateShapeValid = nearestCashEstimates.every(
+    (estimate) => estimate.valid === true
+  );
+  const nearestCashOrderingValid =
+    ordering.length === expectedIDs.length &&
+    ordering.every((id) =>
+      nearestCashEstimateByID.get(id)?.valid === true
+    ) &&
+    ordering.every((id, index) => index === 0 ||
+      compareCommercialCriticNearestCash(
+        nearestCashEstimateByID.get(ordering[index - 1]),
+        nearestCashEstimateByID.get(id)
+      ) <= 0
+    );
   const shapeValid =
     firstText(raw.criticContract) ===
       OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT &&
@@ -5484,7 +5617,9 @@ function normalizeCommercialCritic(
     new Set(ordering).size === expectedIDs.length &&
     expectedIDs.every((id) => ordering.includes(id)) &&
     firstText(raw.selectedFinalistId) === ordering[0] &&
-    Boolean(firstText(raw.reason)) && commercialEstimateShapeValid;
+    Boolean(firstText(raw.reason)) &&
+    commercialEstimateShapeValid &&
+    nearestCashOrderingValid;
   if (!shapeValid) {
     return {
       valid: false,
@@ -5499,6 +5634,9 @@ function normalizeCommercialCritic(
   const comparisons = values
     .map((item) => {
       const finalist = finalistByID.get(firstText(item.finalistId));
+      const nearestCashEstimate = nearestCashEstimateByID.get(
+        firstText(item.finalistId)
+      );
       const deterministic = deterministicCommercialHypothesisGate(
         finalist,
         commercialEvidenceGraphValue
@@ -5525,9 +5663,13 @@ function normalizeCommercialCritic(
         evidenceStrength: firstText(item.evidenceStrength),
         reachability: firstText(item.reachability),
         timeToFirstDollar: firstText(item.timeToFirstDollar),
-        paidOutcomeProbability: Number(item.paidOutcomeProbability),
-        timeToFirstDollarDays: Number(item.timeToFirstDollarDays),
-        recurringValue: firstText(item.recurringValue),
+        paidOutcomeProbability:
+          nearestCashEstimate.paidOutcomeProbability,
+        expectedGrossIncomeMicros:
+          nearestCashEstimate.expectedGrossIncomeMicros,
+        timeToFirstDollarDays:
+          nearestCashEstimate.timeToFirstDollarDays,
+        recurringValue: nearestCashEstimate.recurringValue,
         cost: firstText(item.cost),
         effort: firstText(item.effort),
         uncertainty: firstText(item.uncertainty),
@@ -6838,22 +6980,30 @@ function recommendationFor({
     ? `${revenueWhy} ${candidateLabel} is the ${candidateIsOwnedInboundAsset ? 'approved owned inbound execution asset' : candidateIsContextAnchor ? 'exact named evidence anchor' : 'exact named candidate'} attached to this strategy. ${grounding} It led ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations on objective fit, evidence strength, buyer authority, timing, incremental expected value, effort, cost, risk, and uncertainty.`
     : `${revenueWhy} ${grounding} This was one of ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations.`;
   const whyOverRunnerUp = runnerUp
-    ? comparisonReason(hypothesis, runnerUp, commercialCritic)
+    ? comparisonReason(
+        hypothesis,
+        runnerUp,
+        commercialCritic,
+        objective.currency
+      )
     : '';
   const criticComparison = asArray(
     asObject(commercialCritic).comparisons
   ).map(asObject).find((comparison) =>
     firstText(comparison.finalistId) === firstText(hypothesis.id)
   );
-  const paidOutcomeProbability = Number(
-    criticComparison?.paidOutcomeProbability
-  );
-  const timeToFirstDollarDays = Number(
-    criticComparison?.timeToFirstDollarDays
-  );
+  const paidOutcomeProbability = criticComparison?.paidOutcomeProbability;
+  const expectedGrossIncomeMicros =
+    criticComparison?.expectedGrossIncomeMicros;
+  const timeToFirstDollarDays = criticComparison?.timeToFirstDollarDays;
   const recurringValue = firstText(criticComparison?.recurringValue);
-  if (!Number.isFinite(paidOutcomeProbability) ||
+  if (typeof paidOutcomeProbability !== 'number' ||
+      !Number.isFinite(paidOutcomeProbability) ||
       paidOutcomeProbability <= 0 || paidOutcomeProbability > 1 ||
+      typeof expectedGrossIncomeMicros !== 'number' ||
+      !Number.isSafeInteger(expectedGrossIncomeMicros) ||
+      expectedGrossIncomeMicros <= 0 ||
+      typeof timeToFirstDollarDays !== 'number' ||
       !Number.isInteger(timeToFirstDollarDays) ||
       timeToFirstDollarDays < 1 || timeToFirstDollarDays > 30 ||
       !['one_time', 'repeatable', 'recurring'].includes(recurringValue)) {
@@ -6924,7 +7074,31 @@ function explicitApprovalBoundedAction(value) {
   return `After explicit approval, ${action}`;
 }
 
-function comparisonReason(winner, runnerUp, commercialCriticValue = {}) {
+function commercialCriticProbabilityLabel(value) {
+  const percentage = value * 100;
+  return `${Number.isInteger(percentage)
+    ? percentage.toFixed(0)
+    : percentage.toFixed(1)}%`;
+}
+
+function commercialCriticExpectedGrossLabel(value, currencyValue) {
+  const currency = firstText(currencyValue, 'USD').toUpperCase();
+  return `${(value / 1_000_000).toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  })} ${currency}`;
+}
+
+function commercialCriticRecurringValueLabel(value) {
+  return firstText(value).replaceAll('_', '-');
+}
+
+function comparisonReason(
+  winner,
+  runnerUp,
+  commercialCriticValue = {},
+  currency = 'USD'
+) {
   const critic = asObject(commercialCriticValue);
   const ordering = compactStrings(critic.selectedOrdering);
   const comparisons = asArray(critic.comparisons).map(asObject);
@@ -6935,11 +7109,34 @@ function comparisonReason(winner, runnerUp, commercialCriticValue = {}) {
     const comparison = comparisons.find((item) =>
       firstText(item.finalistId) === firstText(winner.id)
     );
+    const runnerUpComparison = comparisons.find((item) =>
+      firstText(item.finalistId) === firstText(runnerUp.id)
+    );
+    if (!comparison || !runnerUpComparison) return '';
+    const decisivePriority = commercialCriticNearestCashDecisivePriority(
+      comparison,
+      runnerUpComparison
+    );
+    const nearestCashComparison =
+      `paid-outcome probability ${commercialCriticProbabilityLabel(
+        comparison.paidOutcomeProbability
+      )} vs ${commercialCriticProbabilityLabel(
+        runnerUpComparison.paidOutcomeProbability
+      )}; expected gross value ${commercialCriticExpectedGrossLabel(
+        comparison.expectedGrossIncomeMicros,
+        currency
+      )} vs ${commercialCriticExpectedGrossLabel(
+        runnerUpComparison.expectedGrossIncomeMicros,
+        currency
+      )}; recurring class ${commercialCriticRecurringValueLabel(
+        comparison.recurringValue
+      )} vs ${commercialCriticRecurringValueLabel(
+        runnerUpComparison.recurringValue
+      )}; time to first dollar ${comparison.timeToFirstDollarDays} vs ` +
+      `${runnerUpComparison.timeToFirstDollarDays} days`;
     const dimensions = [
-      ['incrementalRevenue', 'incremental revenue'],
       ['evidenceStrength', 'evidence strength'],
       ['reachability', 'reachability'],
-      ['timeToFirstDollar', 'time to first dollar'],
       ['cost', 'cost'],
       ['effort', 'effort'],
       ['uncertainty', 'uncertainty']
@@ -6947,7 +7144,7 @@ function comparisonReason(winner, runnerUp, commercialCriticValue = {}) {
       `${label}: ${firstText(comparison?.[field], 'noted')}`
     ).join('; ');
     return truncate(
-      `The independent commercial critic ranked it ahead of the runner-up after comparing ${dimensions}. Its deterministic score was ${winner.score.total.toFixed(3)} versus ${runnerUp.score.total.toFixed(3)}; the critic ordering, not that score alone, controlled final selection.`,
+      `The independent commercial critic ranked it ahead of the runner-up; the critic ordering, not that score alone, controlled final selection. Nearest-cash comparison: ${nearestCashComparison}. The decisive priority was ${decisivePriority}. Secondary assessment: ${dimensions}.`,
       600
     );
   }
