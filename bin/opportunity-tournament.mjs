@@ -12,6 +12,8 @@ export const OPPORTUNITY_TOURNAMENT_RESULT_CONTRACT =
   'opportunity_tournament_result_v2';
 export const ACTIVE_REVENUE_ACTION_CONTRACT =
   'active_revenue_action_v1';
+export const COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT =
+  'commercial_discovery_evidence_v1';
 
 const MAX_HYPOTHESES = 10_000;
 const MAX_FINALISTS = 20;
@@ -69,6 +71,7 @@ const MAX_PROMPT_EVIDENCE_ITEMS = 16;
 const MAX_PROMPT_PAID_ASSET_ITEMS = 4;
 const MAX_PROMPT_OBJECTIVE_EVIDENCE_ITEMS = 4;
 const MAX_PROMPT_CANDIDATE_EVIDENCE_ITEMS = 4;
+const MAX_PROMPT_COMMERCIAL_DISCOVERY_EVIDENCE_ITEMS = 4;
 const MAX_PROMPT_REVENUE_EVIDENCE_ITEMS = 3;
 const MAX_PROMPT_ATTRIBUTION_EVIDENCE_ITEMS = 2;
 const MAX_PROMPT_RISK_EVIDENCE_ITEMS = 2;
@@ -160,6 +163,62 @@ const ATTRIBUTION_METHODS = new Set([
 ]);
 const OWNED_INBOUND_ASSET_KIND = 'owned_inbound_asset';
 const SYNTHESIZED_OWNED_INBOUND_ASSETS = new WeakSet();
+const COMMERCIAL_DISCOVERY_PROVENANCE =
+  'provider_attested_commercial_discovery';
+const COMMERCIAL_DISCOVERY_STATUSES = new Set([
+  'found',
+  'not_found',
+  'failed',
+  'provider_unavailable'
+]);
+const COMMERCIAL_DISCOVERY_FOUND_STATUS = 'found';
+const COMMERCIAL_DISCOVERY_PROVIDERS = new Set([
+  'google_places',
+  'github_search',
+  'brave_web_search',
+  'people_data_labs_person_search',
+  'people_data_labs_job_posting_search'
+]);
+const COMMERCIAL_DISCOVERY_KINDS = new Set([
+  'verified_external_professional_target',
+  'verified_external_live_demand'
+]);
+const COMMERCIAL_DISCOVERY_PROVIDER_PROVENANCE = new Map([
+  ['google_places', new Set(['read_only_professional_provider'])],
+  ['github_search', new Set(['read_only_professional_provider'])],
+  ['brave_web_search', new Set(['read_only_professional_provider'])],
+  [
+    'people_data_labs_person_search',
+    new Set(['people_data_labs_professional_record'])
+  ],
+  [
+    'people_data_labs_job_posting_search',
+    new Set(['people_data_labs_active_job_posting'])
+  ]
+]);
+const COMMERCIAL_DISCOVERY_ROLES = new Set([
+  'acquisition',
+  'channel_fit',
+  'conversion_destination',
+  'defined_buyer',
+  'demand_signal',
+  'paid_conversion',
+  'paid_offer',
+  'prospective_partner'
+]);
+const COMMERCIAL_DISCOVERY_CANDIDATE_ROLES = new Set([
+  'buyer',
+  'referral_partner',
+  'paid_demand',
+  'hiring_manager'
+]);
+const MAX_COMMERCIAL_DISCOVERY_PROVIDER_CALLS = 4;
+const MAX_COMMERCIAL_DISCOVERY_PAID_PROVIDER_CALLS = 2;
+const MAX_COMMERCIAL_DISCOVERY_ATTEMPTS = 2;
+const MAX_COMMERCIAL_DISCOVERY_EVIDENCE = 10;
+const MAX_COMMERCIAL_DISCOVERY_CANDIDATES = 10;
+const MAX_COMMERCIAL_DISCOVERY_FACT_AGE_MS =
+  30 * DAY_MILLISECONDS;
 
 export function buildOpenRouterJSONRequestBody({
   model,
@@ -347,7 +406,16 @@ async function runOpportunityTournamentCore({
     ...asArray(payload.priorOutcomes),
     ...asArray(asObject(payload.commercialContext).priorAttributedOutcomes)
   ]);
-  const evidenceCatalog = buildEvidenceCatalog(payload, context, now);
+  const commercialDiscovery = normalizeCommercialDiscoveryEvidence(
+    payload.commercialDiscoveryEvidence,
+    now
+  );
+  const evidenceCatalog = buildEvidenceCatalog(
+    payload,
+    context,
+    now,
+    { commercialDiscovery }
+  );
   const promptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
     objective,
@@ -394,6 +462,10 @@ async function runOpportunityTournamentCore({
     searchSpace: {
       ...emptySearchSpace(budget),
       evidenceCatalogCount: evidenceCatalog.length,
+      commercialDiscoveryEvidenceCount:
+        commercialDiscovery.evidence.length,
+      commercialDiscoveryCandidateCount:
+        commercialDiscovery.candidates.length,
       promptEvidenceCount: promptEvidenceCatalog.length,
       promptEvidenceOmittedCount: Math.max(
         0,
@@ -409,6 +481,8 @@ async function runOpportunityTournamentCore({
       world: 'Authorized ProfileScribe profile, source evidence, prior outcomes, and explicit constraints.',
       probe: 'Generate compact strategy dimensions and judge a deterministic expansion.',
       memory: 'Return attributable hypotheses and evidence references to ProfileScribe.',
+      commercialDiscovery:
+        commercialDiscoveryPublicTrace(commercialDiscovery),
       sideEffects: zeroSideEffects()
     }
   };
@@ -1462,6 +1536,7 @@ async function runOpportunityTournamentCore({
     payload.publicBaseUrl
   );
   const externallyGroundedCandidateValues = [
+    ...commercialDiscoveryCandidateValues(commercialDiscovery),
     ...collectStructuredCandidates(
       payload,
       context,
@@ -1723,6 +1798,501 @@ function publicHypothesis(hypothesis) {
   return value;
 }
 
+export function normalizeCommercialDiscoveryEvidence(
+  value,
+  referenceTime = new Date()
+) {
+  const raw = asObject(value);
+  const present = Object.keys(raw).length > 0;
+  const rejectedReasons = {};
+  const reject = (reason) => {
+    rejectedReasons[reason] = (rejectedReasons[reason] || 0) + 1;
+  };
+  const base = {
+    present,
+    valid: false,
+    contractVersion: firstText(raw.contractVersion),
+    status: contractEnum(firstText(raw.status)),
+    attempted: raw.attempted === true,
+    motion: truncate(firstText(raw.motion), 80),
+    buyerArchetype: truncate(firstText(raw.buyerArchetype), 180),
+    market: truncate(firstText(raw.market), 120),
+    queryHash: /^[a-f0-9]{64}$/i.test(firstText(raw.queryHash))
+      ? firstText(raw.queryHash).toLowerCase()
+      : '',
+    providersAttempted: compactStrings(raw.providersAttempted)
+      .slice(0, MAX_COMMERCIAL_DISCOVERY_PROVIDER_CALLS)
+      .map((item) => truncate(item, 100)),
+    providerCalls: nonNegativeInteger(raw.providerCalls) || 0,
+    paidProviderCalls: nonNegativeInteger(raw.paidProviderCalls) || 0,
+    creditsUsed: nonNegativeInteger(raw.creditsUsed) || 0,
+    resultCount: nonNegativeInteger(raw.resultCount) || 0,
+    patientTargetingExcluded: raw.patientTargetingExcluded === true,
+    sideEffectsPerformed:
+      nonNegativeInteger(raw.sideEffectsPerformed) || 0,
+    discoveredAt: validISOString(raw.discoveredAt),
+    attempts: [],
+    evidence: [],
+    candidates: [],
+    rejectedReasons
+  };
+  if (!present) return base;
+  if (base.contractVersion !== COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT) {
+    reject('invalid_contract');
+    return base;
+  }
+  if (!COMMERCIAL_DISCOVERY_STATUSES.has(base.status)) {
+    reject('invalid_status');
+    return base;
+  }
+  if (!base.queryHash ||
+      !base.patientTargetingExcluded ||
+      base.sideEffectsPerformed !== 0 ||
+      !base.discoveredAt ||
+      base.providerCalls > MAX_COMMERCIAL_DISCOVERY_PROVIDER_CALLS ||
+      base.paidProviderCalls >
+        MAX_COMMERCIAL_DISCOVERY_PAID_PROVIDER_CALLS ||
+      base.paidProviderCalls > base.providerCalls ||
+      asArray(raw.providersAttempted).length !==
+        base.providersAttempted.length ||
+      base.providersAttempted.some((provider) =>
+        !COMMERCIAL_DISCOVERY_PROVIDERS.has(provider)
+      ) ||
+      base.providersAttempted.length !== base.providerCalls) {
+    reject('invalid_envelope');
+    return base;
+  }
+  const providerUnavailable = base.status === 'provider_unavailable';
+  if ((providerUnavailable && (
+    base.attempted ||
+    base.providerCalls !== 0 ||
+    base.paidProviderCalls !== 0 ||
+    base.creditsUsed !== 0 ||
+    base.resultCount !== 0 ||
+    asArray(raw.attempts).length !== 0 ||
+    asArray(raw.evidence).length !== 0 ||
+    asArray(raw.candidates).length !== 0
+  )) || (!providerUnavailable && !base.attempted)) {
+    reject('invalid_attempt_state');
+    return base;
+  }
+  const referenceDate = validDate(referenceTime);
+  const discoveredDate = new Date(base.discoveredAt);
+  const discoveryAge = referenceDate.getTime() - discoveredDate.getTime();
+  if (discoveryAge < -MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS ||
+      discoveryAge > MAX_COMMERCIAL_DISCOVERY_FACT_AGE_MS) {
+    reject('stale_or_future_envelope');
+    return base;
+  }
+
+  const attemptIDs = new Set();
+  for (const attemptValue of asArray(raw.attempts)
+    .slice(0, MAX_COMMERCIAL_DISCOVERY_ATTEMPTS)) {
+    const attempt = normalizeCommercialDiscoveryAttempt(attemptValue);
+    if (!attempt || attemptIDs.has(attempt.id)) {
+      reject(attempt ? 'duplicate_attempt' : 'invalid_attempt');
+      continue;
+    }
+    if (attempt.queryHash !== base.queryHash ||
+        !base.providersAttempted.includes(attempt.provider) ||
+        !/^people_data_labs_/.test(attempt.provider)) {
+      reject('attempt_ledger_mismatch');
+      continue;
+    }
+    attemptIDs.add(attempt.id);
+    base.attempts.push(attempt);
+  }
+  if (asArray(raw.attempts).length > MAX_COMMERCIAL_DISCOVERY_ATTEMPTS ||
+      base.attempts.length !== asArray(raw.attempts).length ||
+      base.attempts.length !== base.paidProviderCalls ||
+      base.providerCalls < base.paidProviderCalls ||
+      base.creditsUsed !== base.attempts.reduce(
+        (sum, attempt) => sum + attempt.creditsUsed,
+        0
+      ) ||
+      base.resultCount < base.attempts.reduce(
+        (sum, attempt) => sum + attempt.resultCount,
+        0
+      )) {
+    reject('invalid_attempt_ledger');
+    return base;
+  }
+  const attemptedProviders = new Set(base.providersAttempted.map(comparable));
+  const ledgerProviders = new Set(base.attempts.map((item) =>
+    comparable(item.provider)
+  ));
+  if (attemptedProviders.size === 0 ||
+      [...ledgerProviders].some((provider) =>
+        !attemptedProviders.has(provider)
+      )) {
+    reject('provider_ledger_mismatch');
+    return base;
+  }
+
+  if (base.status !== COMMERCIAL_DISCOVERY_FOUND_STATUS) {
+    if (asArray(raw.evidence).length !== 0 ||
+        asArray(raw.candidates).length !== 0) {
+      reject('non_found_payload_retained_results');
+      return base;
+    }
+    return {
+      ...base,
+      valid: true
+    };
+  }
+
+  const evidenceByID = new Map();
+  for (const factValue of asArray(raw.evidence)
+    .slice(0, MAX_COMMERCIAL_DISCOVERY_EVIDENCE)) {
+    const fact = normalizeCommercialDiscoveryFact(
+      factValue,
+      referenceDate,
+      attemptedProviders
+    );
+    if (!fact || evidenceByID.has(fact.evidenceRef)) {
+      reject(fact ? 'duplicate_evidence_ref' : 'invalid_evidence');
+      continue;
+    }
+    evidenceByID.set(fact.evidenceRef, fact);
+    base.evidence.push(fact);
+  }
+  if (asArray(raw.evidence).length > MAX_COMMERCIAL_DISCOVERY_EVIDENCE) {
+    reject('evidence_limit_exceeded');
+  }
+  if (base.evidence.some((fact) =>
+    /^people_data_labs_/.test(fact.provider) &&
+    !base.attempts.some((attempt) =>
+      attempt.provider === fact.provider &&
+      attempt.status === 'succeeded' &&
+      attempt.resultCount > 0
+    )
+  )) {
+    reject('paid_evidence_without_succeeded_attempt');
+    return base;
+  }
+
+  const candidateIDs = new Set();
+  for (const candidateValue of asArray(raw.candidates)
+    .slice(0, MAX_COMMERCIAL_DISCOVERY_CANDIDATES)) {
+    const candidate = normalizeCommercialDiscoveryCandidate(
+      candidateValue,
+      evidenceByID,
+      attemptedProviders
+    );
+    if (!candidate || candidateIDs.has(candidate.id)) {
+      reject(candidate ? 'duplicate_candidate_id' : 'invalid_candidate');
+      continue;
+    }
+    candidateIDs.add(candidate.id);
+    base.candidates.push(candidate);
+  }
+  if (asArray(raw.candidates).length > MAX_COMMERCIAL_DISCOVERY_CANDIDATES) {
+    reject('candidate_limit_exceeded');
+  }
+  if (base.evidence.length === 0 || base.candidates.length === 0) {
+    reject('empty_verified_discovery');
+    return base;
+  }
+  if (base.resultCount < base.evidence.length) {
+    reject('result_count_mismatch');
+    return base;
+  }
+  return {
+    ...base,
+    valid: true
+  };
+}
+
+function normalizeCommercialDiscoveryAttempt(value) {
+  const raw = asObject(value);
+  const id = truncate(firstText(raw.id), 120);
+  const provider = truncate(firstText(raw.provider), 100);
+  const operation = contractEnum(firstText(raw.operation));
+  const queryHash = firstText(raw.queryHash).toLowerCase();
+  const status = contractEnum(firstText(raw.status));
+  const statuses = new Set([
+    'succeeded',
+    'not_found',
+    'failed',
+    'unknown'
+  ]);
+  if (!id || !provider || !operation ||
+      !/^[a-f0-9]{64}$/.test(queryHash) ||
+      !statuses.has(status)) {
+    return null;
+  }
+  return compact({
+    id,
+    provider,
+    operation,
+    queryHash,
+    status,
+    estimatedSpendMicros:
+      nonNegativeInteger(raw.estimatedSpendMicros) || 0,
+    actualSpendMicros:
+      nonNegativeInteger(raw.actualSpendMicros) || 0,
+    creditsUsed: nonNegativeInteger(raw.creditsUsed) || 0,
+    resultCount: nonNegativeInteger(raw.resultCount) || 0,
+    failureCode: /^[a-z0-9_.:-]{1,80}$/i.test(firstText(raw.failureCode))
+      ? firstText(raw.failureCode).toLowerCase()
+      : undefined,
+    reservedAt: validISOString(raw.reservedAt),
+    updatedAt: validISOString(raw.updatedAt),
+    completedAt: validISOString(raw.completedAt)
+  });
+}
+
+function normalizeCommercialDiscoveryFact(
+  value,
+  referenceDate,
+  attemptedProviders
+) {
+  const raw = asObject(value);
+  const evidenceRef = firstText(raw.evidenceRef);
+  const kind = contractEnum(firstText(raw.kind));
+  const label = truncate(firstText(raw.label), 180);
+  const summary = truncate(firstText(raw.summary), 700);
+  const url = safePublicURL(firstText(raw.url));
+  const provider = truncate(firstText(raw.provider), 100);
+  const provenance = contractEnum(firstText(raw.provenance));
+  const requestedRoles = compactStrings(raw.roles).map(contractEnum);
+  const roles = requestedRoles.filter((role) =>
+    COMMERCIAL_DISCOVERY_ROLES.has(role)
+  );
+  const observedAt = validISOString(raw.observedAt);
+  if (!/^external_discovery:[a-f0-9]{24}$/.test(
+    evidenceRef
+  ) ||
+      !COMMERCIAL_DISCOVERY_KINDS.has(kind) ||
+      !label ||
+      !summary ||
+      !COMMERCIAL_DISCOVERY_PROVIDERS.has(provider) ||
+      !COMMERCIAL_DISCOVERY_PROVIDER_PROVENANCE.get(provider)?.has(
+        provenance
+      ) ||
+      raw.verified !== true ||
+      !observedAt ||
+      requestedRoles.length === 0 ||
+      roles.length !== requestedRoles.length ||
+      !attemptedProviders.has(comparable(provider)) ||
+      commercialDiscoveryContainsPrivateContact(label) ||
+      commercialDiscoveryContainsPrivateContact(summary)) {
+    return null;
+  }
+  const observedDate = new Date(observedAt);
+  const age = referenceDate.getTime() - observedDate.getTime();
+  if (age < -MAX_TIMING_VERIFICATION_FUTURE_SKEW_MS ||
+      age > MAX_COMMERCIAL_DISCOVERY_FACT_AGE_MS) {
+    return null;
+  }
+  const personIdentityOnly =
+    provider === 'people_data_labs_person_search';
+  if (personIdentityOnly && roles.some((role) => [
+    'paid_offer',
+    'paid_conversion',
+    'demand_signal',
+    'conversion_destination'
+  ].includes(role))) {
+    return null;
+  }
+  return {
+    evidenceRef,
+    kind,
+    label,
+    summary,
+    url,
+    provider,
+    provenance,
+    roles,
+    verified: true,
+    observedAt
+  };
+}
+
+function normalizeCommercialDiscoveryCandidate(
+  value,
+  evidenceByID,
+  attemptedProviders
+) {
+  const raw = asObject(value);
+  const id = truncate(firstText(raw.id), 160);
+  const kind = contractEnum(firstText(raw.kind));
+  const displayLabel = truncate(firstText(raw.displayLabel), 180);
+  const organization = truncate(firstText(raw.organization), 180);
+  const role = truncate(firstText(raw.role), 180);
+  const market = truncate(firstText(raw.market), 180);
+  const publicUrl = safePublicURL(firstText(raw.publicUrl));
+  const provider = truncate(firstText(raw.provider), 100);
+  const commercialRole = contractEnum(firstText(raw.commercialRole));
+  const evidenceRefs = compactStrings(raw.evidenceRefs)
+    .filter((ref) => evidenceByID.has(ref))
+    .slice(0, 8);
+  if (!/^candidate:external:[a-f0-9]{24}$/.test(id) ||
+      !kind ||
+      !concreteCandidateLabel(displayLabel) ||
+      !provider ||
+      !COMMERCIAL_DISCOVERY_CANDIDATE_ROLES.has(commercialRole) ||
+      evidenceRefs.length === 0 ||
+      evidenceRefs.length !== compactStrings(raw.evidenceRefs).length ||
+      raw.exactNamedCandidate !== true ||
+      raw.identityResolved !== true ||
+      !attemptedProviders.has(comparable(provider)) ||
+      commercialDiscoveryContainsPrivateContact(displayLabel) ||
+      commercialDiscoveryContainsPrivateContact(organization) ||
+      commercialDiscoveryContainsPrivateContact(role) ||
+      commercialDiscoveryContainsPrivateContact(market)) {
+    return null;
+  }
+  const evidenceValues = evidenceRefs.map((ref) =>
+    asObject(evidenceByID.get(ref))
+  );
+  if (evidenceValues.some((fact) =>
+    fact.provider !== provider ||
+    !exactTextContains(
+      `${firstText(fact.label)} ${firstText(fact.summary)}`,
+      displayLabel
+    )
+  )) {
+    return null;
+  }
+  if (publicUrl && !evidenceValues.some((fact) =>
+    comparableURL(fact.url) === comparableURL(publicUrl)
+  )) {
+    return null;
+  }
+  const roleSet = new Set(evidenceValues.flatMap((fact) => fact.roles));
+  const roleGrounded = commercialRole === 'referral_partner'
+    ? roleSet.has('acquisition') && roleSet.has('channel_fit') &&
+      roleSet.has('prospective_partner')
+    : commercialRole === 'paid_demand'
+      ? roleSet.has('paid_offer') &&
+        roleSet.has('demand_signal') &&
+        roleSet.has('conversion_destination') &&
+        roleSet.has('paid_conversion')
+      : commercialRole === 'buyer'
+        ? roleSet.has('defined_buyer')
+        : roleSet.has('defined_buyer') && roleSet.has('channel_fit');
+  if (!roleGrounded) return null;
+  const rawContactPaths = asArray(raw.contactPaths).slice(0, 8)
+    .map(asObject);
+  if (asArray(raw.contactPaths).length > 8 ||
+      rawContactPaths.some((path) => {
+        const reference = firstText(path.reference, path.Reference);
+        return reference && (
+          !safePublicURL(reference) ||
+          commercialDiscoveryContainsPrivateContact(reference)
+        );
+      })) {
+    return null;
+  }
+  const contactPaths = rawContactPaths.map((path) => compact({
+      kind: contractEnum(firstText(path.kind, 'unknown')),
+      available: path.available === true,
+      verified: path.verified === true
+    }));
+  return compact({
+    id,
+    kind,
+    displayLabel,
+    organization,
+    role,
+    market,
+    publicUrl,
+    provider,
+    commercialRole,
+    evidenceRefs,
+    contactPaths,
+    exactNamedCandidate: true,
+    identityResolved: true
+  });
+}
+
+function commercialDiscoveryContainsPrivateContact(value) {
+  const text = firstText(value);
+  return /(?:mailto:|tel:|sms:|@|work_email|mobile_phone|phone_numbers)/i.test(
+    text
+  ) ||
+    /(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b/.test(text);
+}
+
+function commercialDiscoveryPublicTrace(value) {
+  const discovery = asObject(value);
+  return compact({
+    contractVersion: firstText(discovery.contractVersion),
+    present: discovery.present === true,
+    valid: discovery.valid === true,
+    status: firstText(discovery.status),
+    attempted: discovery.attempted === true,
+    queryHash: firstText(discovery.queryHash),
+    providersAttempted: compactStrings(discovery.providersAttempted),
+    providerCalls: nonNegativeInteger(discovery.providerCalls) || 0,
+    paidProviderCalls:
+      nonNegativeInteger(discovery.paidProviderCalls) || 0,
+    creditsUsed: nonNegativeInteger(discovery.creditsUsed) || 0,
+    resultCount: nonNegativeInteger(discovery.resultCount) || 0,
+    patientTargetingExcluded:
+      discovery.patientTargetingExcluded === true,
+    sideEffectsPerformed:
+      nonNegativeInteger(discovery.sideEffectsPerformed) || 0,
+    attempts: asArray(discovery.attempts).map((attemptValue) => {
+      const attempt = asObject(attemptValue);
+      return compact({
+        id: firstText(attempt.id),
+        provider: firstText(attempt.provider),
+        operation: firstText(attempt.operation),
+        queryHash: firstText(attempt.queryHash),
+        status: firstText(attempt.status),
+        estimatedSpendMicros:
+          nonNegativeInteger(attempt.estimatedSpendMicros) || 0,
+        actualSpendMicros:
+          nonNegativeInteger(attempt.actualSpendMicros) || 0,
+        creditsUsed: nonNegativeInteger(attempt.creditsUsed) || 0,
+        resultCount: nonNegativeInteger(attempt.resultCount) || 0,
+        failureCode: firstText(attempt.failureCode),
+        completedAt: firstText(attempt.completedAt)
+      });
+    }),
+    acceptedEvidenceRefs: asArray(discovery.evidence)
+      .map((fact) => firstText(asObject(fact).evidenceRef)),
+    acceptedCandidateIds: asArray(discovery.candidates)
+      .map((candidate) => firstText(asObject(candidate).id)),
+    rejectedReasons: asObject(discovery.rejectedReasons)
+  });
+}
+
+function commercialDiscoveryReviewChannelForHypothesis(
+  hypothesisValue,
+  graphNodes
+) {
+  const hypothesis = asObject(hypothesisValue);
+  if (!firstText(hypothesis.id) || !(graphNodes instanceof Map)) return '';
+  const path = asObject(hypothesis.revenuePath);
+  const nodes = compactStrings(hypothesis.evidenceRefs)
+    .map((ref) => asObject(graphNodes.get(ref)))
+    .filter((node) =>
+      firstText(node.provenance) === COMMERCIAL_DISCOVERY_PROVENANCE
+    );
+  if (path.acquisitionMode === 'partner_channel' &&
+      nodes.some((node) => {
+        const roles = new Set(compactStrings(node.roles));
+        return roles.has('acquisition') &&
+          roles.has('channel_fit') &&
+          roles.has('prospective_partner');
+      })) {
+    return 'partner_channel';
+  }
+  if (path.revenueMechanism === 'compensated_role' &&
+      nodes.some((node) => {
+        const roles = new Set(compactStrings(node.roles));
+        return roles.has('paid_offer') &&
+          roles.has('conversion_destination') &&
+          roles.has('demand_signal');
+      })) {
+    return 'application_page';
+  }
+  return '';
+}
+
 function finalizeOpportunityTournamentResult(rawValue, argsValue) {
   const raw = asObject(rawValue);
   const args = asObject(argsValue);
@@ -1744,7 +2314,7 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
     winnerHypothesis?.revenuePath ?? winner.revenuePath
   );
   const hypothesisChannel = firstText(winnerHypothesis?.channel);
-  const allowedChannel = commercialContext.allowedChannels.find(
+  const configuredAllowedChannel = commercialContext.allowedChannels.find(
     (channel) => allowedValue(hypothesisChannel, [channel])
   ) || '';
   const graphNodes = new Map(
@@ -1752,6 +2322,13 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
       .map(asObject)
       .map((node) => [firstText(node.evidenceRef), node])
   );
+  const discoveryReviewChannel =
+    commercialDiscoveryReviewChannelForHypothesis(
+      winnerHypothesis,
+      graphNodes
+    );
+  const allowedChannel = configuredAllowedChannel ||
+    discoveryReviewChannel;
   const dimensionRefs = (name) => compactStrings(
     asObject(asObject(winnerHypothesis?.provenance).dimensions)[name]
       ?.evidenceRefs
@@ -1811,6 +2388,14 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
       commercialConstraint.commercialConstraintsSatisfied === true &&
       Boolean(allowedChannel),
     knownPermissions: Boolean(allowedChannel),
+    allowedChannel,
+    allowedChannelSource: configuredAllowedChannel
+      ? 'configured_capability'
+      : discoveryReviewChannel
+        ? 'provider_attested_review_route'
+        : '',
+    discoveryRouteRequiresApproval:
+      Boolean(discoveryReviewChannel && !configuredAllowedChannel),
     observablePaidConversion: observableRevenueText(
       path.observableRevenueOutcome
     ),
@@ -1973,10 +2558,20 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
 export function buildEvidenceCatalog(
   payload,
   context = {},
-  referenceTime = new Date()
+  referenceTime = new Date(),
+  optionsValue = {}
 ) {
   payload = asObject(payload);
   context = asObject(context);
+  const options = asObject(optionsValue);
+  const commercialDiscovery = Object.keys(
+    asObject(options.commercialDiscovery)
+  ).length > 0
+    ? asObject(options.commercialDiscovery)
+    : normalizeCommercialDiscoveryEvidence(
+        payload.commercialDiscoveryEvidence,
+        referenceTime
+      );
   const snapshot = asObject(payload.evidenceSnapshot);
   const profile = asObject(
     Object.keys(asObject(snapshot.profile)).length > 0 ? snapshot.profile : context.profile
@@ -2126,6 +2721,16 @@ export function buildEvidenceCatalog(
         claimedID: id
       }).slice(0, 20)}`;
     }
+    if (/^external_discovery:/i.test(id) &&
+        asObject(origin).providerAttestedCommercialDiscovery !== true) {
+      id = `evidence:${stableHash({
+        type,
+        label,
+        summary,
+        url,
+        claimedID: id
+      }).slice(0, 20)}`;
+    }
     if (!id || (!label && !summary) || seen.has(id)) return;
     seen.add(id);
     catalog.push(compact({
@@ -2157,6 +2762,22 @@ export function buildEvidenceCatalog(
       ),
       profileControlledSource:
         asObject(origin).profileControlledSource === true ? true : undefined,
+      providerAttestedCommercialDiscovery:
+        asObject(origin).providerAttestedCommercialDiscovery === true
+          ? true
+          : undefined,
+      commercialDiscoveryProvider: truncate(firstText(
+        asObject(origin).commercialDiscoveryProvider
+      ), 100),
+      commercialDiscoveryProvenance: truncate(firstText(
+        asObject(origin).commercialDiscoveryProvenance
+      ), 100),
+      commercialDiscoveryKind: truncate(firstText(
+        asObject(origin).commercialDiscoveryKind
+      ), 100),
+      commercialDiscoveryRoles: compactStrings(
+        asObject(origin).commercialDiscoveryRoles
+      ),
       aliases: compactStrings([
         url
       ])
@@ -2302,6 +2923,31 @@ export function buildEvidenceCatalog(
       summary: firstText(value.summary, value.body)
     }, 'source_backed_timeline');
   }
+  if (commercialDiscovery.valid === true) {
+    for (const factValue of asArray(commercialDiscovery.evidence)) {
+      const fact = asObject(factValue);
+      append({
+        id: firstText(fact.evidenceRef),
+        type: firstText(
+          fact.kind,
+          'verified_external_professional_target'
+        ),
+        label: firstText(fact.label),
+        summary: firstText(fact.summary),
+        url: firstText(fact.url),
+        observedAt: firstText(fact.observedAt),
+        current: true,
+        status: 'verified_current',
+        confidence: 'high'
+      }, 'verified_external_professional_target', undefined, {
+        providerAttestedCommercialDiscovery: true,
+        commercialDiscoveryProvider: firstText(fact.provider),
+        commercialDiscoveryProvenance: firstText(fact.provenance),
+        commercialDiscoveryKind: firstText(fact.kind),
+        commercialDiscoveryRoles: compactStrings(fact.roles)
+      });
+    }
+  }
 
   const candidateEvidencePriority = prioritizedCandidateEvidenceRefs(
     collectStructuredCandidates(
@@ -2336,6 +2982,13 @@ export function buildEvidenceCatalog(
         if (leftPriority === undefined) return 1;
         if (rightPriority === undefined) return -1;
         if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      }
+      const leftDiscovery =
+        left.providerAttestedCommercialDiscovery === true ? 1 : 0;
+      const rightDiscovery =
+        right.providerAttestedCommercialDiscovery === true ? 1 : 0;
+      if (leftDiscovery !== rightDiscovery) {
+        return rightDiscovery - leftDiscovery;
       }
       const leftPaidAsset =
         ownerControlledPaidAssetIDs.has(left.id) ? 1 : 0;
@@ -2757,7 +3410,11 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
         evidence.summary,
         evidence.url
       ]).join(' ');
-      const roles = commercialEvidenceRoles(text);
+      const providerAttestedDiscovery =
+        evidence.providerAttestedCommercialDiscovery === true;
+      const roles = providerAttestedDiscovery
+        ? commercialDiscoveryGraphRoles(evidence)
+        : commercialEvidenceRoles(text);
       if (firstText(evidence.revenueAssetRole) === 'informational_only') {
         for (const role of [
           'paid_offer',
@@ -2768,10 +3425,16 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
           if (index >= 0) roles.splice(index, 1);
         }
       }
-      const channelFitChannels = commercialChannelFitChannels(
-        text,
-        commercialContext.allowedChannels
-      );
+      const channelFitChannels = providerAttestedDiscovery &&
+          roles.includes('channel_fit')
+        ? commercialDiscoveryChannelFitChannels(
+            evidence,
+            commercialContext.allowedChannels
+          )
+        : commercialChannelFitChannels(
+            text,
+            commercialContext.allowedChannels
+          );
       if (channelFitChannels.length > 0) roles.push('channel_fit');
       return compact({
         evidenceRef: firstText(evidence.id),
@@ -2783,12 +3446,30 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
         roles: compactStrings(roles),
         channelFitChannels,
         observedAt: firstText(evidence.observedAt),
-        approved: evidence.approvedSourceObservation === true,
-        provenance: evidence.approvedSourceObservation === true
-          ? 'approved_source_observation'
-          : 'profile_or_caller_fact',
+        approved: evidence.approvedSourceObservation === true ||
+          providerAttestedDiscovery,
+        provenance: providerAttestedDiscovery
+          ? COMMERCIAL_DISCOVERY_PROVENANCE
+          : evidence.approvedSourceObservation === true
+            ? 'approved_source_observation'
+            : 'profile_or_caller_fact',
         ownerControlled: evidence.profileControlledSource === true,
-        revenueAssetRole: firstText(evidence.revenueAssetRole)
+        revenueAssetRole: firstText(evidence.revenueAssetRole),
+        provider: providerAttestedDiscovery
+          ? firstText(evidence.commercialDiscoveryProvider)
+          : undefined,
+        providerProvenance: providerAttestedDiscovery
+          ? firstText(evidence.commercialDiscoveryProvenance)
+          : undefined,
+        commercialDiscoveryKind: providerAttestedDiscovery
+          ? firstText(evidence.commercialDiscoveryKind)
+          : undefined,
+        commercialDiscoveryRoles: providerAttestedDiscovery
+          ? compactStrings(evidence.commercialDiscoveryRoles)
+          : undefined,
+        prospectiveExternalTarget: providerAttestedDiscovery
+          ? true
+          : undefined
       });
     });
   const contextNodes = commercialContextEvidenceNodes({
@@ -2844,7 +3525,7 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
     'channel_fit'
   ].filter((role) => !verifiedRoles.has(role));
   return {
-    contractVersion: 'commercial_evidence_graph_v1',
+    contractVersion: 'commercial_evidence_graph_v2',
     nodes,
     verifiedFacts,
     inferences,
@@ -2867,6 +3548,10 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
       namedPartnerOrReferralEvidenceRefs: refsForCommercialRoles(
         nodes,
         ['named_partner', 'referral_relationship']
+      ),
+      prospectivePartnerEvidenceRefs: refsForCommercialRoles(
+        nodes,
+        ['prospective_partner']
       ),
       demandOrEngagementEvidenceRefs: refsForCommercialRoles(
         nodes,
@@ -2914,6 +3599,19 @@ function projectCommercialEvidenceGraphForPrompt(
       roles: compactStrings(node.roles),
       channelFitChannels: compactStrings(node.channelFitChannels),
       revenueAssetRole: firstText(node.revenueAssetRole),
+      provenance: firstText(node.provenance),
+      provider: truncate(firstText(node.provider), 100),
+      providerProvenance: truncate(firstText(
+        node.providerProvenance
+      ), 100),
+      commercialDiscoveryKind: truncate(firstText(
+        node.commercialDiscoveryKind
+      ), 100),
+      commercialDiscoveryRoles: compactStrings(
+        node.commercialDiscoveryRoles
+      ),
+      prospectiveExternalTarget:
+        node.prospectiveExternalTarget === true ? true : undefined,
       location: truncate(firstText(node.location), 96),
       availability: truncate(firstText(node.availability), 96),
       serviceAreas: compactStrings(node.serviceAreas).slice(0, 8),
@@ -2961,7 +3659,7 @@ function projectCommercialEvidenceGraphForPrompt(
   return {
     contractVersion: firstText(
       graph.contractVersion,
-      'commercial_evidence_graph_v1'
+      'commercial_evidence_graph_v2'
     ),
     projection: 'provider_prompt_v1',
     nodes,
@@ -2988,6 +3686,44 @@ function projectCommercialEvidenceGraphForPrompt(
     },
     summary
   };
+}
+
+function commercialDiscoveryGraphRoles(evidenceValue) {
+  const evidence = asObject(evidenceValue);
+  // The app validates that every graph role is a subset of the exact typed
+  // provider fact. Preserve those roles byte-for-byte after enum
+  // normalization; never expand a discovered identity into buyer intent,
+  // warmness, or a commercial relationship.
+  return compactStrings(evidence.commercialDiscoveryRoles)
+    .map(contractEnum)
+    .filter((role) => COMMERCIAL_DISCOVERY_ROLES.has(role));
+}
+
+function commercialDiscoveryChannelFitChannels(
+  evidenceValue,
+  allowedChannelsValue
+) {
+  const evidence = asObject(evidenceValue);
+  const roles = new Set(
+    compactStrings(evidence.commercialDiscoveryRoles).map(contractEnum)
+  );
+  const inferred = [];
+  if (roles.has('prospective_partner')) {
+    inferred.push('partner_channel');
+  }
+  if (roles.has('demand_signal')) {
+    inferred.push('application_page', 'platform_discovery');
+  }
+  return compactStrings([
+    ...inferred,
+    ...asArray(allowedChannelsValue).filter((channel) =>
+      allowedValue(channel, [
+        evidence.label,
+        evidence.summary,
+        ...inferred
+      ])
+    )
+  ]);
 }
 
 function commercialEvidenceRoles(value) {
@@ -3237,6 +3973,11 @@ function compactPromptEvidenceCatalog(
     firstText(item.revenueAssetRole) ===
       'current_owner_paid_conversion_asset'
   ).slice(0, MAX_PROMPT_PAID_ASSET_ITEMS);
+  const commercialDiscoveryEvidence = ranked
+    .filter((item) =>
+      item.providerAttestedCommercialDiscovery === true
+    )
+    .slice(0, MAX_PROMPT_COMMERCIAL_DISCOVERY_EVIDENCE_ITEMS);
   const objectiveEvidence = ranked.slice(
     0,
     MAX_PROMPT_OBJECTIVE_EVIDENCE_ITEMS
@@ -3274,6 +4015,7 @@ function compactPromptEvidenceCatalog(
   // for post-validation provenance, caller evidence, and fallback selection.
   for (const item of [
     ...paidAssets,
+    ...commercialDiscoveryEvidence,
     ...objectivePinned,
     ...objectiveEvidence,
     ...riskEvidence,
@@ -3346,6 +4088,22 @@ function compactPromptEvidenceCatalog(
           item.approvedSourceObservation === true ? true : undefined,
         profileControlledSource:
           item.profileControlledSource === true ? true : undefined,
+        providerAttestedCommercialDiscovery:
+          item.providerAttestedCommercialDiscovery === true
+            ? true
+            : undefined,
+        commercialDiscoveryProvider: truncate(firstText(
+          item.commercialDiscoveryProvider
+        ), 100),
+        commercialDiscoveryProvenance: truncate(firstText(
+          item.commercialDiscoveryProvenance
+        ), 100),
+        commercialDiscoveryKind: truncate(firstText(
+          item.commercialDiscoveryKind
+        ), 100),
+        commercialDiscoveryRoles: compactStrings(
+          item.commercialDiscoveryRoles
+        ),
         revenueAssetRole: firstText(item.revenueAssetRole)
       });
     });
@@ -3747,6 +4505,9 @@ Treat experience with a past endDate as historical proof, never as a current rol
 Do not recommend applying for, enrolling in, or creating a capability when the evidence says that capability already exists. Treat the existing capability as proof or supporting context for a paid acquisition/conversion path. Any verification of that capability belongs only in supportingBottleneck and must never be the primary action.
 Use only exact evidence IDs from evidenceCatalog. Unknown evidence IDs will be discarded.
 Treat evidenceCatalog.revenueAssetRole as a deterministic eligibility signal. A current_owner_paid_conversion_asset is a current owner-controlled paid or reimbursable offer destination and must be preferred over adjacent articles or other informational evidence. informational_only evidence may support expertise but must never ground a paid offer, conversion destination, paid conversion, or evidenceExperiment asset.
+Evidence with providerAttestedCommercialDiscovery=true is app-validated, read-only public professional discovery. Use it only for its exact commercialDiscoveryRoles. It may establish an exact prospective target, public professional identity, role, organization, market, channel fit, or—only for a verified live paid-demand record—the current compensated demand and application path explicitly stated in that evidence. It never proves a warm relationship, permission to contact, willingness to refer, buyer intent, private contact data, or an existing affiliation.
+For a referral-partner path, keep the end buyer distinct from the prospective professional partner. Cite the discovered partner in the channel/acquisition grounding, describe it as prospective, and never put the partner's exact name in the buyer label unless that organization is actually the payer.
+For a compensated-role path, a current paid-demand record may ground the employer buyer, compensated offer, platform-discovery route, and distinct application page. A public job record authorizes no application or form submission.
 You may extract up to eight compact named person or organization candidates only when each exact name appears verbatim in cited evidence. Do not return contact details or URLs; return no candidate rather than infer or complete an identity.
 When an exact named organization is the intended target buyer, begin the buyerSegments label with that exact evidence-backed name and return the same organization in candidates.
 Keep every strategy family coherent end to end. Its family m is one acquisition mode, and its buyer, offer, channel, action, timing trigger, proof point, follow-up, and revenue path must all belong to that same acquisition-to-payment route.
@@ -3824,6 +4585,8 @@ function compactTournamentHardRules() {
     'Return exactly two coherent families; construct each r path first, use one acquisition mode end to end, and derive every other item from it.',
     'Use only evidenceCatalog IDs. Family e contains every ID cited by its items. Each item cites only IDs in its own family, and each family includes an approved observation:* anchor.',
     'Ground the buyer, current paid offer, acquisition, distinct destination, paid conversion, and attribution record; never invent demand or an outside target.',
+    'Provider-attested discovery may ground only its typed commercialDiscoveryRoles. A referral target is prospective and is not the end buyer; a person/company record never proves warmness, willingness, permission, or demand.',
+    'Only a verified live paid-demand record may ground compensated-role demand or an application destination, and it never authorizes application submission.',
     'Inbound names discovery separately from destination. Operations, research, scheduling, content, and verification may appear only in sb, never as the revenue action.',
     'The primary action is active, causal, and incremental. Reject monitoring, observing, measuring, reviewing, recording, auditing, checking, or verifying as the primary action.',
     'r.ats names its booking/payment/invoice/contract/order/claim/CRM/referral record and source/referral/UTM/campaign/channel field.',
@@ -3849,6 +4612,7 @@ function seedAndJudgeRepairPrompt({
 Generate a fresh compact replacement from the supplied objective and evidence. Do not reconstruct, quote, or continue the prior response.
 Return exactly two complete source-grounded incremental-income families plus one review-first evidence experiment. This is research only: no outreach, publishing, advertising, form submission, or provider write.
 Use exact evidence IDs only. Prefer current_owner_paid_conversion_asset for an inbound paid offer/destination; informational_only is never an offer anchor.
+Provider-attested commercial discovery is usable only for its typed roles: referral targets remain prospective and distinct from the buyer, while only verified live paid-demand evidence may ground a compensated role and application path. Never infer warmness, willingness, permission, or private contact data.
 An acquisition mechanism is distinct from its conversion destination. A valid path ends in a durable paid event with an attribution record.
 Return only the strict compact JSON once.`;
   const user = JSON.stringify({
@@ -6218,6 +6982,23 @@ function collectStructuredCandidates(payload, context, profileScribePublicBaseUR
   return values;
 }
 
+function commercialDiscoveryCandidateValues(discoveryValue) {
+  const discovery = asObject(discoveryValue);
+  if (discovery.valid !== true) return [];
+  return asArray(discovery.candidates).map((candidateValue) => {
+    const candidate = asObject(candidateValue);
+    return compact({
+      ...candidate,
+      providers: compactStrings([
+        firstText(candidate.provider),
+        'commercial_discovery_evidence'
+      ]),
+      providerAttestedCommercialDiscovery: true,
+      discoveredAt: firstText(discovery.discoveredAt)
+    });
+  });
+}
+
 function prioritizedCandidateEvidenceRefs(values, evidenceCatalog) {
   const evidenceByID = evidenceIndex(evidenceCatalog);
   const ordered = [
@@ -8552,6 +9333,11 @@ function normalizeCandidates(
       displayLabel: candidateDisplayLabel,
       organization,
       role: truncate(firstText(raw.role, raw.title), 180),
+      commercialRole: COMMERCIAL_DISCOVERY_CANDIDATE_ROLES.has(
+        contractEnum(firstText(raw.commercialRole))
+      )
+        ? contractEnum(firstText(raw.commercialRole))
+        : undefined,
       market: truncate(firstText(raw.market, raw.location), 180),
       publicUrl,
       providers: compactStrings([
@@ -8564,6 +9350,8 @@ function normalizeCandidates(
       rank: 0,
       exactNamedCandidate: raw.exactNamedCandidate === true,
       identityResolved: raw.identityResolved === true || Boolean(authorSlug),
+      providerAttestedCommercialDiscovery:
+        raw.providerAttestedCommercialDiscovery === true,
       selected: false,
       discoveredAt: validISOString(raw.discoveredAt) || timestamp
     });
@@ -8736,6 +9524,10 @@ function combineExactCandidates(candidates) {
       ...existing,
       organization: firstText(existing.organization, candidate.organization),
       role: firstText(existing.role, candidate.role),
+      commercialRole: firstText(
+        existing.commercialRole,
+        candidate.commercialRole
+      ),
       market: firstText(existing.market, candidate.market),
       publicUrl: firstText(existing.publicUrl, candidate.publicUrl),
       providers: compactStrings([
@@ -8751,6 +9543,9 @@ function combineExactCandidates(candidates) {
         ...asArray(candidate.contactPaths)
       ]),
       identityResolved: existing.identityResolved || candidate.identityResolved,
+      providerAttestedCommercialDiscovery:
+        existing.providerAttestedCommercialDiscovery === true ||
+        candidate.providerAttestedCommercialDiscovery === true,
       score: existing.score.total >= candidate.score.total
         ? existing.score
         : candidate.score
@@ -9178,9 +9973,10 @@ function revenuePathGroundingReasons(
     }
   }
   if (groups.acquisition.length > 0 &&
-      !acquisitionEvidenceSupportsMode(
+      !acquisitionEvidenceRefsSupportMode(
         revenuePath.acquisitionMode,
-        evidenceText(groups.acquisition)
+        groups.acquisition,
+        evidenceByID
       )) {
     reasons.add('unsupported_acquisition_evidence');
   }
@@ -9197,6 +9993,13 @@ function revenuePathGroundingReasons(
   );
   const destinationEvidence =
     evidenceText(groups.conversion_destination);
+  const discoveryDestinationSupported =
+    commercialDiscoveryDestinationEvidenceSupported(
+      groups.conversion_destination,
+      evidenceByID,
+      revenuePath.revenueMechanism,
+      destination
+    );
   if (!destination ||
       comparable(destination) === comparable(
         asObject(tuple?.channels).label
@@ -9205,11 +10008,16 @@ function revenuePathGroundingReasons(
       (
         groups.conversion_destination.length > 0 &&
         (
-          !conversionDestinationEvidenceText(destinationEvidence) ||
-          textOverlap(destination, destinationEvidence) <= 0 ||
-          !paidConversionEvidenceText(
-            destinationEvidence,
-            revenuePath.revenueMechanism
+          (
+            !discoveryDestinationSupported &&
+            (
+              !conversionDestinationEvidenceText(destinationEvidence) ||
+              textOverlap(destination, destinationEvidence) <= 0 ||
+              !paidConversionEvidenceText(
+                destinationEvidence,
+                revenuePath.revenueMechanism
+              )
+            )
           ) ||
           groups.conversion_destination.some((ref) =>
             !currentAffirmativeRevenueEvidence(
@@ -9249,6 +10057,37 @@ function revenuePathGroundingReasons(
     reasons.add('unsupported_attribution_evidence');
   }
   return [...reasons];
+}
+
+function commercialDiscoveryDestinationEvidenceSupported(
+  refsValue,
+  evidenceByID,
+  mechanism,
+  destination
+) {
+  if (mechanism !== 'compensated_role' ||
+      !conversionDestinationText(destination)) {
+    return false;
+  }
+  return compactStrings(refsValue).some((ref) => {
+    const evidence = asObject(evidenceByID.get(ref));
+    if (!verifiedCommercialDiscoveryEvidence(evidence)) return false;
+    const roles = new Set(
+      compactStrings(evidence.commercialDiscoveryRoles).map(contractEnum)
+    );
+    return roles.has('conversion_destination') &&
+      roles.has('paid_conversion') &&
+      roles.has('paid_offer') &&
+      roles.has('demand_signal') &&
+      textOverlap(
+        destination,
+        compactStrings([
+          evidence.label,
+          evidence.summary,
+          evidence.url
+        ]).join(' ')
+      ) > 0;
+  });
 }
 
 function paidOfferText(value) {
@@ -9355,6 +10194,50 @@ function acquisitionEvidenceSupportsMode(mode, value) {
   return patterns[mode]?.test(text) === true;
 }
 
+function acquisitionEvidenceRefsSupportMode(
+  mode,
+  refsValue,
+  evidenceByID
+) {
+  const refs = compactStrings(refsValue);
+  const ordinaryText = compactStrings(refs
+    .map((ref) => asObject(evidenceByID.get(ref)))
+    .filter((evidence) =>
+      !verifiedCommercialDiscoveryEvidence(evidence)
+    )
+    .map((evidence) => {
+    return compactStrings([
+      evidence.label,
+      evidence.summary,
+      evidence.url
+    ]).join(' ');
+  })).join(' ');
+  if (ordinaryText && acquisitionEvidenceSupportsMode(mode, ordinaryText)) {
+    return true;
+  }
+  return refs.some((ref) => {
+    const evidence = asObject(evidenceByID.get(ref));
+    if (!verifiedCommercialDiscoveryEvidence(evidence)) return false;
+    const roles = new Set(
+      compactStrings(evidence.commercialDiscoveryRoles).map(contractEnum)
+    );
+    if (!roles.has('acquisition') || !roles.has('channel_fit')) {
+      return false;
+    }
+    if (mode === 'partner_channel') {
+      return roles.has('prospective_partner');
+    }
+    if (mode === 'inbound') {
+      return roles.has('paid_offer') &&
+        roles.has('conversion_destination') &&
+        roles.has('demand_signal');
+    }
+    // Public professional identity never by itself proves warmness or
+    // permission to contact.
+    return false;
+  });
+}
+
 function conversionDestinationText(value) {
   return /\b(?:application page|booking (?:flow|form|page)|checkout|contact form|contract (?:form|page|request)|demo (?:form|page|request)|download page|invoice (?:page|payment page)|landing page|licen[cs](?:e|ing) (?:form|page|request)|marketplace listing|offer page|order form|payment form|pricing page|product page|proposal (?:form|page)|service page|sign up page|signup page|sponsorship (?:inquiry|request) (?:form|page)|storefront|subscription page)\b/i.test(
     firstText(value)
@@ -9434,7 +10317,18 @@ function currentAffirmativeRevenueEvidence(
   role
 ) {
   const evidence = asObject(evidenceValue);
-  if (evidence.approvedSourceObservation !== true ||
+  const providerDiscovery =
+    verifiedCommercialDiscoveryEvidence(evidence);
+  if (providerDiscovery &&
+      !commercialDiscoverySupportsRevenueRole(
+        evidence,
+        mechanism,
+        role
+      )) {
+    return false;
+  }
+  if ((!providerDiscovery &&
+       evidence.approvedSourceObservation !== true) ||
       evidence.current === false ||
       /\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|not accepting|sold out|unavailable|withdrawn)\b/i.test(
         firstText(evidence.status)
@@ -9539,7 +10433,18 @@ function currentAffirmativeAcquisitionEvidence(
   if (verifiedPriorOutcome && !affirmativePriorOutcome(evidence)) {
     return false;
   }
+  const providerDiscovery =
+    verifiedCommercialDiscoveryEvidence(evidence);
+  const discoveryRoles = new Set(
+    compactStrings(evidence.commercialDiscoveryRoles).map(contractEnum)
+  );
+  if (providerDiscovery &&
+      (!discoveryRoles.has('acquisition') ||
+       !discoveryRoles.has('channel_fit'))) {
+    return false;
+  }
   if ((!verifiedPriorOutcome &&
+       !providerDiscovery &&
        evidence.approvedSourceObservation !== true) ||
       evidence.current === false ||
       /\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|former|historical|inactive|not accepting|sold out|stale|unavailable|withdrawn)\b/i.test(
@@ -9577,6 +10482,36 @@ function currentAffirmativeAcquisitionEvidence(
   return !/\b(?:archived|cancelled|canceled|closed|discontinued|ended|expired|inactive|no longer|not (?:accepting|active|available)|sold out|stale|unavailable|withdrawn)\b/.test(
     text
   );
+}
+
+function verifiedCommercialDiscoveryEvidence(value) {
+  const evidence = asObject(value);
+  return evidence.providerAttestedCommercialDiscovery === true &&
+    firstText(evidence.commercialDiscoveryProvider) &&
+    firstText(evidence.commercialDiscoveryProvenance) &&
+    compactStrings(evidence.commercialDiscoveryRoles).length > 0 &&
+    /^external_discovery:/i.test(firstText(evidence.id));
+}
+
+function commercialDiscoverySupportsRevenueRole(
+  evidenceValue,
+  mechanism,
+  role
+) {
+  const evidence = asObject(evidenceValue);
+  const roles = new Set(
+    compactStrings(evidence.commercialDiscoveryRoles).map(contractEnum)
+  );
+  if (mechanism !== 'compensated_role' ||
+      !roles.has('demand_signal')) {
+    return false;
+  }
+  if (role === 'paid_offer') return roles.has('paid_offer');
+  if (role === 'paid_conversion') {
+    return roles.has('paid_conversion') &&
+      roles.has('conversion_destination');
+  }
+  return false;
 }
 
 function affirmativePriorOutcome(value) {
@@ -10195,6 +11130,9 @@ function candidateEvidenceGroundsHypothesis(
   evidenceCatalogOrIndex
 ) {
   const candidate = asObject(candidateValue);
+  const evidenceByID = evidenceCatalogOrIndex instanceof Map
+    ? evidenceCatalogOrIndex
+    : evidenceIndex(asArray(evidenceCatalogOrIndex));
   const evidenceRefs = strategyAnchorEvidenceRefs(candidate.evidenceRefs);
   const tuple = asObject(hypothesis?._tuple);
   const buyerEvidence = strategyAnchorEvidenceRefs(
@@ -10213,9 +11151,6 @@ function candidateEvidenceGroundsHypothesis(
     asObject(tuple.revenuePaths?.revenuePath).evidenceRefs
   );
   if (ownedInboundAssetCandidate(candidate)) {
-    const evidenceByID = evidenceCatalogOrIndex instanceof Map
-      ? evidenceCatalogOrIndex
-      : evidenceIndex(asArray(evidenceCatalogOrIndex));
     const publicUrl = safePublicURL(firstText(candidate.publicUrl));
     const assetEvidenceIsBound = Boolean(
       publicUrl &&
@@ -10240,6 +11175,17 @@ function candidateEvidenceGroundsHypothesis(
       stringsOverlap(evidenceRefs, channelEvidence) &&
       stringsOverlap(evidenceRefs, revenuePathEvidence);
   }
+  const commercialRole = contractEnum(firstText(
+    candidate.commercialRole
+  ));
+  if (candidate.providerAttestedCommercialDiscovery === true &&
+      COMMERCIAL_DISCOVERY_CANDIDATE_ROLES.has(commercialRole)) {
+    return commercialDiscoveryCandidateGroundsHypothesis(
+      candidate,
+      hypothesis,
+      evidenceByID
+    );
+  }
   if (organizationCandidateRequiresBuyerMatch(candidate) &&
       !exactTextContains(
         asObject(tuple.buyerSegments).label,
@@ -10249,6 +11195,121 @@ function candidateEvidenceGroundsHypothesis(
   }
   return stringsOverlap(evidenceRefs, buyerEvidence) &&
     stringsOverlap(evidenceRefs, [...offerEvidence, ...proofEvidence]);
+}
+
+function commercialDiscoveryCandidateGroundsHypothesis(
+  candidateValue,
+  hypothesis,
+  evidenceByID
+) {
+  const candidate = asObject(candidateValue);
+  const commercialRole = contractEnum(firstText(
+    candidate.commercialRole
+  ));
+  const tuple = asObject(hypothesis?._tuple);
+  const revenuePathSeed = asObject(tuple.revenuePaths?.revenuePath);
+  const grounding = asObject(revenuePathSeed._grounding);
+  const revenuePath = asObject(hypothesis?.revenuePath);
+  const candidateRefs = compactStrings(candidate.evidenceRefs)
+    .filter((ref) =>
+      verifiedCommercialDiscoveryEvidence(evidenceByID.get(ref))
+    );
+  if (candidateRefs.length === 0) return false;
+  const candidateEvidence = candidateRefs.map((ref) =>
+    asObject(evidenceByID.get(ref))
+  );
+  const candidateRoles = new Set(candidateEvidence.flatMap((item) =>
+    compactStrings(item.commercialDiscoveryRoles).map(contractEnum)
+  ));
+  const intersects = (left, right) => stringsOverlap(
+    compactStrings(left),
+    compactStrings(right)
+  );
+  const buyerRefs = compactStrings(
+    asObject(tuple.buyerSegments).evidenceRefs
+  );
+  const offerRefs = compactStrings(asObject(tuple.offers).evidenceRefs);
+  const proofRefs = compactStrings(asObject(tuple.proofPoints).evidenceRefs);
+  const channelRefs = compactStrings(asObject(tuple.channels).evidenceRefs);
+  const revenueRefs = compactStrings(revenuePathSeed.evidenceRefs);
+  const acquisitionRefs = compactStrings(
+    grounding.acquisitionEvidenceRefs
+  );
+  const buyerGroundingRefs = compactStrings(grounding.buyerEvidenceRefs);
+  const paidOfferGroundingRefs = compactStrings(
+    grounding.paidOfferEvidenceRefs
+  );
+  const destinationGroundingRefs = compactStrings(
+    grounding.conversionDestinationEvidenceRefs
+  );
+  const paidConversionGroundingRefs = compactStrings(
+    grounding.paidConversionEvidenceRefs
+  );
+
+  if (commercialRole === 'referral_partner') {
+    return firstText(revenuePath.acquisitionMode) === 'partner_channel' &&
+      candidateRoles.has('acquisition') &&
+      candidateRoles.has('channel_fit') &&
+      candidateRoles.has('prospective_partner') &&
+      intersects(candidateRefs, channelRefs) &&
+      intersects(candidateRefs, acquisitionRefs) &&
+      intersects(candidateRefs, revenueRefs);
+  }
+
+  const hypothesisDiscoveryEvidence = compactStrings([
+    ...buyerRefs,
+    ...offerRefs,
+    ...proofRefs,
+    ...channelRefs,
+    ...revenueRefs
+  ])
+    .map((ref) => asObject(evidenceByID.get(ref)))
+    .filter(verifiedCommercialDiscoveryEvidence);
+  const paidDemandEvidence = hypothesisDiscoveryEvidence.filter((item) => {
+    const roles = new Set(
+      compactStrings(item.commercialDiscoveryRoles).map(contractEnum)
+    );
+    return roles.has('paid_offer') &&
+      roles.has('demand_signal');
+  });
+  if (commercialRole === 'paid_demand') {
+    return firstText(revenuePath.revenueMechanism) ===
+        'compensated_role' &&
+      paidDemandEvidence.some((item) => candidateRefs.includes(item.id)) &&
+      intersects(candidateRefs, buyerRefs) &&
+      intersects(candidateRefs, buyerGroundingRefs) &&
+      intersects(candidateRefs, [
+        ...offerRefs,
+        ...proofRefs,
+        ...paidOfferGroundingRefs
+      ]) &&
+      intersects(candidateRefs, [
+        ...destinationGroundingRefs,
+        ...paidConversionGroundingRefs,
+        ...revenueRefs
+      ]);
+  }
+  if (commercialRole === 'hiring_manager') {
+    const organization = firstText(candidate.organization);
+    return firstText(revenuePath.revenueMechanism) ===
+        'compensated_role' &&
+      organization &&
+      exactTextContains(asObject(tuple.buyerSegments).label, organization) &&
+      paidDemandEvidence.some((item) =>
+        evidenceSupportsExactText(item, organization)
+      ) &&
+      intersects(candidateRefs, buyerRefs) &&
+      intersects(candidateRefs, buyerGroundingRefs);
+  }
+  return commercialRole === 'buyer' &&
+    candidateRoles.has('defined_buyer') &&
+    exactTextContains(
+      asObject(tuple.buyerSegments).label,
+      firstText(candidate.organization, candidate.displayLabel)
+    ) &&
+    intersects(candidateRefs, buyerRefs) &&
+    intersects(candidateRefs, buyerGroundingRefs) &&
+    intersects(candidateRefs, [...offerRefs, ...proofRefs]);
 }
 
 function candidateActionableForHypothesis(
@@ -10268,8 +11329,17 @@ function candidateActionableForHypothesis(
     hypothesis?.revenuePath?.acquisitionMode
   );
   if (acquisitionMode === 'inbound') {
-    return ownedInboundAssetCandidate(candidate) &&
-      candidate.identityResolved === true;
+    const commercialRole = contractEnum(firstText(
+      candidate.commercialRole
+    ));
+    const paidRoleCandidate =
+      candidate.providerAttestedCommercialDiscovery === true &&
+      ['paid_demand', 'hiring_manager'].includes(commercialRole) &&
+      firstText(hypothesis?.revenuePath?.revenueMechanism) ===
+        'compensated_role';
+    return (
+      ownedInboundAssetCandidate(candidate) || paidRoleCandidate
+    ) && candidate.identityResolved === true;
   }
   return !ownedInboundAssetCandidate(candidate) &&
     candidate.identityResolved === true &&
@@ -10615,7 +11685,7 @@ function meaningfulTokens(value) {
 function normalizeEvidenceID(rawID, type, sourceID) {
   const value = firstText(rawID);
   if (!value) return sourceID ? `source:${sourceID}` : '';
-  if (/^(source|observation|fact|profile|timeline|evidence):/i.test(value) ||
+  if (/^(source|observation|fact|profile|timeline|evidence|external_discovery):/i.test(value) ||
       /^https?:\/\//i.test(value)) {
     return value;
   }

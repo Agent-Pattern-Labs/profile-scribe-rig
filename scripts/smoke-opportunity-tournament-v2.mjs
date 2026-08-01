@@ -2,6 +2,7 @@
 
 import {
   buildEvidenceCatalog,
+  normalizeCommercialDiscoveryEvidence,
   providerCallSpendCeilingMicros,
   runOpportunityTournament,
   serializeOpenRouterJSONRequestBody
@@ -275,6 +276,9 @@ await verifyTypedFamilyTimingFallbackPreservesBusinessGates();
 await verifySaaSTimingRepair();
 await verifyNoncurrentWarmReferralRejected();
 await verifyFreshFormerCustomerAcquisitionAccepted();
+verifyCommercialDiscoveryPDLReferralEnvelopeNormalization();
+await verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct();
+await verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole();
 await verifyUnsafeGeneratedExperimentRejected();
 await verifyCompletedExternalExecutionRejected();
 await verifyInsufficientGroundedFinalistCause();
@@ -608,6 +612,134 @@ function compactV2Response(domain, ref) {
     candidates: verbose.candidates,
     w: verbose.w
   };
+}
+
+function commercialDiscoveryFixture({
+  id,
+  provider,
+  operation,
+  queryHash,
+  motion,
+  buyerArchetype,
+  market,
+  evidence,
+  candidates,
+  paidProviderCalls = 0
+}) {
+  const paidAttempts = paidProviderCalls === 1
+    ? [{
+        id,
+        provider,
+        operation,
+        queryHash,
+        status: 'succeeded',
+        estimatedSpendMicros: 10_000,
+        actualSpendMicros: 10_000,
+        creditsUsed: 1,
+        resultCount: evidence.length,
+        reservedAt: '2026-07-30T10:59:58Z',
+        updatedAt: '2026-07-30T11:00:00Z',
+        completedAt: '2026-07-30T11:00:00Z'
+      }]
+    : [];
+  return {
+    contractVersion: 'commercial_discovery_evidence_v1',
+    status: 'found',
+    attempted: true,
+    motion,
+    buyerArchetype,
+    market,
+    queryHash,
+    providersAttempted: [provider],
+    providerCalls: 1,
+    paidProviderCalls,
+    creditsUsed: paidProviderCalls,
+    resultCount: evidence.length,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    discoveredAt: '2026-07-30T11:00:00Z',
+    attempts: paidAttempts,
+    evidence,
+    candidates
+  };
+}
+
+function verifyCommercialDiscoveryPDLReferralEnvelopeNormalization() {
+  const evidenceRef = 'external_discovery:abababababababababababab';
+  const candidateID = 'candidate:external:cdcdcdcdcdcdcdcdcdcdcdcd';
+  const provider = 'people_data_labs_person_search';
+  const publicUrl = 'https://www.linkedin.com/in/betty-referral-fixture';
+  const envelope = commercialDiscoveryFixture({
+    id: 'attempt-betty-pdl-referral',
+    provider,
+    operation: 'person_search',
+    queryHash: 'e'.repeat(64),
+    motion: 'local_service_referral',
+    buyerArchetype:
+      'New York parents seeking reimbursable lactation care',
+    market: 'New York, NY',
+    paidProviderCalls: 1,
+    evidence: [{
+      evidenceRef,
+      kind: 'verified_external_professional_target',
+      label: 'Morgan Smith — Pediatrician at Riverside Pediatrics',
+      summary:
+        'Morgan Smith is a current public professional at Riverside Pediatrics in New York and a prospective professional referral target. The provider record does not establish willingness, permission, a relationship, or patient demand.',
+      url: publicUrl,
+      provider,
+      provenance: 'people_data_labs_professional_record',
+      roles: ['acquisition', 'channel_fit', 'prospective_partner'],
+      verified: true,
+      observedAt: '2026-07-30T11:00:00Z'
+    }],
+    candidates: [{
+      id: candidateID,
+      kind: 'person',
+      displayLabel: 'Morgan Smith',
+      organization: 'Riverside Pediatrics',
+      role: 'Pediatrician',
+      market: 'New York, NY',
+      publicUrl,
+      provider,
+      commercialRole: 'referral_partner',
+      evidenceRefs: [evidenceRef],
+      contactPaths: [{
+        kind: 'public_professional_url',
+        available: true,
+        verified: true,
+        reference: publicUrl
+      }],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }]
+  });
+  const normalized = normalizeCommercialDiscoveryEvidence(envelope, now);
+  const inFlight = normalizeCommercialDiscoveryEvidence({
+    ...envelope,
+    attempts: envelope.attempts.map((attempt) => ({
+      ...attempt,
+      status: 'reserved'
+    }))
+  }, now);
+  if (normalized.valid !== true ||
+      normalized.paidProviderCalls !== 1 ||
+      normalized.attempts?.length !== 1 ||
+      normalized.attempts?.[0]?.status !== 'succeeded' ||
+      normalized.evidence?.[0]?.evidenceRef !== evidenceRef ||
+      !normalized.evidence?.[0]?.roles?.includes(
+        'prospective_partner'
+      ) ||
+      normalized.candidates?.[0]?.commercialRole !==
+        'referral_partner' ||
+      normalized.candidates?.[0]?.contactPaths?.some((path) =>
+        path.reference
+      ) ||
+      inFlight.valid !== false ||
+      !inFlight.rejectedReasons?.invalid_attempt_ledger) {
+    throw new Error(
+      `PDL referral envelope did not normalize as paid, terminal, prospective discovery: ${JSON.stringify(normalized)}`
+    );
+  }
 }
 
 async function verifyAcquisitionFamilyMismatch() {
@@ -1019,6 +1151,474 @@ async function verifyFreshFormerCustomerAcquisitionAccepted() {
       result.gate?.sideEffects?.providerWrites !== 0) {
     throw new Error(
       `fresh former-customer evidence was mistaken for stale acquisition evidence: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
+  const offerRef = 'observation:obs-betty-referral-offer';
+  const referralRef =
+    'external_discovery:bbbbbbbbbbbbbbbbbbbbbbbb';
+  const candidateID =
+    'candidate:external:dddddddddddddddddddddddd';
+  const provider = 'google_places';
+  const queryHash = 'a'.repeat(64);
+  const domain = {
+    name: 'betty-referral-discovery',
+    buyer: 'New York parents seeking reimbursable lactation care',
+    offer: 'A reimbursable paid in-home lactation consultation',
+    destination: 'Home-visit booking page',
+    mechanism: 'insurance_reimbursement',
+    outcome: 'One paid claim recorded',
+    attributionMethod: 'claim_record',
+    attribution:
+      'Claim record referral source field stores Riverside Pediatrics',
+    sourceSummary:
+      'New York parents seeking reimbursable lactation care can book a reimbursable paid in-home lactation consultation on the Home-visit booking page. Insurance is accepted, one paid claim is recorded, and the Claim record referral source field stores Riverside Pediatrics. The Home-visit booking page is current.'
+  };
+  const response = strictV2Response(domain, offerRef);
+  for (const family of [response.familyA, response.familyB]) {
+    family.l = `${domain.name} prospective partner family`;
+    family.m = 'partner_channel';
+    family.e = [offerRef, referralRef];
+    family.d.offers = family.d.offers.map((item) => ({
+      ...item,
+      e: [offerRef]
+    }));
+    family.d.buyerSegments = family.d.buyerSegments.map((item) => ({
+      ...item,
+      l: domain.buyer,
+      e: [offerRef]
+    }));
+    family.d.channels = family.d.channels.map((item) => ({
+      ...item,
+      l:
+        `Prospective partner referral channel through Riverside Pediatrics to ${domain.destination}`,
+      e: [referralRef]
+    }));
+    family.d.actions = family.d.actions.map((item) => ({
+      ...item,
+      l:
+        `Request one review-first Riverside Pediatrics partner referral that presents ${domain.offer} and completes ${domain.outcome}`,
+      e: [offerRef, referralRef]
+    }));
+    family.d.proofPoints = family.d.proofPoints.map((item) => ({
+      ...item,
+      e: [offerRef]
+    }));
+    family.d.followUps = family.d.followUps.map((item) => ({
+      ...item,
+      e: [offerRef, referralRef]
+    }));
+    const revenuePath = family.d.revenuePaths[0];
+    revenuePath.l = `${domain.offer} from one prospective partner referral`;
+    revenuePath.e = [offerRef, referralRef];
+    revenuePath.acquisitionMode = 'partner_channel';
+    revenuePath.conversionAction =
+      `Request one review-first Riverside Pediatrics partner referral to ${domain.destination} for ${domain.offer} and complete ${domain.outcome}`;
+    revenuePath.attributionSignal = domain.attribution;
+    revenuePath.g = {
+      b: [offerRef],
+      o: [offerRef],
+      a: [referralRef],
+      d: { l: domain.destination, e: [offerRef] },
+      c: [offerRef],
+      t: [offerRef]
+    };
+  }
+  response.candidates = [];
+  const commercialDiscoveryEvidence = commercialDiscoveryFixture({
+    id: 'attempt-betty-referral',
+    provider,
+    operation: 'places_text_search',
+    queryHash,
+    motion: 'local_service_referral',
+    buyerArchetype: domain.buyer,
+    market: 'New York, NY',
+    evidence: [{
+      evidenceRef: referralRef,
+      kind: 'verified_external_professional_target',
+      label: 'Riverside Pediatrics',
+      summary:
+        'Riverside Pediatrics is a current New York newborn-serving pediatric practice and prospective professional referral target. The public provider record supports channel fit only and does not claim an existing referral relationship, willingness, or patient demand.',
+      url: 'https://riverside-pediatrics.example/',
+      provider,
+      provenance: 'read_only_professional_provider',
+      roles: [
+        'acquisition',
+        'channel_fit',
+        'prospective_partner'
+      ],
+      verified: true,
+      observedAt: '2026-07-30T11:00:00Z'
+    }],
+    candidates: [{
+      id: candidateID,
+      kind: 'organization',
+      displayLabel: 'Riverside Pediatrics',
+      organization: 'Riverside Pediatrics',
+      role: 'Newborn-serving pediatric practice',
+      market: 'New York, NY',
+      publicUrl: 'https://riverside-pediatrics.example/',
+      provider,
+      commercialRole: 'referral_partner',
+      evidenceRefs: [referralRef],
+      contactPaths: [{
+        kind: 'public_professional_url',
+        available: true,
+        verified: true,
+        reference: 'https://riverside-pediatrics.example/'
+      }],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }]
+  });
+  const requests = [];
+  const complete = completionWithCritic(
+    response,
+    'gen-betty-referral-discovery'
+  );
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-betty-referral-discovery',
+      payload: {
+        researchOnly: true,
+        objective: {
+          outcome: 'Generate one new paid or reimbursed lactation visit.',
+          successMetric: domain.outcome
+        },
+        budget: { maxHypotheses: 128, maxLLMCalls: 2 },
+        commercialDiscoveryEvidence,
+        evidenceSnapshot: {
+          profile: {
+            identity: {
+              fullName: 'Betty Greenman',
+              website: 'https://betty-lactation.example/'
+            }
+          },
+          sources: [{
+            id: 'src-betty-referral',
+            url: 'https://betty-lactation.example/',
+            status: 'monitoring'
+          }],
+          sourceEvidence: [{
+            observationId: 'obs-betty-referral-offer',
+            sourceId: 'src-betty-referral',
+            kind: 'service-page',
+            title: domain.destination,
+            summary: domain.sourceSummary,
+            url: 'https://betty-lactation.example/book',
+            observedAt: '2026-07-29T12:00:00Z',
+            current: true,
+            status: 'active'
+          }]
+        }
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      requests.push(request);
+      return complete(request);
+    }
+  });
+  const generatorPrompt = JSON.parse(requests[0]?.user || '{}');
+  const promptDiscovery = generatorPrompt.evidenceCatalog?.find(
+    (item) => item.id === referralRef
+  );
+  const graphNode = result.commercialEvidenceGraph?.nodes?.find(
+    (node) => node.evidenceRef === referralRef
+  );
+  const candidate = result.candidates?.find((item) =>
+    item.id === candidateID
+  );
+  if (result.status !== 'completed' ||
+      result.result?.incrementalRevenueGate?.passed !== true ||
+      result.searchSpace?.commercialDiscoveryEvidenceCount !== 1 ||
+      result.searchSpace?.commercialDiscoveryCandidateCount !== 1 ||
+      result.trace?.commercialDiscovery?.valid !== true ||
+      result.trace?.commercialDiscovery?.providerCalls !== 1 ||
+      result.trace?.commercialDiscovery?.paidProviderCalls !== 0 ||
+      (result.trace?.commercialDiscovery?.attempts || []).length !== 0 ||
+      promptDiscovery?.providerAttestedCommercialDiscovery !== true ||
+      !promptDiscovery?.commercialDiscoveryRoles?.includes(
+        'prospective_partner'
+      ) ||
+      graphNode?.provenance !==
+        'provider_attested_commercial_discovery' ||
+      !graphNode?.roles?.includes('prospective_partner') ||
+      !graphNode?.roles?.includes('acquisition') ||
+      !graphNode?.roles?.includes('channel_fit') ||
+      graphNode?.roles?.includes('defined_buyer') ||
+      graphNode?.roles?.includes('named_partner') ||
+      graphNode?.roles?.includes('named_outside_target') ||
+      result.hypotheses?.some((hypothesis) =>
+        !hypothesis.evidenceRefs?.includes(referralRef) ||
+        hypothesis.revenuePath?.acquisitionMode !== 'partner_channel' ||
+        !/new york parents/i.test(hypothesis.buyerSegment) ||
+        /riverside pediatrics/i.test(hypothesis.buyerSegment)
+      ) ||
+      candidate?.commercialRole !== 'referral_partner' ||
+      candidate?.providerAttestedCommercialDiscovery !== true ||
+      candidate?.contactPaths?.some((path) => path.reference) ||
+      result.winner?.candidateId !== candidateID ||
+      result.result?.incrementalRevenueGate?.allowedChannel !==
+        'partner_channel' ||
+      result.result?.incrementalRevenueGate
+        ?.discoveryRouteRequiresApproval !== true ||
+      result.gate?.sideEffects?.pdlCalls !== 0 ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `provider-attested referral partner did not remain distinct from Betty's buyer: ${JSON.stringify({ result, generatorPrompt })}`
+    );
+  }
+}
+
+async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
+  const supplyRef = 'observation:obs-programmer-go-proof';
+  const jobRef = 'external_discovery:cccccccccccccccccccccccc';
+  const candidateID = 'candidate:external:eeeeeeeeeeeeeeeeeeeeeeee';
+  const provider = 'people_data_labs_job_posting_search';
+  const queryHash = 'c'.repeat(64);
+  const jobURL = 'https://jobs.acme-systems.example/senior-go-engineer';
+  const domain = {
+    name: 'programmer-paid-demand-discovery',
+    buyer:
+      'Acme Systems engineering team buying a current backend requirement',
+    offer: 'A compensated role as Senior Go Engineer with salary',
+    destination: 'Acme Systems application page',
+    mechanism: 'compensated_role',
+    outcome: 'One compensation offer accepted',
+    attributionMethod: 'employment_compensation_record',
+    attribution:
+      'Employment compensation record source field stores public posting ID ACME-GO-42',
+    sourceSummary:
+      'The programmer has verified Go, PostgreSQL, and shipped API experience and is currently available for a backend engagement.'
+  };
+  const response = strictV2Response(domain, supplyRef);
+  for (const family of [response.familyA, response.familyB]) {
+    family.l = `${domain.name} live role family`;
+    family.m = 'inbound';
+    family.e = [supplyRef, jobRef];
+    family.d.offers = family.d.offers.map((item) => ({
+      ...item,
+      l: domain.offer,
+      e: [jobRef]
+    }));
+    family.d.buyerSegments = family.d.buyerSegments.map((item) => ({
+      ...item,
+      l: domain.buyer,
+      e: [jobRef]
+    }));
+    family.d.channels = family.d.channels.map((item) => ({
+      ...item,
+      l:
+        `Inbound platform discovery routes the programmer to ${domain.destination}`,
+      e: [jobRef]
+    }));
+    family.d.actions = family.d.actions.map((item) => ({
+      ...item,
+      l:
+        `Submit one application through ${domain.destination} for the compensated role at Acme Systems`,
+      e: [jobRef]
+    }));
+    family.d.timingTriggers = family.d.timingTriggers.map((item) => ({
+      ...item,
+      l: 'Determine whether the programmer is currently available',
+      e: [supplyRef],
+      q: 'currently available'
+    }));
+    family.d.proofPoints = family.d.proofPoints.map((item) => ({
+      ...item,
+      l: `${domain.sourceSummary} ${domain.offer}`,
+      e: [supplyRef, jobRef]
+    }));
+    family.d.followUps = family.d.followUps.map((item) => ({
+      ...item,
+      e: [jobRef]
+    }));
+    const revenuePath = family.d.revenuePaths[0];
+    revenuePath.l = `${domain.offer} through a current public job posting`;
+    revenuePath.e = [supplyRef, jobRef];
+    revenuePath.revenueMechanism = 'compensated_role';
+    revenuePath.incrementalIncomeOutcome =
+      'One new accepted compensation offer adds incremental gross salary income';
+    revenuePath.acquisitionMode = 'inbound';
+    revenuePath.conversionAction =
+      `Use inbound platform discovery to ${domain.destination} and submit one application for the compensated role`;
+    revenuePath.observableRevenueOutcome = domain.outcome;
+    revenuePath.attributionMethod = 'employment_compensation_record';
+    revenuePath.attributionSignal = domain.attribution;
+    revenuePath.conversionDestination = domain.destination;
+    revenuePath.g = {
+      b: [jobRef],
+      o: [jobRef],
+      a: [jobRef],
+      d: { l: domain.destination, e: [jobRef] },
+      c: [jobRef],
+      t: [jobRef]
+    };
+  }
+  response.candidates = [];
+  const commercialDiscoveryEvidence = commercialDiscoveryFixture({
+    id: 'attempt-programmer-paid-demand',
+    provider,
+    operation: 'job_posting_search',
+    queryHash,
+    motion: 'developer_project',
+    buyerArchetype: 'Engineering teams hiring Go backend developers',
+    market: 'Remote United States',
+    evidence: [{
+      evidenceRef: jobRef,
+      kind: 'verified_external_live_demand',
+      label: 'Senior Go Engineer at Acme Systems',
+      summary:
+        'Verified active compensated-role demand: Acme Systems is hiring for a current salaried Senior Go Engineer role requiring Go, PostgreSQL, and shipped API experience. Inbound platform discovery reaches the Acme Systems application page. One accepted compensation offer is the paid conversion, and the Employment compensation record source field stores public posting ID ACME-GO-42.',
+      url: jobURL,
+      provider,
+      provenance: 'people_data_labs_active_job_posting',
+      roles: [
+        'acquisition',
+        'channel_fit',
+        'conversion_destination',
+        'defined_buyer',
+        'demand_signal',
+        'paid_conversion',
+        'paid_offer'
+      ],
+      verified: true,
+      observedAt: '2026-07-30T11:00:00Z'
+    }],
+    candidates: [{
+      id: candidateID,
+      kind: 'employer_job_posting',
+      displayLabel: 'Acme Systems',
+      organization: 'Acme Systems',
+      role: 'Senior Go Engineer',
+      market: 'Remote United States',
+      publicUrl: jobURL,
+      provider,
+      commercialRole: 'paid_demand',
+      evidenceRefs: [jobRef],
+      contactPaths: [{
+        kind: 'public_professional_url',
+        available: true,
+        verified: true,
+        reference: jobURL
+      }],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }],
+    paidProviderCalls: 1
+  });
+  const requests = [];
+  const complete = completionWithCritic(
+    response,
+    'gen-programmer-paid-demand-discovery'
+  );
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-programmer-paid-demand-discovery',
+      payload: {
+        researchOnly: true,
+        objective: {
+          outcome: 'Generate one new accepted compensated backend role.',
+          successMetric: domain.outcome
+        },
+        budget: { maxHypotheses: 128, maxLLMCalls: 2 },
+        commercialDiscoveryEvidence,
+        evidenceSnapshot: {
+          profile: {
+            identity: {
+              fullName: 'Pat Programmer',
+              website: 'https://pat-programmer.example/'
+            }
+          },
+          sources: [{
+            id: 'src-programmer-proof',
+            url: 'https://pat-programmer.example/',
+            status: 'monitoring'
+          }],
+          sourceEvidence: [{
+            observationId: 'obs-programmer-go-proof',
+            sourceId: 'src-programmer-proof',
+            kind: 'portfolio',
+            title: 'Go and PostgreSQL API portfolio',
+            summary: domain.sourceSummary,
+            url: 'https://pat-programmer.example/api-project',
+            observedAt: '2026-07-29T12:00:00Z',
+            current: true,
+            status: 'active'
+          }]
+        }
+      }
+    },
+    model: 'test/v2',
+    now,
+    completeJSON: async (request) => {
+      requests.push(request);
+      return complete(request);
+    }
+  });
+  const generatorPrompt = JSON.parse(requests[0]?.user || '{}');
+  const promptRefs = new Set(
+    generatorPrompt.evidenceCatalog?.map((item) => item.id)
+  );
+  const jobNode = result.commercialEvidenceGraph?.nodes?.find(
+    (node) => node.evidenceRef === jobRef
+  );
+  const candidate = result.candidates?.find((item) =>
+    item.id === candidateID
+  );
+  if (result.status !== 'completed' ||
+      result.result?.incrementalRevenueGate?.passed !== true ||
+      result.searchSpace?.commercialDiscoveryEvidenceCount !== 1 ||
+      result.searchSpace?.commercialDiscoveryCandidateCount !== 1 ||
+      result.trace?.commercialDiscovery?.paidProviderCalls !== 1 ||
+      result.trace?.commercialDiscovery?.creditsUsed !== 1 ||
+      result.trace?.commercialDiscovery?.attempts?.[0]?.status !==
+        'succeeded' ||
+      !promptRefs.has(jobRef) ||
+      jobNode?.provenance !==
+        'provider_attested_commercial_discovery' ||
+      ![
+        'paid_offer',
+        'demand_signal',
+        'defined_buyer',
+        'acquisition',
+        'conversion_destination',
+        'paid_conversion'
+      ].every((role) => jobNode?.roles?.includes(role)) ||
+      result.hypotheses?.some((hypothesis) =>
+        !hypothesis.evidenceRefs?.includes(jobRef) ||
+        hypothesis.revenuePath?.revenueMechanism !== 'compensated_role' ||
+        hypothesis.revenuePath?.acquisitionMode !== 'inbound' ||
+        hypothesis.revenuePath?.attributionMethod !==
+          'employment_compensation_record' ||
+        !/application page/i.test(
+          hypothesis.revenuePath?.conversionDestination || ''
+        )
+      ) ||
+      candidate?.commercialRole !== 'paid_demand' ||
+      candidate?.providerAttestedCommercialDiscovery !== true ||
+      candidate?.contactPaths?.some((path) => path.reference) ||
+      candidate?.evidenceRefs?.length !== 1 ||
+      candidate?.evidenceRefs?.[0] !== jobRef ||
+      result.candidates?.some((item) =>
+        item.kind === 'owned_inbound_asset'
+      ) ||
+      result.winner?.candidateId !== candidateID ||
+      result.result?.incrementalRevenueGate?.allowedChannel !==
+        'application_page' ||
+      result.result?.executionAuthorization !== 'none' ||
+      result.gate?.sideEffects?.pdlCalls !== 0 ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `provider-attested paid demand did not ground the programmer hiring path: ${JSON.stringify({ result, generatorPrompt })}`
     );
   }
 }
