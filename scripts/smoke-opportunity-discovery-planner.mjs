@@ -567,6 +567,17 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
+        /buyer\/referral c,a:.*only a review-first profile message\/introduction.*omit every private-contact/is.test(
+          rule
+        )
+      ) ||
+      !/buyer\/referral_partner asks for a referral or introduction.*Never emit or mention any other route or private-contact term/is.test(
+        requestSeen.system || ''
+      ) ||
+      /claims no email\/phone\/form\/proposal route/i.test(
+        requestSeen.system || ''
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
         /r\.o describes that one terminal rm event.*not objective alternatives/is.test(
           rule
         )
