@@ -527,6 +527,9 @@ for (const scenario of cases) {
       !plannerDefinitions.revenuePath?.required?.includes('k') ||
       plannerDefinitions.revenuePath?.properties?.k?.$ref !==
         '#/$defs/causalWitness' ||
+      JSON.stringify(
+        plannerDefinitions.revenuePath?.properties?.c?.enum
+      ) !== JSON.stringify(['project_first_viable_tactic_action']) ||
       JSON.stringify(causalWitnessSchema.required) !== JSON.stringify([
         'v',
         'i',
@@ -611,9 +614,17 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /buyer\/referral c,a:.*TARGET_URL.*HTTPS LinkedIn \/in verified public profile only.*review-first.*omit private-contact/is.test(
+        /buyer\/referral a:.*TARGET_URL.*HTTPS LinkedIn \/in verified public profile only.*review-first.*omit private-contact/is.test(
           rule
         )
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
+        /c=project_first_viable_tactic_action.*project valid tactic a/is.test(
+          rule
+        )
+      ) ||
+      !/projects r\.c per tactic/is.test(
+        requestSeen.system || ''
       ) ||
       !/referral_partner=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*buyer=ask target to book\/buy\/sign current paid offer.*paid_demand=typed paid application\/proposal response.*marketplace\/directory placement are invalid/is.test(
         requestSeen.system || ''
@@ -670,7 +681,7 @@ for (const scenario of cases) {
     );
   }
   const materialized = result.plans[0].contingentFinalists;
-  const sharedDimensions = ['r', 'o', 'b', 't', 'p'];
+  const sharedDimensions = ['o', 'b', 't', 'p'];
   if (!materialized?.familyA || !materialized?.familyB ||
       materialized.pathBase || materialized.tacticA || materialized.tacticB ||
       materialized.familyA.tacticKey === materialized.familyB.tacticKey ||
@@ -883,6 +894,7 @@ await verifyOmittedTargetEvidenceProtocolCanonicalization(
 await verifyOneMotionFailsClosed(unsafeJob, unsafeRef);
 await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
 await verifyQualifiedPartnerReferralActionsPass(unsafeJob, unsafeRef);
+await verifyCompactConversionActionProjection(unsafeJob, unsafeRef);
 await verifyPaidDemandResponseActionVerbs(unsafeJob, unsafeRef);
 await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
 await verifyServicePaymentOutcomesPass(unsafeJob, unsafeRef);
@@ -2226,6 +2238,148 @@ async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
       JSON.stringify(returnedActions) !== JSON.stringify(actions)) {
     throw new Error(
       `qualified partner-referral revenue actions were rejected: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyCompactConversionActionProjection(job, evidenceRef) {
+  const motion = cases[0].plans(evidenceRef)[0];
+  motion.contingentFinalists = compactContingentFinalists(
+    motion.contingentFinalists
+  );
+  const projected = await plannerResultForMotion({
+    job,
+    motion,
+    generationId: 'generation-compact-conversion-action-projection'
+  });
+  const projectedFamilies = ['familyA', 'familyB'].map((familyKey) =>
+    projected.plans[0]?.contingentFinalists?.[familyKey]
+  );
+  if (projected.status !== 'planned' || projected.plans.length !== 2 ||
+      projectedFamilies.some((family) =>
+        !family || family.d?.r?.[0]?.c !== family.d?.a?.[0]?.l
+      ) ||
+      projected.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `compact redundant conversion action was not projected from a locally valid tactic: ${JSON.stringify(projected)}`
+    );
+  }
+
+  const secondAction = cases[0].plans(evidenceRef)[0];
+  secondAction.contingentFinalists = compactContingentFinalists(
+    secondAction.contingentFinalists
+  );
+  secondAction.contingentFinalists.tacticA.a[0].l =
+    'After review, monitor {{TARGET_NAME}} without making a paid referral request.';
+  const selectedSecond = await plannerResultForMotion({
+    job,
+    motion: secondAction,
+    generationId: 'generation-compact-second-conversion-action-projection'
+  });
+  if (selectedSecond.status !== 'planned' ||
+      selectedSecond.plans[0]?.contingentFinalists?.familyA?.d?.r?.[0]?.c !==
+        selectedSecond.plans[0]?.contingentFinalists?.familyA?.d?.a?.[1]?.l) {
+    throw new Error(
+      `compact projection did not select the first locally valid same-family action: ${JSON.stringify(selectedSecond)}`
+    );
+  }
+
+  const arbitrary = cases[0].plans(evidenceRef)[0];
+  arbitrary.contingentFinalists = compactContingentFinalists(
+    arbitrary.contingentFinalists
+  );
+  arbitrary.contingentFinalists.pathBase.r[0].c =
+    'Measure the booking workflow without making a commercial ask.';
+  const arbitraryRejected = await plannerResultForMotion({
+    job,
+    motion: arbitrary,
+    generationId: 'generation-compact-arbitrary-conversion-action'
+  });
+  if (arbitraryRejected.status !== 'blocked' ||
+      arbitraryRejected.plans.length !== 0 ||
+      !/conversion_action/i.test(arbitraryRejected.reason)) {
+    throw new Error(
+      `arbitrary compact conversion action was improperly healed: ${JSON.stringify(arbitraryRejected)}`
+    );
+  }
+
+  const invalid = cases[0].plans(evidenceRef)[0];
+  invalid.contingentFinalists = compactContingentFinalists(
+    invalid.contingentFinalists
+  );
+  for (const action of invalid.contingentFinalists.tacticA.a) {
+    action.l =
+      'After review, monitor {{TARGET_NAME}} without making a paid referral request.';
+  }
+  const rejected = await plannerResultForMotion({
+    job,
+    motion: invalid,
+    generationId: 'generation-compact-no-valid-conversion-action'
+  });
+  if (rejected.status !== 'blocked' || rejected.plans.length !== 0 ||
+      !/primary_action_(?:passive|negated|non_revenue|partner_referral)/i.test(
+        rejected.reason
+      ) ||
+      rejected.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `compact conversion projection rescued an invalid tactic: ${JSON.stringify(rejected)}`
+    );
+  }
+
+  const materializedMarker = cases[0].plans(evidenceRef)[0];
+  for (const familyKey of ['familyA', 'familyB']) {
+    materializedMarker.contingentFinalists[familyKey].d.r[0].c =
+      'project_first_viable_tactic_action';
+  }
+  const materializedRejected = await plannerResultForMotion({
+    job,
+    motion: materializedMarker,
+    generationId: 'generation-materialized-conversion-marker'
+  });
+  if (materializedRejected.status !== 'blocked' ||
+      materializedRejected.plans.length !== 0 ||
+      !/conversion_action/i.test(materializedRejected.reason)) {
+    throw new Error(
+      `materialized conversion marker was improperly projected: ${JSON.stringify(materializedRejected)}`
+    );
+  }
+
+  const persistedCompact = normalizeCommercialDiscoveryEvidence({
+    contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
+    status: 'not_found',
+    attempted: true,
+    motion: motion.id,
+    buyerArchetype: motion.buyer,
+    market: motion.market,
+    queryHash: '9'.repeat(64),
+    providersAttempted: ['openrouter_exa_web_search'],
+    providerCalls: 1,
+    paidProviderCalls: 0,
+    creditsUsed: 0,
+    resultCount: 0,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    discoveredAt: now.toISOString(),
+    plan: {
+      contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+      status: 'planned',
+      reason: 'Persisted compact marker must not be projected.',
+      evidenceHash: projected.evidenceHash,
+      plans: twoPlannerMotions(motion, evidenceRef),
+      webSearchReceipt: projected.webSearchReceipt,
+      sideEffectsPerformed: 0
+    },
+    attempts: [],
+    evidence: [],
+    candidates: []
+  }, now);
+  if (persistedCompact.valid !== false ||
+      persistedCompact.plan?.valid !== false ||
+      !/conversion_action/i.test(
+        persistedCompact.plan?.rejectedReason || ''
+      )) {
+    throw new Error(
+      `persisted compact conversion marker was improperly projected: ${JSON.stringify(persistedCompact)}`
     );
   }
 }
@@ -3961,7 +4115,10 @@ async function verifyTwoStageTargetBinding() {
     conflictingModeCalls,
     'explicit permissioned-outreach text in partner-channel family'
   );
-  if (conflictingMode.searchSpace?.motionConflictCount < 1) {
+  if (conflictingMode.searchSpace?.motionConflictCount < 1 &&
+      !/primary_action_acquisition_mode/i.test(
+        conflictingMode.searchSpace?.contingentFinalists?.reason || ''
+      )) {
     throw new Error(
       `explicit acquisition-mode conflict was not diagnosed: ${JSON.stringify(conflictingMode.searchSpace)}`
     );
@@ -5661,6 +5818,8 @@ function contingentFinalists(motion) {
         ? 'After review, request one warm referral introduction'
         : motion.acquisitionMode === 'inbound'
           ? 'After review, submit one inbound paid application'
+          : motion.acquisitionMode === 'partner_channel'
+            ? 'After review, submit one paid proposal through the partner channel'
           : 'After review, submit one permissioned paid proposal';
     return `${prefix} to {{TARGET_NAME}} for ${motion.paidOffer} (${variant}).`;
   };
@@ -5672,6 +5831,8 @@ function contingentFinalists(motion) {
       ? `Warm introduction via {{TARGET_NAME}} (${variant})`
       : motion.acquisitionMode === 'inbound'
         ? `Inbound discovery at {{TARGET_NAME}} (${variant})`
+        : motion.acquisitionMode === 'partner_channel'
+          ? `Partner channel response to {{TARGET_NAME}} (${variant})`
         : `Review-first application to {{TARGET_NAME}} (${variant})`;
   const sharedVariants = ['path option one', 'path option two'];
   const sharedDimensions = {
@@ -5834,7 +5995,10 @@ function compactContingentFinalists(value) {
     seedContract: materialized.seedContract,
     pathBase: {
       e: familyA.e,
-      r: familyA.d.r,
+      r: familyA.d.r.map((revenue) => ({
+        ...revenue,
+        c: 'project_first_viable_tactic_action'
+      })),
       o: familyA.d.o,
       b: familyA.d.b,
       t: familyA.d.t,

@@ -48,6 +48,8 @@ const PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY = Object.freeze({
 const CONTINGENT_TARGET_NAME_TOKEN = '{{TARGET_NAME}}';
 const CONTINGENT_TARGET_URL_TOKEN = '{{TARGET_URL}}';
 const CONTINGENT_TARGET_EVIDENCE_REF = 'target:evidence';
+const CONTINGENT_CONVERSION_ACTION_PROJECTION =
+  'project_first_viable_tactic_action';
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER =
   'openrouter_exa_web_search';
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION =
@@ -596,7 +598,7 @@ Plans are contingent, not proof of target, interest, referral, budget, or permis
 Return exactly two distinct plans; each plan has one shared pathBase plus two tactic deltas. Modes: active_job_posting=paid role; professional_counterparty=person; local_organization=organization seed then person; public_live_demand=live paid demand.
 Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel. No warm_referral/existing_customer for unresolved targets; buyer identity!=inbound demand. professional_counterparty terminates in one person; local_organization uses the organization only as a seed and terminates in its named decision-maker person.
 pathBase={e,r,o,b,t,p}: one v3 path+k and 2 o/b/t/p variants. tacticA/B={l,m,tacticKey,e,s,c,a,f}: 2 c/a/f variants; tactics differ causally over one buyer-to-payment base. Require current paid offer, separate acquisition/destination, paid conversion, attribution, numeric stop, positive value/spend, evidence, active actions.
-Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. No setup/support/follow-up. buyer/referral c,a: {{TARGET_URL}} once, only review-first public professional profile; omit private/alternate routes from JSON/query. Review!=mode; code only binds tokens/refs; operations never outcomes.
+Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. No setup/support/follow-up. buyer/referral a: {{TARGET_URL}} once, only review-first public professional profile; omit private/alternate routes from JSON/query. Review!=mode; code projects r.c per tactic; operations never outcomes.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 target:evidence proves only typed target dimensions: never seller capability, relationship, private contacts, or paid demand unless live-paid-demand. Bind current offer/destination/attribution to exact approved IDs. Professional identity proves identity+prospective channel fit only; live-paid-demand alone grounds outside paid offer/application/compensated conversion.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"). Field use: professional/local uses targetRoleTerms+organizationTerms and leaves jobTitle/skills empty; active job does the reverse; public demand leaves all four empty. The typed target stays professional. Copy IDs/tokens exactly. Return strict JSON only.`;
@@ -717,7 +719,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     // Revalidate against the same trust boundary locally instead of allowing
     // a ref that existed only in the larger, model-hidden catalog.
     promptEvidenceCatalog,
-    now
+    now,
+    { allowPlannerProjection: true }
   );
   const webSearchReceipt = normalizeOpportunityDiscoveryWebSearchReceipt({
     annotations: completion?.annotations,
@@ -921,7 +924,10 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
         rm: { $ref: '#/$defs/revenueMechanism' },
         l: boundedText(140),
         io: boundedText(180),
-        c: boundedText(180),
+        c: {
+          type: 'string',
+          enum: [CONTINGENT_CONVERSION_ACTION_PROJECTION]
+        },
         o: boundedText(180),
         atm: { $ref: '#/$defs/attributionMethod' },
         ats: boundedText(220),
@@ -1194,24 +1200,25 @@ function compactOpportunityDiscoveryHardRules() {
     '2 distinct motions: each pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
-    'Each r: a=plan.acquisitionMode; k.i=counterfactual paid income; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.',
+    `r.a=plan.acquisitionMode; r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; project valid tactic a; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.`,
     'r.o describes that one terminal rm event, not objective alternatives. Reject or/either/attempt/pending/declined/failed/not received.',
-    'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/c/o/ats/cd/st; vm>0.',
+    'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/o/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'Tactics and motions differ. Pick actors/artifacts causing payment, never peer suppliers. paid_demand=current buyer/employer-authored compensated job/RFP/solicitation/explicit buying request only; a bare request term is insufficient; seller/competitor offers, marketplaces, directories, category availability, and accepts-insurance pages are not demand. Sensitive end buyer=>complementary professional referral_partner. Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel; buyer identity!=inbound.',
     'Adapters: professional_counterparty=person/single_exact_target; local_organization=person/organization_then_decision_maker(1-6); organization is never terminal.',
-    `buyer/referral c,a: 1 ${CONTINGENT_TARGET_URL_TOKEN} each; HTTPS LinkedIn /in verified public profile only; review-first; omit private-contact/form/submission/alternate routes.`,
-    'No sensitive/private targets; population only in referral query. No external writes.',
-    'Audit once; return minified strict JSON.'
+    `buyer/referral a: 1 ${CONTINGENT_TARGET_URL_TOKEN}; HTTPS LinkedIn /in verified public profile only; review-first; omit private-contact/form/submission/alternate routes.`,
+    'No sensitive/private targets; population only in referral query. No external writes.'
   ];
 }
 
 function normalizeOpportunityDiscoveryPlan(
   value,
   evidenceCatalog,
-  referenceTime = new Date()
+  referenceTime = new Date(),
+  optionsValue = {}
 ) {
   const raw = asObject(value);
+  const options = asObject(optionsValue);
   const knownEvidence = new Set(
     asArray(evidenceCatalog).map((item) => firstText(asObject(item).id))
   );
@@ -1267,7 +1274,8 @@ function normalizeOpportunityDiscoveryPlan(
         plan.contingentFinalists,
         knownEvidence,
         referenceTime,
-        planWithCanonicalEvidence
+        planWithCanonicalEvidence,
+        options.allowPlannerProjection === true
       )
     };
   }).sort((left, right) =>
@@ -1405,9 +1413,16 @@ function normalizeContingentFinalistBundle(
   value,
   knownEvidence,
   _referenceTime,
-  planValue
+  planValue,
+  allowPlannerProjection = false
 ) {
   const raw = asObject(value);
+  const compactPlannerBundle =
+    Object.keys(asObject(raw.pathBase)).length > 0 &&
+    Object.keys(asObject(raw.tacticA)).length > 0 &&
+    Object.keys(asObject(raw.tacticB)).length > 0 &&
+    Object.keys(asObject(raw.familyA)).length === 0 &&
+    Object.keys(asObject(raw.familyB)).length === 0;
   let serialized = '';
   try {
     serialized = JSON.stringify(raw);
@@ -1427,7 +1442,6 @@ function normalizeContingentFinalistBundle(
   clone = materializePlannerContingentFinalistBundle(clone);
   if (Object.keys(asObject(clone)).length === 0) return {};
   clone = canonicalizeContingentTargetEvidence(clone, planValue);
-  if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   const plan = asObject(planValue);
   const planEvidenceRefs = new Set(
     compactStrings(plan.evidenceRefs).filter((ref) =>
@@ -1458,8 +1472,71 @@ function normalizeContingentFinalistBundle(
       )
     ]);
   }
+  if (compactPlannerBundle && allowPlannerProjection === true) {
+    clone = canonicalizeContingentConversionActions(clone, planValue);
+  }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   return clone;
+}
+
+/**
+ * The compact call-1 contract authors one shared revenue path and two
+ * tactic-local action sets. Its revenue-path `c` field is an exact structural
+ * projection marker rather than a third model-authored version of the same
+ * commercial step. For a compact planner response only, replace that marker
+ * in each materialized family with the first same-family action that already
+ * satisfies the local evidence, active-cash, acquisition-mode, and typed-role
+ * gates.
+ *
+ * This is bounded structural projection of model-authored text, not a new
+ * commercial claim: no target, evidence, offer, permission, or action is
+ * synthesized. An arbitrary string is never eligible for projection. If the
+ * marker is missing or neither tactic action passes the existing gates, the
+ * field is left untouched and the ordinary contract validator fails closed.
+ * A materialized receipt is never projected, preserving tamper detection and
+ * historical validation semantics.
+ */
+function canonicalizeContingentConversionActions(value, planValue) {
+  const bundle = asObject(value);
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = asObject(bundle[familyKey]);
+    const dimensions = asObject(family.d);
+    const revenue = asObject(asArray(dimensions.r)[0]);
+    if (Object.keys(revenue).length === 0 ||
+        firstText(revenue.c) !==
+          CONTINGENT_CONVERSION_ACTION_PROJECTION) {
+      continue;
+    }
+    const action = asArray(dimensions.a)
+      .map(asObject)
+      .find((item) => contingentViableActionItem(
+        item,
+        family,
+        planValue
+      ));
+    if (!action) continue;
+    revenue.c = firstText(action.l);
+  }
+  return bundle;
+}
+
+function contingentViableActionItem(itemValue, familyValue, planValue) {
+  const item = asObject(itemValue);
+  const family = asObject(familyValue);
+  const plan = asObject(planValue);
+  const label = firstText(item.l);
+  const evidenceRefs = compactStrings(item.e);
+  const familyRefs = new Set(compactStrings(family.e));
+  const actionModes = acquisitionModesFromText(label);
+  return evidenceRefs.length > 0 &&
+    evidenceRefs.every((ref) => familyRefs.has(ref)) &&
+    countExactToken(label, CONTINGENT_TARGET_NAME_TOKEN) === 1 &&
+    firstText(family.m) === firstText(plan.acquisitionMode) &&
+    actionModes.every((mode) =>
+      mode === firstText(plan.acquisitionMode)
+    ) &&
+    !contingentPrimaryRevenueActionRoleIssue(label, plan) &&
+    viablePrimaryRevenueAction(label);
 }
 
 /**
@@ -2104,7 +2181,7 @@ function contingentFinalistBundleIssue(planValue) {
         action,
         plan
       );
-      if (!roleIssue && viablePrimaryRevenueAction(action)) {
+      if (contingentViableActionItem(actionValue, family, plan)) {
         familyViableActionSignatures.add(signature);
         viableActionSignatures.add(signature);
       } else if (passiveOrObservationalPrimaryAction(action)) {
@@ -2122,6 +2199,12 @@ function contingentFinalistBundleIssue(planValue) {
       } else if (roleIssue) {
         rejectedActionIssues.push(
           `family ${familyIndex + 1} action ${actionIndex + 1} [${roleIssue}]: must perform the typed commercial role's direct cash-advancing action.`
+        );
+      } else if (acquisitionModesFromText(action).some((mode) =>
+        mode !== firstText(plan.acquisitionMode)
+      )) {
+        rejectedActionIssues.push(
+          `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_acquisition_mode]: must align with the typed acquisition route.`
         );
       } else {
         rejectedActionIssues.push(
@@ -10053,10 +10136,7 @@ function deterministicCommercialHypothesisGate(
       semantic.conversionAction,
     causalAcquisitionPath:
       ACQUISITION_MODES.has(firstText(revenuePath.acquisitionMode)) &&
-      acquisitionModeMatchesText(
-        revenuePath.acquisitionMode,
-        `${channel} ${conversionAction}`
-      ) &&
+      !prohibitedAcquisitionText(`${channel} ${conversionAction}`) &&
       semantic.conversionDestination &&
       comparable(channel) !== comparable(destination),
     incrementalRevenueOutcome:
@@ -14686,10 +14766,12 @@ function validateRevenuePath(
     }
   }
 
-  const acquisitionText = `${channel} ${conversionAction}`;
+  const acquisitionText =
+    `${channel} ${conversionAction} ${conversionDestination}`;
   if (prohibitedAcquisitionText(acquisitionText)) {
     reasons.add('prohibited_acquisition');
-  } else if (ACQUISITION_MODES.has(revenuePath.acquisitionMode) &&
+  } else if (!isV2 &&
+      ACQUISITION_MODES.has(revenuePath.acquisitionMode) &&
       !acquisitionModeMatchesText(
         revenuePath.acquisitionMode,
         acquisitionText
@@ -14755,10 +14837,7 @@ function validateRevenuePath(
       semantic.conversionAction,
     causalAcquisitionPath:
       ACQUISITION_MODES.has(revenuePath.acquisitionMode) &&
-      acquisitionModeMatchesText(
-        revenuePath.acquisitionMode,
-        `${channel} ${conversionAction}`
-      ),
+      !prohibitedAcquisitionText(`${channel} ${conversionAction}`),
     incrementalRevenueOutcome: semantic.incrementalIncome
   };
   return {
@@ -15904,10 +15983,9 @@ function acquisitionFamilySignature(tuple) {
       );
       const familyMismatch = familyModes.length !== 1 ||
         familyModes[0] !== pathMode;
-      // V2 already carries a typed family mode, and validateRevenuePath
-      // independently proves that the channel/conversion text implements it.
-      // Neutral wording is therefore not a conflict; only an explicitly
-      // classified label that disagrees with the typed mode is.
+      // V2 already carries a typed family mode. Neutral wording is not a
+      // conflict; an explicitly classified label that disagrees with that
+      // mode still fails before revenue validation.
       const labelMismatch = labelModes.length > 1 ||
         (labelModes.length === 1 && labelModes[0] !== pathMode);
       return familyMismatch ||
