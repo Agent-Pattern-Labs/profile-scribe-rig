@@ -327,6 +327,15 @@ for (const scenario of cases) {
           'target:evidence'
         ];
       }
+      if (responseData.plans[0].commercialRole === 'paid_demand') {
+        // Paid-demand route selection uniquely implies one exact public live
+        // demand target. These schema-valid slot values reproduce planner
+        // protocol drift seen in production and must be normalized locally;
+        // the outside target itself still requires provider evidence.
+        responseData.plans[0].targetSlot.finalTargetKind = 'person';
+        responseData.plans[0].targetSlot.resolutionStrategy =
+          'organization_then_decision_maker';
+      }
       const responseBytes = Buffer.byteLength(
         JSON.stringify(responseData),
         'utf8'
@@ -560,6 +569,15 @@ for (const scenario of cases) {
         `call-1 structural binding drift was not canonicalized: ${JSON.stringify(normalizedMotion)}`
       );
     }
+  }
+  if (result.plans[0].commercialRole === 'paid_demand' && (
+    result.plans[0].targetSlot?.finalTargetKind !== 'live_paid_demand' ||
+    result.plans[0].targetSlot?.resolutionStrategy !==
+      'single_exact_target'
+  )) {
+    throw new Error(
+      `${scenario.name}: paid-demand target-slot protocol drift was not canonicalized: ${JSON.stringify(result.plans[0].targetSlot)}`
+    );
   }
   const materialized = result.plans[0].contingentFinalists;
   const sharedDimensions = ['r', 'o', 'b', 't', 'p'];
@@ -1265,6 +1283,41 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       throw new Error(
         `unauthorized ${unauthorized.label} target role did not fail closed: ${JSON.stringify(result)}`
       );
+    }
+  }
+
+  const tacticDimensions = new Set(['c', 'a', 'f']);
+  for (const roleCase of roleCases) {
+    for (const dimension of roleCase.ordinaryDimensions) {
+      const candidate = structuredClone(roleCase.candidate);
+      candidate.contingentFinalists = replaceExactRef(
+        compactContingentFinalists(candidate.contingentFinalists),
+        targetRef,
+        primaryEvidenceRef
+      );
+      const container = tacticDimensions.has(dimension)
+        ? candidate.contingentFinalists.tacticA
+        : candidate.contingentFinalists.pathBase;
+      container[dimension][0].e = [targetRef];
+      const result = await runOpportunityDiscoveryPlanner({
+        job: structuredClone(baseJob),
+        model: 'openai/gpt-4.1-mini',
+        now,
+        completeJSON: async () => completionFor(
+          candidate,
+          `generation-unauthorized-target-dimension-${roleCase.label.replace(/\W+/g, '-')}-${dimension}`
+        )
+      });
+      if (result.status !== 'blocked' ||
+          result.plans.length !== 0 ||
+          result.sideEffectsPerformed !== 0 ||
+          !/target evidence in unauthorized .* dimension/i.test(
+            result.reason
+          )) {
+        throw new Error(
+          `unauthorized ${roleCase.label} ${dimension} dimension did not fail closed: ${JSON.stringify(result)}`
+        );
+      }
     }
   }
 
@@ -2061,6 +2114,22 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
 async function verifySemanticDriftFailsClosed(job, evidenceRef) {
   const checks = [
     {
+      name: 'live-demand search with referral role',
+      mutate(plans) {
+        plans[0].searchMode = 'public_live_demand';
+      },
+      reason: /live-demand searches require paid-demand role/i
+    },
+    {
+      name: 'referral route with live-demand target kind',
+      mutate(plans) {
+        plans[0].query = 'pediatric referral authority Queens New York';
+        plans[0].targetSlot.finalTargetKind = 'live_paid_demand';
+        plans[0].targetSlot.resolutionStrategy = 'single_exact_target';
+      },
+      reason: /live paid demand only for a typed paid-demand search/i
+    },
+    {
       name: 'non-local decision-maker chain drift',
       mutate(plans) {
         plans[0].targetSlot.resolutionStrategy =
@@ -2204,6 +2273,9 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
       reason: /causally advance acquisition/i
     }
   ];
+  const semanticActionStartIndex = checks.findIndex((check) =>
+    check.name === 'passive primary action drift'
+  );
   for (const [checkIndex, check] of checks.entries()) {
     const plans = [
       cases[0].plans(evidenceRef)[check.fixtureIndex || 0]
@@ -2211,7 +2283,7 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
     const originalFamilyActions = plans[0].contingentFinalists
       .familyA.d.a.map((action) => action.l);
     check.mutate(plans);
-    const semanticActionCheck = checkIndex >= 4;
+    const semanticActionCheck = checkIndex >= semanticActionStartIndex;
     if (semanticActionCheck) {
       // One bad local variant is now safely pruned. Preserve the mutated
       // adversarial variant and make only the otherwise-valid sibling bad so
@@ -3066,7 +3138,7 @@ async function verifyTwoStageTargetBinding() {
 }
 
 async function verifyPaidDemandTargetProtocolEndToEnd() {
-  const scenario = cases[1];
+  const scenario = cases[2];
   const planner = plannerJob(scenario);
   const catalog = buildEvidenceCatalog(planner.payload, {}, now, {
     includeSystemAttributionCapability: true
@@ -3082,17 +3154,25 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
     ...original,
     acquisitionMode: 'inbound',
     acquisitionMechanism:
-      'Inbound platform discovery of one current compensated role'
+      'Inbound public discovery of one current paid consulting RFP'
   });
   for (const familyKey of ['familyA', 'familyB']) {
     const family = motion.contingentFinalists[familyKey];
     family.d.c = family.d.c.map((item, index) => ({
       ...item,
       l:
-        `Inbound platform discovery at {{TARGET_NAME}} (route ${index + 1})`
+        `Inbound platform discovery of a public RFP at {{TARGET_NAME}} (route ${index + 1})`
+    }));
+    family.d.a = family.d.a.map((item, index) => ({
+      ...item,
+      l:
+        `After review, submit one paid consulting proposal to {{TARGET_NAME}} (${familyKey} route ${index + 1}).`
     }));
     family.d.r[0].c =
-      'Use inbound platform discovery at {{TARGET_NAME}} and submit one application through the official application page.';
+      'Use inbound platform discovery of the public RFP at {{TARGET_NAME}} and submit one reviewed paid consulting proposal through the official proposal page.';
+    family.d.r[0].cd =
+      'The official RFP proposal page at {{TARGET_URL}}';
+    family.d.r[0].g.d.l = family.d.r[0].cd;
   }
   const stripTargetRef = (value) => {
     if (Array.isArray(value)) {
@@ -3111,7 +3191,11 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
   motion.contingentFinalists = stripTargetRef(
     motion.contingentFinalists
   );
-  const jobURL = 'https://jobs.acme.example/senior-go-engineer';
+  motion.targetSlot.finalTargetKind = 'person';
+  motion.targetSlot.resolutionStrategy =
+    'organization_then_decision_maker';
+  const demandURL =
+    'https://rfp.acme.example/open-delivery-operations';
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
     model: 'openai/gpt-4.1-mini',
@@ -3120,7 +3204,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       data: {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
-        reason: 'One current compensated role is the nearest paid path.',
+        reason: 'One current paid consulting RFP is the nearest paid path.',
         plans: [{
           ...motion,
           contingentFinalists: compactContingentFinalists(
@@ -3139,15 +3223,20 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       annotations: [{
         type: 'url_citation',
         url_citation: {
-          url: jobURL,
-          title: 'Acme Systems Senior Go Engineer role',
+          url: demandURL,
+          title: 'Acme Services open delivery-operations RFP',
           content:
-            'Acme Systems is currently hiring a salaried Senior Go Engineer through its official application page.'
+            'Acme Services currently invites paid delivery-operations consulting proposals through its official RFP proposal page.'
         }
       }]
     })
   });
-  if (discoveryPlan.status !== 'planned') {
+  if (discoveryPlan.status !== 'planned' ||
+      discoveryPlan.plans[0]?.searchMode !== 'public_live_demand' ||
+      discoveryPlan.plans[0]?.targetSlot?.finalTargetKind !==
+        'live_paid_demand' ||
+      discoveryPlan.plans[0]?.targetSlot?.resolutionStrategy !==
+        'single_exact_target') {
     throw new Error(
       `paid-demand omitted-target planner failed: ${JSON.stringify(discoveryPlan)}`
     );
@@ -3208,10 +3297,10 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
         motionId: selectedMotion.id,
         evidenceRef: jobEvidenceRef,
         kind: 'verified_external_live_demand',
-        label: 'Acme Systems Senior Go Engineer role',
+        label: 'Acme Services open delivery-operations RFP',
         summary:
-          `Acme Systems is currently hiring for a salaried, compensated Senior Go Engineer role requiring Go and PostgreSQL. Inbound platform discovery reaches the official application page at ${jobURL}. Applying there can produce one accepted compensation offer and salary payment.`,
-        url: jobURL,
+          `Acme Services currently requests paid delivery-operations consulting proposals. Inbound platform discovery reaches the official proposal page at ${demandURL}. One accepted proposal can produce a signed paid consulting contract and invoice.`,
+        url: demandURL,
         provider: 'openrouter_exa_web_search',
         provenance: 'openrouter_exa_url_citation',
         roles: [
@@ -3229,12 +3318,12 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       candidates: [{
         motionId: selectedMotion.id,
         id: candidateID,
-        kind: 'job_posting',
-        displayLabel: 'Acme Systems Senior Go Engineer role',
-        organization: 'Acme Systems',
-        role: 'Senior Go Engineer',
-        market: 'Remote United States',
-        publicUrl: jobURL,
+        kind: 'public_rfp',
+        displayLabel: 'Acme Services open delivery-operations RFP',
+        organization: 'Acme Services',
+        role: 'Open delivery-operations consulting RFP',
+        market: 'United States',
+        publicUrl: demandURL,
         provider: 'openrouter_exa_web_search',
         commercialRole: 'paid_demand',
         evidenceRefs: [jobEvidenceRef],
@@ -3242,7 +3331,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
           kind: 'public_professional_url',
           available: true,
           verified: true,
-          reference: jobURL
+          reference: demandURL
         }],
         exactNamedCandidate: true,
         identityResolved: true
@@ -3250,6 +3339,30 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       discoveredAt: '2026-08-01T12:00:00Z'
     }
   };
+  const unverifiedLiveDemandPayload = structuredClone(downstreamPayload);
+  unverifiedLiveDemandPayload.commercialDiscoveryEvidence.evidence[0].kind =
+    'verified_external_professional_identity';
+  let unverifiedLiveDemandCalls = 0;
+  const unverifiedLiveDemand = await runOpportunityTournament({
+    job: {
+      id: 'job-paid-demand-without-live-demand-fact',
+      kind: 'opportunity_tournament',
+      payload: unverifiedLiveDemandPayload
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => {
+      unverifiedLiveDemandCalls += 1;
+      throw new Error(
+        'unverified live-demand candidate dispatched the critic'
+      );
+    }
+  });
+  assertTechnicalRecovery(
+    unverifiedLiveDemand,
+    unverifiedLiveDemandCalls,
+    'paid-demand target without a verified external live-demand fact'
+  );
   const requests = [];
   let criticIssue = '';
   const result = await runOpportunityTournament({
@@ -3288,7 +3401,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
             finalist.evidenceBindings?.length !== 7 ||
             finalist.evidenceBindings?.find((binding) =>
               binding.role === 'exact_outside_target'
-            )?.kind !== 'job_posting'
+            )?.kind !== 'public_rfp'
           )) {
         criticIssue =
           `paid-demand critic did not receive one safe family-diverse pair: ${JSON.stringify({ finalists, task, requestBytes })}`;
@@ -3327,9 +3440,14 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       result.status !== 'completed' ||
       result.usage?.calls !== 1 ||
       result.result?.incrementalRevenueGate?.passed !== true ||
+      result.result?.allowedChannel !==
+        'public_paid_demand_response' ||
+      result.result?.permissionRequired !== 'explicit_user_approval' ||
+      result.result?.executionAuthorization !== 'none' ||
+      result.result?.sideEffectsPerformed !== 0 ||
       result.winner?.candidateId !== candidateID ||
       !result.winner?.action?.includes(
-        'Acme Systems Senior Go Engineer role'
+        'Acme Services open delivery-operations RFP'
       ) ||
       result.gate?.sideEffects?.outreachAttempts !== 0 ||
       result.gate?.sideEffects?.publishAttempts !== 0 ||
@@ -3783,8 +3901,8 @@ function contingentFinalists(motion) {
       q: 'current'
     })),
     p: sharedVariants.map((variant) => ({
-      l: `Verified seller and target proof (${variant})`,
-      e: [ref, targetRef]
+      l: `Verified seller proof (${variant})`,
+      e: [ref]
     }))
   };
   const makeFamily = (key, variantA, variantB) => ({
@@ -3805,7 +3923,7 @@ function contingentFinalists(motion) {
       })),
       f: [variantA, variantB].map((variant) => ({
         l: `One approved follow-up (${variant})`,
-        e: [ref, targetRef]
+        e: [ref]
       }))
     }
   });

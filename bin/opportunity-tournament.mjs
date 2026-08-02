@@ -1270,6 +1270,11 @@ function normalizeContingentTargetSlot(value, planValue) {
   const raw = asObject(value);
   const plan = asObject(planValue);
   const commercialRole = contractEnum(firstText(plan.commercialRole));
+  const searchMode = contractEnum(firstText(plan.searchMode));
+  const livePaidDemandRoute = commercialRole === 'paid_demand' && (
+    searchMode === 'active_job_posting' ||
+    searchMode === 'public_live_demand'
+  );
   return {
     // These are protocol structure, not model-authored commercial facts.
     // Canonicalize them locally so a harmless ordering or role-list drift
@@ -1277,9 +1282,17 @@ function normalizeContingentTargetSlot(value, planValue) {
     targetNameToken: CONTINGENT_TARGET_NAME_TOKEN,
     targetUrlToken: CONTINGENT_TARGET_URL_TOKEN,
     evidenceRefToken: CONTINGENT_TARGET_EVIDENCE_REF,
-    finalTargetKind: contractEnum(firstText(raw.finalTargetKind)),
+    // A typed paid-demand search can resolve only one exact public demand
+    // record. The model still chooses that economic route, while provider
+    // evidence must later prove and bind the actual target. Canonicalizing
+    // this uniquely implied slot shape neither invents nor broadens demand.
+    finalTargetKind: livePaidDemandRoute
+      ? 'live_paid_demand'
+      : contractEnum(firstText(raw.finalTargetKind)),
     commercialRole,
-    resolutionStrategy: contractEnum(firstText(raw.resolutionStrategy)),
+    resolutionStrategy: livePaidDemandRoute
+      ? 'single_exact_target'
+      : contractEnum(firstText(raw.resolutionStrategy)),
     requiredEvidenceRoles: [
       ...requiredCommercialDiscoveryRolesForSlot({ commercialRole })
     ]
@@ -1395,14 +1408,7 @@ function canonicalizeContingentTargetEvidence(value, planValue) {
     for (const item of asArray(dimensions.a)) {
       canonicalizeTargetBearingItem(item);
     }
-    const roleDimensions = firstText(plan.commercialRole) ===
-        'referral_partner'
-      ? ['c']
-      : firstText(plan.commercialRole) === 'buyer'
-        ? ['b']
-        : firstText(plan.commercialRole) === 'paid_demand'
-          ? ['b', 'o', 'c']
-          : [];
+    const roleDimensions = targetEvidenceDimensionKeysForRole(plan);
     for (const dimension of roleDimensions) {
       for (const item of asArray(dimensions[dimension])) {
         item.e = withTargetRef(asObject(item).e);
@@ -1440,6 +1446,19 @@ function contingentTargetEvidenceRoleIssue(value, planValue) {
   const targetRoles = new Set(
     requiredCommercialDiscoveryRolesForSlot(planValue)
   );
+  const allowedDimensions = new Set([
+    'a',
+    ...targetEvidenceDimensionKeysForRole(planValue)
+  ]);
+  const dimensionRoles = {
+    o: 'paid_offer',
+    b: 'defined_buyer',
+    c: 'acquisition_channel',
+    a: 'primary_action',
+    t: 'timing',
+    p: 'proof',
+    f: 'follow_up'
+  };
   const roleLocations = [
     ['defined_buyer', (grounding) => grounding.b,
       targetRoles.has('defined_buyer')],
@@ -1456,6 +1475,16 @@ function contingentTargetEvidenceRoleIssue(value, planValue) {
   for (const [familyIndex, familyKey] of
     ['familyA', 'familyB'].entries()) {
     const dimensions = asObject(asObject(bundle[familyKey]).d);
+    for (const [dimension, role] of Object.entries(dimensionRoles)) {
+      if (!allowedDimensions.has(dimension) &&
+          asArray(dimensions[dimension]).some((item) =>
+            compactStrings(asObject(item).e).includes(
+              CONTINGENT_TARGET_EVIDENCE_REF
+            )
+          )) {
+        return `has target evidence in unauthorized ${role} dimension for contingent family ${familyIndex + 1}.`;
+      }
+    }
     for (const revenueValue of asArray(dimensions.r)) {
       const grounding = asObject(asObject(revenueValue).g);
       for (const [role, refs, allowed] of roleLocations) {
@@ -1468,6 +1497,14 @@ function contingentTargetEvidenceRoleIssue(value, planValue) {
     }
   }
   return '';
+}
+
+function targetEvidenceDimensionKeysForRole(planValue) {
+  const commercialRole = firstText(asObject(planValue).commercialRole);
+  if (commercialRole === 'referral_partner') return ['c'];
+  if (commercialRole === 'buyer') return ['b'];
+  if (commercialRole === 'paid_demand') return ['b', 'o', 'c'];
+  return [];
 }
 
 /**
@@ -1657,9 +1694,14 @@ function opportunityDiscoveryPlanIssue(value) {
         MAX_DISCOVERY_PLAN_EVIDENCE_REFS) {
       return `Discovery plan ${item.id} exceeds the bounded approved evidence index.`;
     }
+    const livePaidDemandSearch =
+      item.searchMode === 'active_job_posting' ||
+      item.searchMode === 'public_live_demand';
+    if (livePaidDemandSearch && item.commercialRole !== 'paid_demand') {
+      return 'Active-job and public-live-demand searches require paid-demand role.';
+    }
     if (item.searchMode === 'active_job_posting') {
-      if (item.commercialRole !== 'paid_demand' ||
-          (!firstText(item.jobTitle) && asArray(item.skills).length === 0)) {
+      if (!firstText(item.jobTitle) && asArray(item.skills).length === 0) {
         return 'Active job searches require paid-demand role and a verified title or skill query.';
       }
     } else if (item.commercialRole === 'paid_demand' &&
@@ -1763,8 +1805,15 @@ function contingentTargetSlotIssue(planValue) {
       asArray(plan.targetRoleTerms).length === 0) {
     return 'must declare bounded professional role terms for the decision-maker lookup.';
   }
-  if (plan.searchMode === 'active_job_posting' ||
-      plan.searchMode === 'public_live_demand') {
+  const livePaidDemandRoute = plan.commercialRole === 'paid_demand' && (
+    plan.searchMode === 'active_job_posting' ||
+    plan.searchMode === 'public_live_demand'
+  );
+  if (slot.finalTargetKind === 'live_paid_demand' &&
+      !livePaidDemandRoute) {
+    return 'may bind live paid demand only for a typed paid-demand search.';
+  }
+  if (livePaidDemandRoute) {
     if (slot.finalTargetKind !== 'live_paid_demand' ||
         slot.resolutionStrategy !== 'single_exact_target') {
       return 'must bind live paid demand as one exact public target.';
@@ -5507,6 +5556,30 @@ function commercialDiscoveryReviewChannelForHypothesis(
           roles.has('demand_signal');
       })) {
     return 'application_page';
+  }
+  const publicPaidDemandModes = new Set([
+    'inbound',
+    'partner_channel',
+    'permissioned_outreach'
+  ]);
+  if (publicPaidDemandModes.has(firstText(path.acquisitionMode)) &&
+      nodes.some((node) => {
+        const roles = new Set(compactStrings(node.roles));
+        return firstText(node.commercialDiscoveryKind) ===
+            'verified_external_live_demand' &&
+          Boolean(safePublicHTTPSURL(node.url)) &&
+          roles.has('acquisition') &&
+          roles.has('channel_fit') &&
+          roles.has('conversion_destination') &&
+          roles.has('defined_buyer') &&
+          roles.has('demand_signal') &&
+          roles.has('paid_conversion') &&
+          roles.has('paid_offer');
+      })) {
+    // This authorizes only presenting a review-first recommendation for the
+    // public demand-response route. Execution remains none and the final gate
+    // records that explicit approval is still required before submission.
+    return 'public_paid_demand_response';
   }
   return '';
 }
