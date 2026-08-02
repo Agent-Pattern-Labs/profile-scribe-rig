@@ -171,6 +171,7 @@ const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 9_000;
 // required family-diverse critic comparison while preventing the duplicated
 // nested family envelope from exhausting the fixed completion-token ceiling.
 const MAX_DISCOVERY_PLANNER_PLANS = 1;
+const MAX_DISCOVERY_PLAN_EVIDENCE_REFS = 4;
 // Leave a small serialization margin above the model-facing compactness
 // target while still rejecting unexpectedly verbose structured output.
 const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 28 * 1_024;
@@ -893,7 +894,9 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
                 buyer: boundedText(140),
                 counterparty: boundedText(140),
                 paidOffer: boundedText(140),
-                evidenceRefs: stringArray(4),
+                evidenceRefs: stringArray(
+                  MAX_DISCOVERY_PLAN_EVIDENCE_REFS
+                ),
                 query: boundedText(180),
                 market: boundedText(120, true),
                 targetRoleTerms: boundedStringArray(6),
@@ -1080,6 +1083,14 @@ function normalizeOpportunityDiscoveryPlan(
       : 2
   ).map((planValue) => {
     const plan = asObject(planValue);
+    const evidenceRefs = normalizedDiscoveryPlanEvidenceRefs(
+      plan,
+      knownEvidence
+    );
+    const planWithCanonicalEvidence = {
+      ...plan,
+      evidenceRefs
+    };
     return {
       id: truncate(firstText(plan.id), 64),
       priority: clampInteger(plan.priority, 1, 3, 3),
@@ -1089,9 +1100,7 @@ function normalizeOpportunityDiscoveryPlan(
       buyer: truncate(firstText(plan.buyer), 180),
       counterparty: truncate(firstText(plan.counterparty), 180),
       paidOffer: truncate(firstText(plan.paidOffer), 180),
-      evidenceRefs: compactStrings(plan.evidenceRefs)
-        .filter((ref) => knownEvidence.has(ref))
-        .slice(0, 4),
+      evidenceRefs,
       query: truncate(firstText(plan.query), 240),
       market: truncate(firstText(plan.market), 120),
       targetRoleTerms: compactStrings(plan.targetRoleTerms)
@@ -1121,7 +1130,7 @@ function normalizeOpportunityDiscoveryPlan(
         plan.contingentFinalists,
         knownEvidence,
         referenceTime,
-        plan
+        planWithCanonicalEvidence
       )
     };
   }).sort((left, right) =>
@@ -1138,6 +1147,44 @@ function normalizeOpportunityDiscoveryPlan(
         )
       : undefined
   };
+}
+
+function normalizedDiscoveryPlanEvidenceRefs(planValue, knownEvidence) {
+  const plan = asObject(planValue);
+  return compactStrings([
+    ...asArray(plan.evidenceRefs),
+    ...declaredContingentFinalistEvidenceRefs(plan.contingentFinalists)
+  ])
+    .filter((ref) =>
+      ref !== CONTINGENT_TARGET_EVIDENCE_REF && knownEvidence.has(ref)
+    );
+}
+
+function declaredContingentFinalistEvidenceRefs(value) {
+  const refs = [];
+  const evidenceArrayKeys = new Set(['e', 'b', 'o', 'a', 'c', 't']);
+  const visit = (item, key = '') => {
+    if (Array.isArray(item)) {
+      // The compact and materialized contracts both use `e` for child
+      // provenance. Revenue-path graph roles use string arrays under the
+      // other listed keys. Read only those typed locations, never labels or
+      // prose, and leave unknown-reference rejection to the existing shape
+      // guard below.
+      if (evidenceArrayKeys.has(key) &&
+          item.every((entry) => typeof entry === 'string')) {
+        refs.push(...item);
+      }
+      item.forEach((entry) => visit(entry));
+      return;
+    }
+    if (item && typeof item === 'object') {
+      for (const [childKey, child] of Object.entries(item)) {
+        visit(child, childKey);
+      }
+    }
+  };
+  visit(value);
+  return compactStrings(refs);
 }
 
 function normalizeContingentTargetSlot(value, planValue) {
@@ -1187,23 +1234,34 @@ function normalizeContingentFinalistBundle(
   if (Object.keys(asObject(clone)).length === 0) return {};
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   const plan = asObject(planValue);
-  const planEvidenceRefs = compactStrings(plan.evidenceRefs)
-    .filter((ref) => knownEvidence.has(ref) &&
-      ref !== CONTINGENT_TARGET_EVIDENCE_REF)
-    .slice(0, 4);
-  if (planEvidenceRefs.some((ref) => /^observation:/i.test(ref))) {
-    for (const familyKey of ['familyA', 'familyB']) {
-      const family = asObject(clone[familyKey]);
-      if (Object.keys(family).length === 0) continue;
-      // family.e is only the aggregate containment index for evidence the
-      // plan already declared plus its unresolved target slot. Canonicalizing
-      // this index does not author or broaden a child claim: every child ref,
-      // provider role, and causal field is still independently validated.
-      family.e = [
-        CONTINGENT_TARGET_EVIDENCE_REF,
-        ...planEvidenceRefs
-      ];
-    }
+  const planEvidenceRefs = new Set(
+    compactStrings(plan.evidenceRefs).filter((ref) =>
+      knownEvidence.has(ref) && ref !== CONTINGENT_TARGET_EVIDENCE_REF
+    )
+  );
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = asObject(clone[familyKey]);
+    if (Object.keys(family).length === 0) continue;
+    // family.e is a containment index, so rebuild it from this family's
+    // materialized shared-path and tactic children. This preserves nested
+    // grounding refs omitted by an aggregate without borrowing a ref that is
+    // present only in the sibling tactic.
+    const familyRefs = compactStrings([
+      ...asArray(family.e),
+      ...declaredContingentFinalistEvidenceRefs(family.d)
+    ])
+      .filter((ref) => knownEvidence.has(ref))
+      .filter((ref) =>
+        ref === CONTINGENT_TARGET_EVIDENCE_REF || planEvidenceRefs.has(ref)
+      );
+    family.e = compactStrings([
+      ...(familyRefs.includes(CONTINGENT_TARGET_EVIDENCE_REF)
+        ? [CONTINGENT_TARGET_EVIDENCE_REF]
+        : []),
+      ...familyRefs.filter((ref) =>
+        ref !== CONTINGENT_TARGET_EVIDENCE_REF
+      )
+    ]);
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   return clone;
@@ -1391,6 +1449,10 @@ function opportunityDiscoveryPlanIssue(value) {
     }
     if (asArray(item.evidenceRefs).length === 0) {
       return `Discovery plan ${item.id} is not grounded in approved evidence.`;
+    }
+    if (asArray(item.evidenceRefs).length >
+        MAX_DISCOVERY_PLAN_EVIDENCE_REFS) {
+      return `Discovery plan ${item.id} exceeds the bounded approved evidence index.`;
     }
     if (item.searchMode === 'active_job_posting') {
       if (item.commercialRole !== 'paid_demand' ||

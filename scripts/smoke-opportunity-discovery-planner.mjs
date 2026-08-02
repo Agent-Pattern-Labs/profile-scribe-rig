@@ -740,6 +740,7 @@ if (unsafeResult.status !== 'blocked' ||
 
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifySensitiveTargetFieldPolicy(unsafeJob, unsafeRef);
+await verifyOmittedChildEvidenceCanonicalization(unsafeJob, unsafeRef);
 await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
 await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
 await verifyNaturalReviewFirstActionsPass(unsafeJob, unsafeRef);
@@ -762,8 +763,184 @@ if (smallestCompactResponseReduction < 0.25 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + child evidence-index canonicalization + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
+
+async function verifyOmittedChildEvidenceCanonicalization(
+  baseJob,
+  primaryEvidenceRef
+) {
+  const job = structuredClone(baseJob);
+  job.payload.evidenceSnapshot.sources.push({
+    id: 'owner-booking',
+    label: 'Owner booking page',
+    url: 'https://owner.example/book',
+    status: 'approved',
+    profileControlled: true
+  }, {
+    id: 'owner-referral-proof',
+    label: 'Owner referral proof',
+    url: 'https://owner.example/referral',
+    status: 'approved',
+    profileControlled: true
+  });
+  job.payload.evidenceSnapshot.sourceEvidence.push({
+    id: 'separate-booking-proof',
+    observationId: 'separate-booking-proof',
+    sourceId: 'owner-booking',
+    label: 'Current booking proof',
+    summary:
+      'The current owner booking page accepts a paid or reimbursable lactation consultation request.',
+    url: 'https://owner.example/book',
+    observedAt: now.toISOString(),
+    status: 'approved'
+  }, {
+    id: 'separate-referral-proof',
+    observationId: 'separate-referral-proof',
+    sourceId: 'owner-referral-proof',
+    label: 'Current referral proof',
+    summary:
+      'The current owner page explains the paid referral booking path.',
+    url: 'https://owner.example/referral',
+    observedAt: now.toISOString(),
+    status: 'approved'
+  });
+  const catalog = buildEvidenceCatalog(job.payload, {}, now, {
+    includeSystemAttributionCapability: true
+  });
+  const omittedRef = catalog.find((item) =>
+    item.id === 'observation:separate-booking-proof'
+  )?.id;
+  const siblingOmittedRef = catalog.find((item) =>
+    item.id === 'observation:separate-referral-proof'
+  )?.id;
+  const identityRef = catalog.find((item) =>
+    item.id === 'profile:identity'
+  )?.id;
+  if (!omittedRef || !siblingOmittedRef || !identityRef) {
+    throw new Error(
+      'child-evidence fixture produced no complete approved omitted-ref set'
+    );
+  }
+  const annotation = {
+    type: 'url_citation',
+    url_citation: {
+      url: 'https://pediatrics.example/newborn-care',
+      title: 'Pediatrics newborn care',
+      content: 'A current public professional newborn-care page.'
+    }
+  };
+  const completionFor = (candidate, generationId) => ({
+    data: {
+      contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+      status: 'planned',
+      reason: 'The evidence-grounded referral motion is ready for target binding.',
+      plans: [candidate]
+    },
+    usage,
+    generationId,
+    diagnostics: {
+      finishReason: 'stop',
+      nativeFinishReason: 'stop',
+      contentByteCount: 900,
+      contentSha256: '6'.repeat(64)
+    },
+    annotations: [annotation]
+  });
+
+  for (const shape of ['materialized', 'compact']) {
+    const candidate = cases[0].plans(primaryEvidenceRef)[0];
+    candidate.contingentFinalists.familyA.d.a[0].e[0] = omittedRef;
+    candidate.contingentFinalists.familyB.d.a[0].e[0] = siblingOmittedRef;
+    if (shape === 'compact') {
+      candidate.contingentFinalists = compactContingentFinalists(
+        candidate.contingentFinalists
+      );
+    }
+    const result = await runOpportunityDiscoveryPlanner({
+      job,
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => completionFor(
+        candidate,
+        `generation-approved-child-${shape}`
+      )
+    });
+    const normalized = result.plans[0];
+    if (result.status !== 'planned' ||
+        !normalized?.evidenceRefs?.includes(omittedRef) ||
+        !normalized?.evidenceRefs?.includes(siblingOmittedRef) ||
+        !normalized?.contingentFinalists?.familyA?.e?.includes(omittedRef) ||
+        normalized?.contingentFinalists?.familyA?.e?.includes(
+          siblingOmittedRef
+        ) ||
+        !normalized?.contingentFinalists?.familyB?.e?.includes(
+          siblingOmittedRef
+        ) ||
+        normalized?.contingentFinalists?.familyB?.e?.includes(omittedRef) ||
+        !normalized?.contingentFinalists?.familyA?.d?.a?.[0]?.e?.includes(
+          omittedRef
+        )) {
+      throw new Error(
+        `approved omitted child evidence was not canonicalized from ${shape}: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  for (const shape of ['materialized', 'compact']) {
+    const candidate = cases[0].plans(primaryEvidenceRef)[0];
+    candidate.contingentFinalists.familyA.d.a[0].e[0] =
+      'observation:unapproved-child-ref';
+    if (shape === 'compact') {
+      candidate.contingentFinalists = compactContingentFinalists(
+        candidate.contingentFinalists
+      );
+    }
+    const result = await runOpportunityDiscoveryPlanner({
+      job,
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => completionFor(
+        candidate,
+        `generation-unknown-child-${shape}`
+      )
+    });
+    if (result.status !== 'blocked' ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0 ||
+        !/contingent finalist contract/i.test(result.reason)) {
+      throw new Error(
+        `unknown ${shape} child evidence did not fail closed: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const overflowCandidate = cases[0].plans(primaryEvidenceRef)[0];
+  overflowCandidate.contingentFinalists.familyA.d.a[0].e[0] = omittedRef;
+  overflowCandidate.contingentFinalists.familyB.d.a[0].e[0] =
+    siblingOmittedRef;
+  overflowCandidate.contingentFinalists.familyA.d.a[1].e[0] = identityRef;
+  overflowCandidate.contingentFinalists = compactContingentFinalists(
+    overflowCandidate.contingentFinalists
+  );
+  const overflowResult = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => completionFor(
+      overflowCandidate,
+      'generation-child-evidence-overflow'
+    )
+  });
+  if (overflowResult.status !== 'blocked' ||
+      overflowResult.plans.length !== 0 ||
+      overflowResult.sideEffectsPerformed !== 0 ||
+      !/bounded approved evidence index/i.test(overflowResult.reason)) {
+    throw new Error(
+      `child evidence overflow was silently truncated: ${JSON.stringify(overflowResult)}`
+    );
+  }
+}
 
 async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
   const baseReferral = (overrides = {}) => plan({
