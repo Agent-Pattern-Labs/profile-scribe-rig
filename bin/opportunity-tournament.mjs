@@ -528,7 +528,7 @@ Infer complementary economic roles, not matching profession keywords: e.g. lacta
 Plans are contingent motions, never proof that a target exists, is interested, will refer, has budget, or permits contact. Model prose cannot establish a web target. Leave it unresolved as {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for deterministic binding to a validated provider citation/record; use target:evidence only where that future fact grounds a dimension.
 Prefer two distinct plans. One plan is allowed only with two complete, causally distinct finalist families. Modes: active_job_posting=compensated job/contract; professional_counterparty=buyer/referral authority/sponsor/partner; local_organization=location-bound professional organization; public_live_demand=current public paid RFP/contract/marketplace/sponsorship demand. For a local organization's decision-maker, use organization_then_decision_maker plus 1-6 non-sensitive professional targetRoleTerms; never use that strategy with another mode or pretend the organization is a person.
 Each plan has two complete families with different causal acquisition tactics, two variants per dimension, and one v3 revenue path. Include a current paid offer, buyer, acquisition mechanism separate from destination, paid conversion, durable attribution method/signal, numeric stop, positive value, spend estimate, exact evidence, and active (not observational/operational) actions.
-Every primary action contains {{TARGET_NAME}} exactly once and is complete after token replacement. It must ask for one buyer referral/recommendation/introduction, present the paid offer and request one referral/introduction, or submit/list one paid application/proposal/offer. Review/approval states execution authorization only, never acquisitionMode; separately name partner referral, permissioned outreach, inbound discovery, or the actual acquisition channel. Deterministic code replaces declared tokens/refs only and writes no missing prose. Workflow, scheduling, resource, document, profile, content, or measurement work cannot be the requested outcome.
+Both d.a variants independently complete the same family's commercial ask; neither is setup, support, or follow-up. Each contains {{TARGET_NAME}} once and asks for one buyer referral/introduction to the paid offer, requests one paid booking/order/contract/subscription, submits one application/proposal for a compensated role/contract, or lists the offer to capture one paid order/subscription. Review/approval states execution authorization only, never acquisitionMode; separately name partner referral, permissioned outreach, inbound discovery, or the actual acquisition channel. Deterministic code replaces declared tokens/refs only and writes no missing prose. Workflow, scheduling, resource, document, profile, content, or measurement work cannot be the requested outcome.
 Keep the complete JSON response at or below 26 KiB. Use compact labels and one concise sentence per action/path field; do not repeat rationale/evidence prose in labels.
 target:evidence cannot prove seller capability, an existing/warm/permitted relationship, private contacts, or paid demand outside its typed slot. Ground the user's current offer, destination, and attribution in exact approved IDs. A professional-identity slot proves only exact identity and prospective channel fit; only live-paid-demand may ground an outside paid offer, application destination, and compensated conversion.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"); the typed target stays a professional person/organization and targetRoleTerms, organizationTerms, jobTitle, skills never target that population. Copy IDs/tokens exactly. Return strict JSON only.`;
@@ -726,7 +726,9 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
         ...asObject(contingentActionItem.properties),
         l: {
           ...asObject(asObject(contingentActionItem.properties).l),
-          pattern: '\\{\\{TARGET_NAME\\}\\}'
+          pattern: '\\{\\{TARGET_NAME\\}\\}',
+          description:
+            'Complete commercial ask, not setup/support: paid-offer referral/introduction; paid booking/order/contract/subscription; compensated-role/contract application/proposal; or paid-order/subscription listing.'
         }
       }
     },
@@ -939,7 +941,7 @@ function compactOpportunityDiscoveryHardRules() {
   return [
     'Prefer 2 motions with different searchMode/commercialRole/acquisitionMode; 1 requires both complete causal families; insufficient_verified_supply=0 plans+reason.',
     'Use only evidenceCatalog IDs. Every plan/family has an observation:* seller anchor; system attribution proves attribution only; obey targetRoleMap.',
-    `Every distinct d.a contains ${CONTINGENT_TARGET_NAME_TOKEN} once and asks it for one referral/recommendation/introduction, presents the paid offer, or submits/lists one paid application/proposal/offer; operational/observational work is not the outcome.`,
+    `Both d.a variants independently complete the commercial ask, never setup/support: ask ${CONTINGENT_TARGET_NAME_TOKEN} for a paid-offer buyer referral/introduction, paid booking/order/contract/subscription, compensated-role/contract application/proposal, or paid-order/subscription listing.`,
     'Each r: a=plan.acquisitionMode; io=incremental paid income; c=active conversion; o=paid booking/payment/contract/order/subscription/compensation receipt.',
     'Each r: allowed atm; ats=matching durable record+source/referral/UTM/campaign/channel/code field; cd=conversion page separate from acquisition; st=number+time/sample/action unit+stop/at-most/whichever-first; vm>0.',
     'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence; a prospective partner proves no buyer, offer, warmness, permission, or demand.',
@@ -1340,6 +1342,7 @@ function contingentFinalistBundleIssue(planValue) {
   }
   const tacticKeys = new Set();
   const actionSignatures = new Set();
+  const viableActionSignatures = new Set();
   for (const [familyIndex, family] of families.entries()) {
     if (!firstText(family.l) ||
         firstText(family.m) !== firstText(plan.acquisitionMode) ||
@@ -1380,6 +1383,8 @@ function contingentFinalistBundleIssue(planValue) {
         return `has an incomplete ${dimension} finalist dimension.`;
       }
     }
+    const familyViableActionSignatures = new Set();
+    const rejectedActionIssues = [];
     for (const [actionIndex, actionValue] of
       asArray(dimensions.a).entries()) {
       const action = firstText(asObject(actionValue).l);
@@ -1394,16 +1399,33 @@ function contingentFinalistBundleIssue(planValue) {
         );
         return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_target_token]: must contain exactly one target-name token (name_count=${targetNameCount}, url_count=${targetURLCount}).`;
       }
-      if (passiveOrObservationalPrimaryAction(action)) {
-        return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_passive]: must be active rather than observational.`;
+      const signature = comparable(action);
+      actionSignatures.add(signature);
+      if (viablePrimaryRevenueAction(action)) {
+        familyViableActionSignatures.add(signature);
+        viableActionSignatures.add(signature);
+      } else if (passiveOrObservationalPrimaryAction(action)) {
+        rejectedActionIssues.push(
+          `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_passive]: must be active rather than observational.`
+        );
+      } else if (operationOnlyAction(action)) {
+        rejectedActionIssues.push(
+          `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_operational]: must be commercial rather than operational.`
+        );
+      } else if (!revenueAdvancingAction(action)) {
+        rejectedActionIssues.push(
+          `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_non_revenue]: must causally advance acquisition or paid conversion.`
+        );
+      } else {
+        rejectedActionIssues.push(
+          `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_claimed_execution]: must remain a review-first recommendation.`
+        );
       }
-      if (operationOnlyAction(action)) {
-        return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_operational]: must be commercial rather than operational.`;
-      }
-      if (!revenueAdvancingAction(action)) {
-        return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_non_revenue]: must causally advance acquisition or paid conversion.`;
-      }
-      actionSignatures.add(comparable(action));
+    }
+    if (familyViableActionSignatures.size === 0) {
+      return firstText(rejectedActionIssues[0],
+        `family ${familyIndex + 1} [primary_action_no_viable_variant]: must retain at least one active commercial revenue action after deterministic variant pruning.`
+      );
     }
     const revenue = asObject(asArray(dimensions.r)[0]);
     const revenuePathIssues = contingentCausalRevenuePathIssues(
@@ -1416,6 +1438,9 @@ function contingentFinalistBundleIssue(planValue) {
   }
   if (actionSignatures.size < 4) {
     return 'must contain distinct causal primary-action variants across both families.';
+  }
+  if (viableActionSignatures.size < 2) {
+    return 'must retain at least two distinct active commercial primary-action variants across both families.';
   }
   const weights = asObject(bundle.w);
   if (Object.keys(weights).length !== 11 ||
@@ -2870,6 +2895,8 @@ async function runOpportunityTournamentCore({
         strategyFamilyCollisionCount: seedSet.strategyFamilyCollisionCount,
         familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
         invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
+        prunedPrimaryActionVariantCount:
+          seedSet.prunedPrimaryActionVariantCount,
         unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
         timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
         coherenceGate: searchContracts.coherenceGate,
@@ -2914,6 +2941,8 @@ async function runOpportunityTournamentCore({
         strategyFamilyCollisionCount: seedSet.strategyFamilyCollisionCount,
         familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
         invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
+        prunedPrimaryActionVariantCount:
+          seedSet.prunedPrimaryActionVariantCount,
         unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
         timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
         coherenceGate: searchContracts.coherenceGate,
@@ -2994,6 +3023,8 @@ async function runOpportunityTournamentCore({
     strategyFamilyCollisionCount: seedSet.strategyFamilyCollisionCount,
     familyEvidenceMismatchSeedCount: seedSet.familyEvidenceMismatchSeedCount,
     invalidFamilySeedCount: seedSet.invalidFamilySeedCount,
+    prunedPrimaryActionVariantCount:
+      seedSet.prunedPrimaryActionVariantCount,
     unsupportedTimingSeedCount: seedSet.unsupportedTimingSeedCount,
     timingVerificationRepairCount: seedSet.timingVerificationRepairCount,
     coherenceGate: searchContracts.coherenceGate,
@@ -7673,6 +7704,8 @@ function seedSetShapeSearchTrace(seedSetValue) {
       nonNegativeInteger(seedSet.familyEvidenceMismatchSeedCount) || 0,
     invalidFamilySeedCount:
       nonNegativeInteger(seedSet.invalidFamilySeedCount) || 0,
+    prunedPrimaryActionVariantCount:
+      nonNegativeInteger(seedSet.prunedPrimaryActionVariantCount) || 0,
     unsupportedTimingSeedCount:
       nonNegativeInteger(seedSet.unsupportedTimingSeedCount) || 0,
     timingVerificationRepairCount:
@@ -9117,6 +9150,7 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
     strategyFamilyCollisionCount: normalizedFamilies.collisionCount,
     familyEvidenceMismatchSeedCount: 0,
     invalidFamilySeedCount: 0,
+    prunedPrimaryActionVariantCount: 0,
     unsupportedTimingSeedCount: 0,
     timingVerificationRepairCount: 0
   };
@@ -9141,6 +9175,12 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
       const seed = asObject(seedValue);
       let label = truncate(firstText(seed.l, seed.label, seed.name, seed.title), 180);
       if (!label) continue;
+      if (out.seedContract === SEED_CONTRACT_VERSION &&
+          name === 'actions' &&
+          !viablePrimaryRevenueAction(label)) {
+        out.prunedPrimaryActionVariantCount += 1;
+        continue;
+      }
       let evidenceRefs = compactStrings([
         ...asArray(seed.e),
         ...asArray(seed.evidenceRefs),
@@ -13617,6 +13657,13 @@ function operationOnlyAction(value) {
   return !namesPaidCommitment && !namesBoundedAcquisitionStep;
 }
 
+function viablePrimaryRevenueAction(value) {
+  return !passiveOrObservationalPrimaryAction(value) &&
+    !operationOnlyAction(value) &&
+    revenueAdvancingAction(value) &&
+    !experimentActionClaimsCompletedExternalExecution(value);
+}
+
 function primaryActionSemanticText(value) {
   return comparable(firstText(value)).replace(
     /\b(?:(?:after|following|pending) (?:explicit |human |user )?(?:approval|review)|review first|subject to (?:explicit |human |user )?(?:approval|review)|once (?:explicitly |human )?approved)\b[,:;-]?/g,
@@ -14944,6 +14991,7 @@ function emptySearchSpace(budget) {
     strategyFamilyCollisionCount: 0,
     familyEvidenceMismatchSeedCount: 0,
     invalidFamilySeedCount: 0,
+    prunedPrimaryActionVariantCount: 0,
     unsupportedTimingSeedCount: 0,
     timingVerificationRepairCount: 0,
     coherenceGate: COHERENCE_GATE_VERSION,

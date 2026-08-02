@@ -410,7 +410,16 @@ for (const scenario of cases) {
       plannerPrompt.hardRules.length < 7 ||
       requestSeen.responseFormat?.json_schema?.schema?.$defs
         ?.actionItem?.properties?.l?.pattern !==
-          '\\{\\{TARGET_NAME\\}\\}') {
+          '\\{\\{TARGET_NAME\\}\\}' ||
+      !/complete commercial ask, not setup\/support.*paid-offer referral.*paid booking.*compensated-role\/contract application/is.test(
+        requestSeen.responseFormat?.json_schema?.schema?.$defs
+          ?.actionItem?.properties?.l?.description || ''
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
+        /both d\.a variants independently complete the commercial ask, never setup\/support/i.test(
+          rule
+        )
+      )) {
     throw new Error(
       `${scenario.name}: call 1 omitted its compact semantic contract`
     );
@@ -642,6 +651,7 @@ if (unsafeResult.status !== 'blocked' ||
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifySensitiveTargetFieldPolicy(unsafeJob, unsafeRef);
 await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
+await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
 await verifyNaturalReviewFirstActionsPass(unsafeJob, unsafeRef);
 await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
 await verifyServicePaymentOutcomesPass(unsafeJob, unsafeRef);
@@ -809,6 +819,53 @@ async function verifyOneMotionWithTwoCausalFamilies(job, evidenceRef) {
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `one grounded motion with two causal families was rejected: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifySingleOperationalVariantCanBePruned(
+  job,
+  evidenceRef
+) {
+  const motion = cases[0].plans(evidenceRef)[0];
+  motion.contingentFinalists.familyA.d.a[1].l =
+    'After review, configure scheduling for {{TARGET_NAME}}.';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason:
+          'One grounded motion retains two causal families after local variant pruning.',
+        plans: [motion]
+      },
+      usage,
+      generationId: 'generation-one-operational-variant',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 700,
+        contentSha256: '0'.repeat(64)
+      },
+      annotations: [{
+        type: 'url_citation',
+        url_citation: {
+          url: 'https://riverside-pediatrics.example/newborn-care',
+          title: 'Riverside Pediatrics newborn care',
+          content: 'Current public newborn-care practice in Queens.'
+        }
+      }]
+    })
+  });
+  if (result.status !== 'planned' ||
+      result.plans.length !== 1 ||
+      result.plans[0].contingentFinalists?.familyA?.d?.a?.length !== 2 ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `one invalid action variant blocked two viable causal families: ${JSON.stringify(result)}`
     );
   }
 }
@@ -1174,6 +1231,14 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
       reason: /commercial rather than operational/i
     },
     {
+      name: 'commercial-adjacent setup variant drift',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[1].l =
+          'After review, prepare a scheduling resource with {{TARGET_NAME}} before presenting the commercial offer.';
+      },
+      reason: /commercial rather than operational/i
+    },
+    {
       name: 'transport-only metrics action drift',
       mutate(plans) {
         plans[0].contingentFinalists.familyA.d.a[0].l =
@@ -1262,9 +1327,25 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
       reason: /causally advance acquisition/i
     }
   ];
-  for (const check of checks) {
+  for (const [checkIndex, check] of checks.entries()) {
     const plans = cases[0].plans(evidenceRef);
+    const originalFamilyActions = plans[0].contingentFinalists
+      .familyA.d.a.map((action) => action.l);
     check.mutate(plans);
+    const semanticActionCheck = checkIndex >= 4;
+    if (semanticActionCheck) {
+      // One bad local variant is now safely pruned. Preserve the mutated
+      // adversarial variant and make only the otherwise-valid sibling bad so
+      // this suite still proves a family with zero viable actions fails shut.
+      plans[0].contingentFinalists.familyA.d.a.forEach(
+        (action, actionIndex) => {
+          if (action.l === originalFamilyActions[actionIndex]) {
+            action.l =
+              `After review, configure scheduling for {{TARGET_NAME}} (blocked sibling ${actionIndex + 1}).`;
+          }
+        }
+      );
+    }
     const result = await runOpportunityDiscoveryPlanner({
       job,
       model: 'openai/gpt-4.1-mini',
@@ -1286,8 +1367,9 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
         }
       })
     });
+    const expectedReason = check.reason;
     if (result.status !== 'blocked' ||
-        !check.reason.test(result.reason) ||
+        !expectedReason.test(result.reason) ||
         result.plans.length !== 0 ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
@@ -1593,6 +1675,68 @@ async function verifyTwoStageTargetBinding() {
       result.gate?.sideEffects?.providerWrites !== 0) {
     throw new Error(
       `two-stage target binding failed: ${JSON.stringify({ requests: requests.length, result })}`
+    );
+  }
+
+  const prunedVariantPayload = structuredClone(downstreamPayload);
+  prunedVariantPayload.commercialDiscoveryEvidence.plan.plans[0]
+    .contingentFinalists.familyA.d.a[1].l =
+      'After review, configure scheduling for {{TARGET_NAME}}.';
+  const prunedVariantRequests = [];
+  let prunedVariantCriticFinalists = [];
+  const prunedVariant = await runOpportunityTournament({
+    job: {
+      id: 'job-two-stage-pruned-operational-variant',
+      kind: 'opportunity_tournament',
+      payload: prunedVariantPayload
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      prunedVariantRequests.push(request);
+      if (request.responseFormat?.json_schema?.name !==
+          'opportunity_tournament_critic_v1') {
+        throw new Error(
+          'pruned-variant path dispatched an unauthorized generator or repair'
+        );
+      }
+      const task = JSON.parse(request.user || '{}');
+      prunedVariantCriticFinalists = task.finalists || [];
+      assertCompactCriticPair({
+        request,
+        task,
+        finalists: prunedVariantCriticFinalists,
+        expectedTargets: ['Dr. Ava Rivera']
+      });
+      return acceptedCriticCompletion(
+        prunedVariantCriticFinalists,
+        'generation-pruned-operational-variant-critic'
+      );
+    }
+  });
+  const prunedFamilies = new Set(
+    prunedVariantCriticFinalists.map((finalist) => finalist.familyId)
+  );
+  if (prunedVariantRequests.length !== 1 ||
+      prunedVariant.status !== 'completed' ||
+      prunedVariant.usage?.calls !== 1 ||
+      prunedVariant.searchSpace?.modelCalls !== 1 ||
+      prunedVariant.searchSpace?.structuredRepair?.attempted !== false ||
+      prunedVariant.searchSpace?.dimensionCounts?.actions !== 3 ||
+      prunedVariant.searchSpace?.prunedPrimaryActionVariantCount !== 1 ||
+      prunedVariantCriticFinalists.length !== 2 ||
+      prunedFamilies.size !== 2 ||
+      prunedVariantCriticFinalists.some((finalist) =>
+        /configure scheduling/i.test(finalist.primaryAction || '')
+      ) ||
+      /configure scheduling/i.test(prunedVariant.winner?.action || '') ||
+      /configure scheduling/i.test(prunedVariant.runnerUp?.action || '') ||
+      prunedVariant.searchSpace?.commercialCritic
+        ?.criticInputFinalistCount !== 2 ||
+      prunedVariant.result?.incrementalRevenueGate?.criticVerdict !==
+        'accepted') {
+    throw new Error(
+      `single operational variant was not deterministically pruned before the critic: ${JSON.stringify({ requests: prunedVariantRequests.length, finalists: prunedVariantCriticFinalists, result: prunedVariant })}`
     );
   }
 
@@ -2167,6 +2311,52 @@ function assertCompactCriticPair({
       })}`
     );
   }
+}
+
+function acceptedCriticCompletion(finalists, generationId) {
+  const ordering = finalists.map((item) => item.finalistId);
+  return {
+    data: {
+      criticContract: 'opportunity_tournament_critic_v1',
+      selectedOrdering: ordering,
+      selectedFinalistId: ordering[0],
+      comparisons: finalists.map((item, index) => ({
+        finalistId: item.finalistId,
+        verdict: 'accept',
+        activeRevenueAction: true,
+        causalAcquisitionPath: true,
+        incrementalRevenueOutcome: true,
+        incrementalRevenue: index === 0 ? 'strong' : 'moderate',
+        evidenceStrength: index === 0 ? 'strong' : 'moderate',
+        reachability: index === 0 ? 'strong' : 'moderate',
+        timeToFirstDollar: index === 0 ? 'fast' : 'moderate',
+        paidOutcomeProbability: Math.max(0.2, 0.8 - index * 0.08),
+        timeToFirstDollarDays: Math.min(30, 7 + index),
+        recurringValue: index === 0 ? 'recurring' : 'repeatable',
+        cost: 'low',
+        effort: index === 0 ? 'low' : 'moderate',
+        uncertainty: index === 0 ? 'low' : 'moderate',
+        reasonCode: 'active_incremental_path',
+        reason:
+          'The exact target, active referral action, paid booking, attribution field, and numeric stop form a complete incremental path.'
+      })),
+      reason:
+        'The ordering follows paid-outcome probability and nearest-cash criteria.'
+    },
+    usage: {
+      prompt_tokens: 800,
+      completion_tokens: 400,
+      total_tokens: 1_200,
+      cost: 0.005
+    },
+    generationId,
+    diagnostics: {
+      finishReason: 'stop',
+      nativeFinishReason: 'stop',
+      contentByteCount: 700,
+      contentSha256: '8'.repeat(64)
+    }
+  };
 }
 
 function plannerJob(scenario) {
