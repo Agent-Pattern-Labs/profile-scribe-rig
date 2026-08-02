@@ -190,6 +190,14 @@ const DISCOVERY_PLAN_COMMERCIAL_ROLES = new Set([
   'referral_partner',
   'buyer'
 ]);
+const DISCOVERY_PLAN_ACQUISITION_MODES_BY_ROLE = new Map([
+  ['referral_partner', new Set(['partner_channel'])],
+  ['buyer', new Set(['permissioned_outreach'])],
+  [
+    'paid_demand',
+    new Set(['inbound', 'permissioned_outreach', 'partner_channel'])
+  ]
+]);
 
 const DEFAULT_JUDGE_WEIGHTS = {
   objectiveFit: 0.22,
@@ -347,6 +355,8 @@ const LIVE_PAID_DEMAND_CANDIDATE_KINDS = new Set([
 ]);
 const PROVIDER_ATTESTED_REVIEW_CHANNELS = new Set([
   'application_page',
+  'partner_channel',
+  'public_professional_url',
   'public_paid_demand_response'
 ]);
 const COMMERCIAL_DISCOVERY_PROVIDER_PROVENANCE = new Map([
@@ -576,13 +586,14 @@ export async function runOpportunityDiscoveryPlanner({
     };
   }
 
-  const system = `You are ProfileScribe's research-only commercial-motion generator. Find the strongest outside-world search for one professional's nearest credible payment path within 30 days; perform no side effect.
-Ground claims only in commercialEvidenceGraph.verifiedFacts and the forced read-only search context; inferences remain unverified and missingFacts remain gaps. A verified roles=["attribution"] system capability proves only a future attribution record—never buyer, offer, demand, acquisition, channel fit, payment, or conversion.
-Infer complementary economic roles, not matching profession keywords: e.g. lactation consultant→newborn-care referral authority; programmer→live compensated demand; consultant→current buying trigger; product owner→marketplace, buyer, or distributor. Separate end payer from referral/distribution counterparty. Prefer supported live paid demand. A site or booking page is a conversion destination, not acquisition demand.
-Plans are contingent motions, never proof that a target exists, is interested, will refer, has budget, or permits contact. Model prose cannot establish a web target. Leave it unresolved as {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for deterministic binding to a validated provider citation/record; use target:evidence only where that future fact grounds a dimension.
-Return one plan with shared pathBase plus two distinct tactic deltas. Modes: active_job_posting=paid job/contract; professional_counterparty=buyer/referral authority/sponsor/partner; local_organization=local professional organization; public_live_demand=paid RFP/contract/marketplace/sponsorship demand. organization_then_decision_maker is local_organization only and needs 1-6 professional targetRoleTerms.
+  const system = `You are ProfileScribe's research-only commercial-motion generator. Find one professional's strongest outside-world payment path within 30 days; no side effects.
+Use commercialEvidenceGraph.verifiedFacts and forced read-only search only; inferences/gaps stay unverified. roles=["attribution"] proves only a future attribution record, never a commercial fact.
+Infer complementary roles: lactation→newborn-care referral authority; programmer→live paid demand; consultant→buyer trigger; product owner→buyer/distributor. Separate payer/counterparty. Website/booking=destination, not demand.
+Plans are contingent, not proof of target, interest, referral, budget, or permission. Model prose proves no web target. Leave {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for provider binding; use target:evidence only for its typed dimensions.
+Return one plan with shared pathBase plus two tactic deltas. Modes: active_job_posting=paid role; professional_counterparty=person/org; local_organization=local org; public_live_demand=live paid demand.
+Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel. No warm_referral/existing_customer for unresolved targets; buyer identity!=inbound demand. professional_counterparty terminates in one person; local_organization uses the organization only as a seed and terminates in its named decision-maker person.
 pathBase owns e,r,o,b,t,p: one v3 revenue path with required typed k causal witnesses and two offer/buyer/timing/proof variants. tacticA/B each own l,m,tacticKey,e,s,c,a,f and exactly two channel/action/follow-up variants. Tactics differ causally but preserve the shared buyer-to-payment base. Include current paid offer, distinct acquisition and destination, paid conversion, attribution, numeric stop, positive value, spend, evidence, and active actions.
-Every tactic action contains {{TARGET_NAME}} once and independently asks for a paid-offer referral/introduction, paid booking/order/contract/subscription, compensated-role application/proposal, or paid listing. It is never setup/support/follow-up. Review is authorization, not acquisitionMode. Deterministic code only materializes families and binds tokens/refs; workflow, scheduling, resource, document, profile, content, and measurement work cannot be the outcome.
+Every tactic action contains {{TARGET_NAME}} once and independently asks for a paid referral/conversion, compensated-role application/proposal, or paid listing; never setup/support/follow-up. For buyer/referral_partner, every c/a contains {{TARGET_URL}}, names the verified public professional profile, and claims no email/phone/form/proposal route. Review is authorization, not acquisitionMode. Code only materializes families and binds tokens/refs; operations cannot be the outcome.
 Keep the complete JSON at or below 12 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 target:evidence cannot prove seller capability, an existing/warm/permitted relationship, private contacts, or paid demand outside its typed slot. Ground the user's current offer, destination, and attribution in exact approved IDs. A professional-identity slot proves only exact identity and prospective channel fit; only live-paid-demand may ground an outside paid offer, application destination, and compensated conversion.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"); the typed target stays a professional person/organization and targetRoleTerms, organizationTerms, jobTitle, skills never target that population. Copy IDs/tokens exactly. Return strict JSON only.`;
@@ -1132,7 +1143,7 @@ function compactOpportunityDiscoveryOutputContract() {
         'channel_fit',
         'prospective_partner'
       ],
-      buyer: ['defined_buyer'],
+      buyer: ['acquisition', 'channel_fit', 'defined_buyer'],
       paid_demand: [
         'acquisition',
         'channel_fit',
@@ -1164,7 +1175,10 @@ function compactOpportunityDiscoveryHardRules() {
     'r.o describes that one terminal rm event, not objective alternatives. Reject or/either/attempt/pending/declined/failed/not received.',
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/c/o/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
-    'Tactics differ. Review!=acquisitionMode. decision-maker: 1-6 roles. No sensitive/private targets; population only in referral query. No external writes.',
+    'Tactics differ; review!=mode. Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel; buyer identity!=inbound.',
+    'Adapters: professional_counterparty=person/single_exact_target; local_organization=person/organization_then_decision_maker(1-6); organization is never terminal.',
+    'buyer/referral c,a: exactly 1 target URL each, canonical HTTPS LinkedIn /in profile+verified public professional profile; no email/phone/form/proposal route.',
+    'No sensitive/private targets; population only in referral query. No external writes.',
     'Audit once; return minified strict JSON.'
   ];
 }
@@ -1527,7 +1541,7 @@ function contingentTargetEvidenceRoleIssue(value, planValue) {
 function targetEvidenceDimensionKeysForRole(planValue) {
   const commercialRole = firstText(asObject(planValue).commercialRole);
   if (commercialRole === 'referral_partner') return ['c'];
-  if (commercialRole === 'buyer') return ['b'];
+  if (commercialRole === 'buyer') return ['b', 'c'];
   if (commercialRole === 'paid_demand') return ['b', 'o', 'c'];
   return [];
 }
@@ -1688,6 +1702,10 @@ function opportunityDiscoveryPlanIssue(value) {
         !ACQUISITION_MODES.has(item.acquisitionMode)) {
       return 'Discovery plan uses an unsupported typed commercial route.';
     }
+    if (!DISCOVERY_PLAN_ACQUISITION_MODES_BY_ROLE
+      .get(item.commercialRole)?.has(item.acquisitionMode)) {
+      return `Discovery plan ${item.id} uses an acquisition mode that cannot be source-bound to its unresolved ${item.commercialRole} target.`;
+    }
     const signature = `${item.searchMode}\x00${item.commercialRole}\x00${item.acquisitionMode}`;
     if (signatures.has(signature)) {
       return 'Discovery plans repeat the same economic search motion.';
@@ -1837,6 +1855,18 @@ function contingentTargetSlotIssue(planValue) {
       asArray(plan.targetRoleTerms).length === 0) {
     return 'must declare bounded professional role terms for the decision-maker lookup.';
   }
+  if (plan.searchMode === 'professional_counterparty' && (
+    slot.finalTargetKind !== 'person' ||
+      slot.resolutionStrategy !== 'single_exact_target'
+  )) {
+    return 'must resolve a professional counterparty as one exact decision-maker person.';
+  }
+  if (plan.searchMode === 'local_organization' && (
+    slot.finalTargetKind !== 'person' ||
+      slot.resolutionStrategy !== 'organization_then_decision_maker'
+  )) {
+    return 'must use a local organization only as an intermediate seed and resolve its exact decision-maker person.';
+  }
   const livePaidDemandRoute = plan.commercialRole === 'paid_demand' && (
     plan.searchMode === 'active_job_posting' ||
     plan.searchMode === 'public_live_demand'
@@ -1868,7 +1898,7 @@ function requiredCommercialDiscoveryRolesForSlot(planValue) {
     return ['acquisition', 'channel_fit', 'prospective_partner'];
   }
   if (firstText(plan.commercialRole) === 'buyer') {
-    return ['defined_buyer'];
+    return ['acquisition', 'channel_fit', 'defined_buyer'];
   }
   return [
     'acquisition',
@@ -2486,19 +2516,24 @@ function discoveryPlanSensitiveTargetIssue(planValue) {
 
 function discoveryPlanRequestsPrivateContact(value) {
   const text = comparable(value);
-  return commercialDiscoveryContainsPrivateContact(value) ||
-    /\b(?:private|personal|direct|work) (?:email|e mail|phone|telephone|mobile|cell|address|contact(?: detail| information| data)?)\b/.test(
-      text
-    ) ||
-    /\b(?:mobile phone|phone numbers?|email addresses?|home addresses?|private contacts?)\b/.test(
-      text
-    );
+  const boundedText = ` ${text} `;
+  return commercialDiscoveryContainsPrivateContact(value) || [
+    'private email', 'personal email', 'direct email', 'work email',
+    'email', 'emails', 'e mail', 'e mails', 'e mail address',
+    'e mail addresses',
+    'private phone', 'personal phone', 'direct phone', 'mobile phone',
+    'cell phone', 'phone', 'phones', 'telephone', 'telephones',
+    'phone number', 'email address', 'home address', 'contacts',
+    'private contact', 'contact details', 'contact information',
+    'contact data', 'contact list', 'lead list', 'lead lists'
+  ].some((phrase) => boundedText.includes(` ${phrase} `));
 }
 
 function discoveryPlanTargetsSensitivePerson(value) {
   const text = comparable(value);
-  return /\b(?:patient|patients|pregnant person|pregnant woman|pregnant women|postpartum parent|postpartum mother|new mother|breastfeeding mother|health condition|medical condition|family status)\b/.test(
-    text
+  const boundedText = ` ${text} `;
+  return discoveryPlanSensitivePopulationPhrases().some((phrase) =>
+    boundedText.includes(` ${phrase.join(' ')} `)
   );
 }
 
@@ -2517,36 +2552,105 @@ function discoveryPlanHasSafeReferralPopulationQuery(planValue) {
     return false;
   }
 
+  const queryTokens = comparable(plan.query).split(' ').filter(Boolean);
+  const sensitiveSpans = [];
+  for (let index = 0; index < queryTokens.length; index += 1) {
+    for (const phrase of discoveryPlanSensitivePopulationPhrases()) {
+      if (discoveryPlanTokenSequenceAt(queryTokens, index, phrase)) {
+        sensitiveSpans.push({start: index, end: index + phrase.length});
+        break;
+      }
+    }
+  }
+  if (sensitiveSpans.length === 0) return false;
+
   const declaredTargetTokens = discoveryProfessionalAnchorTokens(
     compactStrings([
       ...asArray(plan.targetRoleTerms),
       ...asArray(plan.organizationTerms)
     ]).join(' ')
   );
-  const query = comparable(plan.query);
-  const sensitive = query.match(
-    /\b(?:patient|patients|pregnant person|pregnant woman|pregnant women|postpartum parent|postpartum mother|new mother|breastfeeding mother|health condition|medical condition|family status)\b/
-  );
-  if (!sensitive || typeof sensitive.index !== 'number') return false;
-  const populationPrefix = query.slice(0, sensitive.index);
+  if (declaredTargetTokens.size === 0) return false;
   const serviceRelations = [
-    ...populationPrefix.matchAll(
-      /\b(?:serv(?:e|es|ed|ing)|treat(?:s|ed|ing)?|support(?:s|ed|ing)?|car(?:e|es|ed|ing) for|provid(?:e|es|ed|ing) care (?:for|to)|speciali[sz](?:e|es|ed|ing) in (?:care for|caring for))\b/g
-    )
+    ['serve'], ['serves'], ['served'], ['serving'],
+    ['treat'], ['treats'], ['treated'], ['treating'],
+    ['support'], ['supports'], ['supported'], ['supporting'],
+    ['care', 'for'], ['cares', 'for'], ['cared', 'for'],
+    ['caring', 'for'], ['provide', 'care', 'for'],
+    ['provides', 'care', 'for'], ['provided', 'care', 'for'],
+    ['providing', 'care', 'for'], ['provide', 'care', 'to'],
+    ['provides', 'care', 'to'], ['provided', 'care', 'to'],
+    ['providing', 'care', 'to']
   ];
-  const serviceRelation = serviceRelations.at(-1);
-  if (!serviceRelation || typeof serviceRelation.index !== 'number') {
+  const sensitiveDemandTerms = new Set([
+    'seeking', 'looking', 'needing', 'need', 'needs', 'wanting',
+    'wants', 'interested', 'buying', 'purchase', 'purchasing',
+    'lead', 'leads', 'list', 'lists'
+  ]);
+  const usedRelations = new Set();
+  for (const sensitive of sensitiveSpans) {
+    for (let index = sensitive.end; index < Math.min(
+      queryTokens.length,
+      sensitive.end + 4
+    ); index += 1) {
+      if (sensitiveDemandTerms.has(queryTokens[index])) return false;
+    }
+
+    let matchedRelation = -1;
+    for (let relationStart = sensitive.start - 1;
+      relationStart >= Math.max(0, sensitive.start - 7);
+      relationStart -= 1) {
+      if (usedRelations.has(relationStart)) continue;
+      for (const phrase of serviceRelations) {
+        if (!discoveryPlanTokenSequenceAt(
+          queryTokens,
+          relationStart,
+          phrase
+        ) || relationStart + phrase.length > sensitive.start ||
+          sensitive.start - (relationStart + phrase.length) > 3) {
+          continue;
+        }
+        const professionalPrefixTokens =
+          discoveryProfessionalAnchorTokens(queryTokens.slice(
+            Math.max(0, relationStart - 8),
+            relationStart
+          ).join(' '));
+        if ([...declaredTargetTokens].some((token) =>
+          professionalPrefixTokens.has(token)
+        )) {
+          matchedRelation = relationStart;
+          break;
+        }
+      }
+      if (matchedRelation >= 0) break;
+    }
+    if (matchedRelation < 0) return false;
+    usedRelations.add(matchedRelation);
+  }
+  return true;
+}
+
+function discoveryPlanSensitivePopulationPhrases() {
+  return [
+    ['patient'], ['patients'],
+    ['pregnant', 'person'], ['pregnant', 'people'],
+    ['pregnant', 'woman'], ['pregnant', 'women'],
+    ['postpartum', 'parent'], ['postpartum', 'parents'],
+    ['postpartum', 'mother'], ['postpartum', 'mothers'],
+    ['new', 'mother'], ['new', 'mothers'],
+    ['breastfeeding', 'mother'], ['breastfeeding', 'mothers'],
+    ['health', 'condition'], ['health', 'conditions'],
+    ['medical', 'condition'], ['medical', 'conditions'],
+    ['family', 'status']
+  ];
+}
+
+function discoveryPlanTokenSequenceAt(tokens, start, sequence) {
+  if (start < 0 || sequence.length === 0 ||
+      start + sequence.length > tokens.length) {
     return false;
   }
-  const professionalPrefix = populationPrefix.slice(
-    0,
-    serviceRelation.index
-  );
-  const professionalPrefixTokens =
-    discoveryProfessionalAnchorTokens(professionalPrefix);
-  return [...declaredTargetTokens].some((token) =>
-    professionalPrefixTokens.has(token)
-  );
+  return sequence.every((token, index) => tokens[start + index] === token);
 }
 
 function discoveryProfessionalAnchorTokens(value) {
@@ -5523,7 +5627,8 @@ function normalizeCommercialDiscoveryCandidate(
         roleSet.has('conversion_destination') &&
         roleSet.has('paid_conversion')
       : commercialRole === 'buyer'
-        ? roleSet.has('defined_buyer')
+        ? roleSet.has('acquisition') && roleSet.has('channel_fit') &&
+          roleSet.has('defined_buyer')
         : roleSet.has('defined_buyer') && roleSet.has('channel_fit');
   if (!roleGrounded) return null;
   const rawContactPaths = asArray(raw.contactPaths).slice(0, 8)
@@ -5538,11 +5643,39 @@ function normalizeCommercialDiscoveryCandidate(
       })) {
     return null;
   }
-  const contactPaths = rawContactPaths.map((path) => compact({
-      kind: contractEnum(firstText(path.kind, 'unknown')),
+  const contactPaths = rawContactPaths.map((path) => {
+    const kind = contractEnum(firstText(path.kind, 'unknown'));
+    const reference = safePublicHTTPSURL(firstText(
+      path.reference,
+      path.Reference
+    ));
+    return compact({
+      kind,
       available: path.available === true,
-      verified: path.verified === true
-    }));
+      verified: path.verified === true,
+      reference: kind === 'public_professional_url' &&
+        safePublicProfessionalProfileURL(reference)
+        ? reference
+        : undefined
+    });
+  });
+  const verifiedPublicProfessionalRoute = contactPaths.some((path) =>
+    path.kind === 'public_professional_url' &&
+    path.available === true &&
+    path.verified === true &&
+    Boolean(safePublicProfessionalProfileURL(publicUrl)) &&
+    comparableURL(safePublicProfessionalProfileURL(path.reference)) ===
+      comparableURL(safePublicProfessionalProfileURL(publicUrl))
+  );
+  if (['buyer', 'referral_partner'].includes(commercialRole) &&
+      !verifiedPublicProfessionalRoute) {
+    return null;
+  }
+  if (['buyer', 'referral_partner'].includes(commercialRole) && (
+    provider !== 'people_data_labs_person_search' || kind !== 'person'
+  )) {
+    return null;
+  }
   return compact({
     motionId,
     id,
@@ -5746,16 +5879,6 @@ function commercialDiscoveryReviewChannelForHypothesis(
     .filter((node) =>
       firstText(node.provenance) === COMMERCIAL_DISCOVERY_PROVENANCE
     );
-  if (path.acquisitionMode === 'partner_channel' &&
-      nodes.some((node) => {
-        const roles = new Set(compactStrings(node.roles));
-        return Boolean(firstText(node.commercialDiscoveryMotionId)) &&
-          roles.has('acquisition') &&
-          roles.has('channel_fit') &&
-          roles.has('prospective_partner');
-      })) {
-    return 'partner_channel';
-  }
   const discovery = normalizeCommercialDiscoveryEvidence(
     commercialDiscoveryValue,
     referenceTime
@@ -5773,6 +5896,68 @@ function commercialDiscoveryReviewChannelForHypothesis(
         firstText(path.acquisitionMode)) {
     return '';
   }
+  const routeCandidates = asArray(discovery.candidates).map(asObject)
+    .filter((candidate) =>
+      firstText(candidate.motionId) === motionId &&
+      candidate.exactNamedCandidate === true &&
+      candidate.identityResolved === true &&
+      commercialDiscoveryCandidateHasVerifiedPublicProfessionalRoute(
+        candidate
+      ) &&
+      publicProfessionalRouteTextBindsCandidate(hypothesis, candidate)
+    );
+  const exactPartnerEvidenceRefs = new Set(nodes
+    .filter((node) => {
+      const roles = new Set(compactStrings(node.roles));
+      return firstText(node.commercialDiscoveryMotionId) === motionId &&
+        roles.has('acquisition') &&
+        roles.has('channel_fit') &&
+        roles.has('prospective_partner');
+    })
+    .map((node) => firstText(node.evidenceRef))
+    .filter(Boolean));
+  if (firstText(motion.commercialRole) === 'referral_partner' &&
+      firstText(path.acquisitionMode) === 'partner_channel' &&
+      routeCandidates.some((candidate) =>
+        firstText(candidate.commercialRole) === 'referral_partner' &&
+        firstText(candidate.provider) ===
+          'people_data_labs_person_search' &&
+        firstText(candidate.kind) === 'person' &&
+        compactStrings(candidate.evidenceRefs).some((ref) =>
+          exactPartnerEvidenceRefs.has(ref)
+        )
+      )) {
+    return 'partner_channel';
+  }
+  const exactBuyerEvidenceRefs = new Set(nodes
+    .filter((node) => {
+      const roles = new Set(compactStrings(node.roles));
+      return firstText(node.commercialDiscoveryMotionId) === motionId &&
+        firstText(node.commercialDiscoveryKind) ===
+          'verified_external_professional_target' &&
+        Boolean(safePublicHTTPSURL(node.url)) &&
+        roles.has('acquisition') &&
+        roles.has('channel_fit') &&
+        roles.has('defined_buyer');
+    })
+    .map((node) => firstText(node.evidenceRef))
+    .filter(Boolean));
+  const exactBuyerRoute =
+    firstText(motion.commercialRole) === 'buyer' &&
+    DISCOVERY_PLAN_ACQUISITION_MODES_BY_ROLE.get('buyer')?.has(
+      firstText(path.acquisitionMode)
+    ) &&
+    exactBuyerEvidenceRefs.size > 0 &&
+    routeCandidates.some((candidate) =>
+      firstText(candidate.commercialRole) === 'buyer' &&
+      firstText(candidate.provider) ===
+        'people_data_labs_person_search' &&
+      firstText(candidate.kind) === 'person' &&
+      compactStrings(candidate.evidenceRefs).some((ref) =>
+        exactBuyerEvidenceRefs.has(ref)
+      )
+    );
+  if (exactBuyerRoute) return 'public_professional_url';
   const publicPaidDemandModes = new Set([
     'inbound',
     'partner_channel',
@@ -5809,6 +5994,77 @@ function commercialDiscoveryReviewChannelForHypothesis(
     return 'public_paid_demand_response';
   }
   return '';
+}
+
+function commercialDiscoveryCandidateHasVerifiedPublicProfessionalRoute(
+  candidateValue
+) {
+  const candidate = asObject(candidateValue);
+  const publicUrl = safePublicProfessionalProfileURL(candidate.publicUrl);
+  return Boolean(publicUrl) && asArray(candidate.contactPaths)
+    .map(asObject)
+    .some((path) =>
+      firstText(path.kind) === 'public_professional_url' &&
+      path.available === true &&
+      path.verified === true &&
+      comparableURL(safePublicProfessionalProfileURL(path.reference)) ===
+        comparableURL(publicUrl)
+    );
+}
+
+function safePublicProfessionalProfileURL(value) {
+  const publicUrl = safePublicHTTPSURL(value);
+  if (!publicUrl) return '';
+  try {
+    const parsed = new URL(publicUrl);
+    const host = canonicalPublicHostname(parsed.hostname);
+    const path = parsed.pathname.replace(/\/+$/, '');
+    if (host !== 'linkedin.com' || parsed.search || parsed.hash ||
+        parsed.port || !/^\/in\/[a-z0-9_-]+$/i.test(path)) {
+      return '';
+    }
+    parsed.hostname = 'linkedin.com';
+    parsed.pathname = path;
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+}
+
+function publicProfessionalRouteTextBindsCandidate(
+  hypothesisValue,
+  candidateValue
+) {
+  const hypothesis = asObject(hypothesisValue);
+  const candidate = asObject(candidateValue);
+  const publicUrl = safePublicProfessionalProfileURL(
+    candidate.publicUrl
+  );
+  const routeTexts = [
+    firstText(hypothesis.channel),
+    firstText(hypothesis.action)
+  ];
+  if (!publicUrl || routeTexts.some((text) => {
+    const urls = exactHTTPSURLsInText(text);
+    return urls.length !== 1 ||
+      safePublicProfessionalProfileURL(urls[0]) !== publicUrl ||
+      !/\b(?:linkedin|public professional profile|verified professional profile)\b/i.test(
+        text
+      );
+  })) {
+    return false;
+  }
+  return !routeTexts.some((text) =>
+    /\b(?:e-?mail|phone|telephone|call|sms|text message|contact form|web form|proposal)\b/i.test(
+      text
+    )
+  );
+}
+
+function exactHTTPSURLsInText(value) {
+  return (firstText(value).match(/https:\/\/[^\s<>"']+/gi) || [])
+    .map((url) => url.replace(/[),.;!?\]}]+$/g, ''))
+    .filter(Boolean);
 }
 
 function finalizeOpportunityTournamentResult(rawValue, argsValue) {
@@ -14782,8 +15038,18 @@ function acquisitionEvidenceRefsSupportMode(
         roles.has('conversion_destination') &&
         roles.has('demand_signal');
     }
-    // Public professional identity never by itself proves warmness or
-    // permission to contact.
+    if (mode === 'permissioned_outreach') {
+      // This supports presenting one exact, review-first buyer action only.
+      // It does not prove contact permission or authorize execution; the
+      // provider-attested review channel and exact candidate are checked
+      // separately by the final gate.
+      return roles.has('defined_buyer') &&
+        firstText(evidence.commercialDiscoveryKind) ===
+          'verified_external_professional_target' &&
+        Boolean(safePublicHTTPSURL(evidence.url));
+    }
+    // Public professional identity never by itself proves warmness or an
+    // existing-customer relationship.
     return false;
   });
 }
@@ -15877,12 +16143,20 @@ function commercialDiscoveryCandidateGroundsHypothesis(
       intersects(candidateRefs, buyerRefs) &&
       intersects(candidateRefs, buyerGroundingRefs);
   }
+  const buyerSegmentLabel = asObject(tuple.buyerSegments).label;
+  const buyerTargetNamed = exactTextContains(
+    buyerSegmentLabel,
+    firstText(candidate.organization)
+  ) || exactTextContains(
+    buyerSegmentLabel,
+    firstText(candidate.displayLabel)
+  );
   return commercialRole === 'buyer' &&
+    firstText(revenuePath.acquisitionMode) === 'permissioned_outreach' &&
+    candidateRoles.has('acquisition') &&
+    candidateRoles.has('channel_fit') &&
     candidateRoles.has('defined_buyer') &&
-    exactTextContains(
-      asObject(tuple.buyerSegments).label,
-      firstText(candidate.organization, candidate.displayLabel)
-    ) &&
+    buyerTargetNamed &&
     intersects(candidateRefs, buyerRefs) &&
     intersects(candidateRefs, buyerGroundingRefs) &&
     intersects(candidateRefs, revenueRefs);

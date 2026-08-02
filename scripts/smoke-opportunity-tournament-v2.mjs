@@ -318,7 +318,7 @@ await verifyFreshFormerCustomerAcquisitionAccepted();
 verifyCommercialDiscoveryPDLReferralEnvelopeNormalization();
 verifyClaimFencedBraveDiscoveryRoleNormalization();
 await verifyDiscoveryPlanStaysUnverifiedDownstream();
-await verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct();
+await verifyLegacyReferralPartnerKeepsBuyerDistinctButCannotAuthorize();
 await verifyUnplannedLegacyPaidDemandCannotAuthorizeApplicationRoute();
 await verifyUnsafeGeneratedExperimentRejected();
 await verifyCompletedExternalExecutionRejected();
@@ -835,9 +835,11 @@ function verifyCommercialDiscoveryPDLReferralEnvelopeNormalization() {
       ) ||
       normalized.candidates?.[0]?.commercialRole !==
         'referral_partner' ||
-      normalized.candidates?.[0]?.contactPaths?.some((path) =>
-        path.reference
-      ) ||
+      normalized.candidates?.[0]?.contactPaths?.length !== 1 ||
+      normalized.candidates?.[0]?.contactPaths?.[0]?.kind !==
+        'public_professional_url' ||
+      normalized.candidates?.[0]?.contactPaths?.[0]?.reference !==
+        publicUrl ||
       inFlight.valid !== false ||
       !inFlight.rejectedReasons?.invalid_attempt_ledger) {
     throw new Error(
@@ -1003,9 +1005,12 @@ function verifyClaimFencedBraveDiscoveryRoleNormalization() {
   const reorderedHash = commercialDiscoveryAttemptLedgerHash(
     [...attempts].reverse()
   );
-  if (identity.valid !== true ||
+  if (identity.valid !== false ||
       identity.attempts?.length !== 1 ||
       identity.evidence?.[0]?.roles?.includes('demand_signal') ||
+      !identity.rejectedReasons?.invalid_candidate ||
+      !identity.rejectedReasons?.empty_verified_discovery ||
+      identity.candidates?.length !== 0 ||
       identitySelfAttestedAsDemand.valid !== false ||
       !identitySelfAttestedAsDemand.rejectedReasons?.invalid_evidence ||
       live.valid !== true ||
@@ -1016,7 +1021,7 @@ function verifyClaimFencedBraveDiscoveryRoleNormalization() {
       live.queryHash !== commercialDiscoveryAttemptLedgerHash(attempts) ||
       reorderedHash === live.queryHash) {
     throw new Error(
-      `claim-fenced Brave discovery did not preserve provider roles and ordered aggregate hashing: ${JSON.stringify({ identity, identitySelfAttestedAsDemand, live })}`
+      `claim-fenced Brave discovery did not reject an unrouteable buyer, preserve provider roles, and preserve ordered aggregate hashing: ${JSON.stringify({ identity, identitySelfAttestedAsDemand, live })}`
     );
   }
 }
@@ -1666,14 +1671,16 @@ async function verifyFreshFormerCustomerAcquisitionAccepted() {
   }
 }
 
-async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
+async function verifyLegacyReferralPartnerKeepsBuyerDistinctButCannotAuthorize() {
   const offerRef = 'observation:obs-betty-referral-offer';
   const referralRef =
     'external_discovery:bbbbbbbbbbbbbbbbbbbbbbbb';
   const candidateID =
     'candidate:external:dddddddddddddddddddddddd';
-  const provider = 'google_places';
+  const provider = 'people_data_labs_person_search';
   const queryHash = 'a'.repeat(64);
+  const referralPublicURL =
+    'https://www.linkedin.com/in/morgan-smith-pediatrics';
   const domain = {
     name: 'betty-referral-discovery',
     buyer: 'New York parents seeking reimbursable lactation care',
@@ -1704,13 +1711,13 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
     family.d.channels = family.d.channels.map((item) => ({
       ...item,
       l:
-        `Prospective partner referral channel through Riverside Pediatrics to ${domain.destination}`,
+        `Verified public professional profile for Morgan Smith at ${referralPublicURL} as the prospective Riverside Pediatrics partner channel to ${domain.destination}`,
       e: [referralRef]
     }));
     family.d.actions = family.d.actions.map((item) => ({
       ...item,
       l:
-        `Request one review-first Riverside Pediatrics partner referral that presents ${domain.offer} and completes ${domain.outcome}`,
+        `After approval, ask Morgan Smith via the verified public professional profile ${referralPublicURL} to refer one paid lactation visit.`,
       e: [offerRef, referralRef]
     }));
     family.d.proofPoints = family.d.proofPoints.map((item) => ({
@@ -1726,7 +1733,7 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
     revenuePath.e = [offerRef, referralRef];
     revenuePath.acquisitionMode = 'partner_channel';
     revenuePath.conversionAction =
-      `Request one review-first Riverside Pediatrics partner referral to ${domain.destination} for ${domain.offer} and complete ${domain.outcome}`;
+      `After approval, ask Morgan Smith via the verified public professional profile ${referralPublicURL} to refer one paid lactation visit.`;
     revenuePath.attributionSignal = domain.attribution;
     revenuePath.g = {
       b: [offerRef],
@@ -1741,7 +1748,7 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
   const commercialDiscoveryEvidence = commercialDiscoveryFixture({
     id: 'attempt-betty-referral',
     provider,
-    operation: 'places_text_search',
+    operation: 'person_search',
     queryHash,
     motion: 'local_service_referral',
     buyerArchetype: domain.buyer,
@@ -1749,12 +1756,12 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
     evidence: [{
       evidenceRef: referralRef,
       kind: 'verified_external_professional_target',
-      label: 'Riverside Pediatrics',
+      label: 'Morgan Smith — Pediatrician at Riverside Pediatrics',
       summary:
-        'Riverside Pediatrics is a current New York newborn-serving pediatric practice and prospective professional referral target. The public provider record supports channel fit only and does not claim an existing referral relationship, willingness, or patient demand.',
-      url: 'https://riverside-pediatrics.example/',
+        'Morgan Smith is a current New York pediatric professional at Riverside Pediatrics and a prospective professional referral target. The public provider record supports channel fit only and does not claim an existing referral relationship, willingness, or patient demand.',
+      url: referralPublicURL,
       provider,
-      provenance: 'read_only_professional_provider',
+      provenance: 'people_data_labs_professional_record',
       roles: [
         'acquisition',
         'channel_fit',
@@ -1765,12 +1772,12 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
     }],
     candidates: [{
       id: candidateID,
-      kind: 'organization',
-      displayLabel: 'Riverside Pediatrics',
+      kind: 'person',
+      displayLabel: 'Morgan Smith',
       organization: 'Riverside Pediatrics',
-      role: 'Newborn-serving pediatric practice',
+      role: 'Pediatrician',
       market: 'New York, NY',
-      publicUrl: 'https://riverside-pediatrics.example/',
+      publicUrl: referralPublicURL,
       provider,
       commercialRole: 'referral_partner',
       evidenceRefs: [referralRef],
@@ -1778,11 +1785,12 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
         kind: 'public_professional_url',
         available: true,
         verified: true,
-        reference: 'https://riverside-pediatrics.example/'
+        reference: referralPublicURL
       }],
       exactNamedCandidate: true,
       identityResolved: true
-    }]
+    }],
+    paidProviderCalls: 1
   });
   const requests = [];
   const complete = completionWithCritic(
@@ -1843,14 +1851,18 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
   const candidate = result.candidates?.find((item) =>
     item.id === candidateID
   );
-  if (result.status !== 'completed' ||
-      result.result?.incrementalRevenueGate?.passed !== true ||
+  if (result.status !== 'skipped' ||
+      result.result?.resultType !== 'no_grounded_path' ||
+      result.result?.incrementalRevenueGate?.passed !== false ||
+      result.result?.incrementalRevenueGate?.reachableBuyer !== true ||
+      result.result?.incrementalRevenueGate?.actionCanBeginNow !== false ||
+      result.result?.incrementalRevenueGate?.knownPermissions !== false ||
       result.searchSpace?.commercialDiscoveryEvidenceCount !== 1 ||
       result.searchSpace?.commercialDiscoveryCandidateCount !== 1 ||
       result.trace?.commercialDiscovery?.valid !== true ||
       result.trace?.commercialDiscovery?.providerCalls !== 1 ||
-      result.trace?.commercialDiscovery?.paidProviderCalls !== 0 ||
-      (result.trace?.commercialDiscovery?.attempts || []).length !== 0 ||
+      result.trace?.commercialDiscovery?.paidProviderCalls !== 1 ||
+      (result.trace?.commercialDiscovery?.attempts || []).length !== 1 ||
       promptDiscovery?.providerAttestedCommercialDiscovery !== true ||
       !promptDiscovery?.commercialDiscoveryRoles?.includes(
         'prospective_partner'
@@ -1871,12 +1883,12 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
       ) ||
       candidate?.commercialRole !== 'referral_partner' ||
       candidate?.providerAttestedCommercialDiscovery !== true ||
-      candidate?.contactPaths?.some((path) => path.reference) ||
-      result.winner?.candidateId !== candidateID ||
-      result.result?.incrementalRevenueGate?.allowedChannel !==
-        'partner_channel' ||
+      candidate?.contactPaths?.length !== 1 ||
+      candidate?.contactPaths?.[0]?.reference !== referralPublicURL ||
+      result.winner !== null ||
+      result.result?.allowedChannel !== 'none' ||
       result.result?.incrementalRevenueGate
-        ?.discoveryRouteRequiresApproval !== true ||
+        ?.discoveryRouteRequiresApproval !== false ||
       result.gate?.sideEffects?.pdlCalls !== 0 ||
       result.gate?.sideEffects?.outreachAttempts !== 0 ||
       result.gate?.sideEffects?.publishAttempts !== 0 ||
@@ -3260,8 +3272,8 @@ async function verifyAdaptivePromptEnvelopeCompaction() {
     'external_discovery:edededededededededededed';
   const candidateID =
     'candidate:external:acacacacacacacacacacacac';
-  const provider = 'google_places';
-  const publicURL = 'https://acme-advisory.example/';
+  const provider = 'people_data_labs_person_search';
+  const publicURL = 'https://www.linkedin.com/in/alex-acme-advisory';
   const sourceEvidence = Array.from({ length: 64 }, (_, index) => ({
     observationId:
       `obs-adaptive-envelope-${String(index).padStart(2, '0')}`,
@@ -3281,7 +3293,7 @@ async function verifyAdaptivePromptEnvelopeCompaction() {
   const commercialDiscoveryEvidence = commercialDiscoveryFixture({
     id: 'attempt-adaptive-envelope-discovery',
     provider,
-    operation: 'places_text_search',
+    operation: 'person_search',
     queryHash: 'a'.repeat(64),
     motion: 'local_service_referral',
     buyerArchetype: 'Teams seeking paid advisory services',
@@ -3289,25 +3301,25 @@ async function verifyAdaptivePromptEnvelopeCompaction() {
     evidence: [{
       evidenceRef: discoveryRef,
       kind: 'verified_external_professional_target',
-      label: 'Acme Advisory',
+      label: 'Alex Morgan — Partner at Acme Advisory',
       summary:
-        'Acme Advisory is a current New York professional advisory ' +
-        'organization and a prospective referral partner. The public record ' +
+        'Alex Morgan is a current New York professional at Acme Advisory ' +
+        'and a prospective referral partner. The public record ' +
         'supports channel fit only and establishes no warm relationship, ' +
         'permission, willingness, or buyer demand.',
       url: publicURL,
       provider,
-      provenance: 'read_only_professional_provider',
+      provenance: 'people_data_labs_professional_record',
       roles: ['acquisition', 'channel_fit', 'prospective_partner'],
       verified: true,
       observedAt: '2026-07-30T11:00:00Z'
     }],
     candidates: [{
       id: candidateID,
-      kind: 'organization',
-      displayLabel: 'Acme Advisory',
+      kind: 'person',
+      displayLabel: 'Alex Morgan',
       organization: 'Acme Advisory',
-      role: 'Advisory organization',
+      role: 'Partner',
       market: 'New York, NY',
       publicUrl: publicURL,
       provider,
@@ -3321,7 +3333,8 @@ async function verifyAdaptivePromptEnvelopeCompaction() {
       }],
       exactNamedCandidate: true,
       identityResolved: true
-    }]
+    }],
+    paidProviderCalls: 1
   });
   let providerCalls = 0;
   let request;

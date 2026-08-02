@@ -181,7 +181,7 @@ const cases = [
         priority: 2,
         searchMode: 'professional_counterparty',
         commercialRole: 'buyer',
-        acquisitionMode: 'partner_channel',
+        acquisitionMode: 'permissioned_outreach',
         buyer: 'A service firm buying delivery-system consulting',
         counterparty: 'An operations owner at a service firm',
         paidOffer: 'Paid delivery-system diagnostic',
@@ -190,7 +190,7 @@ const cases = [
         market: 'United States',
         targetRoleTerms: ['chief operating officer', 'head of operations'],
         organizationTerms: ['professional services firm'],
-        acquisitionMechanism: 'One reviewed partner-mediated diagnostic offer',
+        acquisitionMechanism: 'One review-first tailored diagnostic invitation',
         conversionDestination: 'The verified proposal and contract destination',
         paidConversion: 'A signed paid diagnostic contract',
         attributionSignal: 'CRM source stores the selected organization and tournament id'
@@ -383,7 +383,7 @@ for (const scenario of cases) {
         'Keep the complete JSON at or below 12 KiB.'
       ) ||
       !requestSeen.system?.includes(
-        'shared pathBase plus two distinct tactic deltas'
+        'shared pathBase plus two tactic deltas'
       ) ||
       !requestSeen.system?.includes(
         'Return one minified object, concise strings, no formatting whitespace'
@@ -457,6 +457,8 @@ for (const scenario of cases) {
       Buffer.byteLength(JSON.stringify(requestWithoutContract), 'utf8')
   );
   if (!plannerPrompt.outputContract?.targetRoleMap ||
+      JSON.stringify(plannerPrompt.outputContract.targetRoleMap.buyer) !==
+        JSON.stringify(['acquisition', 'channel_fit', 'defined_buyer']) ||
       !plannerPrompt.outputContract?.revenuePath ||
       !/exactly 1 strongest plan/i.test(
         plannerPrompt.outputContract?.plan || ''
@@ -553,6 +555,16 @@ for (const scenario of cases) {
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
         /k\.p=rm\+"_terminal"/i.test(rule)
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
+        /referral_partner=partner_channel.*buyer=permissioned_outreach.*paid_demand=inbound\|permissioned_outreach\|partner_channel/is.test(
+          rule
+        )
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
+        /professional_counterparty=person\/single_exact_target.*local_organization=person\/organization_then_decision_maker.*organization is never terminal/is.test(
+          rule
+        )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
         /r\.o describes that one terminal rm event.*not objective alternatives/is.test(
@@ -796,6 +808,7 @@ if (unsafeResult.status !== 'blocked' ||
 
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifySensitiveTargetFieldPolicy(unsafeJob, unsafeRef);
+await verifyDiscoveryRoleAndAdapterInvariants(unsafeJob, unsafeRef);
 await verifyOmittedChildEvidenceCanonicalization(unsafeJob, unsafeRef);
 await verifyOmittedTargetEvidenceProtocolCanonicalization(
   unsafeJob,
@@ -816,6 +829,7 @@ await verifyTypedCausalWitnessContract(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifyTwoStageTargetBinding();
+await verifyProviderAttestedBuyerReviewRoute();
 await verifyPaidDemandTargetProtocolEndToEnd();
 await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
@@ -827,7 +841,7 @@ if (smallestCompactResponseReduction < 0.25 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + child evidence-index canonicalization + target-slot protocol canonicalization/role guards + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first/paid-demand response actions + artifact-submission rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + child evidence-index canonicalization + target-slot protocol canonicalization + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first/paid-demand response actions + artifact-submission rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyOmittedChildEvidenceCanonicalization(
@@ -1175,10 +1189,10 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     {
       label: 'direct buyer',
       candidate: cases[2].plans(primaryEvidenceRef)[1],
-      targetDimensions: ['b'],
-      ordinaryDimensions: ['o', 'c', 't', 'p', 'f'],
-      targetGrounding: ['b'],
-      ordinaryGrounding: ['o', 'a', 'd', 'c', 't']
+      targetDimensions: ['b', 'c'],
+      ordinaryDimensions: ['o', 't', 'p', 'f'],
+      targetGrounding: ['b', 'a'],
+      ordinaryGrounding: ['o', 'd', 'c', 't']
     },
     {
       label: 'live paid demand',
@@ -1261,7 +1275,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       candidate: cases[0].plans(primaryEvidenceRef)[0],
       role
     })),
-    ...['o', 'a', 'd', 'c', 't'].map((role) => ({
+    ...['o', 'd', 'c', 't'].map((role) => ({
       label: `buyer ${role}`,
       candidate: cases[2].plans(primaryEvidenceRef)[1],
       role
@@ -1473,6 +1487,31 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       reason: /private-contact data/i
     },
     {
+      label: 'two sensitive clauses cannot share one service relation',
+      candidate: baseReferral({
+        id: 'second_sensitive_clause',
+        query:
+          'pediatric practice serving newborn patients; pregnant people looking for lactation help Queens New York'
+      }),
+      reason: /in its query/i
+    },
+    {
+      label: 'patient lead-list server search',
+      candidate: baseReferral({
+        id: 'patient_lead_list_servers',
+        query: 'pediatrician servers containing patient lead lists'
+      }),
+      reason: /private-contact data/i
+    },
+    {
+      label: 'direct pregnant-people role',
+      candidate: baseReferral({
+        id: 'pregnant_people_role',
+        targetRoleTerms: ['pregnant people']
+      }),
+      reason: /direct role, title, or skill target/i
+    },
+    {
       label: 'sensitive population as search subject',
       candidate: baseReferral({
         id: 'unbound_patient_query',
@@ -1485,11 +1524,27 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       candidate: plan({
         ...baseReferral(),
         id: 'buyer_patient_query',
-        commercialRole: 'buyer'
+        commercialRole: 'buyer',
+        acquisitionMode: 'permissioned_outreach'
       }),
       reason: /in its query/i
     }
   ];
+  for (const [index, privateContactTerm] of [
+    'email', 'emails', 'e-mail', 'e-mails', 'e-mail addresses',
+    'phone', 'phones', 'telephone', 'telephones', 'contacts',
+    'lead lists'
+  ].entries()) {
+    adversaries.push({
+      label: `bare private-contact intent: ${privateContactTerm}`,
+      candidate: baseReferral({
+        id: `bare_private_contact_${index + 1}`,
+        acquisitionMechanism:
+          `Use ${privateContactTerm} for one review-first referral request`
+      }),
+      reason: /private-contact data/i
+    });
+  }
   for (const [index, adversary] of adversaries.entries()) {
     const result = await run(
       adversary.candidate,
@@ -1501,6 +1556,177 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
         result.sideEffectsPerformed !== 0) {
       throw new Error(
         `${adversary.label} did not fail closed: ${JSON.stringify(result)}`
+      );
+    }
+  }
+}
+
+async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
+  const candidate = (overrides = {}) => plan({
+    id: 'typed_route_invariant',
+    priority: 1,
+    searchMode: 'professional_counterparty',
+    commercialRole: 'buyer',
+    acquisitionMode: 'permissioned_outreach',
+    buyer: 'A business buying a current paid advisory service',
+    counterparty: 'One exact public professional decision-maker',
+    paidOffer: 'Paid advisory engagement',
+    evidenceRefs: [evidenceRef],
+    query: 'operations decision maker professional services firm',
+    market: 'United States',
+    targetRoleTerms: ['operations director'],
+    organizationTerms: ['professional services firm'],
+    acquisitionMechanism: 'One review-first tailored paid-service invitation',
+    conversionDestination: 'The verified owner booking page',
+    paidConversion: 'One signed paid advisory engagement',
+    attributionSignal: 'CRM source stores target and tournament action ids',
+    ...overrides
+  });
+  const run = async (motion, generationId) =>
+    runOpportunityDiscoveryPlanner({
+      job: structuredClone(job),
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => ({
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: 'One typed outside commercial motion.',
+          plans: [motion]
+        },
+        usage,
+        generationId,
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 800,
+          contentSha256: '7'.repeat(64)
+        },
+        annotations: []
+      })
+    });
+
+  const rejectedRoutes = [
+    ['referral_partner', 'inbound'],
+    ['referral_partner', 'permissioned_outreach'],
+    ['referral_partner', 'warm_referral'],
+    ['referral_partner', 'existing_customer'],
+    ['buyer', 'inbound'],
+    ['buyer', 'partner_channel'],
+    ['buyer', 'warm_referral'],
+    ['buyer', 'existing_customer'],
+    ['paid_demand', 'warm_referral'],
+    ['paid_demand', 'existing_customer']
+  ];
+  for (const [index, [commercialRole, acquisitionMode]] of
+    rejectedRoutes.entries()) {
+    const paidDemand = commercialRole === 'paid_demand';
+    const motion = candidate({
+      id: `invalid_route_${index + 1}`,
+      searchMode: paidDemand ? 'public_live_demand' :
+        'professional_counterparty',
+      commercialRole,
+      acquisitionMode,
+      jobTitle: paidDemand ? 'Paid advisory contract' : '',
+      skills: paidDemand ? ['operations consulting'] : [],
+      targetSlot: paidDemand ? {
+        finalTargetKind: 'live_paid_demand',
+        resolutionStrategy: 'single_exact_target'
+      } : undefined
+    });
+    const result = await run(
+      motion,
+      `generation-invalid-role-route-${index + 1}`
+    );
+    if (result.status !== 'blocked' ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0 ||
+        !/acquisition mode that cannot be source-bound/i.test(
+          result.reason
+        )) {
+      throw new Error(
+        `invalid ${commercialRole}/${acquisitionMode} route did not fail closed: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const rejectedAdapters = [
+    {
+      label: 'professional counterparty decision-maker chain',
+      searchMode: 'professional_counterparty',
+      finalTargetKind: 'person',
+      resolutionStrategy: 'organization_then_decision_maker',
+      reason: /only for a local-organization search/i
+    },
+    {
+      label: 'terminal professional organization',
+      searchMode: 'professional_counterparty',
+      finalTargetKind: 'organization',
+      resolutionStrategy: 'single_exact_target',
+      reason: /exact decision-maker person/i
+    },
+    {
+      label: 'local person without organization chain',
+      searchMode: 'local_organization',
+      finalTargetKind: 'person',
+      resolutionStrategy: 'single_exact_target',
+      reason: /intermediate seed.*decision-maker person/i
+    },
+    {
+      label: 'terminal local organization',
+      searchMode: 'local_organization',
+      finalTargetKind: 'organization',
+      resolutionStrategy: 'single_exact_target',
+      reason: /intermediate seed.*decision-maker person/i
+    },
+    {
+      label: 'local organization through person chain',
+      searchMode: 'local_organization',
+      finalTargetKind: 'organization',
+      resolutionStrategy: 'organization_then_decision_maker',
+      reason: /resolve a person after the intermediate organization/i
+    }
+  ];
+  for (const [index, adapter] of rejectedAdapters.entries()) {
+    const result = await run(candidate({
+      id: `invalid_adapter_${index + 1}`,
+      searchMode: adapter.searchMode,
+      targetSlot: {
+        finalTargetKind: adapter.finalTargetKind,
+        resolutionStrategy: adapter.resolutionStrategy
+      }
+    }), `generation-invalid-adapter-${index + 1}`);
+    if (result.status !== 'blocked' ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0 ||
+        !adapter.reason.test(result.reason)) {
+      throw new Error(
+        `${adapter.label} did not fail closed: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const acceptedAdapters = [
+    candidate({ id: 'valid_professional_person' }),
+    candidate({
+      id: 'valid_local_decision_maker',
+      searchMode: 'local_organization',
+      targetSlot: {
+        finalTargetKind: 'person',
+        resolutionStrategy: 'organization_then_decision_maker'
+      }
+    })
+  ];
+  for (const [index, motion] of acceptedAdapters.entries()) {
+    const result = await run(
+      motion,
+      `generation-valid-adapter-${index + 1}`
+    );
+    if (result.status !== 'planned' ||
+        result.plans.length !== 1 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `valid adapter route was rejected: ${JSON.stringify(result)}`
       );
     }
   }
@@ -2544,7 +2770,7 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
         plans[0].targetSlot.finalTargetKind = 'live_paid_demand';
         plans[0].targetSlot.resolutionStrategy = 'single_exact_target';
       },
-      reason: /live paid demand only for a typed paid-demand search/i
+      reason: /exact decision-maker person|live paid demand only for a typed paid-demand search/i
     },
     {
       name: 'non-local decision-maker chain drift',
@@ -2607,7 +2833,7 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
         plans[0].contingentFinalists.familyA.d.a[0].l =
           'After review, email {{TARGET_NAME}} the paid-booking metrics report.';
       },
-      reason: /causally advance acquisition/i
+      reason: /private-contact data|causally advance acquisition/i
     },
     {
       name: 'transport-only article action drift',
@@ -2671,7 +2897,7 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
         plans[0].contingentFinalists.familyA.d.a[0].l =
           'Review first: email {{TARGET_NAME}} the paid-subscription metrics report.';
       },
-      reason: /causally advance acquisition/i
+      reason: /private-contact data|causally advance acquisition/i
     },
     {
       name: 'contract analytics artifact drift',
@@ -3087,6 +3313,12 @@ async function verifyTwoStageTargetBinding() {
         node.evidenceRef === evidenceRef
       )?.roles?.includes('defined_buyer') ||
       !result.winner?.action?.includes('Dr. Ava Rivera') ||
+      !result.winner?.action?.includes(
+        'https://www.linkedin.com/in/ava-rivera'
+      ) ||
+      !result.hypotheses?.[0]?.channel?.includes(
+        'https://www.linkedin.com/in/ava-rivera'
+      ) ||
       result.winner?.action?.includes('{{TARGET_NAME}}') ||
       result.winner?.candidateId !== targetCandidateId ||
       result.winner?.revenuePath?.causalWitness?.contractVersion !==
@@ -3253,7 +3485,7 @@ async function verifyTwoStageTargetBinding() {
     kind: 'verified_external_professional_target',
     label: 'Dr. Noor Patel at Summit Pediatrics',
     summary: 'Dr. Noor Patel is a current pediatrician at Summit Pediatrics in Queens and a prospective professional partner for a newborn-care referral channel. This public professional record does not establish a warm relationship, willingness, permission, or patient demand.',
-    url: 'https://summit-pediatrics.example/noor-patel',
+    url: 'https://www.linkedin.com/in/noor-patel-pediatrics',
     provider: 'people_data_labs_person_search',
     provenance: 'people_data_labs_professional_record',
     roles: ['acquisition', 'channel_fit', 'prospective_partner'],
@@ -3269,14 +3501,14 @@ async function verifyTwoStageTargetBinding() {
     role: 'Pediatrician',
     commercialRole: 'referral_partner',
     market: 'Queens, New York',
-    publicUrl: 'https://summit-pediatrics.example/noor-patel',
+    publicUrl: 'https://www.linkedin.com/in/noor-patel-pediatrics',
     provider: 'people_data_labs_person_search',
     evidenceRefs: [firstEvidenceRef],
     contactPaths: [{
       kind: 'public_professional_url',
       available: true,
       verified: true,
-      reference: 'https://summit-pediatrics.example/noor-patel'
+      reference: 'https://www.linkedin.com/in/noor-patel-pediatrics'
     }],
     exactNamedCandidate: true,
     identityResolved: true
@@ -3565,6 +3797,623 @@ async function verifyTwoStageTargetBinding() {
     incompleteFamilyCalls,
     'fewer than two complete call-1 families'
   );
+
+  const referralRouteMismatchPayload = structuredClone(downstreamPayload);
+  for (const [familyIndex, familyKey] of
+    ['familyA', 'familyB'].entries()) {
+    const family = referralRouteMismatchPayload
+      .commercialDiscoveryEvidence.plan.plans[0]
+      .contingentFinalists[familyKey];
+    family.d.c = family.d.c.map((item, index) => ({
+      ...item,
+      l:
+        `Partner referral via {{TARGET_NAME}} (${familyIndex + 1}-${index + 1})`
+    }));
+  }
+  let referralRouteMismatchCalls = 0;
+  const referralRouteMismatch = await runOpportunityTournament({
+    job: {
+      id: 'job-referral-route-omits-verified-profile',
+      kind: 'opportunity_tournament',
+      payload: referralRouteMismatchPayload
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      referralRouteMismatchCalls += 1;
+      const task = JSON.parse(request.user || '{}');
+      return acceptedCriticCompletion(
+        task.finalists || [],
+        'generation-referral-route-omits-verified-profile'
+      );
+    }
+  });
+  if (referralRouteMismatchCalls > 1 ||
+      referralRouteMismatch.status === 'completed' ||
+      referralRouteMismatch.result?.resultType ===
+        'immediate_revenue_action' ||
+      referralRouteMismatch.result?.allowedChannel === 'partner_channel' ||
+      referralRouteMismatch.result?.incrementalRevenueGate?.passed === true) {
+    throw new Error(
+      `referral route without the verified profile became actionable: ${JSON.stringify({ calls: referralRouteMismatchCalls, result: referralRouteMismatch })}`
+    );
+  }
+}
+
+async function verifyProviderAttestedBuyerReviewRoute() {
+  const scenario = cases[3];
+  const planner = plannerJob(scenario);
+  planner.payload.evidenceSnapshot.profile.identity.website =
+    'https://owner.example/';
+  planner.payload.evidenceSnapshot.sourceEvidence[0].summary =
+    'The owner website offers a current paid workflow-software subscription with pricing and a signup page where field-service teams can subscribe and pay.';
+  const catalog = buildEvidenceCatalog(planner.payload, {}, now, {
+    includeSystemAttributionCapability: true
+  });
+  const sellerEvidenceRef = catalog.find((item) =>
+    typeof item.id === 'string' && item.id.startsWith('observation:')
+  )?.id;
+  if (!sellerEvidenceRef) {
+    throw new Error('provider-attested buyer fixture has no seller evidence');
+  }
+  const stripTargetEvidence = (value) => {
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => item === 'target:evidence'
+        ? []
+        : [stripTargetEvidence(item)]);
+    }
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        stripTargetEvidence(item)
+      ]));
+    }
+    return value;
+  };
+  const rawMotion = scenario.plans(sellerEvidenceRef)[1];
+  rawMotion.targetSlot.requiredEvidenceRoles = ['defined_buyer'];
+  rawMotion.contingentFinalists = stripTargetEvidence(
+    rawMotion.contingentFinalists
+  );
+  const discoveryPlan = await runOpportunityDiscoveryPlanner({
+    job: planner,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: 'One exact outside buyer search is source-bindable.',
+        plans: [{
+          ...rawMotion,
+          contingentFinalists: compactContingentFinalists(
+            rawMotion.contingentFinalists
+          )
+        }]
+      },
+      usage,
+      generationId: 'generation-provider-attested-buyer-planner',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 900,
+        contentSha256: '4'.repeat(64)
+      },
+      annotations: []
+    })
+  });
+  const selectedMotion = discoveryPlan.plans[0];
+  const buyerRoles = ['acquisition', 'channel_fit', 'defined_buyer'];
+  const buyerProtocolRestored = ['familyA', 'familyB'].every((familyKey) => {
+    const family = selectedMotion?.contingentFinalists?.[familyKey];
+    const revenue = family?.d?.r?.[0];
+    return family?.e?.includes('target:evidence') &&
+      family.d.b.every((item) => item.e.includes('target:evidence')) &&
+      family.d.c.every((item) => item.e.includes('target:evidence')) &&
+      family.d.o.every((item) => !item.e.includes('target:evidence')) &&
+      revenue.g.b.includes('target:evidence') &&
+      revenue.g.a.includes('target:evidence') &&
+      !revenue.g.o.includes('target:evidence') &&
+      !revenue.g.d.e.includes('target:evidence') &&
+      !revenue.g.c.includes('target:evidence');
+  });
+  if (discoveryPlan.status !== 'planned' ||
+      !selectedMotion ||
+      selectedMotion.commercialRole !== 'buyer' ||
+      selectedMotion.acquisitionMode !== 'permissioned_outreach' ||
+      JSON.stringify(selectedMotion.targetSlot?.requiredEvidenceRoles) !==
+        JSON.stringify(buyerRoles) ||
+      !buyerProtocolRestored) {
+    throw new Error(
+      `buyer target protocol was not restored: ${JSON.stringify(discoveryPlan)}`
+    );
+  }
+
+  const attempt = {
+    id: 'attempt-provider-attested-buyer-search',
+    provider: 'people_data_labs_person_search',
+    operation: 'planned_professional_search',
+    queryHash: 'a'.repeat(64),
+    status: 'succeeded',
+    estimatedSpendMicros: 280_000,
+    actualSpendMicros: 280_000,
+    creditsUsed: 1,
+    resultCount: 1,
+    reservedAt: '2026-08-01T12:00:00Z',
+    updatedAt: '2026-08-01T12:00:01Z',
+    completedAt: '2026-08-01T12:00:01Z'
+  };
+  const buyerEvidenceRef =
+    'external_discovery:777777777777777777777777';
+  const buyerCandidateId =
+    'candidate:external:888888888888888888888888';
+  const buyerPublicUrl =
+    'https://www.linkedin.com/in/jordan-lee-operations';
+  const commercialDiscoveryEvidence = {
+    contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
+    attempted: true,
+    status: 'found',
+    motion: selectedMotion.id,
+    buyerArchetype: selectedMotion.buyer,
+    queryHash: commercialDiscoveryAttemptLedgerHash([attempt]),
+    market: selectedMotion.market,
+    providersAttempted: ['people_data_labs_person_search'],
+    providerCalls: 1,
+    paidProviderCalls: 1,
+    creditsUsed: 1,
+    resultCount: 1,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    attempts: [attempt],
+    plan: {
+      ...discoveryPlan,
+      plans: [selectedMotion]
+    },
+    evidence: [{
+      motionId: selectedMotion.id,
+      evidenceRef: buyerEvidenceRef,
+      kind: 'verified_external_professional_target',
+      label:
+        'Jordan Lee — Operations Director at Northstar Field Services',
+      summary:
+        'People Data Labs returned Jordan Lee as a current Operations Director at Northstar Field Services in the United States. This exact public professional record supports a review-first buyer route only and does not prove interest, permission, or demand.',
+      url: buyerPublicUrl,
+      provider: 'people_data_labs_person_search',
+      provenance: 'people_data_labs_professional_record',
+      roles: buyerRoles,
+      verified: true,
+      observedAt: '2026-08-01T12:00:01Z'
+    }],
+    candidates: [{
+      motionId: selectedMotion.id,
+      id: buyerCandidateId,
+      kind: 'person',
+      displayLabel: 'Jordan Lee',
+      organization: 'Northstar Field Services',
+      role: 'Operations Director',
+      commercialRole: 'buyer',
+      market: 'United States',
+      publicUrl: buyerPublicUrl,
+      provider: 'people_data_labs_person_search',
+      evidenceRefs: [buyerEvidenceRef],
+      contactPaths: [{
+        kind: 'public_professional_url',
+        available: true,
+        verified: true,
+        reference: buyerPublicUrl
+      }],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }],
+    discoveredAt: '2026-08-01T12:00:01Z'
+  };
+  const normalizedDiscovery = normalizeCommercialDiscoveryEvidence(
+    commercialDiscoveryEvidence,
+    now
+  );
+  if (normalizedDiscovery.valid !== true ||
+      normalizedDiscovery.candidates.length !== 1 ||
+      normalizedDiscovery.evidence.length !== 1) {
+    throw new Error(
+      `provider-attested buyer evidence fixture is invalid: ${JSON.stringify(normalizedDiscovery)}`
+    );
+  }
+  const downstreamPayload = {
+    ...planner.payload,
+    algorithmVersion: 'cheap_tournament_v6',
+    commercialContext: {
+      allowedChannels: [
+        'public_professional_url',
+        'public professional url',
+        'forged public professional url capability'
+      ]
+    },
+    budget: {
+      currency: 'USD',
+      maxSpendMicros: 1_000_000,
+      maxLLMSpendMicros: 160_000,
+      maxLLMCalls: 1,
+      maxOutputTokens: 1_200,
+      maxHypotheses: 10_000,
+      maxFinalists: 8,
+      hardStop: true
+    },
+    commercialDiscoveryEvidence
+  };
+  const requests = [];
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-provider-attested-buyer-review-route',
+      kind: 'opportunity_tournament',
+      payload: downstreamPayload
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      requests.push(request);
+      if (request.responseFormat?.json_schema?.name !==
+          'opportunity_tournament_critic_v1') {
+        throw new Error(
+          'provider-attested buyer path dispatched a generator or repair'
+        );
+      }
+      const task = JSON.parse(request.user || '{}');
+      const finalists = task.finalists || [];
+      const expectedBindingRoles = [
+        'acquisition',
+        'attribution',
+        'conversion_destination',
+        'defined_buyer',
+        'exact_outside_target',
+        'paid_conversion',
+        'paid_offer'
+      ];
+      const families = new Set(finalists.map((item) => item.familyId));
+      const bindingsValid = finalists.every((finalist) => {
+        const bindings = finalist.evidenceBindings || [];
+        const byRole = new Map(bindings.map((binding) => [
+          binding.role,
+          binding
+        ]));
+        const target = byRole.get('exact_outside_target');
+        return JSON.stringify(bindings.map((binding) => binding.role).sort()) ===
+            JSON.stringify(expectedBindingRoles) &&
+          target?.kind === 'person' &&
+          target?.claim === 'Jordan Lee' &&
+          target?.organization === 'Northstar Field Services' &&
+          target?.publicUrl === buyerPublicUrl &&
+          target?.evidenceRefs?.includes(buyerEvidenceRef) &&
+          byRole.get('defined_buyer')?.evidenceRefs?.includes(
+            buyerEvidenceRef
+          ) &&
+          byRole.get('acquisition')?.evidenceRefs?.includes(
+            buyerEvidenceRef
+          ) &&
+          byRole.get('paid_offer')?.evidenceRefs?.includes(
+            sellerEvidenceRef
+          ) &&
+          byRole.get('conversion_destination')?.evidenceRefs?.includes(
+            sellerEvidenceRef
+          ) &&
+          byRole.get('paid_conversion')?.evidenceRefs?.includes(
+            sellerEvidenceRef
+          ) &&
+          byRole.get('attribution')?.evidenceRefs?.includes(
+            PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+          );
+      });
+      if (finalists.length !== 2 ||
+          families.size !== 2 ||
+          task.contextMode !== 'bound_family_diverse_pair_v1' ||
+          task.executionPolicy?.executionAuthorization !== 'none' ||
+          task.executionPolicy?.requiresReview !== true ||
+          task.executionPolicy?.sideEffectsPerformed !== 0 ||
+          task.commercialContext?.allowedChannels?.length !== 0 ||
+          !bindingsValid) {
+        throw new Error(
+          `critic received an unsafe or incomplete buyer route: ${JSON.stringify(task)}`
+        );
+      }
+      return acceptedCriticCompletion(
+        finalists,
+        'generation-provider-attested-buyer-critic'
+      );
+    }
+  });
+  if (requests.length !== 1 ||
+      result.status !== 'completed' ||
+      result.usage?.calls !== 1 ||
+      result.searchSpace?.modelCalls !== 1 ||
+      result.winner?.candidateId !== buyerCandidateId ||
+      !result.winner?.action?.includes('Jordan Lee') ||
+      !result.winner?.action?.includes(buyerPublicUrl) ||
+      !result.hypotheses?.[0]?.channel?.includes(buyerPublicUrl) ||
+      result.result?.resultType !== 'immediate_revenue_action' ||
+      result.result?.incrementalRevenueGate?.passed !== true ||
+      result.result?.incrementalRevenueGate?.allowedChannelSource !==
+        'provider_attested_review_route' ||
+      result.result?.allowedChannel !== 'public_professional_url' ||
+      result.result?.incrementalRevenueGate
+        ?.discoveryRouteRequiresApproval !== true ||
+      result.result?.permissionRequired !== 'explicit_user_approval' ||
+      result.result?.executionAuthorization !== 'none' ||
+      result.result?.requiresReview !== true ||
+      result.result?.sideEffectsPerformed !== 0 ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `provider-attested buyer route did not complete safely: ${JSON.stringify({ requests: requests.length, result })}`
+    );
+  }
+
+  const incompletePayload = structuredClone(downstreamPayload);
+  incompletePayload.commercialDiscoveryEvidence.evidence[0].roles = [
+    'acquisition',
+    'defined_buyer'
+  ];
+  const incompleteDiscovery = normalizeCommercialDiscoveryEvidence(
+    incompletePayload.commercialDiscoveryEvidence,
+    now
+  );
+  if (incompleteDiscovery.valid !== false ||
+      incompleteDiscovery.candidates.length !== 0) {
+    throw new Error(
+      `incomplete buyer route was unexpectedly provider-bound: ${JSON.stringify(incompleteDiscovery)}`
+    );
+  }
+  let incompleteCalls = 0;
+  const incomplete = await runOpportunityTournament({
+    job: {
+      id: 'job-forged-configured-buyer-route',
+      kind: 'opportunity_tournament',
+      payload: incompletePayload
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => {
+      incompleteCalls += 1;
+      throw new Error('incomplete buyer route dispatched the critic');
+    }
+  });
+  assertTechnicalRecovery(
+    incomplete,
+    incompleteCalls,
+    'configured buyer route without complete provider roles'
+  );
+  if (incomplete.result?.allowedChannel === 'public_professional_url') {
+    throw new Error(
+      `configured buyer-route alias minted provider authority: ${JSON.stringify(incomplete.result)}`
+    );
+  }
+
+  const routeAttestationChecks = [
+    {
+      label: 'company article URL',
+      mutate(payload) {
+        const companyURL =
+          'https://northstar.example/company/jordan-lee-article';
+        payload.commercialDiscoveryEvidence.evidence[0].url = companyURL;
+        payload.commercialDiscoveryEvidence.candidates[0].publicUrl =
+          companyURL;
+        payload.commercialDiscoveryEvidence.candidates[0]
+          .contactPaths[0].reference = companyURL;
+      }
+    },
+    {
+      label: 'missing professional path',
+      mutate(payload) {
+        payload.commercialDiscoveryEvidence.candidates[0].contactPaths = [];
+      }
+    },
+    {
+      label: 'unavailable professional path',
+      mutate(payload) {
+        payload.commercialDiscoveryEvidence.candidates[0]
+          .contactPaths[0].available = false;
+      }
+    },
+    {
+      label: 'unverified professional path',
+      mutate(payload) {
+        payload.commercialDiscoveryEvidence.candidates[0]
+          .contactPaths[0].verified = false;
+      }
+    },
+    {
+      label: 'mismatched professional path',
+      mutate(payload) {
+        payload.commercialDiscoveryEvidence.candidates[0]
+          .contactPaths[0].reference =
+            'https://www.linkedin.com/in/not-jordan-lee';
+      }
+    },
+    {
+      label: 'professional path with query collision',
+      mutate(payload) {
+        const queryURL = `${buyerPublicUrl}?trk=forged`;
+        payload.commercialDiscoveryEvidence.evidence[0].url = queryURL;
+        payload.commercialDiscoveryEvidence.candidates[0].publicUrl =
+          queryURL;
+        payload.commercialDiscoveryEvidence.candidates[0]
+          .contactPaths[0].reference = queryURL;
+      }
+    },
+    {
+      label: 'non-person buyer target',
+      mutate(payload) {
+        payload.commercialDiscoveryEvidence.candidates[0].kind =
+          'organization';
+      }
+    }
+  ];
+  for (const check of routeAttestationChecks) {
+    const payload = structuredClone(downstreamPayload);
+    check.mutate(payload);
+    const normalized = normalizeCommercialDiscoveryEvidence(
+      payload.commercialDiscoveryEvidence,
+      now
+    );
+    if (normalized.valid !== false ||
+        normalized.candidates.length !== 0) {
+      throw new Error(
+        `${check.label} buyer route retained reachability: ${JSON.stringify(normalized)}`
+      );
+    }
+    let calls = 0;
+    const rejected = await runOpportunityTournament({
+      job: {
+        id: `job-buyer-route-${check.label.replace(/\W+/g, '-')}`,
+        kind: 'opportunity_tournament',
+        payload
+      },
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => {
+        calls += 1;
+        throw new Error(`${check.label} dispatched the critic`);
+      }
+    });
+    assertTechnicalRecovery(rejected, calls, check.label);
+  }
+
+  const routeTextChecks = [
+    {
+      label: 'channel omits verified profile route',
+      mutate(motion) {
+        for (const [familyIndex, familyKey] of
+          ['familyA', 'familyB'].entries()) {
+          motion.contingentFinalists[familyKey].d.c =
+            motion.contingentFinalists[familyKey].d.c.map(
+              (item, index) => ({
+                ...item,
+                l: `Permissioned outreach to {{TARGET_NAME}} (${familyIndex + 1}-${index + 1})`
+              })
+            );
+        }
+      }
+    },
+    {
+      label: 'action omits verified profile route',
+      mutate(motion) {
+        for (const [familyIndex, familyKey] of
+          ['familyA', 'familyB'].entries()) {
+          motion.contingentFinalists[familyKey].d.a =
+            motion.contingentFinalists[familyKey].d.a.map(
+              (item, index) => ({
+                ...item,
+                l: `After review, route ${familyIndex + 1}-${index + 1}: use permissioned outreach to offer a paid workflow subscription to {{TARGET_NAME}}.`
+              })
+            );
+        }
+      }
+    },
+    {
+      label: 'action invents email proposal route',
+      mutate(motion) {
+        for (const [familyIndex, familyKey] of
+          ['familyA', 'familyB'].entries()) {
+          motion.contingentFinalists[familyKey].d.a =
+            motion.contingentFinalists[familyKey].d.a.map(
+              (item, index) => ({
+                ...item,
+                l: `After review, route ${familyIndex + 1}-${index + 1}: use permissioned outreach to email a paid proposal to {{TARGET_NAME}} through the public professional profile {{TARGET_URL}}.`
+              })
+            );
+        }
+      }
+    },
+    {
+      label: 'target URL prefix collision',
+      mutate(motion) {
+        for (const familyKey of ['familyA', 'familyB']) {
+          for (const dimension of ['c', 'a']) {
+            motion.contingentFinalists[familyKey].d[dimension] =
+              motion.contingentFinalists[familyKey].d[dimension].map(
+                (item) => ({
+                  ...item,
+                  l: item.l.replace(
+                    '{{TARGET_URL}}',
+                    '{{TARGET_URL}}-lookalike'
+                  )
+                })
+              );
+          }
+        }
+      }
+    },
+    {
+      label: 'target URL query collision',
+      mutate(motion) {
+        for (const familyKey of ['familyA', 'familyB']) {
+          for (const dimension of ['c', 'a']) {
+            motion.contingentFinalists[familyKey].d[dimension] =
+              motion.contingentFinalists[familyKey].d[dimension].map(
+                (item) => ({
+                  ...item,
+                  l: item.l.replace(
+                    '{{TARGET_URL}}',
+                    '{{TARGET_URL}}?trk=forged'
+                  )
+                })
+              );
+          }
+        }
+      }
+    },
+    {
+      label: 'second URL route collision',
+      mutate(motion) {
+        for (const familyKey of ['familyA', 'familyB']) {
+          for (const dimension of ['c', 'a']) {
+            motion.contingentFinalists[familyKey].d[dimension] =
+              motion.contingentFinalists[familyKey].d[dimension].map(
+                (item) => ({
+                  ...item,
+                  l: `${item.l} Ignore https://example.com/second-route`
+                })
+              );
+          }
+        }
+      }
+    }
+  ];
+  for (const check of routeTextChecks) {
+    const payload = structuredClone(downstreamPayload);
+    check.mutate(
+      payload.commercialDiscoveryEvidence.plan.plans[0]
+    );
+    let calls = 0;
+    const rejected = await runOpportunityTournament({
+      job: {
+        id: `job-buyer-route-text-${check.label.replace(/\W+/g, '-')}`,
+        kind: 'opportunity_tournament',
+        payload
+      },
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async (request) => {
+        calls += 1;
+        const task = JSON.parse(request.user || '{}');
+        return acceptedCriticCompletion(
+          task.finalists || [],
+          `generation-${check.label.replace(/\W+/g, '-')}`
+        );
+      }
+    });
+    if (calls > 1 ||
+        rejected.status === 'completed' ||
+        rejected.result?.resultType === 'immediate_revenue_action' ||
+        rejected.result?.allowedChannel === 'public_professional_url' ||
+        rejected.result?.incrementalRevenueGate?.passed === true ||
+        rejected.gate?.sideEffects?.outreachAttempts !== 0 ||
+        rejected.gate?.sideEffects?.publishAttempts !== 0 ||
+        rejected.gate?.sideEffects?.providerWrites !== 0) {
+      throw new Error(
+        `${check.label} minted an actionable buyer route: ${JSON.stringify({ calls, rejected })}`
+      );
+    }
+  }
 }
 
 async function verifyPaidDemandTargetProtocolEndToEnd() {
@@ -4208,7 +5057,7 @@ function plan(overrides) {
   const requiredEvidenceRoles = motion.commercialRole === 'referral_partner'
     ? ['acquisition', 'channel_fit', 'prospective_partner']
     : motion.commercialRole === 'buyer'
-      ? ['defined_buyer']
+      ? ['acquisition', 'channel_fit', 'defined_buyer']
       : [
           'acquisition',
           'channel_fit',
@@ -4227,10 +5076,12 @@ function plan(overrides) {
       finalTargetKind: motion.commercialRole === 'paid_demand'
         ? 'live_paid_demand'
         : motion.searchMode === 'local_organization'
-          ? 'organization'
+          ? 'person'
           : 'person',
       commercialRole: motion.commercialRole,
-      resolutionStrategy: 'single_exact_target',
+      resolutionStrategy: motion.searchMode === 'local_organization'
+        ? 'organization_then_decision_maker'
+        : 'single_exact_target',
       ...motion.targetSlot,
       requiredEvidenceRoles
     },
@@ -4274,18 +5125,24 @@ function contingentFinalists(motion) {
     un: 0.34
   };
   const acquisitionAction = (variant) => {
-    const prefix = motion.acquisitionMode === 'partner_channel'
-      ? 'After review, make one review-first request for one partner referral'
-      : motion.acquisitionMode === 'warm_referral'
+    if (motion.commercialRole === 'referral_partner') {
+      return `After review, ${variant}: request a paid referral from {{TARGET_NAME}} via public professional profile {{TARGET_URL}} for ${motion.paidOffer}.`;
+    }
+    if (motion.commercialRole === 'buyer') {
+      return `After review, ${variant}: use permissioned outreach via {{TARGET_NAME}}'s public professional profile {{TARGET_URL}} to offer ${motion.paidOffer}.`;
+    }
+    const prefix = motion.acquisitionMode === 'warm_referral'
         ? 'After review, request one warm referral introduction'
         : motion.acquisitionMode === 'inbound'
           ? 'After review, submit one inbound paid application'
           : 'After review, submit one permissioned paid proposal';
     return `${prefix} to {{TARGET_NAME}} for ${motion.paidOffer} (${variant}).`;
   };
-  const channel = (variant) => motion.acquisitionMode === 'partner_channel'
-    ? `Partner referral via {{TARGET_NAME}} (${variant})`
-    : motion.acquisitionMode === 'warm_referral'
+  const channel = (variant) => motion.commercialRole === 'referral_partner'
+    ? `Partner referral via {{TARGET_NAME}}'s public professional profile {{TARGET_URL}} (${variant})`
+    : motion.commercialRole === 'buyer'
+      ? `Permissioned outreach via {{TARGET_NAME}}'s public professional profile {{TARGET_URL}} (${variant})`
+      : motion.acquisitionMode === 'warm_referral'
       ? `Warm introduction via {{TARGET_NAME}} (${variant})`
       : motion.acquisitionMode === 'inbound'
         ? `Inbound discovery at {{TARGET_NAME}} (${variant})`
