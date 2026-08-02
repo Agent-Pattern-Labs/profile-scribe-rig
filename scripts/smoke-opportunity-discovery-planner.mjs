@@ -49,7 +49,7 @@ const cases = [
         counterparty: 'A newborn-serving clinical referral authority',
         paidOffer: 'Paid or reimbursable lactation home visit',
         evidenceRefs: [ref],
-        query: 'pediatrician newborn care Queens New York',
+        query: 'pediatric practice serving newborn patients Queens New York',
         market: 'Queens, New York',
         targetRoleTerms: ['pediatrician', 'practice manager', 'midwife'],
         organizationTerms: ['pediatric practice', 'birth center'],
@@ -70,11 +70,21 @@ const cases = [
         evidenceRefs: [ref],
         query: 'newborn pediatric practice Queens New York',
         market: 'Queens, New York',
+        targetRoleTerms: [
+          'pediatrician',
+          'practice owner',
+          'medical director',
+          'practice manager'
+        ],
         organizationTerms: ['pediatric practice', 'birth center'],
         acquisitionMechanism: 'One reviewed practice partner-referral request',
         conversionDestination: 'The verified owner booking page',
         paidConversion: 'One completed paid or reimbursed consultation',
-        attributionSignal: 'Booking referral source stores the selected practice and tournament id'
+        attributionSignal: 'Booking referral source stores the selected practice and tournament id',
+        targetSlot: {
+          finalTargetKind: 'person',
+          resolutionStrategy: 'organization_then_decision_maker'
+        }
       })
     ]
   },
@@ -629,6 +639,7 @@ if (unsafeResult.status !== 'blocked' ||
 }
 
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
+await verifySensitiveTargetFieldPolicy(unsafeJob, unsafeRef);
 await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
 await verifyNaturalReviewFirstActionsPass(unsafeJob, unsafeRef);
 await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
@@ -641,8 +652,123 @@ await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTwoStageTargetBinding();
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + one-motion/two-family tolerance + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest representative response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + one-motion/two-family tolerance + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest representative response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
+
+async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
+  const baseReferral = (overrides = {}) => plan({
+    id: 'newborn_professional_referral',
+    priority: 1,
+    searchMode: 'professional_counterparty',
+    commercialRole: 'referral_partner',
+    acquisitionMode: 'partner_channel',
+    buyer: 'Nearby families seeking paid newborn-feeding care',
+    counterparty: 'A newborn-serving pediatric professional',
+    paidOffer: 'Paid or reimbursable lactation home visit',
+    evidenceRefs: [evidenceRef],
+    query: 'pediatric practice serving newborn patients Queens New York',
+    market: 'Queens, New York',
+    targetRoleTerms: ['pediatrician', 'practice manager'],
+    organizationTerms: ['pediatric practice'],
+    acquisitionMechanism: 'One review-first professional referral request',
+    conversionDestination: 'The verified owner booking page',
+    paidConversion: 'One completed paid or reimbursed consultation',
+    attributionSignal: 'Booking referral source stores the practice and tournament id',
+    ...overrides
+  });
+  const run = async (candidate, generationId) =>
+    runOpportunityDiscoveryPlanner({
+      job,
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => ({
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: 'Typed professional referral search.',
+          plans: [candidate]
+        },
+        usage,
+        generationId,
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 800,
+          contentSha256: '1'.repeat(64)
+        },
+        annotations: []
+      })
+    });
+
+  const allowed = await run(
+    baseReferral(),
+    'generation-safe-referral-population'
+  );
+  if (allowed.status !== 'planned' || allowed.plans.length !== 1) {
+    throw new Error(
+      `professional referral population query was rejected: ${JSON.stringify(allowed)}`
+    );
+  }
+
+  const adversaries = [
+    {
+      label: 'direct sensitive role',
+      candidate: baseReferral({
+        id: 'sensitive_direct_role',
+        targetRoleTerms: ['postpartum patient']
+      }),
+      reason: /direct role, title, or skill target/i
+    },
+    {
+      label: 'sensitive organization target',
+      candidate: baseReferral({
+        id: 'sensitive_organization_target',
+        organizationTerms: ['pregnant women']
+      }),
+      reason: /organization target/i
+    },
+    {
+      label: 'private contact request',
+      candidate: baseReferral({
+        id: 'private_contact_request',
+        acquisitionMechanism:
+          'One review-first request using the professional private email'
+      }),
+      reason: /private-contact data/i
+    },
+    {
+      label: 'sensitive population as search subject',
+      candidate: baseReferral({
+        id: 'unbound_patient_query',
+        query: 'postpartum patients seeking pediatric practices Queens New York'
+      }),
+      reason: /in its query/i
+    },
+    {
+      label: 'non-referral patient query',
+      candidate: plan({
+        ...baseReferral(),
+        id: 'buyer_patient_query',
+        commercialRole: 'buyer'
+      }),
+      reason: /in its query/i
+    }
+  ];
+  for (const [index, adversary] of adversaries.entries()) {
+    const result = await run(
+      adversary.candidate,
+      `generation-sensitive-adversary-${index + 1}`
+    );
+    if (result.status !== 'blocked' ||
+        !adversary.reason.test(result.reason) ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${adversary.label} did not fail closed: ${JSON.stringify(result)}`
+      );
+    }
+  }
+}
 
 async function verifyOneMotionWithTwoCausalFamilies(job, evidenceRef) {
   const result = await runOpportunityDiscoveryPlanner({
@@ -1008,6 +1134,13 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
       reason: /only for a local-organization search/i
     },
     {
+      name: 'decision-maker role terms missing',
+      mutate(plans) {
+        plans[1].targetRoleTerms = [];
+      },
+      reason: /bounded professional role terms/i
+    },
+    {
       name: 'family acquisition mode drift',
       mutate(plans) {
         plans[0].contingentFinalists.familyA.m = 'inbound';
@@ -1206,11 +1339,14 @@ async function verifyTwoStageTargetBinding() {
     );
   }
   const selectedMotion = structuredClone(discoveryPlan.plans[1]);
-  selectedMotion.targetSlot = {
-    ...selectedMotion.targetSlot,
-    finalTargetKind: 'person',
-    resolutionStrategy: 'organization_then_decision_maker'
-  };
+  if (selectedMotion.targetSlot?.finalTargetKind !== 'person' ||
+      selectedMotion.targetSlot?.resolutionStrategy !==
+        'organization_then_decision_maker' ||
+      selectedMotion.targetRoleTerms.length === 0) {
+    throw new Error(
+      `planner did not persist a resolvable organization-to-decision-maker contract: ${JSON.stringify(selectedMotion)}`
+    );
+  }
   const exaAttempt = {
     id: 'attempt-two-stage-folded-exa-search',
     provider: 'openrouter_exa_web_search',
@@ -1374,6 +1510,12 @@ async function verifyTwoStageTargetBinding() {
       }
       const task = JSON.parse(request.user || '{}');
       const finalists = task.finalists || [];
+      assertCompactCriticPair({
+        request,
+        task,
+        finalists,
+        expectedTargets: ['Dr. Ava Rivera']
+      });
       const ordering = finalists.map((item) => item.finalistId);
       return {
         data: {
@@ -1424,6 +1566,7 @@ async function verifyTwoStageTargetBinding() {
       result.searchSpace?.contingentFinalistSource !==
         'discovery_planner_call_1' ||
       result.searchSpace?.structuredRepair?.attempted !== false ||
+      result.searchSpace?.motionConflictCount !== 0 ||
       result.llm?.strategyGeneratorJudge ||
       result.llm?.strategyFamilyRepair ||
       !result.llm?.commercialCritic ||
@@ -1436,9 +1579,13 @@ async function verifyTwoStageTargetBinding() {
       result.commercialEvidenceGraph?.nodes?.find((node) =>
         node.evidenceRef === organizationEvidenceRef
       )?.provider !== 'openrouter_exa_web_search' ||
+      !result.commercialEvidenceGraph?.nodes?.find((node) =>
+        node.evidenceRef === evidenceRef
+      )?.roles?.includes('defined_buyer') ||
       !result.winner?.action?.includes('Dr. Ava Rivera') ||
       result.winner?.action?.includes('{{TARGET_NAME}}') ||
       result.winner?.candidateId !== targetCandidateId ||
+      result.result?.allowedChannel !== 'partner_channel' ||
       result.gate?.sideEffects?.outreachAttempts !== 0 ||
       result.gate?.sideEffects?.publishAttempts !== 0 ||
       result.gate?.sideEffects?.providerWrites !== 0) {
@@ -1446,6 +1593,45 @@ async function verifyTwoStageTargetBinding() {
       `two-stage target binding failed: ${JSON.stringify({ requests: requests.length, result })}`
     );
   }
+
+  const conflictingModePayload = structuredClone(downstreamPayload);
+  const conflictingMotion =
+    conflictingModePayload.commercialDiscoveryEvidence.plan.plans[0];
+  for (const [familyName, family] of Object.entries({
+    familyA: conflictingMotion.contingentFinalists.familyA,
+    familyB: conflictingMotion.contingentFinalists.familyB
+  })) {
+    family.d.a = family.d.a.map((action, index) => ({
+      ...action,
+      l:
+        `After review, use permissioned outreach to ask {{TARGET_NAME}} for one paid partner referral (${familyName}-${index + 1}).`
+    }));
+  }
+  let conflictingModeCalls = 0;
+  const conflictingMode = await runOpportunityTournament({
+    job: {
+      id: 'job-two-stage-explicit-acquisition-conflict',
+      kind: 'opportunity_tournament',
+      payload: conflictingModePayload
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => {
+      conflictingModeCalls += 1;
+      throw new Error('explicit acquisition-mode conflict reached critic');
+    }
+  });
+  assertTechnicalRecovery(
+    conflictingMode,
+    conflictingModeCalls,
+    'explicit permissioned-outreach text in partner-channel family'
+  );
+  if (conflictingMode.searchSpace?.motionConflictCount < 1) {
+    throw new Error(
+      `explicit acquisition-mode conflict was not diagnosed: ${JSON.stringify(conflictingMode.searchSpace)}`
+    );
+  }
+
   const systemNode = result.commercialEvidenceGraph?.nodes?.find((node) =>
     node.evidenceRef ===
       PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
@@ -1532,7 +1718,13 @@ async function verifyTwoStageTargetBinding() {
       }
       const task = JSON.parse(request.user || '{}');
       const finalists = task.finalists || [];
-      if (finalists.length > 6 ||
+      assertCompactCriticPair({
+        request,
+        task,
+        finalists,
+        expectedTargets: ['Dr. Ava Rivera', 'Dr. Noor Patel']
+      });
+      if (finalists.length !== 2 ||
           !finalists.some((item) =>
             item.primaryAction?.includes('Dr. Ava Rivera')
           ) ||
@@ -1613,7 +1805,7 @@ async function verifyTwoStageTargetBinding() {
       !multiMotion.winner?.action?.includes('Dr. Ava Rivera') ||
       multiMotion.winner?.candidateId !== targetCandidateId ||
       multiMotion.searchSpace?.commercialCritic
-        ?.criticInputFinalistCount > 6 ||
+        ?.criticInputFinalistCount !== 2 ||
       multiMotion.usage?.calls !== 1) {
     throw new Error(
       `two valid motions were not compared by the critic: ${JSON.stringify(multiMotion)}`
@@ -1811,6 +2003,86 @@ function assertTechnicalRecovery(result, calls, label) {
   }
 }
 
+function assertCompactCriticPair({
+  request,
+  task,
+  finalists,
+  expectedTargets
+}) {
+  const expectedRoles = [
+    'acquisition',
+    'attribution',
+    'conversion_destination',
+    'defined_buyer',
+    'exact_outside_target',
+    'paid_conversion',
+    'paid_offer'
+  ];
+  const families = new Set(
+    finalists.map((finalist) => finalist.familyId)
+  );
+  const targetClaims = finalists.map((finalist) =>
+    finalist.evidenceBindings?.find((binding) =>
+      binding.role === 'exact_outside_target'
+    )?.claim || ''
+  );
+  const everyRoleIsBound = finalists.every((finalist) => {
+    const bindings = finalist.evidenceBindings || [];
+    const roles = bindings.map((binding) => binding.role).sort();
+    return JSON.stringify(roles) === JSON.stringify(expectedRoles) &&
+      bindings.every((binding) =>
+        typeof binding.claim === 'string' &&
+        binding.claim.length > 0 &&
+        Array.isArray(binding.evidenceRefs) &&
+        binding.evidenceRefs.length > 0
+      );
+  });
+  const targetBindingsArePublic = finalists.every((finalist) => {
+    const target = finalist.evidenceBindings?.find((binding) =>
+      binding.role === 'exact_outside_target'
+    );
+    return target?.kind === 'person' && [
+      'Riverside Pediatrics',
+      'Summit Pediatrics'
+    ].includes(target.organization);
+  });
+  const userText = request.user || '';
+  const responseSchema = request.responseFormat?.json_schema?.schema;
+  const privateContactLeaked =
+    /(?:contactPaths|mailto:|tel:|sms:|work_email|mobile_phone|phone_numbers|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i.test(
+      userText
+    );
+  const requestBytes = Buffer.byteLength(JSON.stringify(request), 'utf8');
+  if (finalists.length !== 2 ||
+      families.size !== 2 ||
+      task.contextMode !== 'bound_family_diverse_pair_v1' ||
+      task.executionPolicy?.executionAuthorization !== 'none' ||
+      task.executionPolicy?.requiresReview !== true ||
+      task.executionPolicy?.sideEffectsPerformed !== 0 ||
+      request.maxTokens !== 1_200 ||
+      responseSchema?.properties?.comparisons?.maxItems !== 2 ||
+      responseSchema?.properties?.selectedOrdering?.maxItems !== 2 ||
+      requestBytes > 36 * 1_024 ||
+      !everyRoleIsBound ||
+      !targetBindingsArePublic ||
+      privateContactLeaked ||
+      !expectedTargets.every((expected) =>
+        targetClaims.includes(expected)
+      )) {
+    throw new Error(
+      `critic did not receive one compact, safe, family-diverse pair: ${JSON.stringify({
+        finalists,
+        targetClaims,
+        expectedTargets,
+        task,
+        requestBytes,
+        maxTokens: request.maxTokens,
+        responseSchema
+      })}`
+    );
+  }
+}
+
 function plannerJob(scenario) {
   return {
     id: `job-${scenario.name.replace(/\W+/g, '-')}`,
@@ -1915,6 +2187,7 @@ function plan(overrides) {
           : 'person',
       commercialRole: motion.commercialRole,
       resolutionStrategy: 'single_exact_target',
+      ...motion.targetSlot,
       requiredEvidenceRoles
     },
     contingentFinalists: contingentFinalists(motion)
@@ -1958,7 +2231,7 @@ function contingentFinalists(motion) {
   };
   const acquisitionAction = (variant) => {
     const prefix = motion.acquisitionMode === 'partner_channel'
-      ? 'After review, request one partner referral'
+      ? 'After review, make one review-first request for one partner referral'
       : motion.acquisitionMode === 'warm_referral'
         ? 'After review, request one warm referral introduction'
         : motion.acquisitionMode === 'inbound'
