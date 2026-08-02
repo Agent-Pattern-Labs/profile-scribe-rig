@@ -789,9 +789,11 @@ await verifyOmittedTargetEvidenceProtocolCanonicalization(
 await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
 await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
 await verifyNaturalReviewFirstActionsPass(unsafeJob, unsafeRef);
+await verifyPaidDemandResponseActionVerbs(unsafeJob, unsafeRef);
 await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
 await verifyServicePaymentOutcomesPass(unsafeJob, unsafeRef);
 await verifyUnpaidServiceOutcomeFails(unsafeJob, unsafeRef);
+await verifyMechanismSpecificTerminalOutcomes(unsafeJob, unsafeRef);
 await verifyRevenueStopUnits(unsafeJob, unsafeRef);
 await verifyNaturalBookingAttribution(unsafeJob, unsafeRef);
 await verifyCausalPathDiagnosticsAreFieldSpecific(unsafeJob, unsafeRef);
@@ -810,7 +812,7 @@ if (smallestCompactResponseReduction < 0.25 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + child evidence-index canonicalization + target-slot protocol canonicalization/role guards + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + child evidence-index canonicalization + target-slot protocol canonicalization/role guards + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first/paid-demand response actions + artifact-submission rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyOmittedChildEvidenceCanonicalization(
@@ -1636,6 +1638,53 @@ async function verifyNaturalReviewFirstActionsPass(job, evidenceRef) {
   }
 }
 
+async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
+  const motion = cases[2].plans(evidenceRef)[0];
+  const actions = [
+    'After review, submit one paid application to {{TARGET_NAME}} through the official response page.',
+    'After review, apply to {{TARGET_NAME}} through one paid-role application.',
+    'After review, respond to {{TARGET_NAME}} with one paid contract proposal.',
+    'After review, bid on {{TARGET_NAME}} through one paid contract response.'
+  ];
+  let index = 0;
+  for (const familyKey of ['familyA', 'familyB']) {
+    for (const action of
+      motion.contingentFinalists[familyKey].d.a) {
+      action.l = actions[index];
+      index += 1;
+    }
+  }
+  const accepted = await plannerResultForMotion({
+    job,
+    motion,
+    generationId: 'generation-paid-demand-response-verbs'
+  });
+  if (accepted.status !== 'planned' || accepted.plans.length !== 1) {
+    throw new Error(
+      `paid application/proposal/response verbs were rejected: ${JSON.stringify(accepted)}`
+    );
+  }
+
+  const artifactOnly = cases[2].plans(evidenceRef)[0];
+  artifactOnly.contingentFinalists.familyA.d.a[0].l =
+    'After review, submit one research report to {{TARGET_NAME}}.';
+  artifactOnly.contingentFinalists.familyA.d.a[1].l =
+    'After review, submit one analytics dashboard to {{TARGET_NAME}}.';
+  const rejected = await plannerResultForMotion({
+    job,
+    motion: artifactOnly,
+    generationId: 'generation-non-revenue-artifact-submission'
+  });
+  if (rejected.status !== 'blocked' ||
+      !/primary_action_(?:non_revenue|passive)/i.test(rejected.reason) ||
+      rejected.plans.length !== 0 ||
+      rejected.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `non-revenue artifact submission passed: ${JSON.stringify(rejected)}`
+    );
+  }
+}
+
 async function verifyOptionalSupportingBottleneckPasses(job, evidenceRef) {
   const motion = cases[0].plans(evidenceRef)[0];
   for (const familyKey of ['familyA', 'familyB']) {
@@ -1656,7 +1705,7 @@ async function verifyOptionalSupportingBottleneckPasses(job, evidenceRef) {
 async function verifyServicePaymentOutcomesPass(job, evidenceRef) {
   const outcomes = [
     'One completed paid lactation consultation recorded.',
-    'One completed paid or reimbursed lactation home visit recorded.',
+    'One completed reimbursed lactation home visit recorded.',
     'One paid visit recorded.',
     'One paid session recorded.',
     'One paid service recorded.',
@@ -1698,6 +1747,201 @@ async function verifyUnpaidServiceOutcomeFails(job, evidenceRef) {
     throw new Error(
       `unpaid service outcome passed the revenue gate: ${JSON.stringify(result)}`
     );
+  }
+}
+
+async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
+  const mechanisms = [
+    'paid_booking',
+    'direct_sale',
+    'signed_contract',
+    'paid_pilot',
+    'subscription_or_retainer',
+    'insurance_reimbursement',
+    'license_or_royalty',
+    'commission_or_referral',
+    'sponsorship',
+    'platform_payout',
+    'compensated_role'
+  ];
+  const motionFor = (mechanism, outcome) => {
+    const motion = cases[0].plans(evidenceRef)[0];
+    for (const familyKey of ['familyA', 'familyB']) {
+      const revenue = motion.contingentFinalists[familyKey].d.r[0];
+      revenue.rm = mechanism;
+      revenue.o = outcome;
+      revenue.k.c = mechanism;
+      revenue.k.o = mechanism;
+    }
+    return motion;
+  };
+
+  for (const [index, mechanism] of mechanisms.entries()) {
+    const outcome = canonicalTerminalPaidOutcome(mechanism);
+    const result = await plannerResultForMotion({
+      job,
+      motion: motionFor(mechanism, outcome),
+      generationId: `generation-terminal-outcome-${index + 1}`
+    });
+    if (result.status !== 'planned' || result.plans.length !== 1) {
+      throw new Error(
+        `canonical ${mechanism} terminal outcome was rejected: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const crossRuntimeVariants = [
+    ['paid_booking', 'One paid lactation visit was completed and recorded.'],
+    ['direct_sale', 'One paid checkout was completed.'],
+    ['signed_contract', 'One signed paid agreement and payment received.'],
+    ['paid_pilot', 'One paid pilot was completed and its funds received.'],
+    ['subscription_or_retainer', 'One subscription was signed and its funds received.'],
+    ['insurance_reimbursement', 'One claim was paid.'],
+    ['license_or_royalty', 'One licensing payment was received.'],
+    ['license_or_royalty', 'One royalties statement shows payment received.'],
+    ['commission_or_referral', 'One commission invoice was paid.'],
+    ['sponsorship', 'One sponsored placement was awarded and payment received.'],
+    ['platform_payout', 'One marketplace payment was received.'],
+    ['platform_payout', 'One ad revenue payment was received.'],
+    ['compensated_role', 'One compensated offer was accepted.']
+  ];
+  for (const [index, [mechanism, outcome]] of
+    crossRuntimeVariants.entries()) {
+    const result = await plannerResultForMotion({
+      job,
+      motion: motionFor(mechanism, outcome),
+      generationId: `generation-cross-runtime-terminal-${index + 1}`
+    });
+    if (result.status !== 'planned' || result.plans.length !== 1) {
+      throw new Error(
+        `cross-runtime ${mechanism} terminal outcome was rejected (${outcome}): ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const adversaries = [
+    {
+      mechanism: 'paid_booking',
+      outcome: 'One paid booking or payment receipt is recorded.',
+      name: 'paid-booking disjunction'
+    },
+    {
+      mechanism: 'compensated_role',
+      outcome:
+        'One compensation offer is accepted or salary payment is recorded.',
+      name: 'compensated-role disjunction'
+    },
+    {
+      mechanism: 'direct_sale',
+      outcome: 'One order payment attempt is recorded.',
+      name: 'direct-sale payment attempt'
+    },
+    {
+      mechanism: 'signed_contract',
+      outcome:
+        'One contract proposal is accepted and a payment attempt is recorded.',
+      name: 'contract payment attempt'
+    },
+    {
+      mechanism: 'subscription_or_retainer',
+      outcome: 'One subscription payment is pending.',
+      name: 'pending subscription payment'
+    },
+    {
+      mechanism: 'platform_payout',
+      outcome: 'One marketplace payout failed and is not received.',
+      name: 'failed payout'
+    },
+    {
+      mechanism: 'subscription_or_retainer',
+      outcome: 'Two subscription payment attempts were recorded.',
+      name: 'plural payment attempts'
+    },
+    {
+      mechanism: 'direct_sale',
+      outcome: 'One order payment authorization was recorded.',
+      name: 'payment authorization'
+    },
+    {
+      mechanism: 'direct_sale',
+      outcome: 'One order payment was initiated and recorded.',
+      name: 'initiated payment'
+    },
+    {
+      mechanism: 'subscription_or_retainer',
+      outcome: 'One subscription payment is processing.',
+      name: 'processing payment'
+    },
+    {
+      mechanism: 'signed_contract',
+      outcome: 'One signed contract has an invoice payment due and recorded.',
+      name: 'payment due'
+    },
+    {
+      mechanism: 'signed_contract',
+      outcome: 'One signed contract has an invoice payment owed and recorded.',
+      name: 'payment owed'
+    },
+    {
+      mechanism: 'signed_contract',
+      outcome: 'One signed contract has an outstanding invoice payment recorded.',
+      name: 'payment outstanding'
+    },
+    {
+      mechanism: 'signed_contract',
+      outcome: 'One signed contract has its invoice payment recorded.',
+      name: 'recorded-only payment'
+    },
+    {
+      mechanism: 'direct_sale',
+      outcome: 'One paid order was confirmed.',
+      name: 'uncompleted paid order'
+    },
+    {
+      mechanism: 'paid_booking',
+      outcome: 'One billable visit was confirmed.',
+      name: 'uncompleted billable visit'
+    },
+    {
+      mechanism: 'paid_pilot',
+      outcome: 'One paid pilot payment was received.',
+      name: 'pilot without accepted or completed agreement'
+    },
+    {
+      mechanism: 'signed_contract',
+      outcome: 'One paid bid is winning and its invoice is settled.',
+      name: 'nonterminal winning bid'
+    },
+    {
+      mechanism: 'compensated_role',
+      outcome: 'One compensated job offer was issued.',
+      name: 'issued offer'
+    },
+    {
+      mechanism: 'compensated_role',
+      outcome: 'One compensated job offer was received.',
+      name: 'unaccepted received offer'
+    }
+  ];
+  for (const [index, adversary] of adversaries.entries()) {
+    const motion = motionFor(
+      adversary.mechanism,
+      canonicalTerminalPaidOutcome(adversary.mechanism)
+    );
+    motion.contingentFinalists.familyA.d.r[0].o = adversary.outcome;
+    const result = await plannerResultForMotion({
+      job,
+      motion,
+      generationId: `generation-terminal-adversary-${index + 1}`
+    });
+    if (result.status !== 'blocked' ||
+        !result.reason.includes('[observable_revenue]') ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${adversary.name} passed the terminal revenue gate: ${JSON.stringify(result)}`
+      );
+    }
   }
 }
 
@@ -3879,13 +4123,7 @@ function contingentFinalists(motion) {
       io: `One additional paid income outcome from ${motion.paidOffer}.`,
       a: motion.acquisitionMode,
       c: acquisitionAction('shared paid path'),
-      o: mechanism === 'compensated_role'
-        ? 'One compensation offer accepted or salary payment recorded.'
-        : mechanism === 'subscription_or_retainer'
-          ? 'One paid subscription order recorded.'
-          : mechanism === 'signed_contract'
-            ? 'One signed contract and paid invoice recorded.'
-        : 'One paid booking or payment receipt recorded.',
+      o: canonicalTerminalPaidOutcome(mechanism),
       atm: attributionMethod,
       ats: attributionSignal,
       cd: conversionDestination,
@@ -3972,6 +4210,34 @@ function causalWitness(
   };
 }
 
+function canonicalTerminalPaidOutcome(mechanism) {
+  const outcomes = {
+    paid_booking:
+      'One paid consultation booking is completed and its payment receipt is recorded.',
+    direct_sale:
+      'One paid order is completed and its payment receipt is recorded.',
+    signed_contract:
+      'One paid services contract is signed and its first invoice payment is received and recorded.',
+    paid_pilot:
+      'One paid pilot agreement is signed and its deposit payment is received and recorded.',
+    subscription_or_retainer:
+      'One paid subscription is activated and its first payment receipt is recorded.',
+    insurance_reimbursement:
+      'One completed reimbursable consultation has a paid claim and reimbursement payment received.',
+    license_or_royalty:
+      'One paid license agreement is signed and its license payment is received and recorded.',
+    commission_or_referral:
+      'One attributed sale produces a commission payment that is received and recorded.',
+    sponsorship:
+      'One sponsorship agreement is signed and its first sponsorship payment is received and recorded.',
+    platform_payout:
+      'One marketplace payout is received and its payout record is recorded.',
+    compensated_role:
+      'One compensated job offer is accepted and its employment source record is recorded.'
+  };
+  return outcomes[mechanism] || '';
+}
+
 function applyNovelTypedCausalSemantics(value) {
   const motion = structuredClone(value);
   for (const familyKey of ['familyA', 'familyB']) {
@@ -3980,7 +4246,7 @@ function applyNovelTypedCausalSemantics(value) {
       'Cash reaches the owner only because this reviewed path succeeds.';
     revenue.c =
       'Invite {{TARGET_NAME}} as the named partner to route one suitable family toward the service.';
-    revenue.o = 'Funds settle for one completed visit.';
+    revenue.o = 'Funds are received and recorded for one completed visit.';
     revenue.ats =
       'Persist the originating practice beside the transaction.';
     revenue.cd = 'https://owner.example/offer';

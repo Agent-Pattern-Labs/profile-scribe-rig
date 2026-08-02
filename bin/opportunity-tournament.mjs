@@ -1152,6 +1152,7 @@ function compactOpportunityDiscoveryHardRules() {
     'Use evidenceCatalog IDs only. base+each tactic e has observation:*; system attribution proves attribution only; obey targetRoleMap.',
     `Both tacticA.a and tacticB.a contain exactly 2 variants; each independently completes its commercial ask, never setup/support: ask ${CONTINGENT_TARGET_NAME_TOKEN} for a paid referral/introduction, booking/order/contract/subscription, compensated application/proposal, or paid listing.`,
     'Each r: a=plan.acquisitionMode; required k.i proves counterfactual paid income; k.c=k.o=rm; k.t=atm.',
+    'r.o: one completed rm-specific paid event; no or/either/attempt/pending/declined/failed/not received.',
     'Each r: k.d proves a separate destination; k.s/n/u prove a bounded stop; calendar_days<=30; author io/c/o/ats/cd/st; vm>0.',
     'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence; a prospective partner proves no buyer, offer, warmness, permission, or demand.',
     'Tactics differ causally. Review=authorization, not acquisitionMode. organization_then_decision_maker needs 1-6 professional roles. Never target patients/sensitive traits/private contacts; only referral query may describe population served. No outreach/publish/ads/forms/provider writes.',
@@ -1715,6 +1716,13 @@ function opportunityDiscoveryPlanIssue(value) {
     if (livePaidDemandSearch && item.commercialRole !== 'paid_demand') {
       return 'Active-job and public-live-demand searches require paid-demand role.';
     }
+    if (livePaidDemandSearch && ![
+      'inbound',
+      'partner_channel',
+      'permissioned_outreach'
+    ].includes(item.acquisitionMode)) {
+      return 'Active-job and public-live-demand searches require a supported provider-attested review route.';
+    }
     if (item.searchMode === 'active_job_posting') {
       if (!firstText(item.jobTitle) && asArray(item.skills).length === 0) {
         return 'Active job searches require paid-demand role and a verified title or skill query.';
@@ -1973,6 +1981,10 @@ function contingentFinalistBundleIssue(planValue) {
       );
     }
     const revenue = asObject(asArray(dimensions.r)[0]);
+    if (plan.searchMode === 'active_job_posting' &&
+        firstText(revenue.rm) !== 'compensated_role') {
+      return `has a non-employment revenue mechanism in active-job contingent family ${familyIndex + 1}.`;
+    }
     const revenuePathIssues = contingentCausalRevenuePathIssues(
       revenue,
       plan.acquisitionMode
@@ -2146,6 +2158,10 @@ function revenueCausalWitnessIssues(revenueValue) {
 function revenuePathSemanticChecks(revenueValue) {
   const revenue = asObject(revenueValue);
   const witness = revenueCausalWitnessFieldChecks(revenue);
+  const revenueMechanism = contractEnum(firstText(
+    revenue.rm,
+    revenue.revenueMechanism
+  ));
   const incrementalIncome = firstText(
     revenue.io,
     revenue.incrementalIncomeOutcome
@@ -2193,7 +2209,10 @@ function revenuePathSemanticChecks(revenueValue) {
       ? (
         witness.observableRevenue &&
         Boolean(observableRevenue) &&
-        !explicitlyContradictsPaidOutcome(observableRevenue)
+        terminalPaidOutcomeText(
+          observableRevenue,
+          revenueMechanism
+        )
       )
       : observableRevenueText(observableRevenue),
     attributionSignal: typed
@@ -2232,9 +2251,97 @@ function explicitlyContradictsIncrementalIncome(value) {
 }
 
 function explicitlyContradictsPaidOutcome(value) {
-  return /\b(?:complimentary|free|unpaid|no (?:income|payment|revenue)|not paid|without (?:income|payment|revenue))\b/i.test(
+  return /\b(?:attempt(?:s|ed|ing)?|authori[sz](?:ation|ed)|awaiting (?:award|deposit|funds|invoice|payment|payout|settlement)|cancelled|canceled|complimentary|declined|denied|failed|free|never (?:accepted|awarded|paid|received|settled|signed)|not (?:yet )?(?:been )?(?:accepted|awarded|paid|received|settled|signed)|pending|refunded|rejected|reversed|unpaid|voided|withdrawn|(?:payment|payout|transfer) (?:initiated|processing|scheduled)|(?:funds|invoice|payment|payout|reimbursement) (?:due|owed|outstanding)|outstanding (?:funds|invoice|payment|payout|reimbursement)|no (?:deposit|funds|income|payment|payout|revenue|settlement)|without (?:deposit|funds|income|payment|payout|revenue|settlement))\b/i.test(
     firstText(value)
   );
+}
+
+function terminalPaidOutcomeText(value, mechanism) {
+  const text = firstText(value);
+  if (!text ||
+      /\b(?:either|or)\b/i.test(text) ||
+      /\b(?:(?:application|bid|proposal|response) (?:filed|recorded|submitted)|(?:filed|submitted) (?:application|bid|proposal|response))\b/i.test(
+        text
+      ) ||
+      explicitlyContradictsPaidOutcome(text)) {
+    return false;
+  }
+
+  const terminalState =
+    /\b(?:accepted|activated|awarded|booked|completed|confirmed|paid|placed|received|recorded|renewed|settled|signed|started|won)\b/i.test(
+      text
+    );
+  const cashSettlement =
+    /\bpayment receipt\b/i.test(text) ||
+    /\b(?:claim|deposit|funds|payment|payout|payroll|reimbursement|revenue|salary|wage)\b/i.test(text) &&
+      /\b(?:deposited|paid|received|settled)\b/i.test(text) ||
+    /\binvoice\b/i.test(text) && /\b(?:paid|settled)\b/i.test(text);
+  if (!terminalState) return false;
+
+  switch (contractEnum(mechanism)) {
+  case 'paid_booking':
+    return /\b(?:appointment|booking|consultation|engagement|service|session|visit)s?\b/i.test(
+      text
+    ) && /\b(?:booked|completed|recorded|payment|receipt)\b/i.test(text) && (
+      cashSettlement ||
+      /\b(?:billable|paid|reimbursed)\b/i.test(text)
+    );
+  case 'direct_sale':
+    return /\b(?:checkout|order|purchase|sale)s?\b/i.test(text) &&
+      /\b(?:completed|placed|received|recorded|payment|receipt)\b/i.test(text) && (
+      cashSettlement ||
+      /\bpaid (?:checkout|order|purchase|sale)\b/i.test(text)
+    );
+  case 'signed_contract':
+    return /\b(?:agreement|bid|contract|proposal)s?\b/i.test(text) &&
+      /\b(?:accepted|awarded|signed|won)\b/i.test(text) &&
+      cashSettlement;
+  case 'paid_pilot':
+    return /\bpaid pilot\b/i.test(text) &&
+      /\b(?:accepted|completed|signed|started)\b/i.test(text) &&
+      cashSettlement;
+  case 'subscription_or_retainer':
+    return /\b(?:retainer|subscription)s?\b/i.test(text) && (
+      cashSettlement ||
+      /\bpaid subscription order\b/i.test(text)
+    ) && /\b(?:accepted|activated|paid|received|recorded|renewed|settled|signed|started)\b/i.test(
+      text
+    );
+  case 'insurance_reimbursement':
+    return /\b(?:claim|reimbursement)s?\b/i.test(text) && (
+      /\bpaid claim\b/i.test(text) ||
+      cashSettlement
+    );
+  case 'license_or_royalty':
+    return /\b(?:licen[cs]e|licensing|royalt(?:y|ies))\b/i.test(text) &&
+      cashSettlement;
+  case 'commission_or_referral':
+    return /\b(?:affiliate|commission|referral fee)\b/i.test(text) &&
+      cashSettlement;
+  case 'sponsorship':
+    return /\bsponsor(?:ship|ed)?\b/i.test(text) &&
+      /\b(?:accepted|awarded|signed|won)\b/i.test(text) &&
+      cashSettlement;
+  case 'platform_payout':
+    return /\b(?:ad revenue|creator|marketplace|platform)\b/i.test(text) &&
+      /\b(?:payment|payout|revenue received)\b/i.test(text) &&
+      cashSettlement;
+  case 'compensated_role': {
+    const acceptedOffer =
+      /\b(?:compensated|compensation|employment|job) offer\b/i.test(text) &&
+      /\b(?:accepted|signed)\b/i.test(text);
+    const compensationSettlement =
+      /\b(?:compensation|payroll|salary|wage) payment\b/i.test(text) &&
+      cashSettlement;
+    return acceptedOffer || compensationSettlement && (
+      /\b(?:compensated|employment|job|payroll|role|salary|wage)\b/i.test(
+        text
+      )
+    );
+  }
+  default:
+    return false;
+  }
 }
 
 function explicitlyContradictsAttribution(value) {
@@ -5543,7 +5650,9 @@ function commercialDiscoveryPublicTrace(value) {
 
 function commercialDiscoveryReviewChannelForHypothesis(
   hypothesisValue,
-  graphNodes
+  graphNodes,
+  commercialDiscoveryValue,
+  referenceTime
 ) {
   const hypothesis = asObject(hypothesisValue);
   if (!firstText(hypothesis.id) || !(graphNodes instanceof Map)) return '';
@@ -5556,40 +5665,60 @@ function commercialDiscoveryReviewChannelForHypothesis(
   if (path.acquisitionMode === 'partner_channel' &&
       nodes.some((node) => {
         const roles = new Set(compactStrings(node.roles));
-        return roles.has('acquisition') &&
+        return Boolean(firstText(node.commercialDiscoveryMotionId)) &&
+          roles.has('acquisition') &&
           roles.has('channel_fit') &&
           roles.has('prospective_partner');
       })) {
     return 'partner_channel';
   }
-  if (path.revenueMechanism === 'compensated_role' &&
-      nodes.some((node) => {
-        const roles = new Set(compactStrings(node.roles));
-        return roles.has('paid_offer') &&
-          roles.has('conversion_destination') &&
-          roles.has('demand_signal');
-      })) {
-    return 'application_page';
+  const discovery = normalizeCommercialDiscoveryEvidence(
+    commercialDiscoveryValue,
+    referenceTime
+  );
+  if (discovery.valid !== true || discovery.status !== 'found') return '';
+  const motionIds = new Set(nodes
+    .map((node) => firstText(node.commercialDiscoveryMotionId))
+    .filter(Boolean));
+  if (motionIds.size !== 1) return '';
+  const [motionId] = motionIds;
+  const motion = asArray(asObject(discovery.plan).plans)
+    .map(asObject)
+    .find((item) => firstText(item.id) === motionId);
+  if (!motion || firstText(motion.acquisitionMode) !==
+        firstText(path.acquisitionMode)) {
+    return '';
   }
   const publicPaidDemandModes = new Set([
     'inbound',
     'partner_channel',
     'permissioned_outreach'
   ]);
-  if (publicPaidDemandModes.has(firstText(path.acquisitionMode)) &&
-      nodes.some((node) => {
-        const roles = new Set(compactStrings(node.roles));
-        return firstText(node.commercialDiscoveryKind) ===
-            'verified_external_live_demand' &&
-          Boolean(safePublicHTTPSURL(node.url)) &&
-          roles.has('acquisition') &&
-          roles.has('channel_fit') &&
-          roles.has('conversion_destination') &&
-          roles.has('defined_buyer') &&
-          roles.has('demand_signal') &&
-          roles.has('paid_conversion') &&
-          roles.has('paid_offer');
-      })) {
+  const completePaidDemandNode =
+    firstText(motion.commercialRole) === 'paid_demand' &&
+    publicPaidDemandModes.has(firstText(path.acquisitionMode)) &&
+    nodes.some((node) => {
+      const roles = new Set(compactStrings(node.roles));
+      return firstText(node.commercialDiscoveryMotionId) === motionId &&
+        firstText(node.commercialDiscoveryKind) ===
+          'verified_external_live_demand' &&
+        Boolean(safePublicHTTPSURL(node.url)) &&
+        roles.has('acquisition') &&
+        roles.has('channel_fit') &&
+        roles.has('conversion_destination') &&
+        roles.has('defined_buyer') &&
+        roles.has('demand_signal') &&
+        roles.has('paid_conversion') &&
+        roles.has('paid_offer');
+    });
+  if (completePaidDemandNode &&
+      firstText(motion.searchMode) === 'active_job_posting') {
+    return firstText(path.revenueMechanism) === 'compensated_role'
+      ? 'application_page'
+      : '';
+  }
+  if (completePaidDemandNode &&
+      firstText(motion.searchMode) === 'public_live_demand') {
     // This authorizes only presenting a review-first recommendation for the
     // public demand-response route. Execution remains none and the final gate
     // records that explicit approval is still required before submission.
@@ -5632,7 +5761,9 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
   const discoveryReviewChannel =
     commercialDiscoveryReviewChannelForHypothesis(
       winnerHypothesis,
-      graphNodes
+      graphNodes,
+      payload.commercialDiscoveryEvidence,
+      args.now || new Date()
     );
   const allowedChannel = configuredAllowedChannel ||
     discoveryReviewChannel;
@@ -8252,6 +8383,7 @@ You may extract up to eight compact named person or organization candidates only
 When an exact named organization is the intended target buyer, begin the buyerSegments label with that exact evidence-backed name and return the same organization in candidates.
 Keep every strategy family coherent end to end. Its family m is one acquisition mode, and its buyer, offer, channel, action, timing trigger, proof point, follow-up, and revenue path must all belong to that same acquisition-to-payment route.
 Every family must trace one actual buyer and explicitly paid offer through inbound, warm, existing-customer, partner, or otherwise permissioned acquisition to an observable paid conversion and durable attribution record. A conversation, inquiry, eligibility check, scheduled consultation, profile change, post, impression, workflow improvement, or completed research task is not incremental income.
+Each observable paid outcome must name one completed mechanism-specific event. Never join outcome alternatives with "or"/"either", and never treat an attempt, submission, pending/declined/failed event, or payment not received as paid conversion.
 Operations, administration, visibility, content, research, and workflow improvements may appear only as auxiliary supportingBottleneck context. The singular action must itself advance permissioned acquisition or paid conversion, align with revenuePath.conversionAction, and must never merely perform the supporting bottleneck.
 Monitoring, observing, measuring, reviewing, recording, researching, auditing, checking, or verifying is not an active primary revenue action. A family may use those verbs only for its bounded stop or supporting evidence; its primary action must causally create qualified discovery, present a paid offer through a permitted path, or complete a paid conversion.
 For inbound acquisition, name one explicit discovery or demand origin such as organic/local search, an app store, a comparison/search listing, an owned opted-in audience, earned media/directory discovery, a marketplace, a community, social distribution, platform discovery, or agent-mediated discovery, and separately name the offer, pricing, signup, demo, application, licensing, sponsorship-inquiry, storefront, product, service, landing, booking, download, marketplace-listing, or checkout destination. A destination by itself is not an acquisition channel.
@@ -14403,6 +14535,12 @@ function revenueAdvancingAction(value) {
     /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|refer(?:s|red|ring|ral)?|recommend(?:s|ed|ing|ation)?|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot|licen[cs](?:e|ing)|royalt(?:y|ies)|commission|sponsor(?:ship)?|payout|compensated|salary|wage|hire|role)\b/i.test(
       text
     );
+  const advancesPaidDemandResponse =
+    /\b(?:apply|bid|respond|submit)\b/i.test(text) &&
+    /\b(?:application|bid|proposal|request for proposal|response|rfp|solicitation)\b/i.test(
+      text
+    ) &&
+    /\b(?:compensated|contract|paid|payment|salary|wage)\b/i.test(text);
   const namesPaidCommitment =
     /\b(paid|payment|purchase|sale|contract|agreement|deposit|invoice|order|checkout|subscription|retainer|reimburs(?:able|ed|ement)|paid pilot|licen[cs]e|royalt(?:y|ies)|commission|referral fee|sponsorship|platform payout|compensated role|salary|wage)\b/i.test(
       text
@@ -14414,7 +14552,7 @@ function revenueAdvancingAction(value) {
     /\b(offer|proposal|quote|request|invite|introduction|referral|book(?:ing|ed)?|checkout|order|purchase|contract|agreement|pilot)\b/i.test(
       text
     );
-  return advancesAcquisition &&
+  return (advancesAcquisition || advancesPaidDemandResponse) &&
     (namesPaidCommitment || namesPermissionedDemand);
 }
 

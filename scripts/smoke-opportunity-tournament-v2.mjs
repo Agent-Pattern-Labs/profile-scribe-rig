@@ -124,7 +124,8 @@ const domains = [
     offer: 'A paid delivery-consulting contract',
     destination: 'Delivery consulting proposal and contract page',
     mechanism: 'signed_contract',
-    outcome: 'One signed contract recorded',
+    outcome:
+      'One paid delivery contract is signed and its first invoice payment is received and recorded',
     attributionMethod: 'invoice_or_contract',
     attribution:
       'Contract source field stores the organic-search UTM campaign',
@@ -318,7 +319,7 @@ verifyCommercialDiscoveryPDLReferralEnvelopeNormalization();
 verifyClaimFencedBraveDiscoveryRoleNormalization();
 await verifyDiscoveryPlanStaysUnverifiedDownstream();
 await verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct();
-await verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole();
+await verifyUnplannedLegacyPaidDemandCannotAuthorizeApplicationRoute();
 await verifyUnsafeGeneratedExperimentRejected();
 await verifyCompletedExternalExecutionRejected();
 await verifyInsufficientGroundedFinalistCause();
@@ -1886,7 +1887,7 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
   }
 }
 
-async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
+async function verifyUnplannedLegacyPaidDemandCannotAuthorizeApplicationRoute() {
   const supplyRef = 'observation:obs-programmer-go-proof';
   const jobRef = 'external_discovery:cccccccccccccccccccccccc';
   const attributionRef = 'observation:obs-programmer-attribution';
@@ -1901,7 +1902,8 @@ async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
     offer: 'A compensated role as Senior Go Engineer with salary',
     destination: 'Acme Systems application page',
     mechanism: 'compensated_role',
-    outcome: 'One compensation offer accepted',
+    outcome:
+      'One employment compensation offer is accepted and its first salary payment is received and recorded',
     attributionMethod: 'employment_compensation_record',
     attribution:
       'Employment compensation record source field stores public posting ID ACME-GO-42',
@@ -2094,8 +2096,8 @@ async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
   const candidate = result.candidates?.find((item) =>
     item.id === candidateID
   );
-  if (result.status !== 'completed' ||
-      result.result?.incrementalRevenueGate?.passed !== true ||
+  if (result.status !== 'skipped' ||
+      result.result?.incrementalRevenueGate?.passed !== false ||
       result.searchSpace?.commercialDiscoveryEvidenceCount !== 1 ||
       result.searchSpace?.commercialDiscoveryCandidateCount !== 1 ||
       result.trace?.commercialDiscovery?.paidProviderCalls !== 1 ||
@@ -2131,16 +2133,18 @@ async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
       result.candidates?.some((item) =>
         item.kind === 'owned_inbound_asset'
       ) ||
-      result.winner?.candidateId !== candidateID ||
-      result.result?.incrementalRevenueGate?.allowedChannel !==
-        'application_page' ||
+      result.winner !== null ||
+      result.result?.incrementalRevenueGate?.allowedChannel !== '' ||
+      result.result?.incrementalRevenueGate?.actionCanBeginNow !== false ||
+      result.result?.incrementalRevenueGate?.knownPermissions !== false ||
+      result.result?.allowedChannel !== 'none' ||
       result.result?.executionAuthorization !== 'none' ||
       result.gate?.sideEffects?.pdlCalls !== 0 ||
       result.gate?.sideEffects?.outreachAttempts !== 0 ||
       result.gate?.sideEffects?.publishAttempts !== 0 ||
       result.gate?.sideEffects?.providerWrites !== 0) {
     throw new Error(
-      `provider-attested paid demand did not ground the programmer hiring path: ${JSON.stringify({ result, generatorPrompt })}`
+      `unplanned legacy paid demand authorized an application route: ${JSON.stringify({ result, generatorPrompt })}`
     );
   }
 }
@@ -4506,7 +4510,8 @@ async function verifyProviderProjectionOrderAndProfessionNeutrality() {
     offer: 'A paid software architecture advisory engagement',
     destination: 'Software architecture advisory booking page',
     mechanism: 'signed_contract',
-    outcome: 'One signed software architecture contract recorded',
+    outcome:
+      'One paid software architecture contract is signed and its first invoice payment is received and recorded',
     attributionMethod: 'invoice_or_contract',
     attribution:
       'Contract source field stores the organic-search UTM campaign',
@@ -4942,7 +4947,8 @@ async function verifyBettyLongHomepageCompactionRegression() {
     offer: 'A reimbursable same-day lactation home visit',
     destination: 'Same-day home-visit booking page',
     mechanism: 'insurance_reimbursement',
-    outcome: 'One paid or reimbursed consultation recorded',
+    outcome:
+      'One completed reimbursable consultation has a paid claim and reimbursement payment received',
     attributionMethod: 'claim_record',
     attribution:
       'Claim record source field stores the organic-search campaign',
@@ -5296,7 +5302,8 @@ async function verifyBettyDistinctArticlePressureRegression() {
     offer: 'A reimbursable same-day lactation home visit',
     destination: 'Same-day home-visit booking page',
     mechanism: 'insurance_reimbursement',
-    outcome: 'One paid or reimbursed consultation recorded',
+    outcome:
+      'One completed reimbursable consultation has a paid claim and reimbursement payment received',
     attributionMethod: 'claim_record',
     attribution:
       'Booking or claim record source field stores the organic-search campaign',
