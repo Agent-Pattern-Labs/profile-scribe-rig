@@ -1142,21 +1142,21 @@ function compactOpportunityDiscoveryOutputContract() {
     revenuePath:
       `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,k,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; k={v,i,c,o,t,d,s,n,u} proves six causal semantics; g binds evidence`,
     evidence:
-      `base+tactic e includes ${CONTINGENT_TARGET_EVIDENCE_REF}, one observation:* and every child ref; child refs⊆plan refs+target`
+      `base+tactic e has ${CONTINGENT_TARGET_EVIDENCE_REF}, observation:*, all child refs; child refs⊆plan refs+target`
   };
 }
 
 function compactOpportunityDiscoveryHardRules() {
   return [
-    'Exactly 1 motion: complete pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
-    'Use evidenceCatalog IDs only. base+each tactic e has observation:*; system attribution proves attribution only; obey targetRoleMap.',
-    `Both tacticA.a and tacticB.a contain exactly 2 variants; each independently completes its commercial ask, never setup/support: ask ${CONTINGENT_TARGET_NAME_TOKEN} for a paid referral/introduction, booking/order/contract/subscription, compensated application/proposal, or paid listing.`,
-    'Each r: a=plan.acquisitionMode; required k.i proves counterfactual paid income; k.c=k.o=rm; k.t=atm.',
-    'r.o: one completed rm-specific paid event; no or/either/attempt/pending/declined/failed/not received.',
-    'Each r: k.d proves a separate destination; k.s/n/u prove a bounded stop; calendar_days<=30; author io/c/o/ats/cd/st; vm>0.',
-    'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence; a prospective partner proves no buyer, offer, warmness, permission, or demand.',
-    'Tactics differ causally. Review=authorization, not acquisitionMode. organization_then_decision_maker needs 1-6 professional roles. Never target patients/sensitive traits/private contacts; only referral query may describe population served. No outreach/publish/ads/forms/provider writes.',
-    'Audit once; return one minified strict-JSON object.'
+    '1 motion: pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
+    'Evidence IDs only; base+each tactic e has observation:*; system attribution is attribution-only; obey targetRoleMap.',
+    `tacticA.a/tacticB.a: 2 complete asks each, never setup/support; ask ${CONTINGENT_TARGET_NAME_TOKEN} for paid referral, conversion, application/proposal, or listing.`,
+    'Each r: a=plan.acquisitionMode; k.i=counterfactual paid income; k.c=k.o=rm; k.t=atm.',
+    'r.o exactly one rm event, not objective alternatives: paid_booking=paid booking completed+payment receipt; direct_sale=paid order completed+payment receipt; signed_contract=contract signed+payment received; paid_pilot=paid pilot signed+deposit received; subscription_or_retainer=subscription activated+payment receipt; insurance_reimbursement=paid claim+reimbursement received; license_or_royalty=license signed+payment received; commission_or_referral=commission payment received; sponsorship=sponsorship signed+payment received; platform_payout=payout received; compensated_role=offer accepted. Reject or/either/attempt/pending/declined/failed/not received.',
+    'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/c/o/ats/cd/st; vm>0.',
+    'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
+    'Tactics differ. Review!=acquisitionMode. decision-maker: 1-6 roles. No sensitive/private targets; population only in referral query. No external writes.',
+    'Audit once; return minified strict JSON.'
   ];
 }
 
@@ -2311,7 +2311,8 @@ function terminalPaidOutcomeText(value, mechanism) {
     return /\b(?:claim|reimbursement)s?\b/i.test(text) && (
       /\bpaid claim\b/i.test(text) ||
       cashSettlement
-    );
+    ) || /\breimbursed\b/i.test(text) &&
+      /\b(?:appointment|booking|consultation|service|session|visit)s?\b/i.test(text);
   case 'license_or_royalty':
     return /\b(?:licen[cs]e|licensing|royalt(?:y|ies))\b/i.test(text) &&
       cashSettlement;

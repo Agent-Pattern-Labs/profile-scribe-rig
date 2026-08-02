@@ -464,7 +464,7 @@ for (const scenario of cases) {
       !Array.isArray(plannerPrompt.hardRules) ||
       plannerPrompt.hardRules.length < 7 ||
       !plannerPrompt.hardRules.some((rule) =>
-        /exactly 1 motion.*pathBase\+2 causal tactics/i.test(
+        /(?:exactly )?1 motion.*pathBase\+2 causal tactics/i.test(
           rule
         )
       ) ||
@@ -540,7 +540,12 @@ for (const scenario of cases) {
           ?.actionItem?.properties?.l?.description || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /both tacticA\.a and tacticB\.a contain exactly 2 variants.*independently completes its commercial ask, never setup\/support/i.test(
+        /tacticA\.a\/tacticB\.a: 2 complete asks each, never setup\/support/i.test(
+          rule
+        )
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
+        /r\.o exactly one rm event.*paid_booking=.*compensated_role=offer accepted/is.test(
           rule
         )
       )) {
@@ -1797,6 +1802,7 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
     ['paid_pilot', 'One paid pilot was completed and its funds received.'],
     ['subscription_or_retainer', 'One subscription was signed and its funds received.'],
     ['insurance_reimbursement', 'One claim was paid.'],
+    ['insurance_reimbursement', 'One reimbursed consultation was completed and recorded.'],
     ['license_or_royalty', 'One licensing payment was received.'],
     ['license_or_royalty', 'One royalties statement shows payment received.'],
     ['commission_or_referral', 'One commission invoice was paid.'],
