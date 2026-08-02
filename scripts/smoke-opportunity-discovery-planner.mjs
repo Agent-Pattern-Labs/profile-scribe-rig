@@ -17,13 +17,16 @@ const usage = {
   cost: 0.0065
 };
 const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 28 * 1024;
-const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 26 * 1024;
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 8_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 556_831;
+const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 12 * 1024;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 9_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 558_431;
 let largestPlannerResponseBytes = 0;
 let largestPlannerRequestBytes = 0;
 let largestPlannerContractBytes = 0;
 let productionShapedPlannerRequestBytes = 0;
+let largestMaterializedFixtureBytes = 0;
+let largestCompactFixtureBytes = 0;
+let smallestCompactResponseReduction = 1;
 
 const cases = [
   {
@@ -279,11 +282,35 @@ for (const scenario of cases) {
     now,
     completeJSON: async (request) => {
       requestSeen = request;
+      const responsePlan = scenario.plans(evidenceRef)[0];
+      const materializedBytes = Buffer.byteLength(
+        JSON.stringify(responsePlan.contingentFinalists),
+        'utf8'
+      );
+      responsePlan.contingentFinalists = compactContingentFinalists(
+        responsePlan.contingentFinalists
+      );
+      const compactBytes = Buffer.byteLength(
+        JSON.stringify(responsePlan.contingentFinalists),
+        'utf8'
+      );
+      largestMaterializedFixtureBytes = Math.max(
+        largestMaterializedFixtureBytes,
+        materializedBytes
+      );
+      largestCompactFixtureBytes = Math.max(
+        largestCompactFixtureBytes,
+        compactBytes
+      );
+      smallestCompactResponseReduction = Math.min(
+        smallestCompactResponseReduction,
+        1 - compactBytes / materializedBytes
+      );
       const responseData = {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
         reason: 'This search is the closest supported path to current paid demand or a qualified commercial channel.',
-        plans: scenario.plans(evidenceRef).slice(0, 1)
+        plans: [responsePlan]
       };
       if (scenario.name === 'lactation referral reasoning') {
         // These values are individually schema-valid but contradict their
@@ -294,7 +321,7 @@ for (const scenario of cases) {
         responseData.plans[0].targetSlot.requiredEvidenceRoles = [
           'defined_buyer'
         ];
-        responseData.plans[0].contingentFinalists.familyA.e = [
+        responseData.plans[0].contingentFinalists.pathBase.e = [
           'target:evidence'
         ];
       }
@@ -308,7 +335,7 @@ for (const scenario of cases) {
       );
       if (responseBytes > DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES) {
         throw new Error(
-          `${scenario.name}: valid call-1 response is ${responseBytes} bytes, above the 26 KiB compact-response target`
+          `${scenario.name}: valid call-1 response is ${responseBytes} bytes, above the 12 KiB compact-response target`
         );
       }
       return {
@@ -340,10 +367,13 @@ for (const scenario of cases) {
       requestSeen.plugins?.[0]?.max_results !== 5 ||
       requestSeen.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       !requestSeen.system?.includes(
-        'Keep the complete JSON response at or below 26 KiB.'
+        'Keep the complete JSON at or below 12 KiB.'
       ) ||
       !requestSeen.system?.includes(
-        'Return exactly one strongest plan containing two complete, causally distinct finalist families.'
+        'shared pathBase plus two distinct tactic deltas'
+      ) ||
+      !requestSeen.system?.includes(
+        'Return one minified object, concise strings, no formatting whitespace'
       ) ||
       result.status !== 'planned' ||
       result.contractVersion !== OPPORTUNITY_DISCOVERY_PLAN_CONTRACT ||
@@ -395,6 +425,9 @@ for (const scenario of cases) {
     );
   }
   const plannerPrompt = JSON.parse(requestSeen.user || '{}');
+  const contingentResponseSchema = requestSeen.responseFormat?.json_schema
+    ?.schema?.properties?.plans?.items?.properties?.contingentFinalists;
+  const contingentProperties = contingentResponseSchema?.properties || {};
   const promptWithoutContract = { ...plannerPrompt };
   delete promptWithoutContract.outputContract;
   delete promptWithoutContract.hardRules;
@@ -415,21 +448,67 @@ for (const scenario of cases) {
       !Array.isArray(plannerPrompt.hardRules) ||
       plannerPrompt.hardRules.length < 7 ||
       !plannerPrompt.hardRules.some((rule) =>
-        /exactly 1 strongest motion with both complete causal families/i.test(
+        /exactly 1 motion.*pathBase\+2 causal tactics/i.test(
           rule
         )
       ) ||
       requestSeen.responseFormat?.json_schema?.schema?.properties
         ?.plans?.maxItems !== 1 ||
+      !contingentProperties.pathBase ||
+      !contingentProperties.tacticA ||
+      !contingentProperties.tacticB ||
+      contingentProperties.familyA ||
+      contingentProperties.familyB ||
+      JSON.stringify(contingentResponseSchema?.required) !== JSON.stringify([
+        'seedContract',
+        'pathBase',
+        'tacticA',
+        'tacticB',
+        'w'
+      ]) ||
+      JSON.stringify(
+        requestSeen.responseFormat?.json_schema?.schema?.$defs
+          ?.pathBase?.required
+      ) !== JSON.stringify(['e', 'r', 'o', 'b', 't', 'p']) ||
+      JSON.stringify(
+        requestSeen.responseFormat?.json_schema?.schema?.$defs
+          ?.tactic?.required
+      ) !== JSON.stringify([
+        'l',
+        'm',
+        'tacticKey',
+        'e',
+        's',
+        'c',
+        'a',
+        'f'
+      ]) ||
       requestSeen.responseFormat?.json_schema?.schema?.$defs
-        ?.actionItem?.properties?.l?.pattern !==
-          '\\{\\{TARGET_NAME\\}\\}' ||
-      !/complete commercial ask, not setup\/support.*paid-offer referral.*paid booking.*compensated-role\/contract application/is.test(
+        ?.pathBase?.properties?.o?.minItems !== 2 ||
+      requestSeen.responseFormat?.json_schema?.schema?.$defs
+        ?.tactic?.properties?.c?.minItems !== 2 ||
+      requestSeen.responseFormat?.json_schema?.schema?.$defs
+        ?.tactic?.properties?.a?.maxItems !== 2 ||
+      requestSeen.responseFormat?.json_schema?.schema?.$defs
+        ?.tactic?.properties?.f?.maxItems !== 2 ||
+      !/^\^/.test(
+        requestSeen.responseFormat?.json_schema?.schema?.$defs
+          ?.actionItem?.properties?.l?.pattern || ''
+      ) ||
+      !/TARGET_NAME/.test(
+        requestSeen.responseFormat?.json_schema?.schema?.$defs
+          ?.actionItem?.properties?.l?.pattern || ''
+      ) ||
+      !/\$$/.test(
+        requestSeen.responseFormat?.json_schema?.schema?.$defs
+          ?.actionItem?.properties?.l?.pattern || ''
+      ) ||
+      !/one complete commercial ask.*never setup, support, or follow-up/is.test(
         requestSeen.responseFormat?.json_schema?.schema?.$defs
           ?.actionItem?.properties?.l?.description || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /both d\.a variants independently complete the commercial ask, never setup\/support/i.test(
+        /both tacticA\.a and tacticB\.a contain exactly 2 variants.*independently completes its commercial ask, never setup\/support/i.test(
           rule
         )
       )) {
@@ -458,6 +537,21 @@ for (const scenario of cases) {
         `call-1 structural binding drift was not canonicalized: ${JSON.stringify(normalizedMotion)}`
       );
     }
+  }
+  const materialized = result.plans[0].contingentFinalists;
+  const sharedDimensions = ['r', 'o', 'b', 't', 'p'];
+  if (!materialized?.familyA || !materialized?.familyB ||
+      materialized.pathBase || materialized.tacticA || materialized.tacticB ||
+      materialized.familyA.tacticKey === materialized.familyB.tacticKey ||
+      sharedDimensions.some((dimension) =>
+        JSON.stringify(materialized.familyA.d?.[dimension]) !==
+          JSON.stringify(materialized.familyB.d?.[dimension])
+      ) ||
+      JSON.stringify(materialized.familyA.d?.a) ===
+        JSON.stringify(materialized.familyB.d?.a)) {
+    throw new Error(
+      `${scenario.name}: compact planner bundle was not materialized into two diverse legacy families: ${JSON.stringify(materialized)}`
+    );
   }
   const projectedSystemCapability = plannerPrompt.evidenceCatalog?.find(
     (item) => item.id ===
@@ -660,8 +754,15 @@ await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifyTwoStageTargetBinding();
 await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
+if (smallestCompactResponseReduction < 0.25 ||
+    largestCompactFixtureBytes >= largestMaterializedFixtureBytes) {
+  throw new Error(
+    `shared planner contract did not reduce representative response size: ${JSON.stringify({ largestMaterializedFixtureBytes, largestCompactFixtureBytes, smallestCompactResponseReduction })}`
+  );
+}
+
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + single-motion/two-family compaction + thrown-length safe receipt + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
@@ -1182,6 +1283,7 @@ async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
 }
 
 async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
+  const liveTruncatedCompletionTokens = 8_000;
   let calls = 0;
   let requestSeen;
   const result = await runOpportunityDiscoveryPlanner({
@@ -1199,7 +1301,7 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
       error.openRouterGenerationId = 'generation-live-length-regression';
       error.openRouterUsage = {
         prompt_tokens: 9_700,
-        completion_tokens: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
+        completion_tokens: liveTruncatedCompletionTokens,
         total_tokens: 17_700,
         cost: 0.02168
       };
@@ -1224,7 +1326,7 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
       result.usage?.calls !== 1 ||
       result.usage?.successfulCalls !== 0 ||
       result.usage?.completionTokens !==
-        DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
+        liveTruncatedCompletionTokens ||
       result.usage?.reportedCostMicros !== 21_680 ||
       receipt?.status !== 'failed' ||
       receipt?.error !== 'openrouter_truncated_structured_output' ||
@@ -1460,7 +1562,12 @@ async function verifyTwoStageTargetBinding() {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
         reason: 'The strongest source-bindable referral search is warranted.',
-        plans: [scenario.plans(evidenceRef)[1]]
+        plans: [{
+          ...scenario.plans(evidenceRef)[1],
+          contingentFinalists: compactContingentFinalists(
+            scenario.plans(evidenceRef)[1].contingentFinalists
+          )
+        }]
       },
       usage,
       generationId: 'generation-two-stage-planner',
@@ -2250,12 +2357,16 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
     now,
     completeJSON: async (request) => {
       requestSeen = request;
+      const productionMotion = cases[0].plans(evidenceRef)[0];
+      productionMotion.contingentFinalists = compactContingentFinalists(
+        productionMotion.contingentFinalists
+      );
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
           reason: 'One compact source-bound professional motion.',
-          plans: [cases[0].plans(evidenceRef)[0]]
+          plans: [productionMotion]
         },
         usage,
         generationId: 'generation-production-shaped-headroom',
@@ -2585,6 +2696,59 @@ function contingentFinalists(motion) {
       : motion.acquisitionMode === 'inbound'
         ? `Inbound discovery at {{TARGET_NAME}} (${variant})`
         : `Review-first application to {{TARGET_NAME}} (${variant})`;
+  const sharedVariants = ['path option one', 'path option two'];
+  const sharedDimensions = {
+    r: [{
+      l: `${motion.paidOffer}: attributable payment`,
+      e: [ref, targetRef, attributionRef],
+      v: 'incremental_revenue_v3',
+      rm: mechanism,
+      io: `One additional paid income outcome from ${motion.paidOffer}.`,
+      a: motion.acquisitionMode,
+      c: acquisitionAction('shared paid path'),
+      o: mechanism === 'compensated_role'
+        ? 'One compensation offer accepted or salary payment recorded.'
+        : mechanism === 'subscription_or_retainer'
+          ? 'One paid subscription order recorded.'
+          : mechanism === 'signed_contract'
+            ? 'One signed contract and paid invoice recorded.'
+        : 'One paid booking or payment receipt recorded.',
+      atm: attributionMethod,
+      ats: attributionSignal,
+      cd: conversionDestination,
+      st: 'Stop after 10 attempts, 1 paid outcome, or 14 calendar days, whichever comes first.',
+      g: {
+        b: [buyerRef],
+        o: paidDemand ? [targetRef] : [ref],
+        a: [targetRef],
+        d: {
+          l: conversionDestination,
+          e: paidDemand ? [targetRef] : [ref]
+        },
+        c: paidDemand ? [targetRef] : [ref],
+        t: [attributionRef]
+      },
+      sb: 'Prepare only the evidence-backed action artifact.',
+      vm: 500_000
+    }],
+    o: sharedVariants.map((variant) => ({
+      l: `${motion.paidOffer} (${variant})`,
+      e: paidDemand ? [targetRef] : [ref]
+    })),
+    b: sharedVariants.map((variant) => ({
+      l: `${motion.buyer} via {{TARGET_NAME}} (${variant})`,
+      e: [buyerRef]
+    })),
+    t: sharedVariants.map((variant) => ({
+      l: `Current target check (${variant})`,
+      e: [ref],
+      q: 'current'
+    })),
+    p: sharedVariants.map((variant) => ({
+      l: `Verified seller and target proof (${variant})`,
+      e: [ref, targetRef]
+    }))
+  };
   const makeFamily = (key, variantA, variantB) => ({
     l: `${motion.id} ${key}`,
     m: motion.acquisitionMode,
@@ -2592,62 +2756,13 @@ function contingentFinalists(motion) {
     s: scores,
     tacticKey: key,
     d: {
-      r: [{
-        l: `${motion.paidOffer}: attributable payment`,
-        e: [ref, targetRef, attributionRef],
-        v: 'incremental_revenue_v3',
-        rm: mechanism,
-        io: `One additional paid income outcome from ${motion.paidOffer}.`,
-        a: motion.acquisitionMode,
-        c: acquisitionAction(variantA),
-        o: mechanism === 'compensated_role'
-          ? 'One compensation offer accepted or salary payment recorded.'
-          : mechanism === 'subscription_or_retainer'
-            ? 'One paid subscription order recorded.'
-            : mechanism === 'signed_contract'
-              ? 'One signed contract and paid invoice recorded.'
-          : 'One paid booking or payment receipt recorded.',
-        atm: attributionMethod,
-        ats: attributionSignal,
-        cd: conversionDestination,
-        st: 'Stop after 10 attempts, 1 paid outcome, or 14 calendar days, whichever comes first.',
-        g: {
-          b: [buyerRef],
-          o: paidDemand ? [targetRef] : [ref],
-          a: [targetRef],
-          d: {
-            l: conversionDestination,
-            e: paidDemand ? [targetRef] : [ref]
-          },
-          c: paidDemand ? [targetRef] : [ref],
-          t: [attributionRef]
-        },
-        sb: 'Prepare only the evidence-backed action artifact.',
-        vm: 500_000
-      }],
-      o: [variantA, variantB].map((variant) => ({
-        l: `${motion.paidOffer} (${variant})`,
-        e: paidDemand ? [targetRef] : [ref]
-      })),
-      b: [variantA, variantB].map((variant) => ({
-        l: `${motion.buyer} via {{TARGET_NAME}} (${variant})`,
-        e: [buyerRef]
-      })),
+      ...structuredClone(sharedDimensions),
       c: [variantA, variantB].map((variant) => ({
         l: channel(variant),
         e: [targetRef]
       })),
       a: [variantA, variantB].map((variant) => ({
         l: acquisitionAction(variant),
-        e: [ref, targetRef]
-      })),
-      t: [variantA, variantB].map((variant) => ({
-        l: `Current target check (${variant})`,
-        e: [ref],
-        q: 'current'
-      })),
-      p: [variantA, variantB].map((variant) => ({
-        l: `Verified seller and target proof (${variant})`,
         e: [ref, targetRef]
       })),
       f: [variantA, variantB].map((variant) => ({
@@ -2661,5 +2776,35 @@ function contingentFinalists(motion) {
     familyA: makeFamily('direct_referral_tactic', 'route alpha', 'route beta'),
     familyB: makeFamily('artifact_led_tactic', 'route gamma', 'route delta'),
     w: scores
+  };
+}
+
+function compactContingentFinalists(value) {
+  const materialized = structuredClone(value);
+  const familyA = materialized.familyA;
+  const familyB = materialized.familyB;
+  const tactic = (family) => ({
+    l: family.l,
+    m: family.m,
+    tacticKey: family.tacticKey,
+    e: family.e.slice(0, 2),
+    s: family.s,
+    c: family.d.c,
+    a: family.d.a,
+    f: family.d.f
+  });
+  return {
+    seedContract: materialized.seedContract,
+    pathBase: {
+      e: familyA.e,
+      r: familyA.d.r,
+      o: familyA.d.o,
+      b: familyA.d.b,
+      t: familyA.d.t,
+      p: familyA.d.p
+    },
+    tacticA: tactic(familyA),
+    tacticB: tactic(familyB),
+    w: materialized.w
   };
 }

@@ -165,7 +165,7 @@ const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
 ];
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
-const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 8_000;
+const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 9_000;
 // One outer motion already carries two independently complete causal tactic
 // families. Keeping call 1 to that single strongest motion preserves the
 // required family-diverse critic comparison while preventing the duplicated
@@ -531,10 +531,10 @@ export async function runOpportunityDiscoveryPlanner({
 Ground claims only in commercialEvidenceGraph.verifiedFacts and the forced read-only search context; inferences remain unverified and missingFacts remain gaps. A verified roles=["attribution"] system capability proves only a future attribution record—never buyer, offer, demand, acquisition, channel fit, payment, or conversion.
 Infer complementary economic roles, not matching profession keywords: e.g. lactation consultant→newborn-care referral authority; programmer→live compensated demand; consultant→current buying trigger; product owner→marketplace, buyer, or distributor. Separate end payer from referral/distribution counterparty. Prefer supported live paid demand. A site or booking page is a conversion destination, not acquisition demand.
 Plans are contingent motions, never proof that a target exists, is interested, will refer, has budget, or permits contact. Model prose cannot establish a web target. Leave it unresolved as {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for deterministic binding to a validated provider citation/record; use target:evidence only where that future fact grounds a dimension.
-Return exactly one strongest plan containing two complete, causally distinct finalist families. Modes: active_job_posting=compensated job/contract; professional_counterparty=buyer/referral authority/sponsor/partner; local_organization=location-bound professional organization; public_live_demand=current public paid RFP/contract/marketplace/sponsorship demand. For a local organization's decision-maker, use organization_then_decision_maker plus 1-6 non-sensitive professional targetRoleTerms; never use that strategy with another mode or pretend the organization is a person.
-The plan has two complete families with different causal acquisition tactics, two variants per dimension, and one v3 revenue path per family. Include a current paid offer, buyer, acquisition mechanism separate from destination, paid conversion, durable attribution method/signal, numeric stop, positive value, spend estimate, exact evidence, and active (not observational/operational) actions.
-Both d.a variants independently complete the same family's commercial ask; neither is setup, support, or follow-up. Each contains {{TARGET_NAME}} once and asks for one buyer referral/introduction to the paid offer, requests one paid booking/order/contract/subscription, submits one application/proposal for a compensated role/contract, or lists the offer to capture one paid order/subscription. Review/approval states execution authorization only, never acquisitionMode; separately name partner referral, permissioned outreach, inbound discovery, or the actual acquisition channel. Deterministic code replaces declared tokens/refs only and writes no missing prose. Workflow, scheduling, resource, document, profile, content, or measurement work cannot be the requested outcome.
-Keep the complete JSON response at or below 26 KiB. Use compact labels and one concise sentence per action/path field; do not repeat rationale/evidence prose in labels.
+Return one plan with shared pathBase plus two distinct tactic deltas. Modes: active_job_posting=paid job/contract; professional_counterparty=buyer/referral authority/sponsor/partner; local_organization=local professional organization; public_live_demand=paid RFP/contract/marketplace/sponsorship demand. organization_then_decision_maker is local_organization only and needs 1-6 professional targetRoleTerms.
+pathBase owns e,r,o,b,t,p: one v3 revenue path and two offer/buyer/timing/proof variants. tacticA/B each own l,m,tacticKey,e,s,c,a,f and exactly two channel/action/follow-up variants. Tactics differ causally but preserve the shared buyer-to-payment base. Include current paid offer, distinct acquisition and destination, paid conversion, attribution, numeric stop, positive value, spend, evidence, and active actions.
+Every tactic action contains {{TARGET_NAME}} once and independently asks for a paid-offer referral/introduction, paid booking/order/contract/subscription, compensated-role application/proposal, or paid listing. It is never setup/support/follow-up. Review is authorization, not acquisitionMode. Deterministic code only materializes families and binds tokens/refs; workflow, scheduling, resource, document, profile, content, and measurement work cannot be the outcome.
+Keep the complete JSON at or below 12 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 target:evidence cannot prove seller capability, an existing/warm/permitted relationship, private contacts, or paid demand outside its typed slot. Ground the user's current offer, destination, and attribution in exact approved IDs. A professional-identity slot proves only exact identity and prospective channel fit; only live-paid-demand may ground an outside paid offer, application destination, and compensated conversion.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"); the typed target stays a professional person/organization and targetRoleTerms, organizationTerms, jobTitle, skills never target that population. Copy IDs/tokens exactly. Return strict JSON only.`;
   const user = JSON.stringify({
@@ -707,9 +707,18 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
 }
 
 function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
+  const boundedText = (maxLength, allowEmpty = false) => ({
+    type: 'string',
+    pattern: `^[^\\r\\n]{${allowEmpty ? '0' : '1'},${maxLength}}$`
+  });
   const stringArray = (maxItems) => ({
     type: 'array',
     items: { type: 'string' },
+    maxItems
+  });
+  const boundedStringArray = (maxItems, maxLength = 80) => ({
+    type: 'array',
+    items: boundedText(maxLength),
     maxItems
   });
   const contingentSchema = tournamentStructuredResponseFormat(
@@ -720,36 +729,124 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
     INITIAL_FAMILY_VARIANT_COUNT
   ).json_schema.schema;
   const contingentFamily = asObject(contingentSchema.$defs.family);
+  const contingentDimensions = asObject(
+    asObject(contingentFamily.properties).d
+  );
+  const contingentDimensionProperties = asObject(
+    contingentDimensions.properties
+  );
   const contingentActionItem = asObject(
     contingentSchema.$defs.actionItem
   );
+  const boundedItemDefinition = (key, labelMaxLength = 140) => {
+    const definition = asObject(contingentSchema.$defs[key]);
+    const properties = asObject(definition.properties);
+    return {
+      ...definition,
+      properties: {
+        ...properties,
+        l: boundedText(labelMaxLength),
+        ...(Object.prototype.hasOwnProperty.call(properties, 'q')
+          ? { q: boundedText(140) }
+          : {})
+      }
+    };
+  };
+  const revenuePath = asObject(contingentSchema.$defs.revenuePath);
+  const revenuePathProperties = asObject(revenuePath.properties);
+  const revenueGrounding = asObject(revenuePathProperties.g);
+  const revenueGroundingProperties = asObject(revenueGrounding.properties);
+  const destinationGrounding = asObject(revenueGroundingProperties.d);
   const contingentDefs = {
-    ...contingentSchema.$defs,
+    evidenceRef: contingentSchema.$defs.evidenceRef,
+    evidenceRefs: contingentSchema.$defs.evidenceRefs,
+    compactEvidenceRefs: contingentSchema.$defs.compactEvidenceRefs,
+    scores: contingentSchema.$defs.scores,
+    offerItem: boundedItemDefinition('offerItem'),
+    buyerItem: boundedItemDefinition('buyerItem'),
+    channelItem: boundedItemDefinition('channelItem'),
     actionItem: {
       ...contingentActionItem,
       properties: {
         ...asObject(contingentActionItem.properties),
         l: {
-          ...asObject(asObject(contingentActionItem.properties).l),
-          pattern: '\\{\\{TARGET_NAME\\}\\}',
+          type: 'string',
+          pattern:
+            '^[^\\r\\n]{0,72}\\{\\{TARGET_NAME\\}\\}[^\\r\\n]{0,72}$',
           description:
-            'Complete commercial ask, not setup/support: paid-offer referral/introduction; paid booking/order/contract/subscription; compensated-role/contract application/proposal; or paid-order/subscription listing.'
+            'One complete commercial ask; never setup, support, or follow-up.'
         }
       }
     },
-    family: {
-      ...contingentFamily,
+    timingItem: boundedItemDefinition('timingItem'),
+    proofItem: boundedItemDefinition('proofItem'),
+    followUpItem: boundedItemDefinition('followUpItem'),
+    revenuePath: {
+      ...revenuePath,
       properties: {
-        ...asObject(contingentFamily.properties),
+        ...revenuePathProperties,
+        l: boundedText(140),
+        io: boundedText(180),
+        c: boundedText(180),
+        o: boundedText(180),
+        ats: boundedText(220),
+        cd: boundedText(180),
+        st: boundedText(180),
+        sb: boundedText(180, true),
+        g: {
+          ...revenueGrounding,
+          properties: {
+            ...revenueGroundingProperties,
+            d: {
+              ...destinationGrounding,
+              properties: {
+                ...asObject(destinationGrounding.properties),
+                l: boundedText(180)
+              }
+            }
+          }
+        }
+      }
+    },
+    pathBase: {
+      type: 'object',
+      properties: {
+        e: asObject(contingentFamily.properties).e,
+        r: contingentDimensionProperties.r,
+        o: contingentDimensionProperties.o,
+        b: contingentDimensionProperties.b,
+        t: contingentDimensionProperties.t,
+        p: contingentDimensionProperties.p
+      },
+      required: ['e', 'r', 'o', 'b', 't', 'p'],
+      additionalProperties: false
+    },
+    tactic: {
+      type: 'object',
+      properties: {
+        l: boundedText(140),
+        m: asObject(contingentFamily.properties).m,
         tacticKey: {
           type: 'string',
           pattern: '^[a-z][a-z0-9_]{2,63}$'
-        }
+        },
+        e: contingentSchema.$defs.compactEvidenceRefs,
+        s: asObject(contingentFamily.properties).s,
+        c: contingentDimensionProperties.c,
+        a: contingentDimensionProperties.a,
+        f: contingentDimensionProperties.f
       },
       required: [
-        ...asArray(contingentFamily.required),
-        'tacticKey'
-      ]
+        'l',
+        'm',
+        'tacticKey',
+        'e',
+        's',
+        'c',
+        'a',
+        'f'
+      ],
+      additionalProperties: false
     }
   };
   return {
@@ -768,7 +865,7 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
             type: 'string',
             enum: ['planned', 'insufficient_verified_supply']
           },
-          reason: { type: 'string' },
+          reason: boundedText(320, true),
           plans: {
             type: 'array',
             minItems: 0,
@@ -776,7 +873,10 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
             items: {
               type: 'object',
               properties: {
-                id: { type: 'string' },
+                id: {
+                  type: 'string',
+                  pattern: '^[a-z][a-z0-9_-]{2,63}$'
+                },
                 priority: { type: 'integer', minimum: 1, maximum: 3 },
                 searchMode: {
                   type: 'string',
@@ -790,21 +890,21 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
                   type: 'string',
                   enum: [...ACQUISITION_MODES]
                 },
-                buyer: { type: 'string' },
-                counterparty: { type: 'string' },
-                paidOffer: { type: 'string' },
+                buyer: boundedText(140),
+                counterparty: boundedText(140),
+                paidOffer: boundedText(140),
                 evidenceRefs: stringArray(4),
-                query: { type: 'string' },
-                market: { type: 'string' },
-                targetRoleTerms: stringArray(6),
-                organizationTerms: stringArray(6),
-                jobTitle: { type: 'string' },
-                skills: stringArray(6),
-                acquisitionMechanism: { type: 'string' },
-                conversionDestination: { type: 'string' },
-                paidConversion: { type: 'string' },
-                attributionSignal: { type: 'string' },
-                rationale: { type: 'string' },
+                query: boundedText(180),
+                market: boundedText(120, true),
+                targetRoleTerms: boundedStringArray(6),
+                organizationTerms: boundedStringArray(6),
+                jobTitle: boundedText(100, true),
+                skills: boundedStringArray(6),
+                acquisitionMechanism: boundedText(180),
+                conversionDestination: boundedText(180),
+                paidConversion: boundedText(140),
+                attributionSignal: boundedText(180),
+                rationale: boundedText(180),
                 targetSlot: {
                   type: 'object',
                   properties: {
@@ -863,11 +963,18 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
                       type: 'string',
                       enum: [SEED_CONTRACT_VERSION]
                     },
-                    familyA: { $ref: '#/$defs/family' },
-                    familyB: { $ref: '#/$defs/family' },
+                    pathBase: { $ref: '#/$defs/pathBase' },
+                    tacticA: { $ref: '#/$defs/tactic' },
+                    tacticB: { $ref: '#/$defs/tactic' },
                     w: contingentSchema.properties.w
                   },
-                  required: ['seedContract', 'familyA', 'familyB', 'w'],
+                  required: [
+                    'seedContract',
+                    'pathBase',
+                    'tacticA',
+                    'tacticB',
+                    'w'
+                  ],
                   additionalProperties: false
                 }
               },
@@ -908,12 +1015,9 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
 }
 
 function compactOpportunityDiscoveryOutputContract() {
-  const finalist = compactTournamentOutputContract(
-    INITIAL_FAMILY_VARIANT_COUNT
-  );
   return {
     plan:
-      'Return exactly 1 strongest plan and fill every schema-required field; its familyA/familyB are the 2 causal revenue paths.',
+      'Return exactly 1 strongest plan; fill every required field.',
     targetSlot:
       `${CONTINGENT_TARGET_NAME_TOKEN}/${CONTINGENT_TARGET_URL_TOKEN}/${CONTINGENT_TARGET_EVIDENCE_REF}; commercialRole=plan.commercialRole; live demand=live_paid_demand/single_exact_target`,
     targetRoleMap: {
@@ -934,25 +1038,27 @@ function compactOpportunityDiscoveryOutputContract() {
       ]
     },
     finalists:
-      `contingentFinalists={seedContract:${SEED_CONTRACT_VERSION},familyA,familyB,w}; family={l,m,e,s,tacticKey,d}; m=plan.acquisitionMode; tacticKey=unique lower_snake_case`,
-    dimensions: finalist.dimensions,
-    item: finalist.item,
-    revenuePath: finalist.revenuePath,
+      `{seedContract:${SEED_CONTRACT_VERSION},pathBase,tacticA,tacticB,w}; pathBase={e,r,o,b,t,p}; tactic={l,m,tacticKey,e,s,c,a,f}; m=plan.acquisitionMode; tacticKey unique`,
+    dimensions:
+      `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}`,
+    item: '{l,e}; t={l,e,q}; exact evidence IDs',
+    revenuePath:
+      `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; g binds the six causal evidence roles`,
     evidence:
-      `family e has ${CONTINGENT_TARGET_EVIDENCE_REF}, one plan observation:* ID, every child ref; child refs⊆plan.evidenceRefs+${CONTINGENT_TARGET_EVIDENCE_REF}`
+      `base+tactic e includes ${CONTINGENT_TARGET_EVIDENCE_REF}, one observation:* and every child ref; child refs⊆plan refs+target`
   };
 }
 
 function compactOpportunityDiscoveryHardRules() {
   return [
-    'Return exactly 1 strongest motion with both complete causal families; insufficient_verified_supply=0 plans+reason.',
-    'Use only evidenceCatalog IDs. Every plan/family has an observation:* seller anchor; system attribution proves attribution only; obey targetRoleMap.',
-    `Both d.a variants independently complete the commercial ask, never setup/support: ask ${CONTINGENT_TARGET_NAME_TOKEN} for a paid-offer buyer referral/introduction, paid booking/order/contract/subscription, compensated-role/contract application/proposal, or paid-order/subscription listing.`,
+    'Exactly 1 motion: complete pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
+    'Use evidenceCatalog IDs only. base+each tactic e has observation:*; system attribution proves attribution only; obey targetRoleMap.',
+    `Both tacticA.a and tacticB.a contain exactly 2 variants; each independently completes its commercial ask, never setup/support: ask ${CONTINGENT_TARGET_NAME_TOKEN} for a paid referral/introduction, booking/order/contract/subscription, compensated application/proposal, or paid listing.`,
     'Each r: a=plan.acquisitionMode; io=incremental paid income; c=active conversion; o=paid booking/payment/contract/order/subscription/compensation receipt.',
     'Each r: allowed atm; ats=matching durable record+source/referral/UTM/campaign/channel/code field; cd=conversion page separate from acquisition; st=number+time/sample/action unit+stop/at-most/whichever-first; vm>0.',
     'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence; a prospective partner proves no buyer, offer, warmness, permission, or demand.',
-    'Families use different causal tactics. Review/approval=authorization, not acquisitionMode; name the channel. organization_then_decision_maker needs 1-6 professional roles. Never target patients/sensitive traits/private contacts; only a typed referral-partner query may describe population served, never direct role/org/job/skill fields. No outreach/publish/ads/forms/provider writes/prose outside JSON.',
-    'Audit every short key and semantic rule; return strict JSON.'
+    'Tactics differ causally. Review=authorization, not acquisitionMode. organization_then_decision_maker needs 1-6 professional roles. Never target patients/sensitive traits/private contacts; only referral query may describe population served. No outreach/publish/ads/forms/provider writes.',
+    'Audit once; return one minified strict-JSON object.'
   ];
 }
 
@@ -1077,6 +1183,9 @@ function normalizeContingentFinalistBundle(
     return {};
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
+  clone = materializePlannerContingentFinalistBundle(clone);
+  if (Object.keys(asObject(clone)).length === 0) return {};
+  if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   const plan = asObject(planValue);
   const planEvidenceRefs = compactStrings(plan.evidenceRefs)
     .filter((ref) => knownEvidence.has(ref) &&
@@ -1098,6 +1207,69 @@ function normalizeContingentFinalistBundle(
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   return clone;
+}
+
+/**
+ * Call 1 authors the common paid path once and only the three tactic-local
+ * dimensions twice. Downstream validation, target binding, persistence, and
+ * the independent critic deliberately continue to consume the established
+ * familyA/familyB contract. This is structural copying only: no commercial
+ * text, evidence reference, or score is synthesized here.
+ *
+ * Previously persisted planner receipts already contain materialized
+ * familyA/familyB values. Canonicalizing that shape to its supported keys
+ * retains read compatibility while preventing a mixed compact/materialized
+ * object from widening the durable contract.
+ */
+function materializePlannerContingentFinalistBundle(value) {
+  const raw = asObject(value);
+  const materializedFamilyA = asObject(raw.familyA);
+  const materializedFamilyB = asObject(raw.familyB);
+  if (Object.keys(materializedFamilyA).length > 0 &&
+      Object.keys(materializedFamilyB).length > 0) {
+    return {
+      seedContract: raw.seedContract,
+      familyA: materializedFamilyA,
+      familyB: materializedFamilyB,
+      w: asObject(raw.w)
+    };
+  }
+
+  const pathBase = asObject(raw.pathBase);
+  const tacticA = asObject(raw.tacticA);
+  const tacticB = asObject(raw.tacticB);
+  if (Object.keys(pathBase).length === 0 ||
+      Object.keys(tacticA).length === 0 ||
+      Object.keys(tacticB).length === 0) {
+    return raw;
+  }
+  const copy = (item) => JSON.parse(JSON.stringify(item));
+  const family = (tactic) => ({
+    l: tactic.l,
+    m: tactic.m,
+    e: compactStrings([
+      ...asArray(pathBase.e),
+      ...asArray(tactic.e)
+    ]),
+    s: copy(asObject(tactic.s)),
+    tacticKey: tactic.tacticKey,
+    d: {
+      r: copy(asArray(pathBase.r)),
+      o: copy(asArray(pathBase.o)),
+      b: copy(asArray(pathBase.b)),
+      c: copy(asArray(tactic.c)),
+      a: copy(asArray(tactic.a)),
+      t: copy(asArray(pathBase.t)),
+      p: copy(asArray(pathBase.p)),
+      f: copy(asArray(tactic.f))
+    }
+  });
+  return {
+    seedContract: raw.seedContract,
+    familyA: family(tacticA),
+    familyB: family(tacticB),
+    w: copy(asObject(raw.w))
+  };
 }
 
 function contingentJSONShapeUnsafe(value, knownEvidence) {
