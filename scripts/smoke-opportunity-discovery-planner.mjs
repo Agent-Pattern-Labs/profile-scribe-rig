@@ -493,6 +493,7 @@ for (const scenario of cases) {
         'i',
         'c',
         'o',
+        'p',
         't',
         'd',
         's',
@@ -505,6 +506,12 @@ for (const scenario of cases) {
         '#/$defs/revenueMechanism' ||
       causalWitnessSchema.properties?.o?.$ref !==
         '#/$defs/revenueMechanism' ||
+      !causalWitnessSchema.properties?.p?.enum?.includes(
+        'paid_booking_terminal'
+      ) ||
+      !causalWitnessSchema.properties?.p?.enum?.includes(
+        'compensated_role_terminal'
+      ) ||
       causalWitnessSchema.properties?.t?.$ref !==
         '#/$defs/attributionMethod' ||
       JSON.stringify(
@@ -545,7 +552,10 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /r\.o exactly one rm event.*paid_booking=.*compensated_role=offer accepted/is.test(
+        /k\.p=rm\+"_terminal"/i.test(rule)
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
+        /r\.o describes that one terminal rm event.*not objective alternatives/is.test(
           rule
         )
       )) {
@@ -1715,14 +1725,20 @@ async function verifyServicePaymentOutcomesPass(job, evidenceRef) {
     'One paid session recorded.',
     'One paid service recorded.',
     'One paid engagement recorded.',
-    'One billable professional support session recorded.',
     'One reimbursed consultation recorded.',
     'One reimbursed visit recorded.',
     'One reimbursed session recorded.'
   ];
   for (const [index, outcome] of outcomes.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
-    motion.contingentFinalists.familyA.d.r[0].o = outcome;
+    const revenue = motion.contingentFinalists.familyA.d.r[0];
+    revenue.o = outcome;
+    if (/\breimbursed\b/i.test(outcome)) {
+      revenue.rm = 'insurance_reimbursement';
+      revenue.k.c = 'insurance_reimbursement';
+      revenue.k.o = 'insurance_reimbursement';
+      revenue.k.p = 'insurance_reimbursement_terminal';
+    }
     const result = await plannerResultForMotion({
       job,
       motion,
@@ -1737,21 +1753,26 @@ async function verifyServicePaymentOutcomesPass(job, evidenceRef) {
 }
 
 async function verifyUnpaidServiceOutcomeFails(job, evidenceRef) {
-  const motion = cases[0].plans(evidenceRef)[0];
-  motion.contingentFinalists.familyA.d.r[0].o =
-    'One completed unpaid lactation consultation recorded.';
-  const result = await plannerResultForMotion({
-    job,
-    motion,
-    generationId: 'generation-unpaid-service-outcome'
-  });
-  if (result.status !== 'blocked' ||
-      !result.reason.includes('[observable_revenue]') ||
-      result.plans.length !== 0 ||
-      result.sideEffectsPerformed !== 0) {
-    throw new Error(
-      `unpaid service outcome passed the revenue gate: ${JSON.stringify(result)}`
-    );
+  const outcomes = [
+    'One completed unpaid lactation consultation recorded.',
+    'One billable professional support session recorded.'
+  ];
+  for (const [index, outcome] of outcomes.entries()) {
+    const motion = cases[0].plans(evidenceRef)[0];
+    motion.contingentFinalists.familyA.d.r[0].o = outcome;
+    const result = await plannerResultForMotion({
+      job,
+      motion,
+      generationId: `generation-unpaid-service-outcome-${index + 1}`
+    });
+    if (result.status !== 'blocked' ||
+        !result.reason.includes('[observable_revenue]') ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `unsettled service outcome passed the revenue gate (${outcome}): ${JSON.stringify(result)}`
+      );
+    }
   }
 }
 
@@ -1777,6 +1798,7 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
       revenue.o = outcome;
       revenue.k.c = mechanism;
       revenue.k.o = mechanism;
+      revenue.k.p = `${mechanism}_terminal`;
     }
     return motion;
   };
@@ -1798,8 +1820,10 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
   const crossRuntimeVariants = [
     ['paid_booking', 'One paid lactation visit was completed and recorded.'],
     ['direct_sale', 'One paid checkout was completed.'],
+    ['direct_sale', 'One paid order was confirmed.'],
     ['signed_contract', 'One signed paid agreement and payment received.'],
     ['paid_pilot', 'One paid pilot was completed and its funds received.'],
+    ['paid_pilot', 'One paid pilot payment was received.'],
     ['subscription_or_retainer', 'One subscription was signed and its funds received.'],
     ['insurance_reimbursement', 'One claim was paid.'],
     ['insurance_reimbursement', 'One reimbursed consultation was completed and recorded.'],
@@ -1841,6 +1865,11 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
       mechanism: 'direct_sale',
       outcome: 'One order payment attempt is recorded.',
       name: 'direct-sale payment attempt'
+    },
+    {
+      mechanism: 'signed_contract',
+      outcome: 'One paid-services proposal was submitted.',
+      name: 'proposal submission without a paid conversion'
     },
     {
       mechanism: 'signed_contract',
@@ -1899,29 +1928,19 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
       name: 'recorded-only payment'
     },
     {
-      mechanism: 'direct_sale',
-      outcome: 'One paid order was confirmed.',
-      name: 'uncompleted paid order'
-    },
-    {
       mechanism: 'paid_booking',
       outcome: 'One billable visit was confirmed.',
       name: 'uncompleted billable visit'
     },
     {
-      mechanism: 'paid_pilot',
-      outcome: 'One paid pilot payment was received.',
-      name: 'pilot without accepted or completed agreement'
-    },
-    {
-      mechanism: 'signed_contract',
-      outcome: 'One paid bid is winning and its invoice is settled.',
-      name: 'nonterminal winning bid'
-    },
-    {
       mechanism: 'compensated_role',
       outcome: 'One compensated job offer was issued.',
       name: 'issued offer'
+    },
+    {
+      mechanism: 'compensated_role',
+      outcome: 'One application was accepted.',
+      name: 'accepted application without a compensated offer'
     },
     {
       mechanism: 'compensated_role',
@@ -2103,9 +2122,34 @@ async function verifyTypedCausalWitnessContract(job, evidenceRef) {
       typed.plans.length !== 1 ||
       typed.sideEffectsPerformed !== 0 ||
       typed.plans[0]?.contingentFinalists?.familyA?.d?.r?.[0]
-        ?.k?.v !== 'revenue_causal_witness_v1') {
+        ?.k?.v !== 'revenue_causal_witness_v2' ||
+      typed.plans[0]?.contingentFinalists?.familyA?.d?.r?.[0]
+        ?.k?.p !== 'paid_booking_terminal') {
     throw new Error(
       `typed causal witnesses did not carry through planner normalization: ${JSON.stringify(typed)}`
+    );
+  }
+
+  const legacyWitnessMotion = cases[0].plans(evidenceRef)[0];
+  for (const familyKey of ['familyA', 'familyB']) {
+    const witness = legacyWitnessMotion.contingentFinalists[familyKey]
+      .d.r[0].k;
+    witness.v = 'revenue_causal_witness_v1';
+    delete witness.p;
+  }
+  const legacyWitness = await plannerResultForMotion({
+    job,
+    motion: legacyWitnessMotion,
+    generationId: 'generation-legacy-v1-causal-witness'
+  });
+  if (legacyWitness.status !== 'blocked' ||
+      !/invalid typed causal revenue witness.*contract_version/i.test(
+        legacyWitness.reason
+      ) ||
+      legacyWitness.plans.length !== 0 ||
+      legacyWitness.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `new planner completion accepted a legacy v1 witness: ${JSON.stringify(legacyWitness)}`
     );
   }
 
@@ -2124,6 +2168,86 @@ async function verifyTypedCausalWitnessContract(job, evidenceRef) {
       mismatchResult.sideEffectsPerformed !== 0) {
     throw new Error(
       `invalid typed witness was rescued by legacy text: ${JSON.stringify(mismatchResult)}`
+    );
+  }
+
+  const mechanisms = [
+    'paid_booking',
+    'direct_sale',
+    'signed_contract',
+    'paid_pilot',
+    'subscription_or_retainer',
+    'insurance_reimbursement',
+    'license_or_royalty',
+    'commission_or_referral',
+    'sponsorship',
+    'platform_payout',
+    'compensated_role'
+  ];
+  for (const [index, mechanism] of mechanisms.entries()) {
+    const terminalMismatch = cases[0].plans(evidenceRef)[0];
+    for (const familyKey of ['familyA', 'familyB']) {
+      const revenue = terminalMismatch.contingentFinalists[familyKey]
+        .d.r[0];
+      revenue.rm = mechanism;
+      revenue.o = canonicalTerminalPaidOutcome(mechanism);
+      revenue.k.c = mechanism;
+      revenue.k.o = mechanism;
+      revenue.k.p = `${mechanism}_terminal`;
+    }
+    terminalMismatch.contingentFinalists.familyA.d.r[0].k.p =
+      index === mechanisms.length - 1
+        ? 'unknown_terminal'
+        : `${mechanisms[index + 1]}_terminal`;
+    const terminalMismatchResult = await plannerResultForMotion({
+      job,
+      motion: terminalMismatch,
+      generationId: `generation-mismatched-terminal-outcome-witness-${index + 1}`
+    });
+    if (terminalMismatchResult.status !== 'blocked' ||
+        !/invalid typed causal revenue witness.*observable_revenue/i.test(
+          terminalMismatchResult.reason
+        ) ||
+        terminalMismatchResult.plans.length !== 0 ||
+        terminalMismatchResult.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `mismatched ${mechanism} terminal outcome witness passed: ${JSON.stringify(terminalMismatchResult)}`
+      );
+    }
+  }
+
+  const missingTerminalState = cases[0].plans(evidenceRef)[0];
+  delete missingTerminalState.contingentFinalists.familyA.d.r[0].k.p;
+  const missingTerminalStateResult = await plannerResultForMotion({
+    job,
+    motion: missingTerminalState,
+    generationId: 'generation-missing-terminal-outcome-witness'
+  });
+  if (missingTerminalStateResult.status !== 'blocked' ||
+      !/invalid typed causal revenue witness.*observable_revenue/i.test(
+        missingTerminalStateResult.reason
+      ) ||
+      missingTerminalStateResult.plans.length !== 0 ||
+      missingTerminalStateResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `missing terminal outcome witness passed: ${JSON.stringify(missingTerminalStateResult)}`
+    );
+  }
+
+  const proseMismatch = cases[0].plans(evidenceRef)[0];
+  proseMismatch.contingentFinalists.familyA.d.r[0].o =
+    'One paid order was completed.';
+  const proseMismatchResult = await plannerResultForMotion({
+    job,
+    motion: proseMismatch,
+    generationId: 'generation-cross-mechanism-terminal-prose'
+  });
+  if (proseMismatchResult.status !== 'blocked' ||
+      !proseMismatchResult.reason.includes('[observable_revenue]') ||
+      proseMismatchResult.plans.length !== 0 ||
+      proseMismatchResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `cross-mechanism terminal prose passed: ${JSON.stringify(proseMismatchResult)}`
     );
   }
 
@@ -2187,6 +2311,23 @@ async function verifyTypedCausalWitnessContract(job, evidenceRef) {
       )) {
     throw new Error(
       `tampered persisted witness was rescued by legacy text: ${JSON.stringify(tamperedPersisted)}`
+    );
+  }
+  const legacyV1PersistedPlan = structuredClone(legacyValid);
+  for (const familyKey of ['familyA', 'familyB']) {
+    const witness = legacyV1PersistedPlan.plans[0]
+      .contingentFinalists[familyKey].d.r[0].k;
+    witness.v = 'revenue_causal_witness_v1';
+    delete witness.p;
+  }
+  const legacyV1Persisted = normalizeCommercialDiscoveryEvidence(
+    persistedEnvelope(legacyV1PersistedPlan, '7'.repeat(64)),
+    now
+  );
+  if (legacyV1Persisted.valid !== true ||
+      legacyV1Persisted.plan?.valid !== true) {
+    throw new Error(
+      `historical v1 receipt lost strict-text read compatibility: ${JSON.stringify(legacyV1Persisted)}`
     );
   }
   for (const familyKey of ['familyA', 'familyB']) {
@@ -2839,7 +2980,9 @@ async function verifyTwoStageTargetBinding() {
       const finalists = task.finalists || [];
       if (finalists.some((finalist) =>
         finalist.revenuePath?.causalWitness?.contractVersion !==
-          'revenue_causal_witness_v1'
+          'revenue_causal_witness_v2' ||
+        finalist.revenuePath?.causalWitness?.terminalOutcomeKind !==
+          'paid_booking_terminal'
       )) {
         throw new Error(
           'typed causal witness did not reach the independent critic'
@@ -2921,7 +3064,9 @@ async function verifyTwoStageTargetBinding() {
       result.winner?.action?.includes('{{TARGET_NAME}}') ||
       result.winner?.candidateId !== targetCandidateId ||
       result.winner?.revenuePath?.causalWitness?.contractVersion !==
-        'revenue_causal_witness_v1' ||
+        'revenue_causal_witness_v2' ||
+      result.winner?.revenuePath?.causalWitness?.terminalOutcomeKind !==
+        'paid_booking_terminal' ||
       result.winner?.revenuePath?.causalWitness?.stopLimit !== 14 ||
       result.winner?.revenuePath?.causalWitness?.stopUnit !==
         'calendar_days' ||
@@ -4203,10 +4348,11 @@ function causalWitness(
   overrides = {}
 ) {
   return {
-    v: 'revenue_causal_witness_v1',
+    v: 'revenue_causal_witness_v2',
     i: 'counterfactual_incremental_paid_income',
     c: revenueMechanism,
     o: revenueMechanism,
+    p: `${revenueMechanism}_terminal`,
     t: attributionMethod,
     d: 'separate_conversion_destination',
     s: 'stop_at_limit',

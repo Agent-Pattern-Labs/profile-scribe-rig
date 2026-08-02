@@ -269,6 +269,8 @@ const ATTRIBUTION_METHODS = new Set([
   'employment_compensation_record'
 ]);
 const REVENUE_CAUSAL_WITNESS_CONTRACT =
+  'revenue_causal_witness_v2';
+const LEGACY_REVENUE_CAUSAL_WITNESS_CONTRACT =
   'revenue_causal_witness_v1';
 const REVENUE_CAUSAL_INCREMENTAL_KIND =
   'counterfactual_incremental_paid_income';
@@ -287,6 +289,9 @@ const REVENUE_CAUSAL_STOP_UNITS = new Set([
   'proposals',
   'buyers'
 ]);
+const REVENUE_CAUSAL_TERMINAL_OUTCOMES = new Set(
+  [...REVENUE_MECHANISMS].map((mechanism) => `${mechanism}_terminal`)
+);
 const OWNED_INBOUND_ASSET_KIND = 'owned_inbound_asset';
 const SYNTHESIZED_OWNED_INBOUND_ASSETS = new WeakSet();
 const COMMERCIAL_CRITIC_RECURRING_VALUE_PRIORITY = new Map([
@@ -825,6 +830,10 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
       o: {
         $ref: '#/$defs/revenueMechanism'
       },
+      p: {
+        type: 'string',
+        enum: [...REVENUE_CAUSAL_TERMINAL_OUTCOMES]
+      },
       t: {
         $ref: '#/$defs/attributionMethod'
       },
@@ -842,7 +851,7 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
         enum: [...REVENUE_CAUSAL_STOP_UNITS]
       }
     },
-    required: ['v', 'i', 'c', 'o', 't', 'd', 's', 'n', 'u'],
+    required: ['v', 'i', 'c', 'o', 'p', 't', 'd', 's', 'n', 'u'],
     additionalProperties: false
   };
   const contingentDefs = {
@@ -1140,7 +1149,7 @@ function compactOpportunityDiscoveryOutputContract() {
       `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}`,
     item: '{l,e}; t={l,e,q}; exact evidence IDs',
     revenuePath:
-      `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,k,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; k={v,i,c,o,t,d,s,n,u} proves six causal semantics; g binds evidence`,
+      `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,k,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; k={v,i,c,o,p,t,d,s,n,u}; p=rm+"_terminal"; g binds evidence`,
     evidence:
       `base+tactic e has ${CONTINGENT_TARGET_EVIDENCE_REF}, observation:*, all child refs; child refs⊆plan refs+target`
   };
@@ -1151,8 +1160,8 @@ function compactOpportunityDiscoveryHardRules() {
     '1 motion: pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
     'Evidence IDs only; base+each tactic e has observation:*; system attribution is attribution-only; obey targetRoleMap.',
     `tacticA.a/tacticB.a: 2 complete asks each, never setup/support; ask ${CONTINGENT_TARGET_NAME_TOKEN} for paid referral, conversion, application/proposal, or listing.`,
-    'Each r: a=plan.acquisitionMode; k.i=counterfactual paid income; k.c=k.o=rm; k.t=atm.',
-    'r.o exactly one rm event, not objective alternatives: paid_booking=paid booking completed+payment receipt; direct_sale=paid order completed+payment receipt; signed_contract=contract signed+payment received; paid_pilot=paid pilot signed+deposit received; subscription_or_retainer=subscription activated+payment receipt; insurance_reimbursement=paid claim+reimbursement received; license_or_royalty=license signed+payment received; commission_or_referral=commission payment received; sponsorship=sponsorship signed+payment received; platform_payout=payout received; compensated_role=offer accepted. Reject or/either/attempt/pending/declined/failed/not received.',
+    'Each r: a=plan.acquisitionMode; k.i=counterfactual paid income; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.',
+    'r.o describes that one terminal rm event, not objective alternatives. Reject or/either/attempt/pending/declined/failed/not received.',
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/c/o/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'Tactics differ. Review!=acquisitionMode. decision-maker: 1-6 roles. No sensitive/private targets; population only in referral query. No external writes.',
@@ -2071,6 +2080,10 @@ function normalizeRevenueCausalWitness(value) {
       raw.o,
       raw.observableOutcomeMechanism
     )),
+    terminalOutcomeKind: contractEnum(firstText(
+      raw.p,
+      raw.terminalOutcomeKind
+    )),
     attributionMethod: contractEnum(firstText(
       raw.t,
       raw.attributionMethod
@@ -2099,8 +2112,12 @@ function revenueCausalWitnessFieldChecks(revenueValue) {
   const witness = normalizeRevenueCausalWitness(
     hasCompactWitness ? revenue.k : revenue.causalWitness
   );
-  const version = firstText(witness?.contractVersion) ===
+  const contractVersion = firstText(witness?.contractVersion);
+  const currentVersion = contractVersion ===
     REVENUE_CAUSAL_WITNESS_CONTRACT;
+  const legacyVersion = contractVersion ===
+    LEGACY_REVENUE_CAUSAL_WITNESS_CONTRACT;
+  const version = currentVersion;
   const mechanism = contractEnum(firstText(
     revenue.rm,
     revenue.revenueMechanism
@@ -2120,6 +2137,8 @@ function revenueCausalWitnessFieldChecks(revenueValue) {
     (stopUnit !== 'calendar_days' || stopLimit <= 30);
   return {
     present: hasCompactWitness || hasNormalizedWitness,
+    currentVersion,
+    legacyVersion,
     witness,
     incrementalIncome: version &&
       firstText(witness?.incrementalIncomeKind) ===
@@ -2129,7 +2148,12 @@ function revenueCausalWitnessFieldChecks(revenueValue) {
       firstText(witness?.conversionActionMechanism) === mechanism,
     observableRevenue: version &&
       REVENUE_MECHANISMS.has(mechanism) &&
-      firstText(witness?.observableOutcomeMechanism) === mechanism,
+      firstText(witness?.observableOutcomeMechanism) === mechanism &&
+      (!currentVersion || firstText(witness?.terminalOutcomeKind) ===
+        `${mechanism}_terminal`),
+    terminalOutcome: currentVersion &&
+      REVENUE_MECHANISMS.has(mechanism) &&
+      firstText(witness?.terminalOutcomeKind) === `${mechanism}_terminal`,
     attributionSignal: version &&
       ATTRIBUTION_METHODS.has(attributionMethod) &&
       firstText(witness?.attributionMethod) === attributionMethod,
@@ -2144,6 +2168,7 @@ function revenueCausalWitnessIssues(revenueValue) {
   const checks = revenueCausalWitnessFieldChecks(revenueValue);
   if (!checks.present) return ['missing_witness'];
   return [
+    [checks.currentVersion, 'contract_version'],
     [checks.incrementalIncome, 'incremental_income'],
     [checks.conversionAction, 'conversion_action'],
     [checks.observableRevenue, 'observable_revenue'],
@@ -2192,7 +2217,7 @@ function revenuePathSemanticChecks(revenueValue) {
     !operationOnlyAction(conversionAction) &&
     !nonRevenueArtifactOrQuestionAction(conversionAction) &&
     !experimentActionClaimsCompletedExternalExecution(conversionAction);
-  const typed = witness.present;
+  const typed = witness.currentVersion;
   return {
     witness,
     incrementalIncome: typed
@@ -2209,10 +2234,15 @@ function revenuePathSemanticChecks(revenueValue) {
       ? (
         witness.observableRevenue &&
         Boolean(observableRevenue) &&
-        terminalPaidOutcomeText(
-          observableRevenue,
-          revenueMechanism
-        )
+        (witness.terminalOutcome
+          ? typedTerminalPaidOutcomeText(
+              observableRevenue,
+              revenueMechanism
+            )
+          : terminalPaidOutcomeText(
+              observableRevenue,
+              revenueMechanism
+            ))
       )
       : observableRevenueText(observableRevenue),
     attributionSignal: typed
@@ -2251,8 +2281,60 @@ function explicitlyContradictsIncrementalIncome(value) {
 }
 
 function explicitlyContradictsPaidOutcome(value) {
-  return /\b(?:attempt(?:s|ed|ing)?|authori[sz](?:ation|ed)|awaiting (?:award|deposit|funds|invoice|payment|payout|settlement)|cancelled|canceled|complimentary|declined|denied|failed|free|never (?:accepted|awarded|paid|received|settled|signed)|not (?:yet )?(?:been )?(?:accepted|awarded|paid|received|settled|signed)|pending|refunded|rejected|reversed|unpaid|voided|withdrawn|(?:payment|payout|transfer) (?:initiated|processing|scheduled)|(?:funds|invoice|payment|payout|reimbursement) (?:due|owed|outstanding)|outstanding (?:funds|invoice|payment|payout|reimbursement)|no (?:deposit|funds|income|payment|payout|revenue|settlement)|without (?:deposit|funds|income|payment|payout|revenue|settlement))\b/i.test(
+  return /\b(?:attempt(?:s|ed|ing)?|authori[sz](?:ation|ed)|awaiting (?:award|deposit|funds|invoice|payment|payout|settlement)|cancelled|canceled|complimentary|declined|denied|failed|free|never (?:accepted|awarded|paid|received|settled|signed)|not (?:yet )?(?:been )?(?:accepted|awarded|paid|received|settled|signed)|pending|refunded|rejected|reversed|unpaid|voided|withdrawn|(?:payment|payout|transfer) (?:is |was |has been )?(?:initiated|processing|scheduled)|(?:funds|invoice|payment|payout|reimbursement) (?:are |is |was )?(?:due|owed|outstanding)|outstanding (?:funds|invoice|payment|payout|reimbursement)|no (?:deposit|funds|income|payment|payout|revenue|settlement)|without (?:deposit|funds|income|payment|payout|revenue|settlement))\b/i.test(
     firstText(value)
+  );
+}
+
+function typedTerminalPaidOutcomeText(value, mechanism) {
+  const text = firstText(value);
+  const recordedFinancialState =
+    /\b(?:funds|invoice|payment|payout|reimbursement|transaction) (?:is |was |has been )?recorded\b/i.test(
+      text
+    );
+  const settledFinancialState =
+    /\b(?:deposit|funds|payment|payout|reimbursement|revenue)\b/i.test(text) &&
+    /\b(?:deposited|paid|received|reimbursed|settled)\b/i.test(text);
+  const unsettledBillableState = /\bbillable\b/i.test(text) &&
+    !/\b(?:paid|received|reimbursed|settled)\b/i.test(text);
+  if (!text ||
+      /\b(?:either|or)\b/i.test(text) ||
+      /\b(?:(?:application|bid|proposal|response) (?:is |was )?(?:filed|recorded|submitted)|(?:filed|submitted) (?:an? )?(?:application|bid|proposal|response))\b/i.test(
+        text
+      ) ||
+      /\b(?:application (?:is |was )?accepted|accepted (?:an? )?application)\b/i.test(
+        text
+      ) ||
+      (mechanism === 'compensated_role' &&
+        /\boffer\b/i.test(text) &&
+        !/\baccepted\b/i.test(text)) ||
+      typedTerminalCrossMechanismContradiction(text, mechanism) ||
+      (recordedFinancialState && !settledFinancialState) ||
+      unsettledBillableState ||
+      explicitlyContradictsPaidOutcome(text)) {
+    return false;
+  }
+  return true;
+}
+
+function typedTerminalCrossMechanismContradiction(value, mechanism) {
+  const text = firstText(value);
+  const markers = new Map([
+    ['direct_sale', /\b(?:checkout|order|purchase|retail sale)s?\b/i],
+    ['signed_contract', /\b(?:consulting|paid services|service) contract\b|\bcontract award\b/i],
+    ['paid_pilot', /\bpilot\b/i],
+    ['subscription_or_retainer', /\b(?:retainer|subscription)s?\b/i],
+    ['insurance_reimbursement', /\b(?:claim|reimbursement)s?\b|\breimbursed\b/i],
+    ['license_or_royalty', /\b(?:licen[cs]e|licensing|royalt(?:y|ies))\b/i],
+    ['commission_or_referral', /\b(?:affiliate|commission|referral fee)\b/i],
+    ['sponsorship', /\bsponsor(?:ship|ed)?\b/i],
+    ['platform_payout', /\b(?:ad revenue|creator payout|marketplace payout|platform payout)\b/i],
+    ['compensated_role', /\b(?:(?:compensated|employment|job) offer|payroll|salary|wage)\b/i]
+  ]);
+  const selectedMarker = markers.get(contractEnum(mechanism));
+  if (selectedMarker?.test(text)) return false;
+  return [...markers.entries()].some(([otherMechanism, pattern]) =>
+    otherMechanism !== contractEnum(mechanism) && pattern.test(text)
   );
 }
 
