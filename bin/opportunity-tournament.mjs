@@ -166,6 +166,11 @@ const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
 const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 8_000;
+// One outer motion already carries two independently complete causal tactic
+// families. Keeping call 1 to that single strongest motion preserves the
+// required family-diverse critic comparison while preventing the duplicated
+// nested family envelope from exhausting the fixed completion-token ceiling.
+const MAX_DISCOVERY_PLANNER_PLANS = 1;
 // Leave a small serialization margin above the model-facing compactness
 // target while still rejecting unexpectedly verbose structured output.
 const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 28 * 1_024;
@@ -522,12 +527,12 @@ export async function runOpportunityDiscoveryPlanner({
     };
   }
 
-  const system = `You are ProfileScribe's research-only commercial-motion generator. Find the strongest distinct outside-world searches for one professional's nearest credible payment path within 30 days; perform no side effect.
+  const system = `You are ProfileScribe's research-only commercial-motion generator. Find the strongest outside-world search for one professional's nearest credible payment path within 30 days; perform no side effect.
 Ground claims only in commercialEvidenceGraph.verifiedFacts and the forced read-only search context; inferences remain unverified and missingFacts remain gaps. A verified roles=["attribution"] system capability proves only a future attribution record—never buyer, offer, demand, acquisition, channel fit, payment, or conversion.
 Infer complementary economic roles, not matching profession keywords: e.g. lactation consultant→newborn-care referral authority; programmer→live compensated demand; consultant→current buying trigger; product owner→marketplace, buyer, or distributor. Separate end payer from referral/distribution counterparty. Prefer supported live paid demand. A site or booking page is a conversion destination, not acquisition demand.
 Plans are contingent motions, never proof that a target exists, is interested, will refer, has budget, or permits contact. Model prose cannot establish a web target. Leave it unresolved as {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for deterministic binding to a validated provider citation/record; use target:evidence only where that future fact grounds a dimension.
-Prefer two distinct plans. One plan is allowed only with two complete, causally distinct finalist families. Modes: active_job_posting=compensated job/contract; professional_counterparty=buyer/referral authority/sponsor/partner; local_organization=location-bound professional organization; public_live_demand=current public paid RFP/contract/marketplace/sponsorship demand. For a local organization's decision-maker, use organization_then_decision_maker plus 1-6 non-sensitive professional targetRoleTerms; never use that strategy with another mode or pretend the organization is a person.
-Each plan has two complete families with different causal acquisition tactics, two variants per dimension, and one v3 revenue path. Include a current paid offer, buyer, acquisition mechanism separate from destination, paid conversion, durable attribution method/signal, numeric stop, positive value, spend estimate, exact evidence, and active (not observational/operational) actions.
+Return exactly one strongest plan containing two complete, causally distinct finalist families. Modes: active_job_posting=compensated job/contract; professional_counterparty=buyer/referral authority/sponsor/partner; local_organization=location-bound professional organization; public_live_demand=current public paid RFP/contract/marketplace/sponsorship demand. For a local organization's decision-maker, use organization_then_decision_maker plus 1-6 non-sensitive professional targetRoleTerms; never use that strategy with another mode or pretend the organization is a person.
+The plan has two complete families with different causal acquisition tactics, two variants per dimension, and one v3 revenue path per family. Include a current paid offer, buyer, acquisition mechanism separate from destination, paid conversion, durable attribution method/signal, numeric stop, positive value, spend estimate, exact evidence, and active (not observational/operational) actions.
 Both d.a variants independently complete the same family's commercial ask; neither is setup, support, or follow-up. Each contains {{TARGET_NAME}} once and asks for one buyer referral/introduction to the paid offer, requests one paid booking/order/contract/subscription, submits one application/proposal for a compensated role/contract, or lists the offer to capture one paid order/subscription. Review/approval states execution authorization only, never acquisitionMode; separately name partner referral, permissioned outreach, inbound discovery, or the actual acquisition channel. Deterministic code replaces declared tokens/refs only and writes no missing prose. Workflow, scheduling, resource, document, profile, content, or measurement work cannot be the requested outcome.
 Keep the complete JSON response at or below 26 KiB. Use compact labels and one concise sentence per action/path field; do not repeat rationale/evidence prose in labels.
 target:evidence cannot prove seller capability, an existing/warm/permitted relationship, private contacts, or paid demand outside its typed slot. Ground the user's current offer, destination, and attribution in exact approved IDs. A professional-identity slot proves only exact identity and prospective channel fit; only live-paid-demand may ground an outside paid offer, application destination, and compensated conversion.
@@ -538,7 +543,7 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     evidenceCatalog: promptEvidenceCatalog,
     commercialEvidenceGraph: promptCommercialEvidenceGraph,
     task:
-      'Plan the smallest outside-world searches most likely to reveal one exact, review-first path to payment within 30 days.',
+      'Plan the single strongest outside-world search most likely to reveal one exact, review-first path to payment within 30 days.',
     outputContract: compactOpportunityDiscoveryOutputContract(),
     hardRules: compactOpportunityDiscoveryHardRules(),
     constraints: [
@@ -767,7 +772,7 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
           plans: {
             type: 'array',
             minItems: 0,
-            maxItems: 2,
+            maxItems: MAX_DISCOVERY_PLANNER_PLANS,
             items: {
               type: 'object',
               properties: {
@@ -907,7 +912,8 @@ function compactOpportunityDiscoveryOutputContract() {
     INITIAL_FAMILY_VARIANT_COUNT
   );
   return {
-    plan: 'Fill every schema-required plan field.',
+    plan:
+      'Return exactly 1 strongest plan and fill every schema-required field; its familyA/familyB are the 2 causal revenue paths.',
     targetSlot:
       `${CONTINGENT_TARGET_NAME_TOKEN}/${CONTINGENT_TARGET_URL_TOKEN}/${CONTINGENT_TARGET_EVIDENCE_REF}; commercialRole=plan.commercialRole; live demand=live_paid_demand/single_exact_target`,
     targetRoleMap: {
@@ -939,7 +945,7 @@ function compactOpportunityDiscoveryOutputContract() {
 
 function compactOpportunityDiscoveryHardRules() {
   return [
-    'Prefer 2 motions with different searchMode/commercialRole/acquisitionMode; 1 requires both complete causal families; insufficient_verified_supply=0 plans+reason.',
+    'Return exactly 1 strongest motion with both complete causal families; insufficient_verified_supply=0 plans+reason.',
     'Use only evidenceCatalog IDs. Every plan/family has an observation:* seller anchor; system attribution proves attribution only; obey targetRoleMap.',
     `Both d.a variants independently complete the commercial ask, never setup/support: ask ${CONTINGENT_TARGET_NAME_TOKEN} for a paid-offer buyer referral/introduction, paid booking/order/contract/subscription, compensated-role/contract application/proposal, or paid-order/subscription listing.`,
     'Each r: a=plan.acquisitionMode; io=incremental paid income; c=active conversion; o=paid booking/payment/contract/order/subscription/compensation receipt.',
@@ -1157,13 +1163,11 @@ function opportunityDiscoveryPlanIssue(value) {
       : 'Insufficient-supply planning must return no outside search plans and a reason.';
   }
   const plans = asArray(plan.plans);
-  // One v2 motion still contains two complete, causally distinct tactic
-  // families. Downstream binding already compares those two families when
-  // only one outside motion resolves, so do not turn a usable one-motion
-  // response into a provider recovery merely because a second outer search
-  // wrapper was not returned. The prompt continues to request two motions;
-  // accepting one is bounded contract tolerance, not deterministic strategy
-  // authorship.
+  // New provider output is constrained to one outer motion by the strict
+  // schema and the raw-cardinality gate. Retain read compatibility with a
+  // previously persisted two-motion v2 plan so an already-paid run can still
+  // compare one family from each bound motion instead of being stranded by
+  // this output-compaction change.
   if ((!legacy && (plans.length < 1 || plans.length > 2)) ||
       (legacy && (plans.length < 2 || plans.length > 3))) {
     return legacy
@@ -1252,8 +1256,8 @@ function opportunityDiscoveryRawPlanCardinalityIssue(value) {
   }
   const status = firstText(raw.status);
   if (status === 'planned' &&
-      (raw.plans.length < 1 || raw.plans.length > 2)) {
-    return 'Discovery planning requires one or two grounded commercial motions.';
+      raw.plans.length !== MAX_DISCOVERY_PLANNER_PLANS) {
+    return 'Discovery planning requires exactly one grounded commercial motion with two causal families.';
   }
   if (status === 'insufficient_verified_supply' &&
       raw.plans.length !== 0) {
