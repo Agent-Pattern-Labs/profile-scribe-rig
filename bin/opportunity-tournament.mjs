@@ -599,7 +599,7 @@ pathBase={e,r,o,b,t,p}: one v3 path+k and 2 o/b/t/p variants. tacticA/B={l,m,tac
 Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. No setup/support/follow-up. buyer/referral c,a: {{TARGET_URL}} once, only review-first public professional profile; omit private/alternate routes from JSON/query. Review!=mode; code only binds tokens/refs; operations never outcomes.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 target:evidence proves only typed target dimensions: never seller capability, relationship, private contacts, or paid demand unless live-paid-demand. Bind current offer/destination/attribution to exact approved IDs. Professional identity proves identity+prospective channel fit only; live-paid-demand alone grounds outside paid offer/application/compensated conversion.
-Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"); the typed target stays a professional person/organization and targetRoleTerms, organizationTerms, jobTitle, skills never target that population. Copy IDs/tokens exactly. Return strict JSON only.`;
+Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"). Field use: professional/local uses targetRoleTerms+organizationTerms and leaves jobTitle/skills empty; active job does the reverse; public demand leaves all four empty. The typed target stays professional. Copy IDs/tokens exactly. Return strict JSON only.`;
   const user = JSON.stringify({
     objective,
     commercialContext,
@@ -1208,8 +1208,10 @@ function normalizeOpportunityDiscoveryPlan(
       plan,
       knownEvidence
     );
+    const searchFields = normalizeOpportunityDiscoverySearchFields(plan);
     const planWithCanonicalEvidence = {
       ...plan,
+      ...searchFields,
       evidenceRefs
     };
     return {
@@ -1224,16 +1226,7 @@ function normalizeOpportunityDiscoveryPlan(
       evidenceRefs,
       query: truncate(firstText(plan.query), 240),
       market: truncate(firstText(plan.market), 120),
-      targetRoleTerms: compactStrings(plan.targetRoleTerms)
-        .map((item) => truncate(item, 80))
-        .slice(0, 6),
-      organizationTerms: compactStrings(plan.organizationTerms)
-        .map((item) => truncate(item, 80))
-        .slice(0, 6),
-      jobTitle: truncate(firstText(plan.jobTitle), 100),
-      skills: compactStrings(plan.skills)
-        .map((item) => truncate(item, 80))
-        .slice(0, 6),
+      ...searchFields,
       acquisitionMechanism: truncate(
         firstText(plan.acquisitionMechanism),
         220
@@ -1246,7 +1239,10 @@ function normalizeOpportunityDiscoveryPlan(
       attributionSignal: truncate(firstText(plan.attributionSignal), 220),
       rationale: truncate(firstText(plan.rationale), 260)
       ,
-      targetSlot: normalizeContingentTargetSlot(plan.targetSlot, plan),
+      targetSlot: normalizeContingentTargetSlot(
+        plan.targetSlot,
+        planWithCanonicalEvidence
+      ),
       contingentFinalists: normalizeContingentFinalistBundle(
         plan.contingentFinalists,
         knownEvidence,
@@ -1268,6 +1264,50 @@ function normalizeOpportunityDiscoveryPlan(
         )
       : undefined
   };
+}
+
+function normalizeOpportunityDiscoverySearchFields(planValue) {
+  const plan = asObject(planValue);
+  const allFields = {
+    targetRoleTerms: compactStrings(plan.targetRoleTerms)
+      .map((item) => truncate(item, 80))
+      .slice(0, 6),
+    organizationTerms: compactStrings(plan.organizationTerms)
+      .map((item) => truncate(item, 80))
+      .slice(0, 6),
+    jobTitle: truncate(firstText(plan.jobTitle), 100),
+    skills: compactStrings(plan.skills)
+      .map((item) => truncate(item, 80))
+      .slice(0, 6)
+  };
+  switch (firstText(plan.searchMode)) {
+  case 'professional_counterparty':
+  case 'local_organization':
+    // These adapters resolve a professional role, optionally through an
+    // organization seed. Job-title and skill fields are not sent to either
+    // adapter, so model spillover there cannot redefine the target.
+    return {...allFields, jobTitle: '', skills: []};
+  case 'active_job_posting':
+    // A live-role search consumes only the compensated title/skill query.
+    return {
+      ...allFields,
+      targetRoleTerms: [],
+      organizationTerms: []
+    };
+  case 'public_live_demand':
+    // Public demand is bound from the buyer-authored query and cited demand
+    // artifact, not from person, organization, title, or skill filters.
+    return {
+      targetRoleTerms: [],
+      organizationTerms: [],
+      jobTitle: '',
+      skills: []
+    };
+  default:
+    // Preserve unsupported-route input so the typed route validator below
+    // can reject it without normalization masking any supplied field.
+    return allFields;
+  }
 }
 
 function normalizedDiscoveryPlanEvidenceRefs(planValue, knownEvidence) {
@@ -2111,7 +2151,7 @@ function contingentPrimaryRevenueActionRoleIssue(value, planValue) {
     return response ? '' : 'primary_action_paid_demand_response';
   }
   if (plan.commercialRole === 'referral_partner') {
-    const qualifiedReferral = qualifiedReferralCashAction(text);
+    const qualifiedReferral = qualifiedReferralCashAction(value);
     return qualifiedReferral ? '' : 'primary_action_partner_referral';
   }
   if (plan.commercialRole === 'buyer') {
@@ -2586,17 +2626,25 @@ function discoveryPlanSensitiveTargetIssue(planValue) {
     return `Discovery plan ${firstText(plan.id)} requests private-contact data.`;
   }
 
-  const directPersonTarget = compactStrings([
-    ...asArray(plan.targetRoleTerms),
-    plan.jobTitle,
-    ...asArray(plan.skills)
-  ]).join(' ');
+  const directPersonTarget = compactStrings(
+    ['professional_counterparty', 'local_organization'].includes(
+      firstText(plan.searchMode)
+    )
+      ? asArray(plan.targetRoleTerms)
+      : firstText(plan.searchMode) === 'active_job_posting'
+        ? [plan.jobTitle, ...asArray(plan.skills)]
+        : []
+  ).join(' ');
   if (discoveryPlanTargetsSensitivePerson(directPersonTarget)) {
     return `Discovery plan ${firstText(plan.id)} uses a patient or sensitive-consumer trait as a direct role, title, or skill target.`;
   }
 
   const organizationTarget = compactStrings(
-    asArray(plan.organizationTerms)
+    ['professional_counterparty', 'local_organization'].includes(
+      firstText(plan.searchMode)
+    )
+      ? asArray(plan.organizationTerms)
+      : []
   ).join(' ');
   if (discoveryPlanTargetsSensitivePerson(organizationTarget)) {
     return `Discovery plan ${firstText(plan.id)} uses a patient or sensitive-consumer population as an organization target.`;
@@ -14967,7 +15015,7 @@ function revenueAdvancingAction(value) {
   const text = primaryActionSemanticText(value);
   if (nonRevenueArtifactOrQuestionAction(text)) return false;
   if (demandSurfacePlacementAction(text)) return false;
-  if (explicitlyUnpaidPrimaryAction(text)) return false;
+  if (explicitlyUnpaidPrimaryAction(value)) return false;
   const advancesAcquisition =
     /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|refer(?:s|red|ring|ral)?|recommend(?:s|ed|ing|ation)?|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot|licen[cs](?:e|ing)|royalt(?:y|ies)|commission|sponsor(?:ship)?|payout|compensated|salary|wage|hire|role)\b/i.test(
       text
@@ -14996,7 +15044,7 @@ function revenueAdvancingAction(value) {
   // "paid" in every action variant when the typed paid offer and conversion
   // remain separately grounded. The shared predicate still rejects bare
   // introductions as well as negated or explicitly free/unpaid actions.
-  const advancesQualifiedReferral = qualifiedReferralCashAction(text);
+  const advancesQualifiedReferral = qualifiedReferralCashAction(value);
   return (advancesAcquisition || advancesPaidDemandResponse) &&
     (
       namesPaidCommitment ||
@@ -15008,24 +15056,31 @@ function revenueAdvancingAction(value) {
 function qualifiedReferralCashAction(value) {
   const text = primaryActionSemanticText(value);
   if (!text || negatedPrimaryRevenueAction(text) ||
-      explicitlyUnpaidPrimaryAction(text)) {
+      explicitlyUnpaidPrimaryAction(value)) {
     return false;
   }
-  return /\b(?:introduc(?:e|es|ed|ing|tion|tions)?|refer(?:s|red|ring|ral|rals)?|recommend(?:s|ed|ing|ation|ations)?)\b/.test(text) &&
-    /\b(?:book|buy|paid|payment|purchase|reimburs|sale)\w*\b/.test(
+  const namesReferralStep =
+    /\b(?:introduc(?:e|es|ed|ing|tion|tions)?|refer(?:s|red|ring|ral|rals)?|recommend(?:s|ed|ing|ation|ations)?)\b/.test(
       text
     );
+  const namesCashDestination =
+    /\b(?:book|buy|checkout|close|contract|deposit|invoice|order|pay(?:ment|ing)?|purchase|reimburs|sale|sell|sign|subscrib)\w*\b/.test(
+      text
+    ) ||
+    /\bpaid\s+(?:appointment|booking|consultation|contract|engagement|license|offer|order|pilot|product|service|session|subscription|visit|work)\b/.test(
+      text
+    );
+  return namesReferralStep && namesCashDestination;
 }
 
 function explicitlyUnpaidPrimaryAction(value) {
-  const text = primaryActionSemanticText(value);
-  return /\b(?:complimentary|unpaid|no[- ]charge)\b/.test(text) ||
-    /\bfree\s+(?:appointment|booking|consultation|engagement|offer|product|service|session|trial|visit|work)\b/.test(
-      text
-    ) ||
-    /\b(?:appointment|booking|consultation|engagement|offer|product|service|session|trial|visit|work)\s+(?:is\s+)?free\b/.test(
-      text
-    );
+  const raw = firstText(value).replace(
+    /\b(?:ad|commission|debt|duty|gluten|interest|maintenance|risk|royalty|sugar|tax)[- ]free\b/gi,
+    'attribute_included'
+  );
+  const text = primaryActionSemanticText(raw);
+  return /\b(?:complimentary|free|pro bono|unpaid)\b/.test(text) ||
+    /\b(?:at no cost|no charge|without payment)\b/.test(text);
 }
 
 function demandSurfacePlacementAction(value) {

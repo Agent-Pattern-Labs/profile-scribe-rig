@@ -1515,6 +1515,101 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     );
   }
 
+  const unusedSensitiveFields = await run(
+    baseReferral({
+      id: 'unused_sensitive_job_fields',
+      jobTitle: 'postpartum patient',
+      skills: ['pregnant people']
+    }),
+    'generation-unused-sensitive-job-fields'
+  );
+  const projectedReferral = unusedSensitiveFields.plans.find((item) =>
+    item.id === 'unused_sensitive_job_fields'
+  );
+  if (unusedSensitiveFields.status !== 'planned' ||
+      unusedSensitiveFields.plans.length !== 2 ||
+      !projectedReferral ||
+      projectedReferral.jobTitle !== '' ||
+      projectedReferral.skills.length !== 0 ||
+      projectedReferral.targetRoleTerms.length === 0 ||
+      projectedReferral.organizationTerms.length === 0) {
+    throw new Error(
+      `professional-counterparty projection retained unused sensitive job fields: ${JSON.stringify(unusedSensitiveFields)}`
+    );
+  }
+
+  const localOrganization = baseReferral({
+    id: 'local_org_unused_sensitive_job_fields',
+    searchMode: 'local_organization',
+    jobTitle: 'postpartum patient',
+    skills: ['pregnant people'],
+    targetSlot: {
+      finalTargetKind: 'person',
+      resolutionStrategy: 'organization_then_decision_maker'
+    }
+  });
+  const localResult = await run(
+    localOrganization,
+    'generation-local-org-unused-sensitive-job-fields'
+  );
+  const projectedLocal = localResult.plans.find((item) =>
+    item.id === localOrganization.id
+  );
+  if (localResult.status !== 'planned' || !projectedLocal ||
+      projectedLocal.jobTitle !== '' ||
+      projectedLocal.skills.length !== 0 ||
+      projectedLocal.targetRoleTerms.length === 0 ||
+      projectedLocal.organizationTerms.length === 0) {
+    throw new Error(
+      `local-organization projection retained unused job fields: ${JSON.stringify(localResult)}`
+    );
+  }
+
+  const activeJob = cases[1].plans(evidenceRef)[0];
+  activeJob.id = 'active_job_unused_sensitive_role_fields';
+  activeJob.targetRoleTerms = ['postpartum patient'];
+  activeJob.organizationTerms = ['pregnant people'];
+  const activeResult = await run(
+    activeJob,
+    'generation-active-job-unused-sensitive-role-fields'
+  );
+  const projectedActive = activeResult.plans.find((item) =>
+    item.id === activeJob.id
+  );
+  if (activeResult.status !== 'planned' || !projectedActive ||
+      projectedActive.targetRoleTerms.length !== 0 ||
+      projectedActive.organizationTerms.length !== 0 ||
+      projectedActive.jobTitle !== activeJob.jobTitle ||
+      JSON.stringify(projectedActive.skills) !==
+        JSON.stringify(activeJob.skills)) {
+    throw new Error(
+      `active-job projection did not retain only title and skills: ${JSON.stringify(activeResult)}`
+    );
+  }
+
+  const publicDemand = cases[1].plans(evidenceRef)[1];
+  publicDemand.id = 'public_demand_unused_sensitive_filter_fields';
+  publicDemand.targetRoleTerms = ['postpartum patient'];
+  publicDemand.organizationTerms = ['pregnant people'];
+  publicDemand.jobTitle = 'newborn patient';
+  publicDemand.skills = ['family health status'];
+  const publicResult = await run(
+    publicDemand,
+    'generation-public-demand-unused-sensitive-filter-fields'
+  );
+  const projectedPublic = publicResult.plans.find((item) =>
+    item.id === publicDemand.id
+  );
+  if (publicResult.status !== 'planned' || !projectedPublic ||
+      projectedPublic.targetRoleTerms.length !== 0 ||
+      projectedPublic.organizationTerms.length !== 0 ||
+      projectedPublic.jobTitle !== '' ||
+      projectedPublic.skills.length !== 0) {
+    throw new Error(
+      `public-live-demand projection retained unused target filters: ${JSON.stringify(publicResult)}`
+    );
+  }
+
   const adversaries = [
     {
       label: 'direct sensitive role',
@@ -2920,7 +3015,28 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
             'After review, ask {{TARGET_NAME}} to recommend one qualified family book a free consultation.';
         }
       },
+      reason: /primary_action_(?:non_revenue|partner_referral)/i
+    },
+    {
+      name: 'free workshop and class referrals are not cash actions',
+      mutate(plans) {
+        const actions = plans[0].contingentFinalists.familyA.d.a;
+        actions[0].l =
+          'After review via {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one family book a free workshop.';
+        actions[1].l =
+          'After review via {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one family to book a free class.';
+      },
       reason: /primary_action_non_revenue/i
+    },
+    {
+      name: 'paid introduction without a paid offer or conversion is not a cash action',
+      mutate(plans) {
+        for (const action of plans[0].contingentFinalists.familyA.d.a) {
+          action.l =
+            'After review, ask {{TARGET_NAME}} for a paid introduction through {{TARGET_URL}}.';
+        }
+      },
+      reason: /primary_action_(?:non_revenue|partner_referral)/i
     },
     {
       name: 'negated shared conversion action is not a causal cash path',
@@ -3623,7 +3739,7 @@ async function verifyTwoStageTargetBinding() {
     family.d.a = family.d.a.map((action, index) => ({
       ...action,
       l:
-        `After review, use permissioned outreach to ask {{TARGET_NAME}} for one paid partner referral (${familyName}-${index + 1}).`
+        `After review via {{TARGET_URL}}, use permissioned outreach to ask {{TARGET_NAME}} to refer one buyer to a paid booking (${familyName}-${index + 1}).`
     }));
   }
   let conflictingModeCalls = 0;
