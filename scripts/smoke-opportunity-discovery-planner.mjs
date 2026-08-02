@@ -1879,8 +1879,8 @@ async function verifySingleOperationalVariantCanBePruned(
 async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
   const motion = cases[0].plans(evidenceRef)[0];
   const actions = [
-    'Review first: via verified professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner referral to the paid offer.',
-    'After review, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner introduction to one paid booking.',
+    'Review first: via verified professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend that one qualified family book the current consultation.',
+    'After review, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified family to book the current consultation.',
     'After review, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner referral to the paid booking offer.',
     'After approval, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner introduction to the paid offer.'
   ];
@@ -2911,6 +2911,16 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
         }
       },
       reason: /primary_action_negated/i
+    },
+    {
+      name: 'free referral booking is not a cash action',
+      mutate(plans) {
+        for (const action of plans[0].contingentFinalists.familyA.d.a) {
+          action.l =
+            'After review, ask {{TARGET_NAME}} to recommend one qualified family book a free consultation.';
+        }
+      },
+      reason: /primary_action_non_revenue/i
     },
     {
       name: 'negated shared conversion action is not a causal cash path',

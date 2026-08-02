@@ -2111,11 +2111,7 @@ function contingentPrimaryRevenueActionRoleIssue(value, planValue) {
     return response ? '' : 'primary_action_paid_demand_response';
   }
   if (plan.commercialRole === 'referral_partner') {
-    const qualifiedReferral = /\b(?:introduc|refer|referral|recommend)\w*\b/.test(
-      text
-    ) && /\b(?:book|buy|paid|payment|purchase|reimburs|sale)\w*\b/.test(
-      text
-    );
+    const qualifiedReferral = qualifiedReferralCashAction(text);
     return qualifiedReferral ? '' : 'primary_action_partner_referral';
   }
   if (plan.commercialRole === 'buyer') {
@@ -14968,9 +14964,10 @@ function incrementalIncomeText(value) {
 }
 
 function revenueAdvancingAction(value) {
-  const text = firstText(value);
+  const text = primaryActionSemanticText(value);
   if (nonRevenueArtifactOrQuestionAction(text)) return false;
   if (demandSurfacePlacementAction(text)) return false;
+  if (explicitlyUnpaidPrimaryAction(text)) return false;
   const advancesAcquisition =
     /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|refer(?:s|red|ring|ral)?|recommend(?:s|ed|ing|ation)?|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot|licen[cs](?:e|ing)|royalt(?:y|ies)|commission|sponsor(?:ship)?|payout|compensated|salary|wage|hire|role)\b/i.test(
       text
@@ -14992,8 +14989,43 @@ function revenueAdvancingAction(value) {
     /\b(offer|proposal|quote|request|invite|introduction|referral|book(?:ing|ed)?|checkout|order|purchase|contract|agreement|pilot)\b/i.test(
       text
     );
+  // The referral-role validator already treats a natural, review-first ask
+  // such as "recommend/refer one qualified buyer to book" as the causal
+  // acquisition step. Keep the generic revenue predicate aligned without
+  // requiring the model to repeat the noun "referral", a partner label, or
+  // "paid" in every action variant when the typed paid offer and conversion
+  // remain separately grounded. The shared predicate still rejects bare
+  // introductions as well as negated or explicitly free/unpaid actions.
+  const advancesQualifiedReferral = qualifiedReferralCashAction(text);
   return (advancesAcquisition || advancesPaidDemandResponse) &&
-    (namesPaidCommitment || namesPermissionedDemand);
+    (
+      namesPaidCommitment ||
+      namesPermissionedDemand ||
+      advancesQualifiedReferral
+    );
+}
+
+function qualifiedReferralCashAction(value) {
+  const text = primaryActionSemanticText(value);
+  if (!text || negatedPrimaryRevenueAction(text) ||
+      explicitlyUnpaidPrimaryAction(text)) {
+    return false;
+  }
+  return /\b(?:introduc(?:e|es|ed|ing|tion|tions)?|refer(?:s|red|ring|ral|rals)?|recommend(?:s|ed|ing|ation|ations)?)\b/.test(text) &&
+    /\b(?:book|buy|paid|payment|purchase|reimburs|sale)\w*\b/.test(
+      text
+    );
+}
+
+function explicitlyUnpaidPrimaryAction(value) {
+  const text = primaryActionSemanticText(value);
+  return /\b(?:complimentary|unpaid|no[- ]charge)\b/.test(text) ||
+    /\bfree\s+(?:appointment|booking|consultation|engagement|offer|product|service|session|trial|visit|work)\b/.test(
+      text
+    ) ||
+    /\b(?:appointment|booking|consultation|engagement|offer|product|service|session|trial|visit|work)\s+(?:is\s+)?free\b/.test(
+      text
+    );
 }
 
 function demandSurfacePlacementAction(value) {
