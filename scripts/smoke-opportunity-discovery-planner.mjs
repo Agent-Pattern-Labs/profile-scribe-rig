@@ -432,6 +432,9 @@ for (const scenario of cases) {
   const contingentResponseSchema = requestSeen.responseFormat?.json_schema
     ?.schema?.properties?.plans?.items?.properties?.contingentFinalists;
   const contingentProperties = contingentResponseSchema?.properties || {};
+  const plannerDefinitions = requestSeen.responseFormat?.json_schema
+    ?.schema?.$defs || {};
+  const causalWitnessSchema = plannerDefinitions.causalWitness || {};
   const promptWithoutContract = { ...plannerPrompt };
   delete promptWithoutContract.outputContract;
   delete promptWithoutContract.hardRules;
@@ -471,12 +474,32 @@ for (const scenario of cases) {
         'w'
       ]) ||
       JSON.stringify(
-        requestSeen.responseFormat?.json_schema?.schema?.$defs
-          ?.pathBase?.required
+        plannerDefinitions.pathBase?.required
       ) !== JSON.stringify(['e', 'r', 'o', 'b', 't', 'p']) ||
+      !plannerDefinitions.revenuePath?.required?.includes('k') ||
+      plannerDefinitions.revenuePath?.properties?.k?.$ref !==
+        '#/$defs/causalWitness' ||
+      JSON.stringify(causalWitnessSchema.required) !== JSON.stringify([
+        'v',
+        'i',
+        'c',
+        'o',
+        't',
+        'd',
+        's',
+        'n',
+        'u'
+      ]) ||
+      causalWitnessSchema.properties?.n?.minimum !== 1 ||
+      causalWitnessSchema.properties?.n?.maximum !== 100 ||
+      causalWitnessSchema.properties?.c?.$ref !==
+        '#/$defs/revenueMechanism' ||
+      causalWitnessSchema.properties?.o?.$ref !==
+        '#/$defs/revenueMechanism' ||
+      causalWitnessSchema.properties?.t?.$ref !==
+        '#/$defs/attributionMethod' ||
       JSON.stringify(
-        requestSeen.responseFormat?.json_schema?.schema?.$defs
-          ?.tactic?.required
+        plannerDefinitions.tactic?.required
       ) !== JSON.stringify([
         'l',
         'm',
@@ -487,14 +510,10 @@ for (const scenario of cases) {
         'a',
         'f'
       ]) ||
-      requestSeen.responseFormat?.json_schema?.schema?.$defs
-        ?.pathBase?.properties?.o?.minItems !== 2 ||
-      requestSeen.responseFormat?.json_schema?.schema?.$defs
-        ?.tactic?.properties?.c?.minItems !== 2 ||
-      requestSeen.responseFormat?.json_schema?.schema?.$defs
-        ?.tactic?.properties?.a?.maxItems !== 2 ||
-      requestSeen.responseFormat?.json_schema?.schema?.$defs
-        ?.tactic?.properties?.f?.maxItems !== 2 ||
+      plannerDefinitions.pathBase?.properties?.o?.minItems !== 2 ||
+      plannerDefinitions.tactic?.properties?.c?.minItems !== 2 ||
+      plannerDefinitions.tactic?.properties?.a?.maxItems !== 2 ||
+      plannerDefinitions.tactic?.properties?.f?.maxItems !== 2 ||
       !/^\^/.test(
         requestSeen.responseFormat?.json_schema?.schema?.$defs
           ?.actionItem?.properties?.l?.pattern || ''
@@ -754,6 +773,7 @@ await verifyUnpaidServiceOutcomeFails(unsafeJob, unsafeRef);
 await verifyRevenueStopUnits(unsafeJob, unsafeRef);
 await verifyNaturalBookingAttribution(unsafeJob, unsafeRef);
 await verifyCausalPathDiagnosticsAreFieldSpecific(unsafeJob, unsafeRef);
+await verifyTypedCausalWitnessContract(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifyTwoStageTargetBinding();
@@ -1372,7 +1392,7 @@ async function verifyServicePaymentOutcomesPass(job, evidenceRef) {
 async function verifyUnpaidServiceOutcomeFails(job, evidenceRef) {
   const motion = cases[0].plans(evidenceRef)[0];
   motion.contingentFinalists.familyA.d.r[0].o =
-    'One completed lactation consultation recorded.';
+    'One completed unpaid lactation consultation recorded.';
   const result = await plannerResultForMotion({
     job,
     motion,
@@ -1413,13 +1433,27 @@ async function verifyRevenueStopUnits(job, evidenceRef) {
   }
 
   const invalidStops = [
-    'Five referral requests within fourteen days.',
-    '5 referrals within 14 calendar days.',
-    'Stop after 5 profile edits.'
+    {
+      text: 'Conclude on the thirty-first day.',
+      witness: { n: 31, u: 'calendar_days' }
+    },
+    {
+      text: 'Conclude before any action is sampled.',
+      witness: { n: 0, u: 'review_first_actions' }
+    },
+    {
+      text: 'Conclude after five profile edits.',
+      witness: { n: 5, u: 'profile_edits' }
+    }
   ];
-  for (const [index, stopCondition] of invalidStops.entries()) {
+  for (const [index, invalid] of invalidStops.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
-    motion.contingentFinalists.familyA.d.r[0].st = stopCondition;
+    const revenue = motion.contingentFinalists.familyA.d.r[0];
+    revenue.st = invalid.text;
+    revenue.k = {
+      ...revenue.k,
+      ...invalid.witness
+    };
     const result = await plannerResultForMotion({
       job,
       motion,
@@ -1430,7 +1464,7 @@ async function verifyRevenueStopUnits(job, evidenceRef) {
         result.plans.length !== 0 ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
-        `invalid revenue stop passed (${stopCondition}): ${JSON.stringify(result)}`
+        `invalid typed revenue stop passed (${invalid.text}): ${JSON.stringify(result)}`
       );
     }
   }
@@ -1447,6 +1481,7 @@ async function verifyNaturalBookingAttribution(job, evidenceRef) {
     const revenue = motion.contingentFinalists.familyA.d.r[0];
     revenue.atm = 'booking_record';
     revenue.ats = attributionSignal;
+    revenue.k.t = 'booking_record';
     const result = await plannerResultForMotion({
       job,
       motion,
@@ -1460,14 +1495,15 @@ async function verifyNaturalBookingAttribution(job, evidenceRef) {
   }
 
   const invalidSignals = [
-    'Referral source field stores the tournament action id.',
-    'Booking record stores the tournament action id.'
+    'No attribution is recorded for the booking.',
+    'The booking has an unknown source.'
   ];
   for (const [index, attributionSignal] of invalidSignals.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
     const revenue = motion.contingentFinalists.familyA.d.r[0];
     revenue.atm = 'booking_record';
     revenue.ats = attributionSignal;
+    revenue.k.t = 'booking_record';
     const result = await plannerResultForMotion({
       job,
       motion,
@@ -1490,9 +1526,9 @@ async function verifyCausalPathDiagnosticsAreFieldSpecific(
 ) {
   const motion = cases[0].plans(evidenceRef)[0];
   const revenue = motion.contingentFinalists.familyA.d.r[0];
-  revenue.io = 'A consultation may occur.';
-  revenue.o = 'A consultation may occur.';
-  revenue.cd = 'The owner website';
+  revenue.io = 'No incremental income is expected.';
+  revenue.o = 'One unpaid consultation may occur.';
+  revenue.cd = 'No conversion destination is available.';
   revenue.vm = 0;
   const result = await plannerResultForMotion({
     job,
@@ -1507,6 +1543,148 @@ async function verifyCausalPathDiagnosticsAreFieldSpecific(
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `causal-path diagnostics were not field-specific and safe: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyTypedCausalWitnessContract(job, evidenceRef) {
+  const motion = applyNovelTypedCausalSemantics(
+    cases[0].plans(evidenceRef)[0]
+  );
+  const typed = await plannerResultForMotion({
+    job,
+    motion,
+    generationId: 'generation-typed-causal-witness-all-six'
+  });
+  if (typed.status !== 'planned' ||
+      typed.plans.length !== 1 ||
+      typed.sideEffectsPerformed !== 0 ||
+      typed.plans[0]?.contingentFinalists?.familyA?.d?.r?.[0]
+        ?.k?.v !== 'revenue_causal_witness_v1') {
+    throw new Error(
+      `typed causal witnesses did not carry through planner normalization: ${JSON.stringify(typed)}`
+    );
+  }
+
+  const mismatched = cases[0].plans(evidenceRef)[0];
+  mismatched.contingentFinalists.familyA.d.r[0].k.c = 'direct_sale';
+  const mismatchResult = await plannerResultForMotion({
+    job,
+    motion: mismatched,
+    generationId: 'generation-mismatched-causal-witness'
+  });
+  if (mismatchResult.status !== 'blocked' ||
+      !/invalid typed causal revenue witness.*conversion_action/i.test(
+        mismatchResult.reason
+      ) ||
+      mismatchResult.plans.length !== 0 ||
+      mismatchResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `invalid typed witness was rescued by legacy text: ${JSON.stringify(mismatchResult)}`
+    );
+  }
+
+  const missing = cases[0].plans(evidenceRef)[0];
+  for (const familyKey of ['familyA', 'familyB']) {
+    delete missing.contingentFinalists[familyKey].d.r[0].k;
+  }
+  const missingResult = await plannerResultForMotion({
+    job,
+    motion: missing,
+    generationId: 'generation-missing-causal-witness'
+  });
+  if (missingResult.status !== 'blocked' ||
+      !/typed causal revenue witness.*missing_witness/i.test(
+        missingResult.reason
+      ) ||
+      missingResult.plans.length !== 0 ||
+      missingResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `new planner response omitted its required typed witness: ${JSON.stringify(missingResult)}`
+    );
+  }
+
+  const persistedEnvelope = (planResult, queryHash) => ({
+    contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
+    status: 'not_found',
+    attempted: true,
+    motion: planResult.plans[0].id,
+    buyerArchetype: planResult.plans[0].buyer,
+    market: planResult.plans[0].market,
+    queryHash,
+    providersAttempted: ['openrouter_exa_web_search'],
+    providerCalls: 1,
+    paidProviderCalls: 0,
+    creditsUsed: 0,
+    resultCount: 0,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    discoveredAt: now.toISOString(),
+    plan: planResult,
+    attempts: [],
+    evidence: [],
+    candidates: []
+  });
+  const legacyValid = await plannerResultForMotion({
+    job,
+    motion: cases[0].plans(evidenceRef)[0],
+    generationId: 'generation-legacy-text-causal-receipt'
+  });
+  const tamperedPersistedPlan = structuredClone(legacyValid);
+  tamperedPersistedPlan.plans[0].contingentFinalists
+    .familyA.d.r[0].k.c = 'direct_sale';
+  const tamperedPersisted = normalizeCommercialDiscoveryEvidence(
+    persistedEnvelope(tamperedPersistedPlan, '4'.repeat(64)),
+    now
+  );
+  if (tamperedPersisted.valid !== false ||
+      tamperedPersisted.plan?.valid !== false ||
+      !tamperedPersisted.plan?.rejectedReason?.includes(
+        'conversion_action'
+      )) {
+    throw new Error(
+      `tampered persisted witness was rescued by legacy text: ${JSON.stringify(tamperedPersisted)}`
+    );
+  }
+  for (const familyKey of ['familyA', 'familyB']) {
+    delete legacyValid.plans[0].contingentFinalists[familyKey]
+      .d.r[0].k;
+  }
+  const legacyPersisted = normalizeCommercialDiscoveryEvidence(
+    persistedEnvelope(legacyValid, '5'.repeat(64)),
+    now
+  );
+  if (legacyPersisted.valid !== true ||
+      legacyPersisted.plan?.valid !== true) {
+    throw new Error(
+      `historical no-witness receipt lost legacy text compatibility: ${JSON.stringify(legacyPersisted)}`
+    );
+  }
+
+  const novelWithoutWitness = structuredClone(typed);
+  for (const familyKey of ['familyA', 'familyB']) {
+    delete novelWithoutWitness.plans[0].contingentFinalists[familyKey]
+      .d.r[0].k;
+  }
+  const legacyNovelPersisted = normalizeCommercialDiscoveryEvidence(
+    persistedEnvelope(novelWithoutWitness, '6'.repeat(64)),
+    now
+  );
+  const allSix = [
+    'incremental_income',
+    'conversion_action',
+    'observable_revenue',
+    'attribution_signal',
+    'conversion_destination',
+    'numeric_stop'
+  ];
+  if (legacyNovelPersisted.valid !== false ||
+      legacyNovelPersisted.plan?.valid !== false ||
+      !allSix.every((code) =>
+        legacyNovelPersisted.plan?.rejectedReason?.includes(code)
+      )) {
+    throw new Error(
+      `legacy regex fallback did not fail the six novel semantic claims closed: ${JSON.stringify(legacyNovelPersisted)}`
     );
   }
 }
@@ -1849,6 +2027,9 @@ async function verifyTwoStageTargetBinding() {
   const evidenceRef = catalog.find((item) =>
     typeof item.id === 'string' && item.id.startsWith('observation:')
   )?.id;
+  const typedScenarioMotion = applyNovelTypedCausalSemantics(
+    scenario.plans(evidenceRef)[1]
+  );
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
     model: 'openai/gpt-4.1-mini',
@@ -1859,9 +2040,9 @@ async function verifyTwoStageTargetBinding() {
         status: 'planned',
         reason: 'The strongest source-bindable referral search is warranted.',
         plans: [{
-          ...scenario.plans(evidenceRef)[1],
+          ...typedScenarioMotion,
           contingentFinalists: compactContingentFinalists(
-            scenario.plans(evidenceRef)[1].contingentFinalists
+            typedScenarioMotion.contingentFinalists
           )
         }]
       },
@@ -2060,6 +2241,14 @@ async function verifyTwoStageTargetBinding() {
       }
       const task = JSON.parse(request.user || '{}');
       const finalists = task.finalists || [];
+      if (finalists.some((finalist) =>
+        finalist.revenuePath?.causalWitness?.contractVersion !==
+          'revenue_causal_witness_v1'
+      )) {
+        throw new Error(
+          'typed causal witness did not reach the independent critic'
+        );
+      }
       assertCompactCriticPair({
         request,
         task,
@@ -2135,6 +2324,18 @@ async function verifyTwoStageTargetBinding() {
       !result.winner?.action?.includes('Dr. Ava Rivera') ||
       result.winner?.action?.includes('{{TARGET_NAME}}') ||
       result.winner?.candidateId !== targetCandidateId ||
+      result.winner?.revenuePath?.causalWitness?.contractVersion !==
+        'revenue_causal_witness_v1' ||
+      result.winner?.revenuePath?.causalWitness?.stopLimit !== 14 ||
+      result.winner?.revenuePath?.causalWitness?.stopUnit !==
+        'calendar_days' ||
+      result.result?.incrementalRevenueGate?.passed !== true ||
+      result.result?.incrementalRevenueGate?.observablePaidConversion !==
+        true ||
+      result.result?.incrementalRevenueGate?.attribution !== true ||
+      result.result?.incrementalRevenueGate
+        ?.counterfactualIncrementality !== true ||
+      result.result?.incrementalRevenueGate?.numericStop !== true ||
       result.result?.allowedChannel !== 'partner_channel' ||
       result.gate?.sideEffects?.outreachAttempts !== 0 ||
       result.gate?.sideEffects?.publishAttempts !== 0 ||
@@ -3013,6 +3214,7 @@ function contingentFinalists(motion) {
       ats: attributionSignal,
       cd: conversionDestination,
       st: 'Stop after 10 attempts, 1 paid outcome, or 14 calendar days, whichever comes first.',
+      k: causalWitness(mechanism, attributionMethod),
       g: {
         b: [buyerRef],
         o: paidDemand ? [targetRef] : [ref],
@@ -3073,6 +3275,42 @@ function contingentFinalists(motion) {
     familyB: makeFamily('artifact_led_tactic', 'route gamma', 'route delta'),
     w: scores
   };
+}
+
+function causalWitness(
+  revenueMechanism,
+  attributionMethod,
+  overrides = {}
+) {
+  return {
+    v: 'revenue_causal_witness_v1',
+    i: 'counterfactual_incremental_paid_income',
+    c: revenueMechanism,
+    o: revenueMechanism,
+    t: attributionMethod,
+    d: 'separate_conversion_destination',
+    s: 'stop_at_limit',
+    n: 14,
+    u: 'calendar_days',
+    ...overrides
+  };
+}
+
+function applyNovelTypedCausalSemantics(value) {
+  const motion = structuredClone(value);
+  for (const familyKey of ['familyA', 'familyB']) {
+    const revenue = motion.contingentFinalists[familyKey].d.r[0];
+    revenue.io =
+      'Cash reaches the owner only because this reviewed path succeeds.';
+    revenue.c =
+      'Invite {{TARGET_NAME}} as the named partner to route one suitable family toward the service.';
+    revenue.o = 'Funds settle for one completed visit.';
+    revenue.ats =
+      'Persist the originating practice beside the transaction.';
+    revenue.cd = 'https://owner.example/offer';
+    revenue.st = 'Conclude on the fourteenth day.';
+  }
+  return motion;
 }
 
 function compactContingentFinalists(value) {

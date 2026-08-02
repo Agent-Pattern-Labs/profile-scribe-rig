@@ -268,6 +268,25 @@ const ATTRIBUTION_METHODS = new Set([
   'platform_or_marketplace_record',
   'employment_compensation_record'
 ]);
+const REVENUE_CAUSAL_WITNESS_CONTRACT =
+  'revenue_causal_witness_v1';
+const REVENUE_CAUSAL_INCREMENTAL_KIND =
+  'counterfactual_incremental_paid_income';
+const REVENUE_CAUSAL_DESTINATION_KIND =
+  'separate_conversion_destination';
+const REVENUE_CAUSAL_STOP_RULE = 'stop_at_limit';
+const REVENUE_CAUSAL_STOP_UNITS = new Set([
+  'calendar_days',
+  'review_first_actions',
+  'referral_requests',
+  'applications',
+  'qualified_visits',
+  'paid_outcomes',
+  'bookings',
+  'orders',
+  'proposals',
+  'buyers'
+]);
 const OWNED_INBOUND_ASSET_KIND = 'owned_inbound_asset';
 const SYNTHESIZED_OWNED_INBOUND_ASSETS = new WeakSet();
 const COMMERCIAL_CRITIC_RECURRING_VALUE_PRIORITY = new Map([
@@ -542,7 +561,7 @@ Ground claims only in commercialEvidenceGraph.verifiedFacts and the forced read-
 Infer complementary economic roles, not matching profession keywords: e.g. lactation consultant→newborn-care referral authority; programmer→live compensated demand; consultant→current buying trigger; product owner→marketplace, buyer, or distributor. Separate end payer from referral/distribution counterparty. Prefer supported live paid demand. A site or booking page is a conversion destination, not acquisition demand.
 Plans are contingent motions, never proof that a target exists, is interested, will refer, has budget, or permits contact. Model prose cannot establish a web target. Leave it unresolved as {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for deterministic binding to a validated provider citation/record; use target:evidence only where that future fact grounds a dimension.
 Return one plan with shared pathBase plus two distinct tactic deltas. Modes: active_job_posting=paid job/contract; professional_counterparty=buyer/referral authority/sponsor/partner; local_organization=local professional organization; public_live_demand=paid RFP/contract/marketplace/sponsorship demand. organization_then_decision_maker is local_organization only and needs 1-6 professional targetRoleTerms.
-pathBase owns e,r,o,b,t,p: one v3 revenue path and two offer/buyer/timing/proof variants. tacticA/B each own l,m,tacticKey,e,s,c,a,f and exactly two channel/action/follow-up variants. Tactics differ causally but preserve the shared buyer-to-payment base. Include current paid offer, distinct acquisition and destination, paid conversion, attribution, numeric stop, positive value, spend, evidence, and active actions.
+pathBase owns e,r,o,b,t,p: one v3 revenue path with required typed k causal witnesses and two offer/buyer/timing/proof variants. tacticA/B each own l,m,tacticKey,e,s,c,a,f and exactly two channel/action/follow-up variants. Tactics differ causally but preserve the shared buyer-to-payment base. Include current paid offer, distinct acquisition and destination, paid conversion, attribution, numeric stop, positive value, spend, evidence, and active actions.
 Every tactic action contains {{TARGET_NAME}} once and independently asks for a paid-offer referral/introduction, paid booking/order/contract/subscription, compensated-role application/proposal, or paid listing. It is never setup/support/follow-up. Review is authorization, not acquisitionMode. Deterministic code only materializes families and binds tokens/refs; workflow, scheduling, resource, document, profile, content, and measurement work cannot be the outcome.
 Keep the complete JSON at or below 12 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 target:evidence cannot prove seller capability, an existing/warm/permitted relationship, private contacts, or paid demand outside its typed slot. Ground the user's current offer, destination, and attribution in exact approved IDs. A professional-identity slot proves only exact identity and prospective channel fit; only live-paid-demand may ground an outside paid offer, application destination, and compensated conversion.
@@ -656,6 +675,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
   const rawCardinalityIssue = opportunityDiscoveryRawPlanCardinalityIssue(
     completion?.data
   );
+  const rawCausalWitnessIssue =
+    opportunityDiscoveryRawCausalWitnessIssue(completion?.data);
   const normalized = normalizeOpportunityDiscoveryPlan(
     completion?.data,
     // The strict response enum is built from this exact projected catalog.
@@ -671,7 +692,7 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     observedAt: validDate(now).toISOString()
   });
   normalized.webSearchReceipt = webSearchReceipt;
-  const issue = rawCardinalityIssue ||
+  const issue = rawCardinalityIssue || rawCausalWitnessIssue ||
     opportunityDiscoveryPlanIssue(normalized);
   const webSearchIssue = opportunityDiscoveryWebSearchReceiptIssue(
     webSearchReceipt
@@ -770,10 +791,51 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
   const revenueGrounding = asObject(revenuePathProperties.g);
   const revenueGroundingProperties = asObject(revenueGrounding.properties);
   const destinationGrounding = asObject(revenueGroundingProperties.d);
+  const revenueMechanism = asObject(revenuePathProperties.rm);
+  const attributionMethod = asObject(revenuePathProperties.atm);
+  const causalWitness = {
+    type: 'object',
+    properties: {
+      v: {
+        type: 'string',
+        enum: [REVENUE_CAUSAL_WITNESS_CONTRACT]
+      },
+      i: {
+        type: 'string',
+        enum: [REVENUE_CAUSAL_INCREMENTAL_KIND]
+      },
+      c: {
+        $ref: '#/$defs/revenueMechanism'
+      },
+      o: {
+        $ref: '#/$defs/revenueMechanism'
+      },
+      t: {
+        $ref: '#/$defs/attributionMethod'
+      },
+      d: {
+        type: 'string',
+        enum: [REVENUE_CAUSAL_DESTINATION_KIND]
+      },
+      s: {
+        type: 'string',
+        enum: [REVENUE_CAUSAL_STOP_RULE]
+      },
+      n: { type: 'integer', minimum: 1, maximum: 100 },
+      u: {
+        type: 'string',
+        enum: [...REVENUE_CAUSAL_STOP_UNITS]
+      }
+    },
+    required: ['v', 'i', 'c', 'o', 't', 'd', 's', 'n', 'u'],
+    additionalProperties: false
+  };
   const contingentDefs = {
     evidenceRef: contingentSchema.$defs.evidenceRef,
     evidenceRefs: contingentSchema.$defs.evidenceRefs,
     compactEvidenceRefs: contingentSchema.$defs.compactEvidenceRefs,
+    revenueMechanism,
+    attributionMethod,
     scores: contingentSchema.$defs.scores,
     offerItem: boundedItemDefinition('offerItem'),
     buyerItem: boundedItemDefinition('buyerItem'),
@@ -798,13 +860,16 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
       ...revenuePath,
       properties: {
         ...revenuePathProperties,
+        rm: { $ref: '#/$defs/revenueMechanism' },
         l: boundedText(140),
         io: boundedText(180),
         c: boundedText(180),
         o: boundedText(180),
+        atm: { $ref: '#/$defs/attributionMethod' },
         ats: boundedText(220),
         cd: boundedText(180),
         st: boundedText(180),
+        k: { $ref: '#/$defs/causalWitness' },
         sb: boundedText(180, true),
         g: {
           ...revenueGrounding,
@@ -819,8 +884,10 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
             }
           }
         }
-      }
+      },
+      required: [...asArray(revenuePath.required), 'k']
     },
+    causalWitness,
     pathBase: {
       type: 'object',
       properties: {
@@ -1058,7 +1125,7 @@ function compactOpportunityDiscoveryOutputContract() {
       `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}`,
     item: '{l,e}; t={l,e,q}; exact evidence IDs',
     revenuePath:
-      `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; g binds the six causal evidence roles`,
+      `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,k,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; k={v,i,c,o,t,d,s,n,u} proves six causal semantics; g binds evidence`,
     evidence:
       `base+tactic e includes ${CONTINGENT_TARGET_EVIDENCE_REF}, one observation:* and every child ref; child refs⊆plan refs+target`
   };
@@ -1069,8 +1136,8 @@ function compactOpportunityDiscoveryHardRules() {
     'Exactly 1 motion: complete pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
     'Use evidenceCatalog IDs only. base+each tactic e has observation:*; system attribution proves attribution only; obey targetRoleMap.',
     `Both tacticA.a and tacticB.a contain exactly 2 variants; each independently completes its commercial ask, never setup/support: ask ${CONTINGENT_TARGET_NAME_TOKEN} for a paid referral/introduction, booking/order/contract/subscription, compensated application/proposal, or paid listing.`,
-    'Each r: a=plan.acquisitionMode; io=incremental paid income; c=active conversion; o=paid booking/payment/contract/order/subscription/compensation receipt.',
-    'Each r: allowed atm; ats=matching durable record+source/referral/UTM/campaign/channel/code field; cd=conversion page separate from acquisition; st=number+time/sample/action unit+stop/at-most/whichever-first; vm>0.',
+    'Each r: a=plan.acquisitionMode; required k.i proves counterfactual paid income; k.c=k.o=rm; k.t=atm.',
+    'Each r: k.d proves a separate destination; k.s/n/u prove a bounded stop; calendar_days<=30; author io/c/o/ats/cd/st; vm>0.',
     'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence; a prospective partner proves no buyer, offer, warmness, permission, or demand.',
     'Tactics differ causally. Review=authorization, not acquisitionMode. organization_then_decision_maker needs 1-6 professional roles. Never target patients/sensitive traits/private contacts; only referral query may describe population served. No outreach/publish/ads/forms/provider writes.',
     'Audit once; return one minified strict-JSON object.'
@@ -1512,6 +1579,35 @@ function opportunityDiscoveryRawPlanCardinalityIssue(value) {
   return '';
 }
 
+function opportunityDiscoveryRawCausalWitnessIssue(value) {
+  const raw = asObject(value);
+  if (firstText(raw.contractVersion) !==
+      OPPORTUNITY_DISCOVERY_PLAN_CONTRACT ||
+      firstText(raw.status) !== 'planned') {
+    return '';
+  }
+  for (const planValue of asArray(raw.plans)) {
+    const plan = asObject(planValue);
+    const bundle = asObject(plan.contingentFinalists);
+    const pathBase = asObject(bundle.pathBase);
+    const revenuePaths = Object.keys(pathBase).length > 0
+      ? asArray(pathBase.r)
+      : ['familyA', 'familyB'].flatMap((familyKey) =>
+          asArray(asObject(asObject(bundle[familyKey]).d).r)
+        );
+    if (revenuePaths.length === 0) {
+      return `Discovery plan ${firstText(plan.id)} has no typed causal revenue witness.`;
+    }
+    for (const [index, revenueValue] of revenuePaths.entries()) {
+      const issues = revenueCausalWitnessIssues(revenueValue);
+      if (issues.length > 0) {
+        return `Discovery plan ${firstText(plan.id)} has an invalid typed causal revenue witness ${index + 1} [${issues.join(',')}].`;
+      }
+    }
+  }
+  return '';
+}
+
 function contingentTargetSlotIssue(planValue) {
   const plan = asObject(planValue);
   const slot = asObject(plan.targetSlot);
@@ -1707,6 +1803,7 @@ function contingentCausalRevenuePathIssues(
   const revenue = asObject(revenueValue);
   const grounding = asObject(revenue.g);
   const destination = asObject(grounding.d);
+  const semantic = revenuePathSemanticChecks(revenue);
   return [
     [
       firstText(revenue.v) === REVENUE_PATH_CONTRACT_VERSION,
@@ -1724,18 +1821,12 @@ function contingentCausalRevenuePathIssues(
       ATTRIBUTION_METHODS.has(firstText(revenue.atm)),
       'attribution_method'
     ],
-    [incrementalIncomeText(revenue.io), 'incremental_income'],
-    [revenueAdvancingAction(revenue.c), 'conversion_action'],
-    [observableRevenueText(revenue.o), 'observable_revenue'],
-    [
-      attributionSignalText(revenue.ats, revenue.atm),
-      'attribution_signal'
-    ],
-    [
-      conversionDestinationText(revenue.cd),
-      'conversion_destination'
-    ],
-    [boundedRevenueStopCondition(revenue.st), 'numeric_stop'],
+    [semantic.incrementalIncome, 'incremental_income'],
+    [semantic.conversionAction, 'conversion_action'],
+    [semantic.observableRevenue, 'observable_revenue'],
+    [semantic.attributionSignal, 'attribution_signal'],
+    [semantic.conversionDestination, 'conversion_destination'],
+    [semantic.numericStop, 'numeric_stop'],
     [nonNegativeInteger(revenue.vm) > 0, 'expected_value'],
     [asArray(grounding.b).length > 0, 'grounding_buyer'],
     [asArray(grounding.o).length > 0, 'grounding_offer'],
@@ -1750,6 +1841,219 @@ function contingentCausalRevenuePathIssues(
   ]
     .filter(([valid]) => !valid)
     .map(([, code]) => code);
+}
+
+function normalizeRevenueCausalWitness(value) {
+  const raw = asObject(value);
+  if (Object.keys(raw).length === 0) return undefined;
+  return compact({
+    contractVersion: firstText(raw.v, raw.contractVersion),
+    incrementalIncomeKind: firstText(
+      raw.i,
+      raw.incrementalIncomeKind
+    ),
+    conversionActionMechanism: contractEnum(firstText(
+      raw.c,
+      raw.conversionActionMechanism
+    )),
+    observableOutcomeMechanism: contractEnum(firstText(
+      raw.o,
+      raw.observableOutcomeMechanism
+    )),
+    attributionMethod: contractEnum(firstText(
+      raw.t,
+      raw.attributionMethod
+    )),
+    destinationKind: firstText(raw.d, raw.destinationKind),
+    stopRule: firstText(raw.s, raw.stopRule),
+    stopLimit: Number.isInteger(raw.n)
+      ? raw.n
+      : Number.isInteger(raw.stopLimit)
+        ? raw.stopLimit
+        : undefined,
+    stopUnit: contractEnum(firstText(raw.u, raw.stopUnit))
+  });
+}
+
+function revenueCausalWitnessFieldChecks(revenueValue) {
+  const revenue = asObject(revenueValue);
+  const hasCompactWitness = Object.prototype.hasOwnProperty.call(
+    revenue,
+    'k'
+  );
+  const hasNormalizedWitness = Object.prototype.hasOwnProperty.call(
+    revenue,
+    'causalWitness'
+  );
+  const witness = normalizeRevenueCausalWitness(
+    hasCompactWitness ? revenue.k : revenue.causalWitness
+  );
+  const version = firstText(witness?.contractVersion) ===
+    REVENUE_CAUSAL_WITNESS_CONTRACT;
+  const mechanism = contractEnum(firstText(
+    revenue.rm,
+    revenue.revenueMechanism
+  ));
+  const attributionMethod = contractEnum(firstText(
+    revenue.atm,
+    revenue.attributionMethod
+  ));
+  const stopLimit = witness?.stopLimit;
+  const stopUnit = firstText(witness?.stopUnit);
+  const numericStop = version &&
+    firstText(witness?.stopRule) === REVENUE_CAUSAL_STOP_RULE &&
+    Number.isInteger(stopLimit) &&
+    stopLimit >= 1 &&
+    stopLimit <= 100 &&
+    REVENUE_CAUSAL_STOP_UNITS.has(stopUnit) &&
+    (stopUnit !== 'calendar_days' || stopLimit <= 30);
+  return {
+    present: hasCompactWitness || hasNormalizedWitness,
+    witness,
+    incrementalIncome: version &&
+      firstText(witness?.incrementalIncomeKind) ===
+        REVENUE_CAUSAL_INCREMENTAL_KIND,
+    conversionAction: version &&
+      REVENUE_MECHANISMS.has(mechanism) &&
+      firstText(witness?.conversionActionMechanism) === mechanism,
+    observableRevenue: version &&
+      REVENUE_MECHANISMS.has(mechanism) &&
+      firstText(witness?.observableOutcomeMechanism) === mechanism,
+    attributionSignal: version &&
+      ATTRIBUTION_METHODS.has(attributionMethod) &&
+      firstText(witness?.attributionMethod) === attributionMethod,
+    conversionDestination: version &&
+      firstText(witness?.destinationKind) ===
+        REVENUE_CAUSAL_DESTINATION_KIND,
+    numericStop
+  };
+}
+
+function revenueCausalWitnessIssues(revenueValue) {
+  const checks = revenueCausalWitnessFieldChecks(revenueValue);
+  if (!checks.present) return ['missing_witness'];
+  return [
+    [checks.incrementalIncome, 'incremental_income'],
+    [checks.conversionAction, 'conversion_action'],
+    [checks.observableRevenue, 'observable_revenue'],
+    [checks.attributionSignal, 'attribution_signal'],
+    [checks.conversionDestination, 'conversion_destination'],
+    [checks.numericStop, 'numeric_stop']
+  ]
+    .filter(([valid]) => !valid)
+    .map(([, code]) => code);
+}
+
+function revenuePathSemanticChecks(revenueValue) {
+  const revenue = asObject(revenueValue);
+  const witness = revenueCausalWitnessFieldChecks(revenue);
+  const incrementalIncome = firstText(
+    revenue.io,
+    revenue.incrementalIncomeOutcome
+  );
+  const conversionAction = firstText(
+    revenue.c,
+    revenue.conversionAction
+  );
+  const observableRevenue = firstText(
+    revenue.o,
+    revenue.observableRevenueOutcome
+  );
+  const attributionSignal = firstText(
+    revenue.ats,
+    revenue.attributionSignal
+  );
+  const conversionDestination = firstText(
+    revenue.cd,
+    revenue.conversionDestination
+  );
+  const numericStop = firstText(
+    revenue.st,
+    revenue.stopCondition
+  );
+  const typedConversionAction = witness.conversionAction &&
+    Boolean(conversionAction) &&
+    !passiveOrObservationalPrimaryAction(conversionAction) &&
+    !operationOnlyAction(conversionAction) &&
+    !nonRevenueArtifactOrQuestionAction(conversionAction) &&
+    !experimentActionClaimsCompletedExternalExecution(conversionAction);
+  const typed = witness.present;
+  return {
+    witness,
+    incrementalIncome: typed
+      ? (
+        witness.incrementalIncome &&
+        Boolean(incrementalIncome) &&
+        !explicitlyContradictsIncrementalIncome(incrementalIncome)
+      )
+      : incrementalIncomeText(incrementalIncome),
+    conversionAction: typed
+      ? typedConversionAction
+      : revenueAdvancingAction(conversionAction),
+    observableRevenue: typed
+      ? (
+        witness.observableRevenue &&
+        Boolean(observableRevenue) &&
+        !explicitlyContradictsPaidOutcome(observableRevenue)
+      )
+      : observableRevenueText(observableRevenue),
+    attributionSignal: typed
+      ? (
+        witness.attributionSignal &&
+        Boolean(attributionSignal) &&
+        !explicitlyContradictsAttribution(attributionSignal)
+      )
+      : attributionSignalText(
+          attributionSignal,
+          firstText(revenue.atm, revenue.attributionMethod)
+        ),
+    conversionDestination: typed
+      ? (
+        witness.conversionDestination &&
+        Boolean(conversionDestination) &&
+        !explicitlyContradictsConversionDestination(
+          conversionDestination
+        )
+      )
+      : conversionDestinationText(conversionDestination),
+    numericStop: typed
+      ? (
+        witness.numericStop &&
+        Boolean(numericStop) &&
+        !explicitlyContradictsBoundedStop(numericStop)
+      )
+      : boundedRevenueStopCondition(numericStop)
+  };
+}
+
+function explicitlyContradictsIncrementalIncome(value) {
+  return /\b(?:business as usual|equally likely without|no (?:new |additional |incremental )?(?:income|payment|revenue)|not incremental|without (?:new |additional |incremental )?(?:income|payment|revenue))\b/i.test(
+    firstText(value)
+  );
+}
+
+function explicitlyContradictsPaidOutcome(value) {
+  return /\b(?:complimentary|free|unpaid|no (?:income|payment|revenue)|not paid|without (?:income|payment|revenue))\b/i.test(
+    firstText(value)
+  );
+}
+
+function explicitlyContradictsAttribution(value) {
+  return /\b(?:no attribution|no source (?:field|record)|not attributed|not recorded|unattributed|unknown source)\b/i.test(
+    firstText(value)
+  );
+}
+
+function explicitlyContradictsConversionDestination(value) {
+  return /\b(?:destination unavailable|no conversion destination|no destination|not bookable|not available)\b/i.test(
+    firstText(value)
+  );
+}
+
+function explicitlyContradictsBoundedStop(value) {
+  return /\b(?:indefinite|no (?:limit|stop)|unbounded|unlimited|without (?:a )?(?:limit|stop))\b/i.test(
+    firstText(value)
+  );
 }
 
 function countExactToken(value, token) {
@@ -5137,6 +5441,7 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
     firstText(asArray(critic.selectedOrdering)[0]) ===
       firstText(winnerHypothesis?.id);
   const activeAction = asObject(path.activeRevenueAction);
+  const causalSemantic = revenuePathSemanticChecks(path);
   const commercialConstraint = deterministicCommercialHypothesisGate(
     winnerHypothesis,
     raw.commercialEvidenceGraph
@@ -5159,7 +5464,7 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
       Boolean(hypothesisChannel),
     acquisitionDistinctFromDestination:
       Boolean(hypothesisChannel) &&
-      conversionDestinationText(path.conversionDestination) &&
+      causalSemantic.conversionDestination &&
       comparable(hypothesisChannel) !==
         comparable(path.conversionDestination),
     actionCanBeginNow:
@@ -5175,17 +5480,10 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
         : '',
     discoveryRouteRequiresApproval:
       Boolean(discoveryReviewChannel && !configuredAllowedChannel),
-    observablePaidConversion: observableRevenueText(
-      path.observableRevenueOutcome
-    ),
-    attribution: attributionSignalText(
-      path.attributionSignal,
-      path.attributionMethod
-    ),
-    counterfactualIncrementality: incrementalIncomeText(
-      path.incrementalIncomeOutcome
-    ),
-    numericStop: boundedRevenueStopCondition(path.stopCondition),
+    observablePaidConversion: causalSemantic.observableRevenue,
+    attribution: causalSemantic.attributionSignal,
+    counterfactualIncrementality: causalSemantic.incrementalIncome,
+    numericStop: causalSemantic.numericStop,
     primarilyOperationalOrObservational,
     activeRevenueAction: activeAction.active === true,
     causalAcquisitionPath:
@@ -8843,6 +9141,7 @@ function deterministicCommercialHypothesisGate(
   const revenuePath = asObject(hypothesis.revenuePath);
   const conversionAction = firstText(revenuePath.conversionAction);
   const destination = firstText(revenuePath.conversionDestination);
+  const semantic = revenuePathSemanticChecks(revenuePath);
   const constraintGate = commercialConstraintGate(
     hypothesis,
     commercialEvidenceGraphValue
@@ -8854,19 +9153,20 @@ function deterministicCommercialHypothesisGate(
       !experimentActionClaimsCompletedExternalExecution(action) &&
       !experimentActionClaimsCompletedExternalExecution(conversionAction) &&
       !operationOnlyAction(action) &&
-      revenueAdvancingAction(action),
+      revenueAdvancingAction(action) &&
+      semantic.conversionAction,
     causalAcquisitionPath:
       ACQUISITION_MODES.has(firstText(revenuePath.acquisitionMode)) &&
       acquisitionModeMatchesText(
         revenuePath.acquisitionMode,
         `${channel} ${conversionAction}`
       ) &&
-      conversionDestinationText(destination) &&
+      semantic.conversionDestination &&
       comparable(channel) !== comparable(destination),
     incrementalRevenueOutcome:
-      incrementalIncomeText(revenuePath.incrementalIncomeOutcome) &&
-      observableRevenueText(revenuePath.observableRevenueOutcome) &&
-      boundedRevenueStopCondition(revenuePath.stopCondition),
+      semantic.incrementalIncome &&
+      semantic.observableRevenue &&
+      semantic.numericStop,
     commercialConstraintsSatisfied: constraintGate.valid
   };
   return {
@@ -9682,6 +9982,9 @@ function normalizeRevenuePathSeed(seedValue, evidenceRefs) {
   );
   return compact({
     contractVersion,
+    causalWitness: normalizeRevenueCausalWitness(
+      seed.k ?? seed.causalWitness
+    ),
     revenueMechanism: contractEnum(firstText(
       seed.revenueMechanism,
       seed.mechanism,
@@ -13448,45 +13751,35 @@ function validateRevenuePath(
   const offer = firstText(tuple?.offers?.label);
   const channel = firstText(tuple?.channels?.label);
   const action = firstText(tuple?.actions?.label);
-  const incomeOutcome = firstText(
-    revenuePath.incrementalIncomeOutcome
-  );
   const conversionAction = firstText(revenuePath.conversionAction);
-  const observableOutcome = firstText(
-    revenuePath.observableRevenueOutcome
-  );
-  const attributionSignal = firstText(revenuePath.attributionSignal);
   const conversionDestination = firstText(
     revenuePath.conversionDestination
   );
-  const stopCondition = firstText(revenuePath.stopCondition);
   const supportingBottleneck = firstText(
     revenuePath.supportingBottleneck
   );
+  const semantic = revenuePathSemanticChecks(revenuePath);
   if (!paidOfferText(offer)) {
     reasons.add('missing_paid_offer');
   }
-  if (!incrementalIncomeText(incomeOutcome)) {
+  if (!semantic.incrementalIncome) {
     reasons.add('missing_incremental_income');
   }
-  if (!revenueAdvancingAction(conversionAction)) {
+  if (!semantic.conversionAction) {
     reasons.add('missing_paid_conversion');
   }
-  if (!observableRevenueText(observableOutcome)) {
+  if (!semantic.observableRevenue) {
     reasons.add('missing_observable_revenue');
   }
-  if (!attributionSignalText(
-    attributionSignal,
-    revenuePath.attributionMethod
-  )) {
+  if (!semantic.attributionSignal) {
     reasons.add('missing_attribution_signal');
   }
   if (revenuePath.contractVersion === REVENUE_PATH_CONTRACT_VERSION) {
-    if (!conversionDestinationText(conversionDestination) ||
+    if (!semantic.conversionDestination ||
         comparable(conversionDestination) === comparable(channel)) {
       reasons.add('invalid_conversion_destination');
     }
-    if (!boundedRevenueStopCondition(stopCondition)) {
+    if (!semantic.numericStop) {
       reasons.add('missing_numeric_stop');
     }
   }
@@ -13551,17 +13844,20 @@ function validateRevenuePath(
     primaryAction: action,
     conversionAction,
     active: !passiveOrObservationalPrimaryAction(action) &&
+      !passiveOrObservationalPrimaryAction(conversionAction) &&
       !experimentActionClaimsCompletedExternalExecution(action) &&
       !experimentActionClaimsCompletedExternalExecution(conversionAction) &&
       !operationOnlyAction(action) &&
-      revenueAdvancingAction(action),
+      !operationOnlyAction(conversionAction) &&
+      revenueAdvancingAction(action) &&
+      semantic.conversionAction,
     causalAcquisitionPath:
       ACQUISITION_MODES.has(revenuePath.acquisitionMode) &&
       acquisitionModeMatchesText(
         revenuePath.acquisitionMode,
         `${channel} ${conversionAction}`
       ),
-    incrementalRevenueOutcome: incrementalIncomeText(incomeOutcome)
+    incrementalRevenueOutcome: semantic.incrementalIncome
   };
   return {
     valid: reasons.size === 0,
@@ -13580,6 +13876,7 @@ function revenuePathGroundingReasons(
   referenceTime
 ) {
   const grounding = asObject(revenuePath._grounding);
+  const causalWitness = revenueCausalWitnessFieldChecks(revenuePath);
   const groups = {
     buyer: compactStrings(grounding.buyerEvidenceRefs),
     paid_offer: compactStrings(grounding.paidOfferEvidenceRefs),
@@ -13730,13 +14027,17 @@ function revenuePathGroundingReasons(
       groups.conversion_destination,
       evidenceByID,
       revenuePath.revenueMechanism,
-      destination
+      destination,
+      causalWitness.conversionDestination
     );
   if (!destination ||
       comparable(destination) === comparable(
         asObject(tuple?.channels).label
       ) ||
-      !conversionDestinationText(destination) ||
+      (
+        !conversionDestinationText(destination) &&
+        !causalWitness.conversionDestination
+      ) ||
       (
         groups.conversion_destination.length > 0 &&
         (
@@ -13795,10 +14096,14 @@ function commercialDiscoveryDestinationEvidenceSupported(
   refsValue,
   evidenceByID,
   mechanism,
-  destination
+  destination,
+  typedDestination = false
 ) {
   if (mechanism !== 'compensated_role' ||
-      !conversionDestinationText(destination)) {
+      (
+        !conversionDestinationText(destination) &&
+        typedDestination !== true
+      )) {
     return false;
   }
   return compactStrings(refsValue).some((ref) => {
