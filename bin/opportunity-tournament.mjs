@@ -166,11 +166,14 @@ const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
 const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 9_000;
-// One outer motion already carries two independently complete causal tactic
-// families. Keeping call 1 to that single strongest motion preserves the
-// required family-diverse critic comparison while preventing the duplicated
-// nested family envelope from exhausting the fixed completion-token ceiling.
-const MAX_DISCOVERY_PLANNER_PLANS = 1;
+// Call 1 must retain two economically distinct outside-world motions until
+// provider evidence can bind or reject them. Prematurely collapsing to one
+// motion lets a plausible but wrong route (for example, peer supplier pages
+// mislabeled as demand) strand a stronger referral, buyer, or paid-demand
+// path before deterministic discovery gets a vote. Each compact motion still
+// carries only one shared path plus two tactic deltas, keeping the response
+// inside the fixed envelope without adding a model call.
+const MAX_DISCOVERY_PLANNER_PLANS = 2;
 // The planner sees at most fourteen approved, non-target evidence records.
 // Its two family indexes can legitimately cite different subsets, so the
 // outer containment index must span that whole projected trust boundary even
@@ -523,9 +526,9 @@ export async function runOpportunityDiscoveryPlanner({
     now,
     {
       maxItems: MAX_DISCOVERY_PLAN_EVIDENCE_REFS,
-      labelChars: 120,
-      summaryChars: 220,
-      urlChars: 160
+      labelChars: 96,
+      summaryChars: 160,
+      urlChars: 136
     }
   );
   const commercialEvidenceGraph = buildCommercialEvidenceGraph(
@@ -586,15 +589,15 @@ export async function runOpportunityDiscoveryPlanner({
     };
   }
 
-  const system = `You are ProfileScribe's research-only commercial-motion generator. Find one professional's strongest outside-world payment path within 30 days; no side effects.
+  const system = `You are ProfileScribe's research-only commercial-motion generator. Find one professional's two strongest distinct outside-world payment paths within 30 days; no side effects.
 Use commercialEvidenceGraph.verifiedFacts and forced read-only search only; inferences/gaps stay unverified. roles=["attribution"] proves only a future attribution record, never a commercial fact.
-Infer complementary roles: lactation→newborn-care referral authority; programmer→live paid demand; consultant→buyer trigger; product owner→buyer/distributor. Separate payer/counterparty. Website/booking=destination, not demand.
+Choose the outside actor or buyer-authored artifact that can cause the next payment, never a peer supplier. paid_demand requires a current purchaser/employer-authored compensated job, RFP, solicitation, or explicit buying request; supplier/competitor offers, directories, category availability, "accepts insurance," and the seller's own offer/booking page are not demand. If a protected or sensitive end buyer cannot be researched directly, choose a complementary professional referral authority. For skills/labor prefer live compensated demand; for consulting/products prefer a real buyer or buyer-authored demand. Separate payer/counterparty. Website/booking=destination, not demand. Any inbound preference is conditional on real outside demand and never overrides this route test.
 Plans are contingent, not proof of target, interest, referral, budget, or permission. Model prose proves no web target. Leave {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for provider binding; use target:evidence only for its typed dimensions.
-Return one plan with shared pathBase plus two tactic deltas. Modes: active_job_posting=paid role; professional_counterparty=person; local_organization=organization seed then person; public_live_demand=live paid demand.
+Return exactly two distinct plans; each plan has one shared pathBase plus two tactic deltas. Modes: active_job_posting=paid role; professional_counterparty=person; local_organization=organization seed then person; public_live_demand=live paid demand.
 Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel. No warm_referral/existing_customer for unresolved targets; buyer identity!=inbound demand. professional_counterparty terminates in one person; local_organization uses the organization only as a seed and terminates in its named decision-maker person.
 pathBase={e,r,o,b,t,p}: one v3 path+k and 2 o/b/t/p variants. tacticA/B={l,m,tacticKey,e,s,c,a,f}: 2 c/a/f variants; tactics differ causally over one buyer-to-payment base. Require current paid offer, separate acquisition/destination, paid conversion, attribution, numeric stop, positive value/spend, evidence, active actions.
 Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. No setup/support/follow-up. buyer/referral c,a: {{TARGET_URL}} once, only review-first public professional profile; omit private/alternate routes from JSON/query. Review!=mode; code only binds tokens/refs; operations never outcomes.
-Keep the complete JSON at or below 12 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
+Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 target:evidence proves only typed target dimensions: never seller capability, relationship, private contacts, or paid demand unless live-paid-demand. Bind current offer/destination/attribution to exact approved IDs. Professional identity proves identity+prospective channel fit only; live-paid-demand alone grounds outside paid offer/application/compensated conversion.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"); the typed target stays a professional person/organization and targetRoleTerms, organizationTerms, jobTitle, skills never target that population. Copy IDs/tokens exactly. Return strict JSON only.`;
   const user = JSON.stringify({
@@ -603,7 +606,7 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     evidenceCatalog: promptEvidenceCatalog,
     commercialEvidenceGraph: promptCommercialEvidenceGraph,
     task:
-      'Plan the single strongest outside-world search most likely to reveal one exact, review-first path to payment within 30 days.',
+      'Plan the two strongest economically distinct outside-world searches most likely to reveal one exact, review-first path to payment within 30 days; rank by attributable payment probability, then time-to-cash and one-to-many or recurring leverage.',
     outputContract: compactOpportunityDiscoveryOutputContract(),
     hardRules: compactOpportunityDiscoveryHardRules(),
     constraints: [
@@ -1134,7 +1137,7 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
 function compactOpportunityDiscoveryOutputContract() {
   return {
     plan:
-      'Return exactly 1 strongest plan; fill every required field.',
+      'Return exactly 2 ranked, economically distinct plans; fill every required field.',
     targetSlot:
       `${CONTINGENT_TARGET_NAME_TOKEN}/${CONTINGENT_TARGET_URL_TOKEN}/${CONTINGENT_TARGET_EVIDENCE_REF}; commercialRole=plan.commercialRole; live demand=live_paid_demand/single_exact_target`,
     targetRoleMap: {
@@ -1168,14 +1171,14 @@ function compactOpportunityDiscoveryOutputContract() {
 
 function compactOpportunityDiscoveryHardRules() {
   return [
-    '1 motion: pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
+    '2 distinct motions: each pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
     'Evidence IDs only; base+each tactic e has observation:*; system attribution is attribution-only; obey targetRoleMap.',
     'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     'Each r: a=plan.acquisitionMode; k.i=counterfactual paid income; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.',
     'r.o describes that one terminal rm event, not objective alternatives. Reject or/either/attempt/pending/declined/failed/not received.',
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/c/o/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
-    'Tactics differ; review!=mode. Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel; buyer identity!=inbound.',
+    'Tactics and motions differ. Pick actors/artifacts causing payment, never peer suppliers. paid_demand=current buyer/employer-authored compensated job/RFP/solicitation/explicit buying request only; a bare request term is insufficient; seller/competitor offers, marketplaces, directories, category availability, and accepts-insurance pages are not demand. Sensitive end buyer=>complementary professional referral_partner. Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel; buyer identity!=inbound.',
     'Adapters: professional_counterparty=person/single_exact_target; local_organization=person/organization_then_decision_maker(1-6); organization is never terminal.',
     `buyer/referral c,a: 1 ${CONTINGENT_TARGET_URL_TOKEN} each; HTTPS LinkedIn /in verified public profile only; review-first; omit private-contact/form/submission/alternate routes.`,
     'No sensitive/private targets; population only in referral query. No external writes.',
@@ -1730,6 +1733,10 @@ function opportunityDiscoveryPlanIssue(value) {
         comparable(item.buyer) === comparable(item.counterparty)) {
       return `Discovery plan ${item.id} must keep the end buyer distinct from the prospective referral counterparty.`;
     }
+    if (item.commercialRole === 'referral_partner' &&
+        countExactToken(item.buyer, CONTINGENT_TARGET_NAME_TOKEN) > 0) {
+      return `Discovery plan ${item.id} must describe the end buyer independently of its unresolved referral target.`;
+    }
     if (asArray(item.evidenceRefs).length === 0) {
       return `Discovery plan ${item.id} is not grounded in approved evidence.`;
     }
@@ -1757,6 +1764,14 @@ function opportunityDiscoveryPlanIssue(value) {
     } else if (item.commercialRole === 'paid_demand' &&
         item.searchMode !== 'public_live_demand') {
       return 'Paid-demand role requires an active job or public live-demand search.';
+    }
+    if (item.commercialRole === 'paid_demand' &&
+        countExactToken(item.buyer, CONTINGENT_TARGET_NAME_TOKEN) > 0) {
+      return `Discovery plan ${item.id} must name the buyer archetype independently of the unresolved paid-demand artifact.`;
+    }
+    if (item.commercialRole === 'paid_demand' &&
+        !buyerAuthoredPaidDemandQuery(item)) {
+      return `Discovery plan ${item.id} must search for a current buyer- or employer-authored compensated job, RFP, solicitation, contract, or explicit buying request rather than another supplier's offer.`;
     }
     if (item.searchMode === 'professional_counterparty' &&
         asArray(item.targetRoleTerms).length === 0) {
@@ -1786,7 +1801,7 @@ function opportunityDiscoveryRawPlanCardinalityIssue(value) {
   const status = firstText(raw.status);
   if (status === 'planned' &&
       raw.plans.length !== MAX_DISCOVERY_PLANNER_PLANS) {
-    return 'Discovery planning requires exactly one grounded commercial motion with two causal families.';
+    return 'Discovery planning requires exactly two grounded, economically distinct commercial motions with two causal families each.';
   }
   if (status === 'insufficient_verified_supply' &&
       raw.plans.length !== 0) {
@@ -1993,7 +2008,11 @@ function contingentFinalistBundleIssue(planValue) {
       }
       const signature = comparable(action);
       actionSignatures.add(signature);
-      if (viablePrimaryRevenueAction(action)) {
+      const roleIssue = contingentPrimaryRevenueActionRoleIssue(
+        action,
+        plan
+      );
+      if (!roleIssue && viablePrimaryRevenueAction(action)) {
         familyViableActionSignatures.add(signature);
         viableActionSignatures.add(signature);
       } else if (passiveOrObservationalPrimaryAction(action)) {
@@ -2007,6 +2026,10 @@ function contingentFinalistBundleIssue(planValue) {
       } else if (!revenueAdvancingAction(action)) {
         rejectedActionIssues.push(
           `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_non_revenue]: must causally advance acquisition or paid conversion.`
+        );
+      } else if (roleIssue) {
+        rejectedActionIssues.push(
+          `family ${familyIndex + 1} action ${actionIndex + 1} [${roleIssue}]: must perform the typed commercial role's direct cash-advancing action.`
         );
       } else {
         rejectedActionIssues.push(
@@ -2026,7 +2049,8 @@ function contingentFinalistBundleIssue(planValue) {
     }
     const revenuePathIssues = contingentCausalRevenuePathIssues(
       revenue,
-      plan.acquisitionMode
+      plan.acquisitionMode,
+      plan
     );
     if (revenuePathIssues.length > 0) {
       return `has an incomplete causal revenue path in family ${familyIndex + 1} [${revenuePathIssues.join(',')}].`;
@@ -2046,14 +2070,74 @@ function contingentFinalistBundleIssue(planValue) {
   return '';
 }
 
+function buyerAuthoredPaidDemandQuery(planValue) {
+  const plan = asObject(planValue);
+  const query = comparable(plan.query);
+  if (!query) return false;
+  if (/\b(?:canceled|cancelled|closed|do not|does not|expired|no longer|not hiring|not seeking|unpaid|volunteer|withdrawn)\b/.test(query)) {
+    return false;
+  }
+  if (plan.searchMode === 'active_job_posting') {
+    return /\b(?:compensated|contract|employment|freelance|hiring|job|paid|role|salary|vacancy|wage)\b/.test(
+      query
+    );
+  }
+  const explicitDemandArtifact = /\b(?:invitation to bid|job posting|open call|paid opportunity|procurement (?:notice|opportunity|rfp)|request for (?:bid|proposal|quotation)|rfp|rfq|solicitation|tender)\b/.test(
+    query
+  );
+  const buyerOrEmployer = /\b(?:agency|business|buyer|client|company|employer|government|organization|purchaser)\b/.test(
+    query
+  );
+  const compensatedAsk = /\b(?:budget|commission|compensated|contract|paid|payment|salary|wage)\b/.test(
+    query
+  ) && /\b(?:buying|hiring|procuring|requesting|seeking|wanted)\b/.test(
+    query
+  );
+  return explicitDemandArtifact || (buyerOrEmployer && compensatedAsk);
+}
+
+function contingentPrimaryRevenueActionRoleIssue(value, planValue) {
+  const plan = asObject(planValue);
+  const text = primaryActionSemanticText(value);
+  if (negatedPrimaryRevenueAction(text)) {
+    return 'primary_action_negated';
+  }
+  if (plan.commercialRole === 'paid_demand') {
+    const response = /\b(?:apply|bid|respond|submit)\b/.test(text) &&
+      /\b(?:application|bid|proposal|request for proposal|response|rfp|solicitation)\b/.test(
+        text
+      ) &&
+      /\b(?:compensated|contract|paid|payment|salary|wage)\b/.test(text);
+    return response ? '' : 'primary_action_paid_demand_response';
+  }
+  if (plan.commercialRole === 'referral_partner') {
+    const qualifiedReferral = /\b(?:introduc|refer|referral|recommend)\w*\b/.test(
+      text
+    ) && /\b(?:book|buy|paid|payment|purchase|reimburs|sale)\w*\b/.test(
+      text
+    );
+    return qualifiedReferral ? '' : 'primary_action_partner_referral';
+  }
+  if (plan.commercialRole === 'buyer') {
+    const buyerAsk = /\b(?:book|buy|contract|hire|offer|propos|purchase|sign|subscribe)\w*\b/.test(
+      text
+    ) && /\b(?:compensated|contract|paid|payment|purchase|reimburs|subscription)\w*\b/.test(
+      text
+    );
+    return buyerAsk ? '' : 'primary_action_buyer_commitment';
+  }
+  return 'primary_action_unknown_commercial_role';
+}
+
 function contingentCausalRevenuePathIssues(
   revenueValue,
-  acquisitionMode
+  acquisitionMode,
+  planValue
 ) {
   const revenue = asObject(revenueValue);
   const grounding = asObject(revenue.g);
   const destination = asObject(grounding.d);
-  const semantic = revenuePathSemanticChecks(revenue);
+  const semantic = revenuePathSemanticChecks(revenue, planValue);
   return [
     [
       firstText(revenue.v) === REVENUE_PATH_CONTRACT_VERSION,
@@ -2210,7 +2294,7 @@ function revenueCausalWitnessIssues(revenueValue) {
     .map(([, code]) => code);
 }
 
-function revenuePathSemanticChecks(revenueValue) {
+function revenuePathSemanticChecks(revenueValue, planValue) {
   const revenue = asObject(revenueValue);
   const witness = revenueCausalWitnessFieldChecks(revenue);
   const revenueMechanism = contractEnum(firstText(
@@ -2241,11 +2325,26 @@ function revenuePathSemanticChecks(revenueValue) {
     revenue.st,
     revenue.stopCondition
   );
+  const plan = asObject(planValue);
+  const roleIssue = Object.keys(plan).length > 0
+    ? contingentPrimaryRevenueActionRoleIssue(conversionAction, plan)
+    : '';
   const typedConversionAction = witness.conversionAction &&
     Boolean(conversionAction) &&
     !passiveOrObservationalPrimaryAction(conversionAction) &&
     !operationOnlyAction(conversionAction) &&
+    !negatedPrimaryRevenueAction(conversionAction) &&
     !nonRevenueArtifactOrQuestionAction(conversionAction) &&
+    revenueAdvancingAction(conversionAction) &&
+    !roleIssue &&
+    !experimentActionClaimsCompletedExternalExecution(conversionAction);
+  const legacyConversionAction = Boolean(conversionAction) &&
+    !passiveOrObservationalPrimaryAction(conversionAction) &&
+    !operationOnlyAction(conversionAction) &&
+    !negatedPrimaryRevenueAction(conversionAction) &&
+    !nonRevenueArtifactOrQuestionAction(conversionAction) &&
+    revenueAdvancingAction(conversionAction) &&
+    !roleIssue &&
     !experimentActionClaimsCompletedExternalExecution(conversionAction);
   const typed = witness.currentVersion;
   return {
@@ -2259,7 +2358,7 @@ function revenuePathSemanticChecks(revenueValue) {
       : incrementalIncomeText(incrementalIncome),
     conversionAction: typed
       ? typedConversionAction
-      : revenueAdvancingAction(conversionAction),
+      : legacyConversionAction,
     observableRevenue: typed
       ? (
         witness.observableRevenue &&
@@ -14964,8 +15063,14 @@ function operationOnlyAction(value) {
 function viablePrimaryRevenueAction(value) {
   return !passiveOrObservationalPrimaryAction(value) &&
     !operationOnlyAction(value) &&
+    !negatedPrimaryRevenueAction(value) &&
     revenueAdvancingAction(value) &&
     !experimentActionClaimsCompletedExternalExecution(value);
+}
+
+function negatedPrimaryRevenueAction(value) {
+  const text = primaryActionSemanticText(value);
+  return /\b(?:do not|dont|never|no|not|refrain|without)\b/.test(text);
 }
 
 function primaryActionSemanticText(value) {
