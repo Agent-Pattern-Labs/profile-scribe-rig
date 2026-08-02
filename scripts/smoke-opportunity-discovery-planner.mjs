@@ -764,6 +764,10 @@ if (unsafeResult.status !== 'blocked' ||
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifySensitiveTargetFieldPolicy(unsafeJob, unsafeRef);
 await verifyOmittedChildEvidenceCanonicalization(unsafeJob, unsafeRef);
+await verifyOmittedTargetEvidenceProtocolCanonicalization(
+  unsafeJob,
+  unsafeRef
+);
 await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
 await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
 await verifyNaturalReviewFirstActionsPass(unsafeJob, unsafeRef);
@@ -777,6 +781,7 @@ await verifyTypedCausalWitnessContract(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifyTwoStageTargetBinding();
+await verifyPaidDemandTargetProtocolEndToEnd();
 await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
 if (smallestCompactResponseReduction < 0.25 ||
@@ -787,7 +792,7 @@ if (smallestCompactResponseReduction < 0.25 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + child evidence-index canonicalization + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + child evidence-index canonicalization + target-slot protocol canonicalization/role guards + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyOmittedChildEvidenceCanonicalization(
@@ -1077,6 +1082,241 @@ async function verifyOmittedChildEvidenceCanonicalization(
       )) {
     throw new Error(
       `fifteen-ref persisted evidence overflow was silently accepted: ${JSON.stringify(overflowResult)}`
+    );
+  }
+}
+
+async function verifyOmittedTargetEvidenceProtocolCanonicalization(
+  baseJob,
+  primaryEvidenceRef
+) {
+  const targetRef = 'target:evidence';
+  const replaceExactRef = (value, from, to) => {
+    if (Array.isArray(value)) {
+      return value.map((item) => replaceExactRef(item, from, to));
+    }
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        replaceExactRef(item, from, to)
+      ]));
+    }
+    return value === from ? to : value;
+  };
+  const annotation = {
+    type: 'url_citation',
+    url_citation: {
+      url: 'https://pediatrics.example/newborn-care',
+      title: 'Pediatrics newborn care',
+      content: 'A current public professional newborn-care page.'
+    }
+  };
+  const completionFor = (candidate, generationId) => ({
+    data: {
+      contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+      status: 'planned',
+      reason: 'The paid path is ready for deterministic target binding.',
+      plans: [candidate]
+    },
+    usage,
+    generationId,
+    diagnostics: {
+      finishReason: 'stop',
+      nativeFinishReason: 'stop',
+      contentByteCount: 900,
+      contentSha256: 'd'.repeat(64)
+    },
+    annotations: [annotation]
+  });
+  const roleCases = [
+    {
+      label: 'referral partner',
+      candidate: cases[0].plans(primaryEvidenceRef)[0],
+      targetDimensions: ['c'],
+      ordinaryDimensions: ['b', 'o', 't', 'p', 'f'],
+      targetGrounding: ['a'],
+      ordinaryGrounding: ['b', 'o', 'd', 'c', 't']
+    },
+    {
+      label: 'direct buyer',
+      candidate: cases[2].plans(primaryEvidenceRef)[1],
+      targetDimensions: ['b'],
+      ordinaryDimensions: ['o', 'c', 't', 'p', 'f'],
+      targetGrounding: ['b'],
+      ordinaryGrounding: ['o', 'a', 'd', 'c', 't']
+    },
+    {
+      label: 'live paid demand',
+      candidate: cases[1].plans(primaryEvidenceRef)[0],
+      targetDimensions: ['b', 'o', 'c'],
+      ordinaryDimensions: ['t', 'p', 'f'],
+      targetGrounding: ['b', 'o', 'a', 'd', 'c'],
+      ordinaryGrounding: ['t']
+    }
+  ];
+  const groundingRefs = (grounding, role) => role === 'd'
+    ? grounding.d?.e || []
+    : grounding[role] || [];
+
+  for (const roleCase of roleCases) {
+    const candidate = structuredClone(roleCase.candidate);
+    candidate.contingentFinalists = replaceExactRef(
+      compactContingentFinalists(candidate.contingentFinalists),
+      targetRef,
+      primaryEvidenceRef
+    );
+    const result = await runOpportunityDiscoveryPlanner({
+      job: structuredClone(baseJob),
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => completionFor(
+        candidate,
+        `generation-omitted-target-${roleCase.label.replace(/\W+/g, '-')}`
+      )
+    });
+    const families = ['familyA', 'familyB'].map((familyKey) =>
+      result.plans[0]?.contingentFinalists?.[familyKey]
+    );
+    const targetProtocolRestored = families.every((family) => {
+      const revenue = family?.d?.r?.[0];
+      const actions = family?.d?.a || [];
+      return family?.e?.includes(targetRef) &&
+        actions.length === 2 &&
+        actions.every((action) =>
+          action.l.includes('{{TARGET_NAME}}') &&
+          action.e.includes(targetRef)
+        ) &&
+        roleCase.targetDimensions.every((dimension) =>
+          (family?.d?.[dimension] || []).every((item) =>
+            item.e.includes(targetRef)
+          )
+        ) &&
+        roleCase.ordinaryDimensions.every((dimension) =>
+          (family?.d?.[dimension] || []).every((item) =>
+            !item.e.includes(targetRef)
+          )
+        ) &&
+        roleCase.targetGrounding.every((role) =>
+          groundingRefs(revenue?.g || {}, role).includes(targetRef)
+        ) &&
+        roleCase.ordinaryGrounding.every((role) =>
+          !groundingRefs(revenue?.g || {}, role).includes(targetRef)
+        );
+    });
+    if (result.status !== 'planned' ||
+        result.plans.length !== 1 ||
+        !targetProtocolRestored ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `omitted ${roleCase.label} target protocol was not safely canonicalized: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const setGroundingRef = (grounding, role, ref) => {
+    if (role === 'd') {
+      grounding.d.e = [ref];
+      return;
+    }
+    grounding[role] = [ref];
+  };
+  const unauthorizedCases = [
+    ...['b', 'o', 'd', 'c', 't'].map((role) => ({
+      label: `referral ${role}`,
+      candidate: cases[0].plans(primaryEvidenceRef)[0],
+      role
+    })),
+    ...['o', 'a', 'd', 'c', 't'].map((role) => ({
+      label: `buyer ${role}`,
+      candidate: cases[2].plans(primaryEvidenceRef)[1],
+      role
+    })),
+    {
+      label: 'paid demand attribution',
+      candidate: cases[1].plans(primaryEvidenceRef)[0],
+      role: 't'
+    }
+  ];
+  for (const unauthorized of unauthorizedCases) {
+    const candidate = structuredClone(unauthorized.candidate);
+    candidate.contingentFinalists = replaceExactRef(
+      compactContingentFinalists(candidate.contingentFinalists),
+      targetRef,
+      primaryEvidenceRef
+    );
+    setGroundingRef(
+      candidate.contingentFinalists.pathBase.r[0].g,
+      unauthorized.role,
+      targetRef
+    );
+    const result = await runOpportunityDiscoveryPlanner({
+      job: structuredClone(baseJob),
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => completionFor(
+        candidate,
+        `generation-unauthorized-target-${unauthorized.label.replace(/\W+/g, '-')}`
+      )
+    });
+    if (result.status !== 'blocked' ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0 ||
+        !/target evidence in unauthorized/i.test(result.reason)) {
+      throw new Error(
+        `unauthorized ${unauthorized.label} target role did not fail closed: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const missingObservation = cases[0].plans(primaryEvidenceRef)[0];
+  missingObservation.contingentFinalists = replaceExactRef(
+    compactContingentFinalists(missingObservation.contingentFinalists),
+    primaryEvidenceRef,
+    PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+  );
+  const missingObservationResult = await runOpportunityDiscoveryPlanner({
+    job: structuredClone(baseJob),
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => completionFor(
+      missingObservation,
+      'generation-target-protocol-no-observation'
+    )
+  });
+  if (missingObservationResult.status !== 'blocked' ||
+      !/missing approved observation evidence/i.test(
+        missingObservationResult.reason
+      ) ||
+      missingObservationResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `target canonicalization invented an observation: ${JSON.stringify(missingObservationResult)}`
+    );
+  }
+
+  const forged = cases[0].plans(primaryEvidenceRef)[0];
+  forged.contingentFinalists = replaceExactRef(
+    compactContingentFinalists(forged.contingentFinalists),
+    targetRef,
+    primaryEvidenceRef
+  );
+  forged.contingentFinalists.tacticA.a[0].e.push(
+    'observation:unapproved-target-protocol-ref'
+  );
+  const forgedResult = await runOpportunityDiscoveryPlanner({
+    job: structuredClone(baseJob),
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => completionFor(
+      forged,
+      'generation-target-protocol-forged-ref'
+    )
+  });
+  if (forgedResult.status !== 'blocked' ||
+      forgedResult.plans.length !== 0 ||
+      forgedResult.sideEffectsPerformed !== 0 ||
+      !/contingent finalist contract/i.test(forgedResult.reason)) {
+    throw new Error(
+      `target canonicalization admitted an unknown ref: ${JSON.stringify(forgedResult)}`
     );
   }
 }
@@ -2030,6 +2270,31 @@ async function verifyTwoStageTargetBinding() {
   const typedScenarioMotion = applyNovelTypedCausalSemantics(
     scenario.plans(evidenceRef)[1]
   );
+  const omitUnresolvedTargetEvidence = (value) => {
+    if (Array.isArray(value)) {
+      return value.flatMap((item) =>
+        item === 'target:evidence'
+          ? []
+          : [omitUnresolvedTargetEvidence(item)]
+      );
+    }
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        omitUnresolvedTargetEvidence(item)
+      ]));
+    }
+    return value;
+  };
+  // Reproduce the production failure: the model authors the exact target
+  // tokens and a valid typed slot but omits the repeated target sentinel from
+  // every finalist evidence array. Planner normalization must repair only the
+  // protocol reference; the downstream provider still has to bind a real
+  // cited professional before the critic can see a finalist.
+  typedScenarioMotion.contingentFinalists =
+    omitUnresolvedTargetEvidence(
+      typedScenarioMotion.contingentFinalists
+    );
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
     model: 'openai/gpt-4.1-mini',
@@ -2798,6 +3063,281 @@ async function verifyTwoStageTargetBinding() {
     incompleteFamilyCalls,
     'fewer than two complete call-1 families'
   );
+}
+
+async function verifyPaidDemandTargetProtocolEndToEnd() {
+  const scenario = cases[1];
+  const planner = plannerJob(scenario);
+  const catalog = buildEvidenceCatalog(planner.payload, {}, now, {
+    includeSystemAttributionCapability: true
+  });
+  const evidenceRef = catalog.find((item) =>
+    typeof item.id === 'string' && item.id.startsWith('observation:')
+  )?.id;
+  if (!evidenceRef) {
+    throw new Error('paid-demand protocol fixture has no supply evidence');
+  }
+  const original = scenario.plans(evidenceRef)[0];
+  const motion = plan({
+    ...original,
+    acquisitionMode: 'inbound',
+    acquisitionMechanism:
+      'Inbound platform discovery of one current compensated role'
+  });
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = motion.contingentFinalists[familyKey];
+    family.d.c = family.d.c.map((item, index) => ({
+      ...item,
+      l:
+        `Inbound platform discovery at {{TARGET_NAME}} (route ${index + 1})`
+    }));
+    family.d.r[0].c =
+      'Use inbound platform discovery at {{TARGET_NAME}} and submit one application through the official application page.';
+  }
+  const stripTargetRef = (value) => {
+    if (Array.isArray(value)) {
+      return value.flatMap((item) =>
+        item === 'target:evidence' ? [] : [stripTargetRef(item)]
+      );
+    }
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        stripTargetRef(item)
+      ]));
+    }
+    return value;
+  };
+  motion.contingentFinalists = stripTargetRef(
+    motion.contingentFinalists
+  );
+  const jobURL = 'https://jobs.acme.example/senior-go-engineer';
+  const discoveryPlan = await runOpportunityDiscoveryPlanner({
+    job: planner,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: 'One current compensated role is the nearest paid path.',
+        plans: [{
+          ...motion,
+          contingentFinalists: compactContingentFinalists(
+            motion.contingentFinalists
+          )
+        }]
+      },
+      usage,
+      generationId: 'generation-paid-demand-target-protocol-planner',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 900,
+        contentSha256: '4'.repeat(64)
+      },
+      annotations: [{
+        type: 'url_citation',
+        url_citation: {
+          url: jobURL,
+          title: 'Acme Systems Senior Go Engineer role',
+          content:
+            'Acme Systems is currently hiring a salaried Senior Go Engineer through its official application page.'
+        }
+      }]
+    })
+  });
+  if (discoveryPlan.status !== 'planned') {
+    throw new Error(
+      `paid-demand omitted-target planner failed: ${JSON.stringify(discoveryPlan)}`
+    );
+  }
+  const selectedMotion = structuredClone(discoveryPlan.plans[0]);
+  const attempt = {
+    id: 'attempt-paid-demand-folded-exa-search',
+    provider: 'openrouter_exa_web_search',
+    operation: 'forced_exa_web_search',
+    queryHash: discoveryPlan.webSearchReceipt.requestHash,
+    status: 'succeeded',
+    estimatedSpendMicros: 5_000,
+    actualSpendMicros: 0,
+    creditsUsed: 1,
+    resultCount: 1,
+    reservedAt: '2026-08-01T12:00:00Z',
+    updatedAt: '2026-08-01T12:00:00Z',
+    completedAt: '2026-08-01T12:00:00Z'
+  };
+  const jobEvidenceRef =
+    'external_discovery:777777777777777777777777';
+  const candidateID =
+    'candidate:external:888888888888888888888888';
+  const downstreamPayload = {
+    ...planner.payload,
+    algorithmVersion: 'cheap_tournament_v6',
+    budget: {
+      currency: 'USD',
+      maxSpendMicros: 1_000_000,
+      maxLLMSpendMicros: 160_000,
+      maxLLMCalls: 1,
+      maxOutputTokens: 1_200,
+      maxHypotheses: 10_000,
+      maxFinalists: 8,
+      hardStop: true
+    },
+    commercialDiscoveryEvidence: {
+      contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
+      attempted: true,
+      status: 'found',
+      motion: selectedMotion.id,
+      buyerArchetype: selectedMotion.buyer,
+      queryHash: commercialDiscoveryAttemptLedgerHash([attempt]),
+      market: selectedMotion.market,
+      providersAttempted: ['openrouter_exa_web_search'],
+      providerCalls: 1,
+      paidProviderCalls: 1,
+      creditsUsed: 1,
+      resultCount: 1,
+      patientTargetingExcluded: true,
+      sideEffectsPerformed: 0,
+      attempts: [attempt],
+      plan: {
+        ...discoveryPlan,
+        plans: [selectedMotion]
+      },
+      evidence: [{
+        motionId: selectedMotion.id,
+        evidenceRef: jobEvidenceRef,
+        kind: 'verified_external_live_demand',
+        label: 'Acme Systems Senior Go Engineer role',
+        summary:
+          `Acme Systems is currently hiring for a salaried, compensated Senior Go Engineer role requiring Go and PostgreSQL. Inbound platform discovery reaches the official application page at ${jobURL}. Applying there can produce one accepted compensation offer and salary payment.`,
+        url: jobURL,
+        provider: 'openrouter_exa_web_search',
+        provenance: 'openrouter_exa_url_citation',
+        roles: [
+          'acquisition',
+          'channel_fit',
+          'conversion_destination',
+          'defined_buyer',
+          'demand_signal',
+          'paid_conversion',
+          'paid_offer'
+        ],
+        verified: true,
+        observedAt: '2026-08-01T12:00:00Z'
+      }],
+      candidates: [{
+        motionId: selectedMotion.id,
+        id: candidateID,
+        kind: 'job_posting',
+        displayLabel: 'Acme Systems Senior Go Engineer role',
+        organization: 'Acme Systems',
+        role: 'Senior Go Engineer',
+        market: 'Remote United States',
+        publicUrl: jobURL,
+        provider: 'openrouter_exa_web_search',
+        commercialRole: 'paid_demand',
+        evidenceRefs: [jobEvidenceRef],
+        contactPaths: [{
+          kind: 'public_professional_url',
+          available: true,
+          verified: true,
+          reference: jobURL
+        }],
+        exactNamedCandidate: true,
+        identityResolved: true
+      }],
+      discoveredAt: '2026-08-01T12:00:00Z'
+    }
+  };
+  const requests = [];
+  let criticIssue = '';
+  const result = await runOpportunityTournament({
+    job: {
+      id: 'job-paid-demand-target-protocol-end-to-end',
+      kind: 'opportunity_tournament',
+      payload: downstreamPayload
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      requests.push(request);
+      if (request.responseFormat?.json_schema?.name !==
+          'opportunity_tournament_critic_v1') {
+        criticIssue =
+          'paid-demand target protocol dispatched a generator or repair';
+      }
+      const task = JSON.parse(request.user || '{}');
+      const finalists = task.finalists || [];
+      const finalistFamilies = new Set(
+        finalists.map((finalist) => finalist.familyId)
+      );
+      const requestBytes = Buffer.byteLength(
+        JSON.stringify(request),
+        'utf8'
+      );
+      if (finalists.length !== 2 ||
+          finalistFamilies.size !== 2 ||
+          task.contextMode !== 'bound_family_diverse_pair_v1' ||
+          task.executionPolicy?.executionAuthorization !== 'none' ||
+          task.executionPolicy?.requiresReview !== true ||
+          task.executionPolicy?.sideEffectsPerformed !== 0 ||
+          request.maxTokens !== 1_200 ||
+          requestBytes > 36 * 1_024 ||
+          finalists.some((finalist) =>
+            finalist.evidenceBindings?.length !== 7 ||
+            finalist.evidenceBindings?.find((binding) =>
+              binding.role === 'exact_outside_target'
+            )?.kind !== 'job_posting'
+          )) {
+        criticIssue =
+          `paid-demand critic did not receive one safe family-diverse pair: ${JSON.stringify({ finalists, task, requestBytes })}`;
+      }
+      const discoveryRoles = new Set([
+        'exact_outside_target',
+        'defined_buyer',
+        'paid_offer',
+        'acquisition',
+        'conversion_destination',
+        'paid_conversion'
+      ]);
+      if (finalists.some((finalist) =>
+        finalist.evidenceBindings.some((binding) =>
+          discoveryRoles.has(binding.role)
+            ? !binding.evidenceRefs.includes(jobEvidenceRef)
+            : binding.role === 'attribution' && (
+                binding.evidenceRefs.includes(jobEvidenceRef) ||
+                !binding.evidenceRefs.includes(
+                  PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+                )
+              )
+        ) || JSON.stringify(finalist).includes('target:evidence')
+      )) {
+        criticIssue =
+          `paid-demand target roles were not bound exactly: ${JSON.stringify(finalists)}`;
+      }
+      return acceptedCriticCompletion(
+        finalists,
+        'generation-paid-demand-target-protocol-critic'
+      );
+    }
+  });
+  if (criticIssue ||
+      requests.length !== 1 ||
+      result.status !== 'completed' ||
+      result.usage?.calls !== 1 ||
+      result.result?.incrementalRevenueGate?.passed !== true ||
+      result.winner?.candidateId !== candidateID ||
+      !result.winner?.action?.includes(
+        'Acme Systems Senior Go Engineer role'
+      ) ||
+      result.gate?.sideEffects?.outreachAttempts !== 0 ||
+      result.gate?.sideEffects?.publishAttempts !== 0 ||
+      result.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `paid-demand target protocol did not survive provider binding and critic: ${JSON.stringify({ criticIssue, requests: requests.length, result })}`
+    );
+  }
 }
 
 async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {

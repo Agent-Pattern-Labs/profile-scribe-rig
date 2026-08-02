@@ -1889,6 +1889,7 @@ async function verifyCommercialDiscoveryReferralPartnerKeepsBuyerDistinct() {
 async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
   const supplyRef = 'observation:obs-programmer-go-proof';
   const jobRef = 'external_discovery:cccccccccccccccccccccccc';
+  const attributionRef = 'observation:obs-programmer-attribution';
   const candidateID = 'candidate:external:eeeeeeeeeeeeeeeeeeeeeeee';
   const provider = 'people_data_labs_job_posting_search';
   const queryHash = 'c'.repeat(64);
@@ -1911,7 +1912,7 @@ async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
   for (const family of [response.familyA, response.familyB]) {
     family.l = `${domain.name} live role family`;
     family.m = 'inbound';
-    family.e = [supplyRef, jobRef];
+    family.e = [supplyRef, jobRef, attributionRef];
     family.d.offers = family.d.offers.map((item) => ({
       ...item,
       l: domain.offer,
@@ -1951,7 +1952,7 @@ async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
     }));
     const revenuePath = family.d.revenuePaths[0];
     revenuePath.l = `${domain.offer} through a current public job posting`;
-    revenuePath.e = [supplyRef, jobRef];
+    revenuePath.e = [supplyRef, jobRef, attributionRef];
     revenuePath.revenueMechanism = 'compensated_role';
     revenuePath.incrementalIncomeOutcome =
       'One new accepted compensation offer adds incremental gross salary income';
@@ -1968,7 +1969,7 @@ async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
       a: [jobRef],
       d: { l: domain.destination, e: [jobRef] },
       c: [jobRef],
-      t: [jobRef]
+      t: [attributionRef]
     };
   }
   response.candidates = [];
@@ -2058,6 +2059,17 @@ async function verifyCommercialDiscoveryPaidDemandGroundsCompensatedRole() {
             title: 'Go and PostgreSQL API portfolio',
             summary: domain.sourceSummary,
             url: 'https://pat-programmer.example/api-project',
+            observedAt: '2026-07-29T12:00:00Z',
+            current: true,
+            status: 'active'
+          }, {
+            observationId: 'obs-programmer-attribution',
+            sourceId: 'src-programmer-proof',
+            kind: 'outcome_attribution',
+            title: 'Employment compensation attribution record',
+            summary:
+              'The employment compensation record source field stores the public posting ID with an accepted compensation offer and salary payment.',
+            url: 'https://pat-programmer.example/employment-outcomes',
             observedAt: '2026-07-29T12:00:00Z',
             current: true,
             status: 'active'

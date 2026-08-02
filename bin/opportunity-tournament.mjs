@@ -1311,6 +1311,7 @@ function normalizeContingentFinalistBundle(
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   clone = materializePlannerContingentFinalistBundle(clone);
   if (Object.keys(asObject(clone)).length === 0) return {};
+  clone = canonicalizeContingentTargetEvidence(clone, planValue);
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   const plan = asObject(planValue);
   const planEvidenceRefs = new Set(
@@ -1344,6 +1345,129 @@ function normalizeContingentFinalistBundle(
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   return clone;
+}
+
+/**
+ * The unresolved target sentinel is protocol structure, not evidence that an
+ * outside person, organization, or paid-demand record exists. Canonicalize
+ * that structure locally so a model cannot strand an otherwise complete paid
+ * path merely by omitting the sentinel from a repeated containment array.
+ *
+ * This does not choose or synthesize a target. The sentinel must still be
+ * replaced later by a validated public provider candidate whose typed roles
+ * satisfy the canonical target slot. Only those canonical roles are projected
+ * into revenue grounding; no observation or seller-side fact is added here.
+ */
+function canonicalizeContingentTargetEvidence(value, planValue) {
+  const bundle = asObject(value);
+  const plan = asObject(planValue);
+  const normalizedTargetSlot = normalizeContingentTargetSlot(
+    plan.targetSlot,
+    plan
+  );
+  const canonicalPlan = {
+    ...plan,
+    targetSlot: normalizedTargetSlot
+  };
+  if (contingentTargetSlotIssue(canonicalPlan)) return bundle;
+  const targetRoles = new Set(
+    requiredCommercialDiscoveryRolesForSlot(canonicalPlan)
+  );
+  const withTargetRef = (refsValue) => compactStrings([
+    ...asArray(refsValue),
+    CONTINGENT_TARGET_EVIDENCE_REF
+  ]);
+  const canonicalizeTargetBearingItem = (itemValue) => {
+    const item = asObject(itemValue);
+    if (countExactToken(
+      firstText(item.l),
+      CONTINGENT_TARGET_NAME_TOKEN
+    ) !== 1) {
+      return;
+    }
+    item.e = withTargetRef(item.e);
+  };
+
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = asObject(bundle[familyKey]);
+    if (Object.keys(family).length === 0) continue;
+    const dimensions = asObject(family.d);
+    for (const item of asArray(dimensions.a)) {
+      canonicalizeTargetBearingItem(item);
+    }
+    const roleDimensions = firstText(plan.commercialRole) ===
+        'referral_partner'
+      ? ['c']
+      : firstText(plan.commercialRole) === 'buyer'
+        ? ['b']
+        : firstText(plan.commercialRole) === 'paid_demand'
+          ? ['b', 'o', 'c']
+          : [];
+    for (const dimension of roleDimensions) {
+      for (const item of asArray(dimensions[dimension])) {
+        item.e = withTargetRef(asObject(item).e);
+      }
+    }
+    for (const revenueValue of asArray(dimensions.r)) {
+      const revenue = asObject(revenueValue);
+      const grounding = asObject(revenue.g);
+      if (targetRoles.has('defined_buyer')) {
+        grounding.b = withTargetRef(grounding.b);
+      }
+      if (targetRoles.has('paid_offer')) {
+        grounding.o = withTargetRef(grounding.o);
+      }
+      if (targetRoles.has('acquisition') &&
+          targetRoles.has('channel_fit')) {
+        grounding.a = withTargetRef(grounding.a);
+      }
+      if (targetRoles.has('conversion_destination')) {
+        const destination = asObject(grounding.d);
+        destination.e = withTargetRef(destination.e);
+        grounding.d = destination;
+      }
+      if (targetRoles.has('paid_conversion')) {
+        grounding.c = withTargetRef(grounding.c);
+      }
+      revenue.g = grounding;
+    }
+  }
+  return bundle;
+}
+
+function contingentTargetEvidenceRoleIssue(value, planValue) {
+  const bundle = asObject(value);
+  const targetRoles = new Set(
+    requiredCommercialDiscoveryRolesForSlot(planValue)
+  );
+  const roleLocations = [
+    ['defined_buyer', (grounding) => grounding.b,
+      targetRoles.has('defined_buyer')],
+    ['paid_offer', (grounding) => grounding.o,
+      targetRoles.has('paid_offer')],
+    ['acquisition', (grounding) => grounding.a,
+      targetRoles.has('acquisition') && targetRoles.has('channel_fit')],
+    ['conversion_destination', (grounding) => asObject(grounding.d).e,
+      targetRoles.has('conversion_destination')],
+    ['paid_conversion', (grounding) => grounding.c,
+      targetRoles.has('paid_conversion')],
+    ['attribution', (grounding) => grounding.t, false]
+  ];
+  for (const [familyIndex, familyKey] of
+    ['familyA', 'familyB'].entries()) {
+    const dimensions = asObject(asObject(bundle[familyKey]).d);
+    for (const revenueValue of asArray(dimensions.r)) {
+      const grounding = asObject(asObject(revenueValue).g);
+      for (const [role, refs, allowed] of roleLocations) {
+        if (!allowed && compactStrings(refs(grounding)).includes(
+          CONTINGENT_TARGET_EVIDENCE_REF
+        )) {
+          return `has target evidence in unauthorized ${role} grounding for contingent family ${familyIndex + 1}.`;
+        }
+      }
+    }
+  }
+  return '';
 }
 
 /**
@@ -1686,6 +1810,11 @@ function contingentFinalistBundleIssue(planValue) {
   if (families.some((family) => Object.keys(family).length === 0)) {
     return 'must contain exactly two complete contingent finalist families.';
   }
+  const targetEvidenceRoleIssue = contingentTargetEvidenceRoleIssue(
+    bundle,
+    plan
+  );
+  if (targetEvidenceRoleIssue) return targetEvidenceRoleIssue;
   const tacticKeys = new Set();
   const actionSignatures = new Set();
   const viableActionSignatures = new Set();
@@ -1698,14 +1827,20 @@ function contingentFinalistBundleIssue(planValue) {
     }
     tacticKeys.add(firstText(family.tacticKey));
     const familyRefs = compactStrings(family.e);
-    if (familyRefs.length === 0 ||
-        !familyRefs.includes(CONTINGENT_TARGET_EVIDENCE_REF) ||
-        !familyRefs.some((ref) => /^observation:/i.test(ref)) ||
-        familyRefs.some((ref) =>
-          ref !== CONTINGENT_TARGET_EVIDENCE_REF &&
-          !asArray(plan.evidenceRefs).includes(ref)
-        )) {
-      return 'has contingent families outside its approved supply evidence and target slot.';
+    if (familyRefs.length === 0) {
+      return `has no evidence containment index for contingent family ${familyIndex + 1}.`;
+    }
+    if (!familyRefs.includes(CONTINGENT_TARGET_EVIDENCE_REF)) {
+      return `is missing the unresolved target slot in contingent family ${familyIndex + 1}.`;
+    }
+    if (!familyRefs.some((ref) => /^observation:/i.test(ref))) {
+      return `is missing approved observation evidence in contingent family ${familyIndex + 1}.`;
+    }
+    if (familyRefs.some((ref) =>
+      ref !== CONTINGENT_TARGET_EVIDENCE_REF &&
+      !asArray(plan.evidenceRefs).includes(ref)
+    )) {
+      return `has contingent family ${familyIndex + 1} outside its approved supply evidence.`;
     }
     const dimensions = asObject(family.d);
     for (const [dimension, count] of [
@@ -13912,6 +14047,28 @@ function revenuePathGroundingReasons(
       reasons.add(`missing_${name}_evidence`);
     }
   }
+  const discoveryRoleRequirements = {
+    buyer: ['defined_buyer'],
+    paid_offer: ['paid_offer', 'demand_signal'],
+    acquisition: ['acquisition', 'channel_fit'],
+    conversion_destination: ['conversion_destination'],
+    paid_conversion: ['paid_conversion'],
+    attribution: []
+  };
+  for (const [name, refs] of Object.entries(groups)) {
+    const requiredRoles = discoveryRoleRequirements[name] || [];
+    for (const ref of refs) {
+      const evidence = asObject(evidenceByID.get(ref));
+      if (!verifiedCommercialDiscoveryEvidence(evidence)) continue;
+      const roles = new Set(
+        compactStrings(evidence.commercialDiscoveryRoles).map(contractEnum)
+      );
+      if (name === 'attribution' ||
+          requiredRoles.some((role) => !roles.has(role))) {
+        reasons.add(`commercial_discovery_role_misused_as_${name}`);
+      }
+    }
+  }
   const dimensionRefs = (dimension) => new Set(
     compactStrings(asObject(dimension).evidenceRefs)
   );
@@ -15395,7 +15552,7 @@ function commercialDiscoveryCandidateGroundsHypothesis(
     ) &&
     intersects(candidateRefs, buyerRefs) &&
     intersects(candidateRefs, buyerGroundingRefs) &&
-    intersects(candidateRefs, [...offerRefs, ...proofRefs]);
+    intersects(candidateRefs, revenueRefs);
 }
 
 function candidateActionableForHypothesis(
