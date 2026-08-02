@@ -2458,6 +2458,15 @@ async function verifyTwoStageTargetBinding() {
   const downstreamPayload = {
     ...planner.payload,
     algorithmVersion: 'cheap_tournament_v6',
+    commercialContext: {
+      // Internal provider-attested review routes must never be accepted as a
+      // configured user capability, even if a forged payload names one.
+      allowedChannels: [
+        'public_paid_demand_response',
+        'forged public paid demand response capability',
+        'public paid demand'
+      ]
+    },
     budget: {
       currency: 'USD',
       maxSpendMicros: 1_000_000,
@@ -3318,8 +3327,11 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       candidates: [{
         motionId: selectedMotion.id,
         id: candidateID,
-        kind: 'public_rfp',
-        displayLabel: 'Acme Services open delivery-operations RFP',
+        kind: 'public_paid_demand_page',
+        // The organization suffix exercises the generic kind-normalization
+        // heuristic. Provider-attested paid demand must retain its canonical
+        // page kind instead of being retyped as an organization.
+        displayLabel: 'Acme Services',
         organization: 'Acme Services',
         role: 'Open delivery-operations consulting RFP',
         market: 'United States',
@@ -3395,13 +3407,14 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
           task.executionPolicy?.executionAuthorization !== 'none' ||
           task.executionPolicy?.requiresReview !== true ||
           task.executionPolicy?.sideEffectsPerformed !== 0 ||
+          task.commercialContext?.allowedChannels?.length !== 0 ||
           request.maxTokens !== 1_200 ||
           requestBytes > 36 * 1_024 ||
           finalists.some((finalist) =>
             finalist.evidenceBindings?.length !== 7 ||
             finalist.evidenceBindings?.find((binding) =>
               binding.role === 'exact_outside_target'
-            )?.kind !== 'public_rfp'
+            )?.kind !== 'public_paid_demand_page'
           )) {
         criticIssue =
           `paid-demand critic did not receive one safe family-diverse pair: ${JSON.stringify({ finalists, task, requestBytes })}`;
@@ -3440,14 +3453,19 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       result.status !== 'completed' ||
       result.usage?.calls !== 1 ||
       result.result?.incrementalRevenueGate?.passed !== true ||
+      result.result?.incrementalRevenueGate?.allowedChannelSource !==
+        'provider_attested_review_route' ||
       result.result?.allowedChannel !==
         'public_paid_demand_response' ||
       result.result?.permissionRequired !== 'explicit_user_approval' ||
       result.result?.executionAuthorization !== 'none' ||
       result.result?.sideEffectsPerformed !== 0 ||
       result.winner?.candidateId !== candidateID ||
+      result.candidates?.find((candidate) =>
+        candidate.id === candidateID
+      )?.kind !== 'public_paid_demand_page' ||
       !result.winner?.action?.includes(
-        'Acme Services open delivery-operations RFP'
+        'Acme Services'
       ) ||
       result.gate?.sideEffects?.outreachAttempts !== 0 ||
       result.gate?.sideEffects?.publishAttempts !== 0 ||

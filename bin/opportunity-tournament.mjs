@@ -329,6 +329,21 @@ const COMMERCIAL_DISCOVERY_KINDS = new Set([
   'verified_external_professional_target',
   'verified_external_live_demand'
 ]);
+const LIVE_PAID_DEMAND_CANDIDATE_KINDS = new Set([
+  'contract_opportunity',
+  'employer_job_posting',
+  'job_posting',
+  'live_demand',
+  'marketplace_request',
+  'paid_opportunity',
+  'public_paid_demand_page',
+  'public_rfp',
+  'sponsorship_request'
+]);
+const PROVIDER_ATTESTED_REVIEW_CHANNELS = new Set([
+  'application_page',
+  'public_paid_demand_response'
+]);
 const COMMERCIAL_DISCOVERY_PROVIDER_PROVENANCE = new Map([
   ['google_places', new Set(['read_only_professional_provider'])],
   ['github_search', new Set(['read_only_professional_provider'])],
@@ -4562,9 +4577,8 @@ function bindContingentMotionTarget({
       if (expectedRoles.some((role) => !roles.has(role))) return false;
       const kind = contractEnum(firstText(candidateValue.kind));
       if (slot.finalTargetKind === 'live_paid_demand') {
-        return /(?:job_posting|live_demand|paid_opportunity|public_rfp|contract_opportunity|marketplace_request|sponsorship_request)/.test(
-          kind
-        ) && facts.some((fact) =>
+        return LIVE_PAID_DEMAND_CANDIDATE_KINDS.has(kind) &&
+          facts.some((fact) =>
           firstText(asObject(fact).kind) ===
             'verified_external_live_demand'
         );
@@ -5606,7 +5620,9 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
   );
   const hypothesisChannel = firstText(winnerHypothesis?.channel);
   const configuredAllowedChannel = commercialContext.allowedChannels.find(
-    (channel) => allowedValue(hypothesisChannel, [channel])
+    (channel) =>
+      !providerAttestedReviewChannelAlias(channel) &&
+      allowedValue(hypothesisChannel, [channel])
   ) || '';
   const graphNodes = new Map(
     asArray(asObject(raw.commercialEvidenceGraph).nodes)
@@ -6666,7 +6682,12 @@ function normalizeCommercialContext(payloadValue, objectiveValue, constraintsVal
       ...distributionAccounts.flatMap((account) => [
         account.provider
       ])
-    ]).slice(0, 20).map((value) => truncate(value, 80)),
+    ])
+      .filter((value) =>
+        !providerAttestedReviewChannelAlias(value)
+      )
+      .slice(0, 20)
+      .map((value) => truncate(value, 80)),
     allowedActions: compactStrings([
       ...asArray(raw.allowedActions),
       ...asArray(raw.permissions),
@@ -13530,11 +13551,17 @@ function normalizeCandidates(
     // here as the common output boundary so a payer brand cannot retain a
     // person-like kind and become eligible for downstream person enrichment.
     const declaredKind = firstText(raw.kind, 'public_professional');
+    const providerAttestedLivePaidDemandKind =
+      raw.providerAttestedCommercialDiscovery === true &&
+      contractEnum(firstText(raw.commercialRole)) === 'paid_demand' &&
+      LIVE_PAID_DEMAND_CANDIDATE_KINDS.has(contractEnum(declaredKind));
     const candidateKind = ownedInboundAssetCandidate(raw)
       ? OWNED_INBOUND_ASSET_KIND
-      : organizationLikeCandidateLabel(candidateDisplayLabel)
-        ? 'organization'
-        : declaredKind;
+      : providerAttestedLivePaidDemandKind
+        ? contractEnum(declaredKind)
+        : organizationLikeCandidateLabel(candidateDisplayLabel)
+          ? 'organization'
+          : declaredKind;
     if (!candidateIdentityIsConcrete({
       raw,
       displayLabel: candidateDisplayLabel,
@@ -14975,6 +15002,17 @@ function allowedValue(value, allowed) {
       target.includes(candidate) ||
       candidate.includes(target)
     );
+  });
+}
+
+function providerAttestedReviewChannelAlias(value) {
+  const candidate = comparable(value);
+  if (!candidate) return false;
+  return [...PROVIDER_ATTESTED_REVIEW_CHANNELS].some((reserved) => {
+    const canonical = comparable(reserved);
+    return candidate === canonical ||
+      candidate.includes(canonical) ||
+      canonical.includes(candidate);
   });
 }
 
