@@ -1693,7 +1693,11 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     attributionSignal: 'Booking referral source stores the practice and tournament id',
     ...overrides
   });
-  const run = async (candidate, generationId) =>
+  const run = async (
+    candidate,
+    generationId,
+    plannerReason = 'Typed professional referral search.'
+  ) =>
     runOpportunityDiscoveryPlanner({
       job,
       model: 'openai/gpt-4.1-mini',
@@ -1702,7 +1706,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
-          reason: 'Typed professional referral search.',
+          reason: plannerReason,
           plans: twoPlannerMotions(candidate, evidenceRef)
         },
         usage,
@@ -1724,6 +1728,192 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
   if (allowed.status !== 'planned' || allowed.plans.length !== 2) {
     throw new Error(
       `professional referral population query was rejected: ${JSON.stringify(allowed)}`
+    );
+  }
+
+  const allowedContactContext = await run(
+    baseReferral({
+      id: 'safe_contact_context',
+      buyer: 'Small businesses buying paid email marketing consulting',
+      counterparty: 'An email marketing director',
+      paidOffer: 'Paid consultation for email marketing',
+      query: 'professional technology and marketing specialists Queens New York',
+      targetRoleTerms: [
+        'email marketing director',
+        'contact database engineer',
+        'mobile phone repair owner',
+        'phone number portability specialist',
+        'contact information governance consultant',
+        'email address validation specialist'
+      ],
+      organizationTerms: ['marketing agency'],
+      acquisitionMechanism:
+        'Use LinkedIn, not email outreach. Email outreach is not authorized; send an email marketing audit invitation through the public professional profile',
+      conversionDestination: 'The owner public contact and booking page',
+      paidConversion: 'One completed paid consultation for email marketing',
+      attributionSignal:
+        'Booking source records whether the inquiry began by phone',
+      rationale:
+        'Do not ever find or use private contact data. We do not need to find private email. Private contact data is not required.'
+    }),
+    'generation-safe-contact-context'
+  );
+  if (allowedContactContext.status !== 'planned' ||
+      allowedContactContext.plans.length !== 2) {
+    throw new Error(
+      `descriptive contact context was mistaken for private-contact acquisition: ${JSON.stringify(allowedContactContext)}`
+    );
+  }
+
+  const allowedPhoneProfession = await run(
+    plan({
+      id: 'safe_phone_profession',
+      priority: 1,
+      searchMode: 'professional_counterparty',
+      commercialRole: 'buyer',
+      acquisitionMode: 'permissioned_outreach',
+      buyer: 'A practice buying a paid phone consultation',
+      counterparty: 'A telephone triage director',
+      paidOffer: 'Paid phone consultation',
+      evidenceRefs: [evidenceRef],
+      query: 'telephone triage nurse Queens New York',
+      market: 'Queens, New York',
+      targetRoleTerms: [
+        'telephone triage nurse',
+        'Google Contacts app developer',
+        'transactional emails platform developer',
+        'lead list hygiene consultant'
+      ],
+      organizationTerms: ['nurse-led health practice'],
+      acquisitionMechanism:
+        'One review-first invitation through a public professional profile',
+      conversionDestination: 'The verified owner booking page',
+      paidConversion: 'One completed paid phone consultation',
+      attributionSignal:
+        'Booking source stores the target and tournament action ids'
+    }),
+    'generation-safe-phone-profession'
+  );
+  if (allowedPhoneProfession.status !== 'planned' ||
+      allowedPhoneProfession.plans.length !== 2) {
+    throw new Error(
+      `a phone-based profession or paid offer was mistaken for private-contact acquisition: ${JSON.stringify(allowedPhoneProfession)}`
+    );
+  }
+
+  const allowedTechnicalAndCatalogTerms = await run(
+    baseReferral({
+      id: 'safe_technical_and_catalog_terms',
+      commercialRole: 'buyer',
+      acquisitionMode: 'permissioned_outreach',
+      buyer: 'Publishers buying a paid software catalog audit',
+      counterparty: 'An Angular @angular/core application maintainer',
+      paidOffer: 'Paid @angular/core consulting and software catalog audit',
+      query:
+        'Angular application maintainer software job requisition 1234567890',
+      targetRoleTerms: [
+        'Angular @angular/core consultant'
+      ],
+      skills: ['@angular/core'],
+      organizationTerms: ['software publisher'],
+      acquisitionMechanism:
+        'One review-first invitation through a public professional profile',
+      conversionDestination: 'The verified owner proposal page',
+      paidConversion: 'One signed paid catalog-audit contract',
+      attributionSignal: 'Contract source stores the target and tournament ids',
+      rationale:
+        'RFP 1234567 closes 2026-08-15 with a $1250000 or INR 1000000 ceiling. Candidate offices include 69-27 164th Street and 110-20 73rd Road. The paid catalog audit covers support for 192.168.1.1 and 192.168.1.0/24, ISBN 9780132350884, Phone case UPC 012345678905, SKU 123456789012, GTIN 00012345600012, IMEI 490154203237518, and NPI 1234567890.'
+    }),
+    'generation-safe-technical-and-catalog-terms'
+  );
+  if (allowedTechnicalAndCatalogTerms.status !== 'planned' ||
+      allowedTechnicalAndCatalogTerms.plans.length !== 2) {
+    throw new Error(
+      `technical package or catalog identifiers were mistaken for private contact data: ${JSON.stringify(allowedTechnicalAndCatalogTerms)}`
+    );
+  }
+
+  const highValueMotion = baseReferral({ id: 'safe_high_value_motion' });
+  for (const familyKey of ['familyA', 'familyB']) {
+    highValueMotion.contingentFinalists[familyKey].d.r[0].vm =
+      1_250_000_000;
+  }
+  const allowedHighValueMotion = await run(
+    highValueMotion,
+    'generation-safe-high-value-motion'
+  );
+  if (allowedHighValueMotion.status !== 'planned' ||
+      allowedHighValueMotion.plans.length !== 2) {
+    throw new Error(
+      `high-value revenue micros were mistaken for a phone number: ${JSON.stringify(allowedHighValueMotion)}`
+    );
+  }
+
+  const numericEvidenceJob = structuredClone(job);
+  const numericObservationID =
+    'obs-a76ca342-5ca5-44c7-8844-123456789012';
+  numericEvidenceJob.payload.evidenceSnapshot.sourceEvidence[0].id =
+    numericObservationID;
+  numericEvidenceJob.payload.evidenceSnapshot.sourceEvidence[0]
+    .observationId = numericObservationID;
+  const numericEvidenceCatalog = buildEvidenceCatalog(
+    numericEvidenceJob.payload,
+    {},
+    now,
+    { includeSystemAttributionCapability: true }
+  );
+  const numericEvidenceRef = numericEvidenceCatalog.find((item) =>
+    typeof item.id === 'string' && item.id.startsWith('observation:')
+  )?.id;
+  if (!numericEvidenceRef ||
+      !numericEvidenceRef.includes('123456789012')) {
+    throw new Error('numeric evidence-ref fixture was not preserved');
+  }
+  const numericEvidenceMotion = baseReferral({
+    id: 'safe_numeric_evidence_ref'
+  });
+  const replaceEvidenceRef = (value) => {
+    if (typeof value === 'string') {
+      return value === evidenceRef ? numericEvidenceRef : value;
+    }
+    if (Array.isArray(value)) return value.map(replaceEvidenceRef);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        replaceEvidenceRef(item)
+      ]));
+    }
+    return value;
+  };
+  const allowedNumericEvidenceRef = await runOpportunityDiscoveryPlanner({
+    job: numericEvidenceJob,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: 'Typed professional referral search.',
+        plans: twoPlannerMotions(
+          replaceEvidenceRef(numericEvidenceMotion),
+          numericEvidenceRef
+        )
+      },
+      usage,
+      generationId: 'generation-safe-numeric-evidence-ref',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 800,
+        contentSha256: '1'.repeat(64)
+      },
+      annotations: []
+    })
+  });
+  if (allowedNumericEvidenceRef.status !== 'planned' ||
+      allowedNumericEvidenceRef.plans.length !== 2) {
+    throw new Error(
+      `numeric evidence ref was mistaken for a phone number: ${JSON.stringify(allowedNumericEvidenceRef)}`
     );
   }
 
@@ -1822,6 +2012,11 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     );
   }
 
+  const materializedRouteCandidate = (id, label) => {
+    const candidate = baseReferral({ id });
+    candidate.contingentFinalists.familyA.d.a[0].l = label;
+    return candidate;
+  };
   const adversaries = [
     {
       label: 'direct sensitive role',
@@ -1849,6 +2044,378 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       reason: /private-contact data/i
     },
     {
+      label: 'materialized family-label private route',
+      candidate: (() => {
+        const candidate = baseReferral({
+          id: 'materialized_family_private_route'
+        });
+        candidate.contingentFinalists.familyA.l = 'Email outreach route';
+        return candidate;
+      })(),
+      reason:
+        /private-contact data \[private_contact_route:acquisition\]/i
+    },
+    {
+      label: 'materialized alternate email route',
+      candidate: materializedRouteCandidate(
+        'materialized_alternate_email_route',
+        'After approval, invite {{TARGET_NAME}} over email to refer one qualified family to book the paid consultation through {{TARGET_URL}}.'
+      ),
+      reason:
+        /private-contact data \[private_contact_route:acquisition\]/i
+    },
+    {
+      label: 'bounded email-object alternate route',
+      candidate: materializedRouteCandidate(
+        'bounded_email_object_route',
+        'After approval, email a reviewed referral request to {{TARGET_NAME}} through {{TARGET_URL}}, asking them to refer one family to book the paid consultation.'
+      ),
+      reason:
+        /private-contact data \[private_contact_route:acquisition\]/i
+    },
+    {
+      label: 'possessive email alternate route',
+      candidate: materializedRouteCandidate(
+        'possessive_email_route',
+        'After approval, reach {{TARGET_NAME}} at their email to request one referral to the paid consultation through {{TARGET_URL}}.'
+      ),
+      reason:
+        /private-contact data \[private_contact_route:acquisition\]/i
+    },
+    ...[
+      ['electronic_mail_route', 'send electronic mail'],
+      ['gmail_route', 'send via Gmail'],
+      ['outlook_route', 'use Outlook inbox'],
+      ['sms_route', 'SMS {{TARGET_NAME}}'],
+      [
+        'communicate_using_sms_route',
+        'communicate with {{TARGET_NAME}} using SMS'
+      ],
+      [
+        'message_using_sms_route',
+        'message {{TARGET_NAME}} using SMS'
+      ],
+      ['send_target_email_route', 'send {{TARGET_NAME}} an email'],
+      ['send_target_sms_route', 'send {{TARGET_NAME}} an SMS'],
+      [
+        'send_target_whatsapp_note_route',
+        'send {{TARGET_NAME}} a WhatsApp note'
+      ],
+      ['whatsapp_route', 'message {{TARGET_NAME}} on WhatsApp'],
+      ['telegram_route', 'contact {{TARGET_NAME}} on Telegram'],
+      ['signal_route', 'reach {{TARGET_NAME}} on Signal'],
+      ['signal_dm_route', 'DM {{TARGET_NAME}} on Signal'],
+      ['slack_route', 'message {{TARGET_NAME}} on Slack'],
+      ['slack_in_route', 'message {{TARGET_NAME}} in Slack'],
+      ['slack_ping_route', 'ping {{TARGET_NAME}} in Slack'],
+      ['linkedin_inmail_route', 'send LinkedIn InMail'],
+      ['linkedin_message_route', 'send LinkedIn message'],
+      ['linkedin_note_route', 'send LinkedIn note'],
+      [
+        'linkedin_connection_request_route',
+        'send LinkedIn connection request'
+      ],
+      ['linkedin_dm_route', 'send {{TARGET_NAME}} a LinkedIn DM'],
+      [
+        'linkedin_note_through_route',
+        'send {{TARGET_NAME}} a note through LinkedIn'
+      ],
+      [
+        'linkedin_connect_route',
+        'invite {{TARGET_NAME}} to connect on LinkedIn'
+      ],
+      [
+        'linkedin_connect_with_route',
+        'connect with {{TARGET_NAME}} on LinkedIn'
+      ],
+      [
+        'linkedin_public_profile_connect_route',
+        'connect with {{TARGET_NAME}} on LinkedIn public professional profile {{TARGET_URL}}'
+      ],
+      [
+        'linkedin_connection_invite_route',
+        'send {{TARGET_NAME}} a LinkedIn connection invite'
+      ],
+      [
+        'linkedin_chat_route',
+        'start a LinkedIn chat with {{TARGET_NAME}}'
+      ],
+      [
+        'linkedin_reach_out_route',
+        'reach out to {{TARGET_NAME}} on LinkedIn'
+      ],
+      ['linkedin_inbox_route', 'inbox {{TARGET_NAME}} on LinkedIn'],
+      ['direct_inmail_route', 'InMail {{TARGET_NAME}}'],
+      ['direct_dm_route', 'DM {{TARGET_NAME}}'],
+      ['ring_target_route', 'ring {{TARGET_NAME}}'],
+      ['ring_up_target_route', 'ring up {{TARGET_NAME}}'],
+      ['phone_up_target_route', 'phone up {{TARGET_NAME}}'],
+      ['wechat_target_route', 'WeChat {{TARGET_NAME}}'],
+      ['give_target_call_route', 'give {{TARGET_NAME}} a call'],
+      ['give_target_ring_route', 'give {{TARGET_NAME}} a ring'],
+      [
+        'ask_target_on_call_route',
+        'ask {{TARGET_NAME}} on a call for one referral'
+      ],
+      [
+        'call_target_practice_route',
+        'ask {{TARGET_NAME}} for a referral then call their practice'
+      ],
+      [
+        'phone_target_practice_route',
+        'ask {{TARGET_NAME}} for a referral then phone their practice'
+      ],
+      [
+        'call_target_clinic_route',
+        'ask {{TARGET_NAME}} for a referral then call their clinic'
+      ],
+      [
+        'calling_target_practice_route',
+        'reach {{TARGET_NAME}} by calling their practice'
+      ],
+      ['fax_target_route', 'fax {{TARGET_NAME}}'],
+      ['page_target_route', 'page {{TARGET_NAME}}'],
+      ['mail_target_route', 'mail {{TARGET_NAME}}'],
+      ['send_target_note_route', 'send {{TARGET_NAME}} a note'],
+      [
+        'patient_portal_route',
+        'ask {{TARGET_NAME}} for a referral then message their patient portal'
+      ],
+      [
+        'epic_route',
+        'message {{TARGET_NAME}} through Epic'
+      ],
+      [
+        'doximity_route',
+        'message {{TARGET_NAME}} through Doximity'
+      ],
+      [
+        'mychart_route',
+        'message {{TARGET_NAME}} through MyChart'
+      ],
+      [
+        'teams_chat_route',
+        'start a Teams chat with {{TARGET_NAME}}'
+      ],
+      ['slack_chat_route', 'chat with {{TARGET_NAME}} in Slack'],
+      [
+        'voicemail_route',
+        'leave {{TARGET_NAME}} a voicemail asking them to recommend one qualified family'
+      ],
+      [
+        'voice_message_route',
+        'leave {{TARGET_NAME}} a voice message asking them to recommend one qualified family'
+      ],
+      [
+        'drop_voicemail_route',
+        'drop {{TARGET_NAME}} a voicemail asking them to recommend one qualified family'
+      ],
+      ['drop_email_route', 'drop {{TARGET_NAME}} an email'],
+      ['shoot_email_route', 'shoot {{TARGET_NAME}} an email'],
+      [
+        'note_by_mail_route',
+        'send {{TARGET_NAME}} a note by mail'
+      ],
+      [
+        'note_to_inbox_route',
+        'send {{TARGET_NAME}} a note to their inbox'
+      ],
+      [
+        'postal_letter_route',
+        'write {{TARGET_NAME}} a postal letter asking them to recommend one qualified family'
+      ],
+      [
+        'mail_letter_route',
+        'mail a letter to {{TARGET_NAME}} asking them to recommend one qualified family'
+      ],
+      [
+        'mail_target_letter_route',
+        'mail {{TARGET_NAME}} a letter asking them to recommend one qualified family'
+      ],
+      [
+        'deliver_letter_route',
+        'deliver a letter to {{TARGET_NAME}} asking them to recommend one qualified family'
+      ],
+      ['text_message_route', 'text-message {{TARGET_NAME}}'],
+      ['office_line_route', 'dial the office line'],
+      ['target_email_list_route', 'use target email list']
+    ].map(([id, route]) => ({
+      label: `alternate contact route ${id}`,
+      candidate: materializedRouteCandidate(
+        id,
+        `After approval, ${route} and ask {{TARGET_NAME}} to refer one family to book the paid consultation through public professional profile {{TARGET_URL}}.`
+      ),
+      reason:
+        /private-contact data \[private_contact_route:acquisition\]/i
+    })),
+    {
+      label: 'scoped-looking handle in an acquisition route',
+      candidate: materializedRouteCandidate(
+        'scoped_handle_route',
+        'After approval, use @john/profile and ask {{TARGET_NAME}} to refer one family to book the paid consultation through public professional profile {{TARGET_URL}}.'
+      ),
+      reason:
+        /private-contact data \[private_contact_(?:value|route:acquisition)\]/i
+    },
+    {
+      label: 'labeled phone literal in an acquisition route',
+      candidate: materializedRouteCandidate(
+        'labeled_phone_literal_route',
+        'After approval, call NPI 9175550123, then ask {{TARGET_NAME}} to refer one family through public professional profile {{TARGET_URL}}.'
+      ),
+      reason:
+        /private-contact data \[private_contact_route:acquisition\]/i
+    },
+    {
+      label: 'literal email is forbidden even in descriptive prose',
+      candidate: baseReferral({
+        id: 'literal_email_value',
+        rationale: 'No outreach is authorized to person@example.com.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'obfuscated literal email is forbidden',
+      candidate: baseReferral({
+        id: 'obfuscated_literal_email_value',
+        rationale:
+          'No outreach is authorized to person [at] example [dot] com.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'literal phone is forbidden even in descriptive prose',
+      candidate: baseReferral({
+        id: 'literal_phone_value',
+        conversionDestination: 'Owner booking page or 917-555-0123'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'compact literal phone is forbidden',
+      candidate: baseReferral({
+        id: 'literal_compact_phone_value',
+        rationale: 'No outreach is authorized to 9175550123.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'unlabeled compact literal phone is forbidden',
+      candidate: baseReferral({
+        id: 'literal_unlabeled_compact_phone_value',
+        conversionDestination: 'Owner booking page 9175550123'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'international literal phone is forbidden',
+      candidate: baseReferral({
+        id: 'literal_international_phone_value',
+        rationale: 'No outreach is authorized to +44 20 7123 4567.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'parenthesized literal phone is forbidden',
+      candidate: baseReferral({
+        id: 'literal_parenthesized_phone_value',
+        rationale: 'No outreach is authorized to (917)538-1564.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'slash-separated literal phone is forbidden',
+      candidate: baseReferral({
+        id: 'literal_slash_phone_value',
+        rationale: 'No outreach is authorized to 917/538/1564.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'unicode-dash literal phone is forbidden',
+      candidate: baseReferral({
+        id: 'literal_unicode_dash_phone_value',
+        rationale: 'No outreach is authorized to 917–538–1564.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'fullwidth literal phone is forbidden',
+      candidate: baseReferral({
+        id: 'literal_fullwidth_phone_value',
+        rationale: 'No outreach is authorized to ９１７５５５０１２３.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'UK local literal phone is forbidden',
+      candidate: baseReferral({
+        id: 'literal_uk_local_phone_value',
+        rationale: 'No outreach is authorized to 020 7123 4567.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'country-code literal phone without plus is forbidden',
+      candidate: baseReferral({
+        id: 'literal_country_code_phone_value',
+        rationale: 'No outreach is authorized to 44 20 7123 4567.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'fullwidth-at email literal is forbidden',
+      candidate: baseReferral({
+        id: 'literal_fullwidth_at_email_value',
+        rationale: 'No outreach is authorized to person＠example.com.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'zero-width email literal is forbidden',
+      candidate: baseReferral({
+        id: 'literal_zero_width_email_value',
+        rationale: 'No outreach is authorized to person@\u200Bexample.com.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'explicit private-data retrieval outside route fields',
+      candidate: baseReferral({
+        id: 'private_contact_retrieval',
+        rationale: 'Find the target private email before review.'
+      }),
+      reason: /private-contact data \[private_contact_request\]/i
+    },
+    {
+      label: 'social handle with a trailing slash is forbidden',
+      candidate: baseReferral({
+        id: 'literal_social_handle_trailing_slash',
+        rationale: 'Contact @privatehandle/ after review.'
+      }),
+      reason: /private-contact data \[private_contact_value\]/i
+    },
+    {
+      label: 'double-negative private-data retrieval',
+      candidate: baseReferral({
+        id: 'double_negative_private_contact',
+        rationale:
+          'There is no reason not to find the target private email before review.'
+      }),
+      reason: /private-contact data \[private_contact_request\]/i
+    },
+    ...[
+      ['find_private_route', 'Find target email address before review.'],
+      ['need_private_route', 'Need target phone number before review.'],
+      ['collecting_private_routes', 'Collecting phone numbers before review.'],
+      ['retrieve_private_routes', 'Retrieve private emails before review.'],
+      ['use_private_directory', 'Use target contact directory before review.']
+    ].map(([id, rationale]) => ({
+      label: `explicit private-data request ${id}`,
+      candidate: baseReferral({ id, rationale }),
+      reason: /private-contact data \[private_contact_request\]/i
+    })),
+    {
       label: 'two sensitive clauses cannot share one service relation',
       candidate: baseReferral({
         id: 'second_sensitive_clause',
@@ -1864,6 +2431,14 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
         query: 'pediatrician servers containing patient lead lists'
       }),
       reason: /private-contact data/i
+    },
+    {
+      label: 'contact-directory search',
+      candidate: baseReferral({
+        id: 'contact_directory_search',
+        query: 'pediatrician email directory Queens New York'
+      }),
+      reason: /private-contact data \[private_contact_request\]/i
     },
     {
       label: 'direct pregnant-people role',
@@ -1914,10 +2489,35 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     );
     if (result.status !== 'blocked' ||
         !adversary.reason.test(result.reason) ||
+        /person@example\.com|917-555-0123|9175550123|44 20 7123 4567|\(917\)538-1564|917\/538\/1564/i.test(
+          result.reason
+        ) ||
         result.plans.length !== 0 ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
         `${adversary.label} did not fail closed: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  for (const [index, wrapperReason] of [
+    'No outreach is authorized to person@example.com.',
+    'Find the target private email before review.'
+  ].entries()) {
+    const result = await run(
+      baseReferral({ id: `wrapper_reason_private_contact_${index + 1}` }),
+      `generation-wrapper-reason-private-contact-${index + 1}`,
+      wrapperReason
+    );
+    if (result.status !== 'blocked' ||
+        !/planner reason (?:contains|requests) private-contact data/i.test(
+          result.reason
+        ) ||
+        /person@example\.com/i.test(result.reason) ||
+        result.plans.length !== 0 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `wrapper reason private-contact data was not safely rejected: ${JSON.stringify(result)}`
       );
     }
   }
@@ -4529,7 +5129,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
   planner.payload.evidenceSnapshot.profile.identity.website =
     'https://owner.example/';
   planner.payload.evidenceSnapshot.sourceEvidence[0].summary =
-    'The owner website offers a current paid workflow-software subscription with pricing and a signup page where field-service teams can subscribe and pay.';
+    'The owner website offers a current paid email-marketing and phone-consultation subscription with pricing and a signup page where field-service teams can subscribe and pay.';
   const catalog = buildEvidenceCatalog(planner.payload, {}, now, {
     includeSystemAttributionCapability: true
   });
@@ -4553,7 +5153,25 @@ async function verifyProviderAttestedBuyerReviewRoute() {
     }
     return value;
   };
-  const rawMotion = scenario.plans(sellerEvidenceRef)[1];
+  const replaceOfferText = (value) => {
+    if (typeof value === 'string') {
+      return value.replaceAll(
+        'Paid workflow-software subscription',
+        'Paid email-marketing and phone-consultation subscription'
+      );
+    }
+    if (Array.isArray(value)) return value.map(replaceOfferText);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        replaceOfferText(item)
+      ]));
+    }
+    return value;
+  };
+  const rawMotion = replaceOfferText(
+    scenario.plans(sellerEvidenceRef)[1]
+  );
   rawMotion.targetSlot.requiredEvidenceRoles = ['defined_buyer'];
   rawMotion.contingentFinalists = stripTargetEvidence(
     rawMotion.contingentFinalists
@@ -5096,6 +5714,53 @@ async function verifyProviderAttestedBuyerReviewRoute() {
         `${check.label} minted an actionable buyer route: ${JSON.stringify({ calls, rejected })}`
       );
     }
+  }
+
+  const paidProposalPayload = structuredClone(downstreamPayload);
+  for (const [familyIndex, familyKey] of
+    ['familyA', 'familyB'].entries()) {
+    paidProposalPayload.commercialDiscoveryEvidence.plan.plans[0]
+      .contingentFinalists[familyKey].d.a =
+      paidProposalPayload.commercialDiscoveryEvidence.plan.plans[0]
+        .contingentFinalists[familyKey].d.a.map((item, index) => ({
+          ...item,
+          l:
+            `After review, route ${familyIndex + 1}-${index + 1}: offer {{TARGET_NAME}} the paid subscription by paid proposal through LinkedIn public professional profile {{TARGET_URL}}.`
+        }));
+  }
+  let paidProposalCalls = 0;
+  const paidProposal = await runOpportunityTournament({
+    job: {
+      id: 'job-provider-attested-paid-proposal-route',
+      kind: 'opportunity_tournament',
+      payload: paidProposalPayload
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      paidProposalCalls += 1;
+      const task = JSON.parse(request.user || '{}');
+      return acceptedCriticCompletion(
+        task.finalists || [],
+        'generation-provider-attested-paid-proposal-critic'
+      );
+    }
+  });
+  if (paidProposalCalls !== 1 ||
+      paidProposal.status !== 'completed' ||
+      paidProposal.result?.resultType !== 'immediate_revenue_action' ||
+      paidProposal.result?.incrementalRevenueGate?.passed !== true ||
+      paidProposal.result?.allowedChannel !== 'public_professional_url' ||
+      paidProposal.result?.executionAuthorization !== 'none' ||
+      paidProposal.result?.requiresReview !== true ||
+      paidProposal.result?.sideEffectsPerformed !== 0 ||
+      !paidProposal.winner?.action?.includes('paid proposal') ||
+      paidProposal.gate?.sideEffects?.outreachAttempts !== 0 ||
+      paidProposal.gate?.sideEffects?.publishAttempts !== 0 ||
+      paidProposal.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `legitimate public-profile paid proposal did not complete safely: ${JSON.stringify({ calls: paidProposalCalls, result: paidProposal })}`
+    );
   }
 }
 

@@ -1824,6 +1824,12 @@ function opportunityDiscoveryPlanIssue(value) {
   if (!['planned', 'insufficient_verified_supply'].includes(plan.status)) {
     return 'Discovery planner returned an unsupported status.';
   }
+  if (commercialDiscoveryContainsPrivateContact(plan.reason)) {
+    return 'Discovery planner reason contains private-contact data [private_contact_value].';
+  }
+  if (discoveryPlanExplicitlyRequestsPrivateContact(plan.reason)) {
+    return 'Discovery planner reason requests private-contact data [private_contact_request].';
+  }
   if (!legacy) {
     const webSearchIssue = opportunityDiscoveryWebSearchReceiptIssue(
       plan.webSearchReceipt
@@ -2754,11 +2760,9 @@ function countExactToken(value, token) {
 
 function discoveryPlanSensitiveTargetIssue(planValue) {
   const plan = asObject(planValue);
-  // Private-contact intent is forbidden anywhere in the proposed plan,
-  // including a nested finalist action; typed target exceptions apply only
-  // to non-contact population wording in the general search query.
-  if (discoveryPlanRequestsPrivateContact(JSON.stringify(plan))) {
-    return `Discovery plan ${firstText(plan.id)} requests private-contact data.`;
+  const privateContactIssue = discoveryPlanPrivateContactIssue(plan);
+  if (privateContactIssue) {
+    return `Discovery plan ${firstText(plan.id)} requests private-contact data [${privateContactIssue}].`;
   }
 
   const directPersonTarget = compactStrings(
@@ -2792,19 +2796,305 @@ function discoveryPlanSensitiveTargetIssue(planValue) {
   return '';
 }
 
-function discoveryPlanRequestsPrivateContact(value) {
+/**
+ * Contact safety has two separate trust boundaries. Literal contact values
+ * are forbidden everywhere because no planner field may carry or persist
+ * them. Contact-seeking prose is evaluated only where it can affect provider
+ * discovery or the recommended acquisition route. Descriptive fields may
+ * truthfully mention a paid phone service, phone attribution, or that private
+ * contact data is not needed without granting search or execution authority.
+ */
+function discoveryPlanPrivateContactIssue(planValue) {
+  const plan = asObject(planValue);
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(plan);
+  } catch {
+    return 'private_contact_value';
+  }
+  const textEntries = discoveryPlanTextEntries(plan);
+  const textValues = textEntries.map((entry) => entry.value);
+  if (!serialized || textEntries.some((entry) =>
+    commercialDiscoveryContainsPrivateContact(entry.value, {
+      allowBareCodePackage:
+        discoveryPlanPathAllowsBareCodePackage(entry.path)
+    })
+  ) || discoveryPlanContainsPrivateContactKey(plan)) {
+    return 'private_contact_value';
+  }
+
+  if (textValues.some(
+    discoveryPlanExplicitlyRequestsPrivateContact
+  )) {
+    return 'private_contact_request';
+  }
+
+  const searchValues = compactStrings([
+    plan.query,
+    plan.market,
+    ...asArray(plan.targetRoleTerms),
+    ...asArray(plan.organizationTerms),
+    plan.jobTitle,
+    ...asArray(plan.skills)
+  ]);
+  if (searchValues.some(discoverySearchRequestsPrivateContact)) {
+    return 'private_contact_route:search';
+  }
+
+  const bundle = asObject(plan.contingentFinalists);
+  const routeValues = [plan.acquisitionMechanism];
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = asObject(bundle[familyKey]);
+    const dimensions = asObject(family.d);
+    routeValues.push(
+      family.l,
+      ...asArray(dimensions.c).map((item) => asObject(item).l),
+      ...asArray(dimensions.a).map((item) => asObject(item).l),
+      ...asArray(dimensions.r).map((item) => asObject(item).c)
+    );
+  }
+  for (const tacticKey of ['tacticA', 'tacticB']) {
+    const tactic = asObject(bundle[tacticKey]);
+    routeValues.push(
+      tactic.l,
+      ...asArray(tactic.c).map((item) => asObject(item).l),
+      ...asArray(tactic.a).map((item) => asObject(item).l)
+    );
+  }
+  routeValues.push(
+    ...asArray(asObject(bundle.pathBase).r)
+      .map((item) => asObject(item).c)
+  );
+  if (compactStrings(routeValues).some(
+    discoveryAcquisitionRequestsPrivateContact
+  )) {
+    return 'private_contact_route:acquisition';
+  }
+  return '';
+}
+
+function discoveryPlanTextEntries(value, output = [], path = []) {
+  if (typeof value === 'string') {
+    if (!discoveryPlanTextPathIsIdentifier(path)) {
+      output.push({ value, path: [...path] });
+    }
+    return output;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      discoveryPlanTextEntries(item, output, path);
+    }
+    return output;
+  }
+  for (const [key, item] of Object.entries(asObject(value))) {
+    discoveryPlanTextEntries(item, output, [...path, key]);
+  }
+  return output;
+}
+
+function discoveryPlanPathAllowsBareCodePackage(path) {
+  return path.at(-1) === 'skills';
+}
+
+function discoveryPlanTextPathIsIdentifier(path) {
+  const key = path.at(-1);
+  const parent = path.at(-2);
+  return [
+    'contractVersion',
+    'e',
+    'evidenceRefs',
+    'evidenceRefToken',
+    'id',
+    'seedContract',
+    'tacticKey',
+    'targetNameToken',
+    'targetUrlToken'
+  ].includes(key) ||
+    parent === 'g' && ['a', 'b', 'c', 'o', 't'].includes(key);
+}
+
+function discoveryPlanContainsPrivateContactKey(value) {
+  if (Array.isArray(value)) {
+    return value.some(discoveryPlanContainsPrivateContactKey);
+  }
+  const record = asObject(value);
+  return Object.entries(record).some(([key, item]) =>
+    /^(?:work_email|mobile_phone|phone_numbers?)$/i.test(key) ||
+    discoveryPlanContainsPrivateContactKey(item)
+  );
+}
+
+function discoverySearchRequestsPrivateContact(value) {
+  return discoveryPlanExplicitlyRequestsPrivateContact(value) ||
+    discoveryContactPatternsRequest(value, [
+      /\b(?:patient|consumer) lead lists?\b/g
+    ]);
+}
+
+function discoveryAcquisitionRequestsPrivateContact(value) {
+  if (discoveryPlanExplicitlyRequestsPrivateContact(value)) return true;
+  const rawText = commercialDiscoveryContactInspectionText(value);
+  const routeText = rawText.replace(/https?:\/\/\S+/gi, ' ');
+  const routePhoneMatches = commercialDiscoveryPhoneLikeMatches(routeText);
+  if (routePhoneMatches.some((match) =>
+    !commercialDiscoveryNumberHasProductLabel(routeText, match.index) ||
+    commercialDiscoveryLabeledNumberUsedAsContactRoute(routeText, match.index)
+  )) {
+    return true;
+  }
+  if ([...rawText.matchAll(/@[a-z0-9_][a-z0-9_.-]*/gi)].some(
+    (match) => !commercialDiscoveryAtTokenIsCodePackage(
+      rawText,
+      match,
+      false
+    )
+  )) {
+    return true;
+  }
+  const unnormalizedRouteText = comparable(routeText);
+  if (discoveryContactPatternsRequest(unnormalizedRouteText, [
+    /\b(?:chat|connect|dm|inbox|message|ping|reach out)(?: [a-z0-9]+){0,8} (?:at|on|through|via) (?:linked in|linkedin) (?:public )?professional profile\b/g,
+    /\b(?:ask|invite|request)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person)(?: [a-z0-9]+){0,3} to connect(?: [a-z0-9]+){0,3} on (?:linked in|linkedin) (?:public )?professional profile\b/g
+  ])) {
+    return true;
+  }
+  const text = unnormalizedRouteText
+    .replace(
+      /\b(?:linked in|linkedin) (?:public )?professional profile\b/g,
+      ' public professional profile '
+    )
+    .replace(
+      /\bpublic professional profile (?:at|on) (?:linked in|linkedin)\b/g,
+      ' public professional profile '
+    )
+    .replace(/\b(?:consultation|session|service|support|care|visit|interview|meeting) (?:at|by|on|over|through|via) (?:phone|telephone)\b/g, ' service modality ')
+    .replace(/\b(?:phone|telephone) (?:care|consultation|interview|meeting|service|session|support|visit)\b/g, ' service modality ');
+  const medium = '(?:call|calling|contacts|direct message|discord|dm|doximity|e mail|e mails|ehr(?: secure)? messaging|electronic mail|email|emails|epic|facebook messenger|fax|gmail|inbox|inmail|linked in|linkedin|mail|mychart|office line|outlook(?: inbox)?|patient portal|phone|phones|portal|postal (?:letter|mail)|secure messaging|signal|slack|sms|teams|telegram|telephone|telephones|text message|voice mail|voice message|voicemail|wechat|whatsapp)';
+  const commercialVerb = '(?:apply|ask|bid|chat|communicate|connect|contact|dm|drop|engage|fax|inbox|invite|introduce|leave|message|notify|offer|page|ping|propose|reach|recommend|refer|request|respond|send|shoot|start|submit|write)';
+  const targetObject = '(?:target|target name|candidate|buyer|partner|professional|person)';
+  return discoveryContactPatternsRequest(text, [
+    new RegExp(
+      `\\b(?:at|by|in|on|over|through|to|using|via)(?: an?| her| his| their| the)? ${medium}\\b(?= (?:address|and|for|to|with)\\b|$)`,
+      'g'
+    ),
+    new RegExp(
+      `\\b${commercialVerb}(?: [a-z0-9]+){0,8} (?:at|by|in|on|over|through|to|using|via)(?: an?| her| his| their| the)? ${medium}\\b`,
+      'g'
+    ),
+    new RegExp(
+      `\\b(?:at|by|in|on|over|through|to|using|via)(?: an?| her| his| their| the)? ${medium}(?: and)?(?: to| for)? ${commercialVerb}\\b`,
+      'g'
+    ),
+    new RegExp(
+      '\\b(?:call|dial|dm|email|fax|inmail|mail|page|phone|sms|telephone|text message|text|wechat|whatsapp)(?: (?:a|an|the|one|reviewed|review first|referral|partner|paid|booking|proposal|request)){0,5}(?: to)? (?:target|target name|candidate|buyer|partner|professional|person)\\b',
+      'g'
+    ),
+    new RegExp(
+      `\\b(?:use|using)(?: an?| her| his| target| their| the)? ${medium} (?:as|for|to)\\b`,
+      'g'
+    ),
+    new RegExp(
+      `\\bsend(?: an?| the)? ${medium} (?:to|through|via)\\b`,
+      'g'
+    ),
+    new RegExp(
+      `\\b${medium} (?:channel|contact|message|outreach|request|route)\\b`,
+      'g'
+    ),
+    new RegExp(
+      `\\b(?:drop|leave|mail|message|send|shoot|write)(?: an?| the)? ${targetObject}(?: an?| the| one| reviewed)? (?:${medium}|letter|note)(?: (?:letter|message|note|proposal|request))?\\b`,
+      'g'
+    ),
+    /\b(?:send|use|using) (?:direct message|electronic mail|gmail|outlook(?: inbox)?|postal (?:letter|mail)|signal|telegram|voice mail|voicemail|whatsapp)\b/g,
+    /\b(?:send|use|using)(?: an?| the)? (?:inmail|linked in inmail|linkedin inmail)\b/g,
+    /\b(?:send|use|using)(?: an?| the)? (?:linked in|linkedin) (?:connection request|message|note)\b/g,
+    /\b(?:direct message|dm|fax|inmail|page|signal|telegram|wechat|whatsapp) (?:target|target name|candidate|buyer|partner|professional|person)\b/g,
+    /\b(?:leave|send)(?: [a-z0-9]+){0,8} (?:a |an |the )?(?:direct message|text message|voice mail|voice message|voicemail)\b/g,
+    /\b(?:drop|shoot)(?: [a-z0-9]+){0,8} (?:a |an |the )?(?:e mail|email)\b/g,
+    /\b(?:mail|post|send|write)(?: [a-z0-9]+){0,8} (?:a |an |the )?postal (?:letter|mail)\b/g,
+    /\b(?:mail|post|send|write)(?: an?| the)?(?: reviewed)? letter(?: [a-z0-9]+){0,5} (?:for|to) (?:target|target name|candidate|buyer|partner|professional|person)\b/g,
+    /\b(?:mail|post|send|write)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person)(?: an?| the)? letter\b/g,
+    /\b(?:call|dial|phone|ring|telephone)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person)\b/g,
+    /\b(?:call|dial|phone|ring|telephone)(?: an?| her| his| target| their| the)? (?:clinic|office|practice|telephone|line|number)\b/g,
+    /\b(?:give|place)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person) (?:a |one )?call\b/g,
+    /\b(?:call|dial|phone|ring|telephone) up(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person)\b/g,
+    /\b(?:call|dial|phone|ring|telephone)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person) up\b/g,
+    /\b(?:give|place)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person) (?:a |one )?ring\b/g,
+    /\b(?:start|open)(?: an?| the)? (?:discord|linked in|linkedin|slack|teams|telegram|wechat|whatsapp) chat(?: [a-z0-9]+){0,4} (?:target|target name|candidate|buyer|partner|professional|person)\b/g,
+    /\b(?:message|reach)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person)(?: [a-z0-9]+){0,3} by calling(?: an?| her| his| target| their| the)? (?:clinic|office|practice|line|number)\b/g,
+    /\b(?:ask|invite|request)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person)(?: [a-z0-9]+){0,3} on(?: an?| the)? call\b/g,
+    /\b(?:ask|invite|request)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person)(?: [a-z0-9]+){0,3} to connect(?: [a-z0-9]+){0,3} on (?:linked in|linkedin)\b/g,
+    /\bdeliver(?: an?| the)?(?: reviewed)? letter(?: [a-z0-9]+){0,5} to (?:target|target name|candidate|buyer|partner|professional|person)\b/g,
+    /\binbox(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person)(?: [a-z0-9]+){0,3} (?:linked in|linkedin)\b/g,
+    /\bdial(?: an?| the)? office line\b/g,
+    /\buse(?: an?| the)? target (?:e mail|email) list\b/g
+  ]);
+}
+
+function discoveryContactPatternsRequest(value, expressions) {
   const text = comparable(value);
-  const boundedText = ` ${text} `;
-  return commercialDiscoveryContainsPrivateContact(value) || [
-    'private email', 'personal email', 'direct email', 'work email',
-    'email', 'emails', 'e mail', 'e mails', 'e mail address',
-    'e mail addresses',
-    'private phone', 'personal phone', 'direct phone', 'mobile phone',
-    'cell phone', 'phone', 'phones', 'telephone', 'telephones',
-    'phone number', 'email address', 'home address', 'contacts',
-    'private contact', 'contact details', 'contact information',
-    'contact data', 'contact list', 'lead list', 'lead lists'
-  ].some((phrase) => boundedText.includes(` ${phrase} `));
+  for (const expression of expressions) {
+    for (const match of text.matchAll(expression)) {
+      if (!privateContactMatchIsExplicitlyDenied(
+        text,
+        match.index,
+        match.index + match[0].length
+      )) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function discoveryPlanExplicitlyRequestsPrivateContact(value) {
+  const text = comparable(value);
+  const contactObject =
+    '(?:private|personal|direct|work) (?:e mails?|emails?)|(?:e mail|email) address(?:es)?|(?:private|personal|direct) phones?|(?:mobile|cell) phone numbers?|phone numbers?|home address(?:es)?|private contacts?|contact (?:details|directory|information|lists?)|lead lists?';
+  const retrieval =
+    '(?:find|get|look up|lookup|obtain|collect(?:ing)?|scrap(?:e|ing)|enrich(?:ing)?|sourc(?:e|ing)|retriev(?:e|ing)|return|identify|discover|search for|request|send|use|using|need|require)';
+  const expressions = [
+    new RegExp(`\\b${retrieval}(?: [a-z0-9]+){0,6} (?:${contactObject})\\b`, 'g'),
+    new RegExp(`\\b(?:${contactObject})(?: [a-z0-9]+){0,4} (?:lookup|search|scrape|enrichment|retrieval|collection)\\b`, 'g'),
+    new RegExp(`\\b(?:${contactObject})(?: [a-z0-9]+){0,3} (?:needed|required|requested|collected|returned|searched|used)\\b`, 'g')
+  ];
+  for (const expression of expressions) {
+    for (const match of text.matchAll(expression)) {
+      if (!privateContactMatchIsExplicitlyDenied(
+        text,
+        match.index,
+        match.index + match[0].length
+      )) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function privateContactMatchIsExplicitlyDenied(text, start, end) {
+  const prefix = text.slice(Math.max(0, start - 96), start);
+  const match = text.slice(start, end);
+  const suffix = text.slice(end, Math.min(text.length, end + 72));
+  const plainNotBefore = /\bnot $/.test(prefix) &&
+    !/\breason not $/.test(prefix);
+  const deniedBefore =
+    /\b(?:do not|does not|don t)(?: ever| need to)? $/.test(prefix) ||
+    /\bnever $/.test(prefix) || plainNotBefore ||
+    /\b(?:avoid|avoids|avoiding|exclude|excludes|excluding|omit|omits|omitting|without)(?: any| the)? $/.test(prefix) ||
+    /\bno(?: need)?(?: for| to)?(?: any| the)? $/.test(prefix);
+  const deniedInside =
+    /\b(?:do not|does not|don t|never|no|not|without)\b(?: [a-z0-9]+){0,4} (?:collect|find|get|need|obtain|request|require|return|search|use)\w*\b/.test(
+      match
+    ) ||
+    /\b(?:are|is|were|was) (?:never |not )(?:authorized|collected|needed|permitted|required|requested|returned|searched|used)\b/.test(
+      match
+    );
+  const deniedAfter =
+    /^ (?:are|is|were|was) (?:never |not )(?:authorized|collected|needed|permitted|required|requested|returned|searched|used)\b/.test(
+      suffix
+    );
+  return deniedBefore || deniedInside || deniedAfter;
 }
 
 function discoveryPlanTargetsSensitivePerson(value) {
@@ -6057,12 +6347,189 @@ function commercialDiscoveryDecisionMakerCandidateFactsBound({
   );
 }
 
-function commercialDiscoveryContainsPrivateContact(value) {
-  const text = firstText(value);
-  return /(?:mailto:|tel:|sms:|@|work_email|mobile_phone|phone_numbers)/i.test(
+function commercialDiscoveryContainsPrivateContact(
+  value,
+  { allowBareCodePackage = false } = {}
+) {
+  const text = commercialDiscoveryContactInspectionText(value);
+  const containsSocialHandle = [
+    ...text.matchAll(/@[a-z0-9_][a-z0-9_.-]*/gi)
+  ].some((match) => !commercialDiscoveryAtTokenIsCodePackage(
+    text,
+    match,
+    allowBareCodePackage
+  ));
+  const containsPhoneLikeValue = commercialDiscoveryPhoneLikeMatches(
+    text
+  ).some((match) => !commercialDiscoveryNumberHasProductLabel(
+    text,
+    match.index
+  ));
+  return /(?:mailto:|tel:|sms:|work_email|mobile_phone|phone_numbers)/i.test(
     text
   ) ||
-    /(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b/.test(text);
+    /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(text) ||
+    /\b[a-z0-9._%+-]+\s*(?:\[at\]|\(at\)|\bat\b)\s*[a-z0-9.-]+\s*(?:\[dot\]|\(dot\)|\bdot\b)\s*[a-z]{2,}\b/i.test(
+      text
+    ) ||
+    containsSocialHandle ||
+    containsPhoneLikeValue;
+}
+
+function commercialDiscoveryAtTokenIsCodePackage(
+  text,
+  match,
+  allowBareCodePackage = false
+) {
+  const end = match.index + match[0].length;
+  const packageSuffix = text.slice(end).match(
+    /^\/[a-z0-9_][a-z0-9_.-]*/i
+  );
+  if (!packageSuffix) return false;
+  if (allowBareCodePackage) return true;
+  const prefix = text.slice(Math.max(0, match.index - 40), match.index);
+  const suffix = text.slice(
+    end + packageSuffix[0].length,
+    end + packageSuffix[0].length + 32
+  );
+  return /\b(?:angular|dependency|framework|javascript|library|module|node|npm|package|react|sdk|typescript|vue)\s*$/i.test(
+    prefix
+  ) || /^\s+(?:application|audit|consultant|consulting|dependency|developer|development|engineer|framework|integration|library|maintenance|maintainer|migration|module|package|sdk|specialist|support)\b/i.test(
+    suffix
+  );
+}
+
+function commercialDiscoveryNumberHasProductLabel(text, index) {
+  return /\b(?:application id|build id|catalog (?:code|id)|commit id|contract id|ean|gtin(?: 8| 12| 13| 14)?|imei|isbn(?: 10| 13)?|issue id|job (?:posting id|requisition)|npi|order id|part number|patent (?:application|number)|posting id|product (?:code|id)|reference id|requisition|rfp(?: id)?|serial number|sku|solicitation id|tender id|ticket id|upc)\s*(?:#|:|-)?\s*$/i.test(
+    text.slice(Math.max(0, index - 48), index)
+  );
+}
+
+function commercialDiscoveryLabeledNumberUsedAsContactRoute(text, index) {
+  return /\b(?:call|contact|dial|fax|message|phone|reach|ring|sms|telephone|text)(?: [a-z0-9]+){0,4}\s*$/i.test(
+    text.slice(Math.max(0, index - 64), index)
+  );
+}
+
+function commercialDiscoveryPhoneLikeMatches(value) {
+  const text = commercialDiscoveryContactInspectionText(value);
+  return [
+    ...text.matchAll(
+      /(?<!\d)\+?\d[\d\s()./\-\u2010-\u2015\u2212]{5,30}\d(?!\d)/g
+    )
+  ].filter((match) => {
+    const digitCount = (match[0].match(/\d/g) || []).length;
+    return digitCount >= 7 && digitCount <= 15 &&
+      !commercialDiscoveryPhoneLikeMatchIsObviouslyNonContact(
+        text,
+        match
+      );
+  });
+}
+
+function commercialDiscoveryPhoneLikeMatchIsObviouslyNonContact(text, match) {
+  const raw = match[0].trim();
+  const prefix = text.slice(Math.max(0, match.index - 32), match.index);
+  const suffix = text.slice(
+    match.index + match[0].length,
+    match.index + match[0].length + 24
+  );
+  if (/[€£¥$]\s*$/.test(prefix) ||
+      commercialDiscoveryHasISO4217CurrencyBefore(prefix) ||
+      commercialDiscoveryHasISO4217CurrencyAfter(suffix) ||
+      /^\s*dollars?\b/i.test(suffix)) {
+    return true;
+  }
+  if (/^\s*(?:st|nd|rd|th)\s+(?:avenue|ave|boulevard|blvd|court|ct|drive|dr|highway|hwy|lane|ln|parkway|pkwy|place|pl|road|rd|street|st|terrace|way)\b/i.test(
+    suffix
+  )) {
+    return true;
+  }
+  if (commercialDiscoveryValidCalendarDate(raw)) return true;
+  const ipv4Parts = raw.split('.');
+  if (ipv4Parts.length === 4 && ipv4Parts.every((part) =>
+    /^\d{1,3}$/.test(part) && Number(part) <= 255
+  )) {
+    return true;
+  }
+  const cidr = raw.match(
+    /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/
+  );
+  if (cidr && cidr.slice(1, 5).every((part) => Number(part) <= 255) &&
+      Number(cidr[5]) <= 32) {
+    return true;
+  }
+  return /\b(?:v|ver|version)\s*$/i.test(prefix) &&
+    /^\d+(?:\.\d+){2,3}$/.test(raw);
+}
+
+function commercialDiscoveryHasISO4217CurrencyBefore(value) {
+  const match = value.match(/\b([a-z]{3})\s*$/i);
+  return Boolean(match && commercialDiscoveryISO4217Currencies().has(
+    match[1].toUpperCase()
+  ));
+}
+
+function commercialDiscoveryHasISO4217CurrencyAfter(value) {
+  const match = value.match(/^\s*([a-z]{3})\b/i);
+  return Boolean(match && commercialDiscoveryISO4217Currencies().has(
+    match[1].toUpperCase()
+  ));
+}
+
+let cachedISO4217Currencies;
+
+function commercialDiscoveryISO4217Currencies() {
+  if (cachedISO4217Currencies) return cachedISO4217Currencies;
+  const fallback = [
+    'AUD', 'BRL', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', 'HKD', 'INR',
+    'JPY', 'KRW', 'MXN', 'NZD', 'SGD', 'USD', 'ZAR'
+  ];
+  let values = fallback;
+  try {
+    if (typeof Intl.supportedValuesOf === 'function') {
+      values = Intl.supportedValuesOf('currency');
+    }
+  } catch {
+    values = fallback;
+  }
+  cachedISO4217Currencies = new Set(values);
+  return cachedISO4217Currencies;
+}
+
+function commercialDiscoveryValidCalendarDate(value) {
+  const iso = value.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (iso) {
+    return commercialDiscoveryCalendarPartsValid(
+      Number(iso[1]),
+      Number(iso[2]),
+      Number(iso[3])
+    );
+  }
+  const local = value.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (!local) return false;
+  const first = Number(local[1]);
+  const second = Number(local[2]);
+  const year = Number(local[3]);
+  return commercialDiscoveryCalendarPartsValid(year, first, second) ||
+    commercialDiscoveryCalendarPartsValid(year, second, first);
+}
+
+function commercialDiscoveryCalendarPartsValid(year, month, day) {
+  if (year < 1900 || year > 2200 || month < 1 || month > 12 ||
+      day < 1 || day > 31) {
+    return false;
+  }
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
+}
+
+function commercialDiscoveryContactInspectionText(value) {
+  return firstText(value)
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '');
 }
 
 function redactCommercialDiscoveryContactTokens(value) {
@@ -6333,9 +6800,8 @@ function publicProfessionalRouteTextBindsCandidate(
     return false;
   }
   return !routeTexts.some((text) =>
-    /\b(?:e-?mail|phone|telephone|call|sms|text message|contact form|web form|proposal)\b/i.test(
-      text
-    )
+    discoveryAcquisitionRequestsPrivateContact(text) ||
+    /\b(?:contact form|web form)\b/i.test(text)
   );
 }
 
