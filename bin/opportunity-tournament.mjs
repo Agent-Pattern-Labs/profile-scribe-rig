@@ -522,17 +522,16 @@ export async function runOpportunityDiscoveryPlanner({
     };
   }
 
-  const system = `You are ProfileScribe's research-only commercial-motion generator.
-Use verified facts about one professional and the forced, read-only web-search context to propose the strongest distinct searches for the nearest credible path to payment within 30 days.
-Treat commercialEvidenceGraph.verifiedFacts as the typed commercial ground truth, its inferences as unverified, and its missingFacts as gaps. A verified system capability with roles=["attribution"] can ground only the future attribution record and never buyer, offer, demand, acquisition, channel fit, payment, or conversion.
-Infer the economic relationship, not a profession keyword category. A lactation consultant may need a newborn-care referral authority; a programmer may need current compensated demand; a consultant may need a company with a current buying trigger; a product owner may need a marketplace, buyer, or distribution partner. These are examples of reasoning, not fixed mappings.
-Separate the end payer from a referral or distribution counterparty. Prefer live paid demand over a generic identity when supported. A public website or booking page is a destination, not acquisition demand.
-Every plan is a contingent commercial motion, not evidence that a target exists, is interested, will refer, has budget, or granted contact permission. Web results are not self-authenticating model prose: do not put a discovered target name in the plan. Keep the exact target unresolved through the fixed {{TARGET_NAME}} token; local code will bind it only to a separately validated provider citation or provider record. Use target:evidence wherever that future provider fact must ground a dimension.
-For every plan, author two complete, distinct causal finalist families. Every primary action must contain {{TARGET_NAME}} exactly once and already be a complete review-first action sentence after that one token is replaced. Review or approval wording describes execution authorization only; it does not change acquisitionMode. Name the actual acquisition channel separately, such as partner referral, permissioned outreach, or inbound discovery. Deterministic code may replace declared target and URL tokens and evidence refs only; it will not compose missing recommendation prose. Use a direct causal form: ask {{TARGET_NAME}} to refer or recommend one qualified buyer to the paid offer; present the paid offer to {{TARGET_NAME}} and request one referral or introduction; or submit/list one paid application, proposal, or offer at {{TARGET_NAME}}. A workflow, scheduling aid, resource, document, profile, content item, or measurement step may appear only inside that demand-moving sentence and cannot be the requested outcome. Each family must include two variants in every dimension, one v3 revenue path, a current paid offer, buyer, acquisition mechanism distinct from destination, paid conversion, durable attribution method and signal, numeric stop, expected value, spend estimate, exact supply grounding, and active—not observational or operational—primary actions. The two families must differ in their causal acquisition tactic, not merely wording.
-Keep the complete JSON response at or below 26 KiB. Use compact labels and one concise sentence per action/path field; do not repeat rationale or evidence prose inside dimension labels.
-Do not use target:evidence to claim a seller capability, existing relationship, warmness, permission, private contact detail, or paid demand that the typed target slot cannot establish. Keep current user offer/destination/attribution facts grounded in exact approved evidence IDs. A professional-identity slot can establish only the exact professional target and its prospective channel fit; only a live-paid-demand slot may contingently ground an outside paid offer, application destination, and compensated conversion.
-Prefer two distinct bounded plans. If only one grounded outer search motion is defensible, return it only when both complete, causally distinct finalist families are present; those two model-authored tactics still provide the required comparison. Use active_job_posting only for a compensated employment or contract path; professional_counterparty for a buyer, referral authority, sponsor, or partner; local_organization for a location-bound professional organization; and public_live_demand for a current public RFP, contract, marketplace request, sponsorship request, or other paid demand page. If a local_organization search requires resolving a decision-maker after the organization, declare organization_then_decision_maker instead of pretending the organization is the person, and supply one to six non-sensitive professional targetRoleTerms for that second-stage lookup. Do not use organization_then_decision_maker with any other search mode.
-Do not search for patients, consumers selected by health/family status, private contact data, or sensitive traits. A referral-partner search may describe the population a professional counterparty serves in query only (for example, "pediatric practice serving newborn patients"); the typed target must remain a professional person or organization, and targetRoleTerms, organizationTerms, jobTitle, and skills must never target that population. Copy evidence IDs and fixed tokens exactly. Return only strict JSON.`;
+  const system = `You are ProfileScribe's research-only commercial-motion generator. Find the strongest distinct outside-world searches for one professional's nearest credible payment path within 30 days; perform no side effect.
+Ground claims only in commercialEvidenceGraph.verifiedFacts and the forced read-only search context; inferences remain unverified and missingFacts remain gaps. A verified roles=["attribution"] system capability proves only a future attribution record—never buyer, offer, demand, acquisition, channel fit, payment, or conversion.
+Infer complementary economic roles, not matching profession keywords: e.g. lactation consultant→newborn-care referral authority; programmer→live compensated demand; consultant→current buying trigger; product owner→marketplace, buyer, or distributor. Separate end payer from referral/distribution counterparty. Prefer supported live paid demand. A site or booking page is a conversion destination, not acquisition demand.
+Plans are contingent motions, never proof that a target exists, is interested, will refer, has budget, or permits contact. Model prose cannot establish a web target. Leave it unresolved as {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for deterministic binding to a validated provider citation/record; use target:evidence only where that future fact grounds a dimension.
+Prefer two distinct plans. One plan is allowed only with two complete, causally distinct finalist families. Modes: active_job_posting=compensated job/contract; professional_counterparty=buyer/referral authority/sponsor/partner; local_organization=location-bound professional organization; public_live_demand=current public paid RFP/contract/marketplace/sponsorship demand. For a local organization's decision-maker, use organization_then_decision_maker plus 1-6 non-sensitive professional targetRoleTerms; never use that strategy with another mode or pretend the organization is a person.
+Each plan has two complete families with different causal acquisition tactics, two variants per dimension, and one v3 revenue path. Include a current paid offer, buyer, acquisition mechanism separate from destination, paid conversion, durable attribution method/signal, numeric stop, positive value, spend estimate, exact evidence, and active (not observational/operational) actions.
+Every primary action contains {{TARGET_NAME}} exactly once and is complete after token replacement. It must ask for one buyer referral/recommendation/introduction, present the paid offer and request one referral/introduction, or submit/list one paid application/proposal/offer. Review/approval states execution authorization only, never acquisitionMode; separately name partner referral, permissioned outreach, inbound discovery, or the actual acquisition channel. Deterministic code replaces declared tokens/refs only and writes no missing prose. Workflow, scheduling, resource, document, profile, content, or measurement work cannot be the requested outcome.
+Keep the complete JSON response at or below 26 KiB. Use compact labels and one concise sentence per action/path field; do not repeat rationale/evidence prose in labels.
+target:evidence cannot prove seller capability, an existing/warm/permitted relationship, private contacts, or paid demand outside its typed slot. Ground the user's current offer, destination, and attribution in exact approved IDs. A professional-identity slot proves only exact identity and prospective channel fit; only live-paid-demand may ground an outside paid offer, application destination, and compensated conversion.
+Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"); the typed target stays a professional person/organization and targetRoleTerms, organizationTerms, jobTitle, skills never target that population. Copy IDs/tokens exactly. Return strict JSON only.`;
   const user = JSON.stringify({
     objective,
     commercialContext,
@@ -544,11 +543,7 @@ Do not search for patients, consumers selected by health/family status, private 
     hardRules: compactOpportunityDiscoveryHardRules(),
     constraints: [
       RESEARCH_ONLY_CONSTRAINT,
-      'Prefer two distinct plans; one is valid only when it carries both complete causal finalist families. The forced Exa search returns at most five sanitized URL citations and app adapters may make at most the separately budgeted bounded provider reads.',
-      'No outreach, publishing, form submission, advertising, provider writes, private contact retrieval, patient search, or sensitive-trait targeting. A typed professional referral-partner query may describe the population served without making that population the target.',
-      'Use only evidence IDs in evidenceCatalog. Search terms may infer counterpart roles but may not assert outside-world facts.',
-      `Use ${CONTINGENT_TARGET_NAME_TOKEN}, ${CONTINGENT_TARGET_URL_TOKEN}, and ${CONTINGENT_TARGET_EVIDENCE_REF} only as declared typed placeholders.`,
-      'Plans must differ in economic path or discovery mode, not wording alone; each plan must still contain two family-diverse causal finalist tactics.'
+      'Forced Exa returns <=5 sanitized URL citations; app adapters may make only separately budgeted bounded provider reads.'
     ]
   });
   const request = {
@@ -910,10 +905,9 @@ function compactOpportunityDiscoveryOutputContract() {
     INITIAL_FAMILY_VARIANT_COUNT
   );
   return {
-    plan:
-      '{id,priority,searchMode,commercialRole,acquisitionMode,buyer,counterparty,paidOffer,evidenceRefs,query,market,targetRoleTerms,organizationTerms,jobTitle,skills,acquisitionMechanism,conversionDestination,paidConversion,attributionSignal,rationale,targetSlot,contingentFinalists}',
+    plan: 'Fill every schema-required plan field.',
     targetSlot:
-      `Use exact tokens ${CONTINGENT_TARGET_NAME_TOKEN}, ${CONTINGENT_TARGET_URL_TOKEN}, ${CONTINGENT_TARGET_EVIDENCE_REF}; commercialRole=plan.commercialRole; live demand uses live_paid_demand/single_exact_target`,
+      `${CONTINGENT_TARGET_NAME_TOKEN}/${CONTINGENT_TARGET_URL_TOKEN}/${CONTINGENT_TARGET_EVIDENCE_REF}; commercialRole=plan.commercialRole; live demand=live_paid_demand/single_exact_target`,
     targetRoleMap: {
       referral_partner: [
         'acquisition',
@@ -932,25 +926,25 @@ function compactOpportunityDiscoveryOutputContract() {
       ]
     },
     finalists:
-      `contingentFinalists={seedContract:${SEED_CONTRACT_VERSION},familyA,familyB,w}; family={l,m,e,s,tacticKey,d}; m=plan.acquisitionMode; tacticKey values are unique lower_snake_case`,
+      `contingentFinalists={seedContract:${SEED_CONTRACT_VERSION},familyA,familyB,w}; family={l,m,e,s,tacticKey,d}; m=plan.acquisitionMode; tacticKey=unique lower_snake_case`,
     dimensions: finalist.dimensions,
     item: finalist.item,
     revenuePath: finalist.revenuePath,
     evidence:
-      `family e contains ${CONTINGENT_TARGET_EVIDENCE_REF}, one plan observation:* ID, and every child ref; child refs stay inside plan.evidenceRefs plus ${CONTINGENT_TARGET_EVIDENCE_REF}`
+      `family e has ${CONTINGENT_TARGET_EVIDENCE_REF}, one plan observation:* ID, every child ref; child refs⊆plan.evidenceRefs+${CONTINGENT_TARGET_EVIDENCE_REF}`
   };
 }
 
 function compactOpportunityDiscoveryHardRules() {
   return [
-    'Prefer 2 planned motions with different searchMode/commercialRole/acquisitionMode tuples; 1 planned motion is valid only with both complete causal families; insufficient_verified_supply requires 0 plans plus a reason.',
-    'Use only evidenceCatalog IDs. Each plan/family has an observation:* seller anchor. System attribution evidence supports attribution only. Obey outputContract targetRoleMap exactly.',
-    `Every d.a action is distinct, contains ${CONTINGENT_TARGET_NAME_TOKEN} exactly once, and directly asks it to refer/recommend one buyer, requests one introduction, presents one paid offer, or submits/lists one paid application/proposal/offer. Workflow, scheduling, resource, document, profile, content, and measurement work cannot be the requested outcome.`,
-    'For each r: a=plan acquisitionMode; io says additional/incremental paid income; c is active; o names a paid booking/payment/contract/order/subscription/compensation receipt.',
-    'For each r: atm is allowed; ats names its matching durable record plus source/referral/UTM/campaign/channel/code field; cd is a concrete conversion page distinct from acquisition; st has a number, a sound time/sample/action unit such as referral request, booking, introduction, application, or proposal, and stop/at-most/whichever-first; vm>0.',
-    'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence. A prospective partner never proves buyer, offer, warmness, permission, or demand.',
-    'Two families use distinct causal tactics. Review/approval is authorization, never an acquisitionMode; state the actual channel separately. organization_then_decision_maker requires 1-6 professional targetRoleTerms. Never target patients/sensitive traits or request private contacts. Only a typed professional referral-partner query may describe its population served; direct role/org/job/skill target fields stay non-sensitive. No outreach copy/publishing/ads/forms/provider writes/prose outside JSON.',
-    'Silently audit every short key and semantic rule once before returning the strict JSON.'
+    'Prefer 2 motions with different searchMode/commercialRole/acquisitionMode; 1 requires both complete causal families; insufficient_verified_supply=0 plans+reason.',
+    'Use only evidenceCatalog IDs. Every plan/family has an observation:* seller anchor; system attribution proves attribution only; obey targetRoleMap.',
+    `Every distinct d.a contains ${CONTINGENT_TARGET_NAME_TOKEN} once and asks it for one referral/recommendation/introduction, presents the paid offer, or submits/lists one paid application/proposal/offer; operational/observational work is not the outcome.`,
+    'Each r: a=plan.acquisitionMode; io=incremental paid income; c=active conversion; o=paid booking/payment/contract/order/subscription/compensation receipt.',
+    'Each r: allowed atm; ats=matching durable record+source/referral/UTM/campaign/channel/code field; cd=conversion page separate from acquisition; st=number+time/sample/action unit+stop/at-most/whichever-first; vm>0.',
+    'r.g b/o/a/d/c/t cites exact buyer/offer/acquisition/destination/conversion/attribution evidence; a prospective partner proves no buyer, offer, warmness, permission, or demand.',
+    'Families use different causal tactics. Review/approval=authorization, not acquisitionMode; name the channel. organization_then_decision_maker needs 1-6 professional roles. Never target patients/sensitive traits/private contacts; only a typed referral-partner query may describe population served, never direct role/org/job/skill fields. No outreach/publish/ads/forms/provider writes/prose outside JSON.',
+    'Audit every short key and semantic rule; return strict JSON.'
   ];
 }
 

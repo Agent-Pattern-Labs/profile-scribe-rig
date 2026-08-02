@@ -23,6 +23,7 @@ const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 556_831;
 let largestPlannerResponseBytes = 0;
 let largestPlannerRequestBytes = 0;
 let largestPlannerContractBytes = 0;
+let productionShapedPlannerRequestBytes = 0;
 
 const cases = [
   {
@@ -650,9 +651,10 @@ await verifyNaturalBookingAttribution(unsafeJob, unsafeRef);
 await verifyCausalPathDiagnosticsAreFieldSpecific(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTwoStageTargetBinding();
+await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + one-motion/two-family tolerance + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest representative response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + typed referral-population safety + one-motion/two-family tolerance + natural review-first actions + optional supporting bottleneck + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; largest representative response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
@@ -1985,6 +1987,90 @@ async function verifyTwoStageTargetBinding() {
     incompleteFamilyCalls,
     'fewer than two complete call-1 families'
   );
+}
+
+async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
+  const productionJob = structuredClone(job);
+  const snapshot = productionJob.payload.evidenceSnapshot;
+  const longLabel =
+    'Current source-backed professional activity and service context';
+  const longSummary =
+    'Approved professional evidence describing current work, geographic context, relevant expertise, public service information, and source-backed constraints without private contact data or unsupported commercial claims. ';
+  productionJob.payload.commercialContext = {
+    profile: {
+      profession: 'Independent professional with a current paid service',
+      location: 'New York, New York, United States',
+      availability: 'Current availability remains bounded by approved capacity and geographic constraints.',
+      specialties: Array.from({ length: 6 }, (_, index) =>
+        `Source-backed professional specialty ${index + 1} ${'expertise '.repeat(7)}`
+      ),
+      serviceAreas: Array.from({ length: 4 }, (_, index) =>
+        `Verified service area ${index + 1} ${'local market '.repeat(5)}`
+      ),
+      currentFocus: Array.from({ length: 2 }, (_, index) => ({
+        name: `Current professional focus ${index + 1}`,
+        description:
+          `${longSummary} ${'bounded context '.repeat(8)}`,
+        status: 'current',
+        priority: 'high'
+      }))
+    },
+    allowedChannels: ['partner_channel'],
+    allowedActions: ['research', 'recommend', 'review'],
+    permissionRequired: 'explicit_user_approval'
+  };
+  snapshot.sources.push(...Array.from({ length: 16 }, (_, index) => ({
+    id: `production-shaped-source-${index + 1}`,
+    label: `${longLabel} ${index + 1}`,
+    url: `https://owner.example/context/${index + 1}/`,
+    status: 'approved',
+    profileControlled: true
+  })));
+  snapshot.sourceEvidence.push(...Array.from({ length: 16 }, (_, index) => ({
+    id: `production-shaped-observation-${index + 1}`,
+    observationId: `production-shaped-observation-${index + 1}`,
+    sourceId: `production-shaped-source-${index + 1}`,
+    label: `${longLabel} ${index + 1} ${'context '.repeat(15)}`,
+    summary: `${longSummary.repeat(3)} Record ${index + 1}.`,
+    url: `https://owner.example/context/${index + 1}/${'professional-evidence/'.repeat(10)}`,
+    observedAt: now.toISOString(),
+    status: 'approved'
+  })));
+  let requestSeen;
+  const result = await runOpportunityDiscoveryPlanner({
+    job: productionJob,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      requestSeen = request;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: 'One compact source-bound professional motion.',
+          plans: [cases[0].plans(evidenceRef)[0]]
+        },
+        usage,
+        generationId: 'generation-production-shaped-headroom',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '9'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const requestBytes = result.preflight?.requestBodyByteCount || 0;
+  productionShapedPlannerRequestBytes = requestBytes;
+  if (!requestSeen || result.status !== 'planned' ||
+      requestBytes < 32 * 1_024 ||
+      requestBytes > 35 * 1_024) {
+    throw new Error(
+      `production-shaped planner request lacks bounded headroom: ${JSON.stringify({ requestBytes, evidenceCount: JSON.parse(requestSeen?.user || '{}').evidenceCatalog?.length, preflight: result.preflight, status: result.status, reason: result.reason })}`
+    );
+  }
 }
 
 function assertTechnicalRecovery(result, calls, label) {
