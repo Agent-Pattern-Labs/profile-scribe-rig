@@ -1446,12 +1446,16 @@ function normalizeContingentFinalistBundle(
  * The unresolved target sentinel is protocol structure, not evidence that an
  * outside person, organization, or paid-demand record exists. Canonicalize
  * that structure locally so a model cannot strand an otherwise complete paid
- * path merely by omitting the sentinel from a repeated containment array.
+ * path merely by omitting the sentinel from a repeated containment array or
+ * by copying it into a role the eventual provider record cannot prove.
  *
  * This does not choose or synthesize a target. The sentinel must still be
  * replaced later by a validated public provider candidate whose typed roles
  * satisfy the canonical target slot. Only those canonical roles are projected
- * into revenue grounding; no observation or seller-side fact is added here.
+ * into revenue grounding. Unauthorized sentinel copies are removed without
+ * removing any approved owner evidence; a field left with no evidence then
+ * fails the ordinary completeness gate. No observation or seller-side fact is
+ * added here.
  */
 function canonicalizeContingentTargetEvidence(value, planValue) {
   const bundle = asObject(value);
@@ -1468,55 +1472,68 @@ function canonicalizeContingentTargetEvidence(value, planValue) {
   const targetRoles = new Set(
     requiredCommercialDiscoveryRolesForSlot(canonicalPlan)
   );
-  const withTargetRef = (refsValue) => compactStrings([
-    ...asArray(refsValue),
-    CONTINGENT_TARGET_EVIDENCE_REF
+  const withoutTargetRef = (refsValue) => compactStrings(
+    asArray(refsValue).filter((ref) =>
+      ref !== CONTINGENT_TARGET_EVIDENCE_REF
+    )
+  );
+  const canonicalTargetRefs = (refsValue, allowed) => compactStrings([
+    ...withoutTargetRef(refsValue),
+    ...(allowed ? [CONTINGENT_TARGET_EVIDENCE_REF] : [])
   ]);
   const canonicalizeTargetBearingItem = (itemValue) => {
     const item = asObject(itemValue);
-    if (countExactToken(
+    const targetBearing = countExactToken(
       firstText(item.l),
       CONTINGENT_TARGET_NAME_TOKEN
-    ) !== 1) {
-      return;
-    }
-    item.e = withTargetRef(item.e);
+    ) === 1;
+    item.e = canonicalTargetRefs(item.e, targetBearing);
   };
 
   for (const familyKey of ['familyA', 'familyB']) {
     const family = asObject(bundle[familyKey]);
     if (Object.keys(family).length === 0) continue;
     const dimensions = asObject(family.d);
-    for (const item of asArray(dimensions.a)) {
-      canonicalizeTargetBearingItem(item);
-    }
     const roleDimensions = targetEvidenceDimensionKeysForRole(plan);
-    for (const dimension of roleDimensions) {
+    for (const dimension of ['o', 'b', 'c', 'a', 't', 'p', 'f']) {
       for (const item of asArray(dimensions[dimension])) {
-        item.e = withTargetRef(asObject(item).e);
+        if (dimension === 'a') {
+          canonicalizeTargetBearingItem(item);
+          continue;
+        }
+        const normalizedItem = asObject(item);
+        normalizedItem.e = canonicalTargetRefs(
+          normalizedItem.e,
+          roleDimensions.includes(dimension)
+        );
       }
     }
     for (const revenueValue of asArray(dimensions.r)) {
       const revenue = asObject(revenueValue);
       const grounding = asObject(revenue.g);
-      if (targetRoles.has('defined_buyer')) {
-        grounding.b = withTargetRef(grounding.b);
-      }
-      if (targetRoles.has('paid_offer')) {
-        grounding.o = withTargetRef(grounding.o);
-      }
-      if (targetRoles.has('acquisition') &&
-          targetRoles.has('channel_fit')) {
-        grounding.a = withTargetRef(grounding.a);
-      }
-      if (targetRoles.has('conversion_destination')) {
-        const destination = asObject(grounding.d);
-        destination.e = withTargetRef(destination.e);
-        grounding.d = destination;
-      }
-      if (targetRoles.has('paid_conversion')) {
-        grounding.c = withTargetRef(grounding.c);
-      }
+      grounding.b = canonicalTargetRefs(
+        grounding.b,
+        targetRoles.has('defined_buyer')
+      );
+      grounding.o = canonicalTargetRefs(
+        grounding.o,
+        targetRoles.has('paid_offer')
+      );
+      grounding.a = canonicalTargetRefs(
+        grounding.a,
+        targetRoles.has('acquisition') && targetRoles.has('channel_fit')
+      );
+      const destination = asObject(grounding.d);
+      destination.e = canonicalTargetRefs(
+        destination.e,
+        targetRoles.has('conversion_destination')
+      );
+      grounding.d = destination;
+      grounding.c = canonicalTargetRefs(
+        grounding.c,
+        targetRoles.has('paid_conversion')
+      );
+      grounding.t = canonicalTargetRefs(grounding.t, false);
       revenue.g = grounding;
     }
   }

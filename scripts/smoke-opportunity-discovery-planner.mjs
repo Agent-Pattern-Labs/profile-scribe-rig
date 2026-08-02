@@ -1285,14 +1285,17 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       const revenue = family?.d?.r?.[0];
       const actions = family?.d?.a || [];
       return family?.e?.includes(targetRef) &&
+        family.e.includes(primaryEvidenceRef) &&
         actions.length === 2 &&
         actions.every((action) =>
           action.l.includes('{{TARGET_NAME}}') &&
-          action.e.includes(targetRef)
+          action.e.includes(targetRef) &&
+          action.e.includes(primaryEvidenceRef)
         ) &&
         roleCase.targetDimensions.every((dimension) =>
           (family?.d?.[dimension] || []).every((item) =>
-            item.e.includes(targetRef)
+            item.e.includes(targetRef) &&
+            item.e.includes(primaryEvidenceRef)
           )
         ) &&
         roleCase.ordinaryDimensions.every((dimension) =>
@@ -1301,7 +1304,8 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
           )
         ) &&
         roleCase.targetGrounding.every((role) =>
-          groundingRefs(revenue?.g || {}, role).includes(targetRef)
+          groundingRefs(revenue?.g || {}, role).includes(targetRef) &&
+          groundingRefs(revenue?.g || {}, role).includes(primaryEvidenceRef)
         ) &&
         roleCase.ordinaryGrounding.every((role) =>
           !groundingRefs(revenue?.g || {}, role).includes(targetRef)
@@ -1315,6 +1319,64 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
         `omitted ${roleCase.label} target protocol was not safely canonicalized: ${JSON.stringify(result)}`
       );
     }
+  }
+
+  const mixedPaidOfferContamination = structuredClone(
+    cases[0].plans(primaryEvidenceRef)[0]
+  );
+  mixedPaidOfferContamination.contingentFinalists = replaceExactRef(
+    compactContingentFinalists(
+      mixedPaidOfferContamination.contingentFinalists
+    ),
+    targetRef,
+    primaryEvidenceRef
+  );
+  for (const offer of
+    mixedPaidOfferContamination.contingentFinalists.pathBase.o) {
+    offer.e.push(targetRef);
+  }
+  mixedPaidOfferContamination.contingentFinalists
+    .pathBase.r[0].g.o.push(targetRef);
+  const mixedPaidOfferResult = await runOpportunityDiscoveryPlanner({
+    job: structuredClone(baseJob),
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => completionFor(
+      mixedPaidOfferContamination,
+      'generation-mixed-unauthorized-paid-offer-target-evidence'
+    )
+  });
+  const repairedPaidOfferPlan = mixedPaidOfferResult.plans.find((item) =>
+    item.id === mixedPaidOfferContamination.id
+  );
+  const mixedPaidOfferRepaired = ['familyA', 'familyB'].every((familyKey) => {
+    const family = repairedPaidOfferPlan?.contingentFinalists?.[familyKey];
+    const revenue = family?.d?.r?.[0];
+    return family?.d?.o?.every((offer) =>
+      offer.e.includes(primaryEvidenceRef) &&
+      !offer.e.includes(targetRef)
+    ) &&
+      revenue?.g?.o?.includes(primaryEvidenceRef) &&
+      !revenue.g.o.includes(targetRef) &&
+      family.d.a.every((action) =>
+        action.e.includes(primaryEvidenceRef) &&
+        action.e.includes(targetRef)
+      ) &&
+      family.d.c.every((channel) =>
+        channel.e.includes(primaryEvidenceRef) &&
+        channel.e.includes(targetRef)
+      ) &&
+      revenue.g.a.includes(primaryEvidenceRef) &&
+      revenue.g.a.includes(targetRef);
+  });
+  if (mixedPaidOfferResult.status !== 'planned' ||
+      mixedPaidOfferResult.plans.length !== 2 ||
+      !repairedPaidOfferPlan ||
+      !mixedPaidOfferRepaired ||
+      mixedPaidOfferResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `mixed owner/target paid-offer contamination was not structurally repaired: ${JSON.stringify(mixedPaidOfferResult)}`
+    );
   }
 
   const setGroundingRef = (grounding, role, ref) => {
@@ -1362,12 +1424,22 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
         `generation-unauthorized-target-${unauthorized.label.replace(/\W+/g, '-')}`
       )
     });
+    const missingGroundingCode = {
+      b: 'grounding_buyer',
+      o: 'grounding_offer',
+      d: 'grounding_destination_evidence',
+      c: 'grounding_conversion',
+      t: 'grounding_attribution'
+    }[unauthorized.role];
     if (result.status !== 'blocked' ||
         result.plans.length !== 0 ||
         result.sideEffectsPerformed !== 0 ||
-        !/target evidence in unauthorized/i.test(result.reason)) {
+        !new RegExp(
+          `incomplete causal revenue path.*${missingGroundingCode}`,
+          'i'
+        ).test(result.reason)) {
       throw new Error(
-        `unauthorized ${unauthorized.label} target role did not fail closed: ${JSON.stringify(result)}`
+        `target-only unauthorized ${unauthorized.label} grounding did not fail closed after structural repair: ${JSON.stringify(result)}`
       );
     }
   }
@@ -1397,11 +1469,12 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       if (result.status !== 'blocked' ||
           result.plans.length !== 0 ||
           result.sideEffectsPerformed !== 0 ||
-          !/target evidence in unauthorized .* dimension/i.test(
-            result.reason
-          )) {
+          !new RegExp(
+            `incomplete ${dimension} finalist dimension`,
+            'i'
+          ).test(result.reason)) {
         throw new Error(
-          `unauthorized ${roleCase.label} ${dimension} dimension did not fail closed: ${JSON.stringify(result)}`
+          `target-only unauthorized ${roleCase.label} ${dimension} dimension did not fail closed after structural repair: ${JSON.stringify(result)}`
         );
       }
     }
