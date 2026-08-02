@@ -195,6 +195,57 @@ const DISCOVERY_PLAN_COMMERCIAL_ROLES = new Set([
   'referral_partner',
   'buyer'
 ]);
+const COMMERCIAL_MOTION_ROUTE_CONTRACT =
+  'commercial_motion_route_v1';
+const DISCOVERY_MOTION_ROUTES = new Map([
+  ['referral_person', {
+    searchMode: 'professional_counterparty',
+    commercialRole: 'referral_partner',
+    acquisitionMode: 'partner_channel',
+    demandArtifactKind: 'not_applicable'
+  }],
+  ['referral_org_decision_maker', {
+    searchMode: 'local_organization',
+    commercialRole: 'referral_partner',
+    acquisitionMode: 'partner_channel',
+    demandArtifactKind: 'not_applicable'
+  }],
+  ['direct_buyer_person', {
+    searchMode: 'professional_counterparty',
+    commercialRole: 'buyer',
+    acquisitionMode: 'permissioned_outreach',
+    demandArtifactKind: 'not_applicable'
+  }],
+  ['direct_buyer_org_decision_maker', {
+    searchMode: 'local_organization',
+    commercialRole: 'buyer',
+    acquisitionMode: 'permissioned_outreach',
+    demandArtifactKind: 'not_applicable'
+  }],
+  ['compensated_job', {
+    searchMode: 'active_job_posting',
+    commercialRole: 'paid_demand',
+    acquisitionMode: 'permissioned_outreach',
+    demandArtifactKind: 'employer_job_posting'
+  }],
+  ['buyer_solicitation', {
+    searchMode: 'public_live_demand',
+    commercialRole: 'paid_demand',
+    acquisitionMode: 'permissioned_outreach'
+  }]
+]);
+const BUYER_SOLICITATION_ARTIFACT_KINDS = new Set([
+  'buyer_rfp',
+  'buyer_rfq',
+  'buyer_tender',
+  'buyer_procurement_notice',
+  'buyer_paid_request'
+]);
+const DISCOVERY_DEMAND_ARTIFACT_KINDS = new Set([
+  'not_applicable',
+  'employer_job_posting',
+  ...BUYER_SOLICITATION_ARTIFACT_KINDS
+]);
 const DISCOVERY_PLAN_ACQUISITION_MODES_BY_ROLE = new Map([
   ['referral_partner', new Set(['partner_channel'])],
   ['buyer', new Set(['permissioned_outreach'])],
@@ -369,10 +420,6 @@ const COMMERCIAL_DISCOVERY_PROVIDER_PROVENANCE = new Map([
   ['github_search', new Set(['read_only_professional_provider'])],
   ['brave_web_search', new Set(['read_only_professional_provider'])],
   [
-    OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER,
-    new Set(['openrouter_exa_url_citation'])
-  ],
-  [
     'people_data_labs_person_search',
     new Set([
       'people_data_labs_professional_record',
@@ -440,8 +487,12 @@ const COMMERCIAL_DISCOVERY_CANDIDATE_ROLES = new Set([
   'hiring_manager'
 ]);
 const MAX_COMMERCIAL_DISCOVERY_PROVIDER_CALLS = 4;
-const MAX_COMMERCIAL_DISCOVERY_PAID_PROVIDER_CALLS = 2;
-const MAX_COMMERCIAL_DISCOVERY_ATTEMPTS = 2;
+// One folded Exa read is retained for accounting only. Exact commercial
+// evidence may then use at most two separately reserved post-plan reads.
+const MAX_COMMERCIAL_DISCOVERY_PAID_PROVIDER_CALLS = 3;
+const MAX_COMMERCIAL_DISCOVERY_ATTEMPTS = 3;
+const MAX_COMMERCIAL_DISCOVERY_CANONICAL_ATTEMPTS = 2;
+const MAX_COMMERCIAL_DISCOVERY_LLM_INCLUDED_ATTEMPTS = 1;
 const MAX_COMMERCIAL_DISCOVERY_EVIDENCE = 10;
 const MAX_COMMERCIAL_DISCOVERY_CANDIDATES = 10;
 const MAX_COMMERCIAL_DISCOVERY_FACT_AGE_MS =
@@ -513,6 +564,14 @@ export async function runOpportunityDiscoveryPlanner({
   const objective = normalizeObjective(payload.objective, payload);
   const constraints = normalizeConstraints(objective, payload);
   const budget = normalizeBudget(payload.budget);
+  const discoveryCapabilities =
+    normalizeCommercialDiscoveryCapabilities(
+      payload.commercialDiscoveryCapabilities
+    );
+  const allowedMotionKinds =
+    commercialDiscoveryMotionKindsForCapabilities(
+      discoveryCapabilities
+    );
   const commercialContext = normalizeCommercialContext(
     payload,
     objective,
@@ -558,6 +617,12 @@ export async function runOpportunityDiscoveryPlanner({
     reason: '',
     evidenceHash,
     plans: [],
+    planSelection: {
+      returnedPlanCount: 0,
+      acceptedPlanCount: 0,
+      rejectedPlanCount: 0,
+      rejectedPlans: []
+    },
     webSearchReceipt: null,
     preflight: {},
     usage: emptyUsage(model, budget),
@@ -590,18 +655,23 @@ export async function runOpportunityDiscoveryPlanner({
       reason: 'The tournament budget does not authorize discovery planning.'
     };
   }
+  if (allowedMotionKinds.length === 0) {
+    return {
+      ...base,
+      reason:
+        'No configured read-only discovery provider can execute a commercial motion.'
+    };
+  }
 
-  const system = `You are ProfileScribe's research-only commercial-motion generator. Find one professional's two strongest distinct outside-world payment paths within 30 days; no side effects.
-Use commercialEvidenceGraph.verifiedFacts and forced read-only search only; inferences/gaps stay unverified. roles=["attribution"] proves only a future attribution record, never a commercial fact.
-Choose the outside actor or buyer-authored artifact that can cause the next payment, never a peer supplier. paid_demand requires a current purchaser/employer-authored compensated job, RFP, solicitation, or explicit buying request; supplier/competitor offers, directories, category availability, "accepts insurance," and the seller's own offer/booking page are not demand. If a protected or sensitive end buyer cannot be researched directly, choose a complementary professional referral authority. For skills/labor prefer live compensated demand; for consulting/products prefer a real buyer or buyer-authored demand. Separate payer/counterparty. Website/booking=destination, not demand. Any inbound preference is conditional on real outside demand and never overrides this route test.
-Plans are contingent, not proof of target, interest, referral, budget, or permission. Model prose proves no web target. Leave {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for provider binding; use target:evidence only for its typed dimensions.
-Return exactly two distinct plans; each plan has one shared pathBase plus two tactic deltas. Modes: active_job_posting=paid role; professional_counterparty=person; local_organization=organization seed then person; public_live_demand=live paid demand.
-Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel. No warm_referral/existing_customer for unresolved targets; buyer identity!=inbound demand. professional_counterparty terminates in one person; local_organization uses the organization only as a seed and terminates in its named decision-maker person.
-pathBase={e,r,o,b,t,p}: one v3 path+k and 2 o/b/t/p variants. tacticA/B={l,m,tacticKey,e,s,c,a,f}: 2 c/a/f variants; tactics differ causally over one buyer-to-payment base. Require current paid offer, separate acquisition/destination, paid conversion, attribution, numeric stop, positive value/spend, evidence, active actions.
-Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. No setup/support/follow-up. buyer/referral a: {{TARGET_URL}} once, only review-first public professional profile; omit private/alternate routes from JSON/query. Review!=mode; code projects r.c per tactic; operations never outcomes.
+  const system = `You are ProfileScribe's research-only commercial-motion generator. Find two distinct outside-world paths to one attributable payment within 30 days. Use verifiedFacts and read-only search; inferences stay unverified; no side effects. attribution proves only recording capability.
+Choose the outside actor or buyer-authored artifact that can cause payment, never a peer supplier. Choose only a motionKind allowed by the response schema. referral_person/referral_org_decision_maker find a complementary professional referral authority; direct_buyer_person/direct_buyer_org_decision_maker find a non-sensitive institutional buyer; compensated_job finds an employer job posting; buyer_solicitation finds a buyer-authored paid RFP/RFQ/tender/procurement notice/explicit request. Two referral motions with different counterparties are valid; diversity never requires paid_demand. For a sensitive end buyer, prefer referral unless targeting a real institutional compensated artifact. Supplier/competitor offers, directories, marketplaces, payer participation, "accepts insurance," and the seller's offer/booking page are supply, never demand. Website/booking=destination, not acquisition.
+Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind is not_applicable, employer_job_posting, or a buyer_* artifact. Code constructs the provider query; query prose never proves demand.
+Plans are hypotheses, not target, interest, relationship, budget, or permission evidence. Preserve {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for provider binding.
+Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas.
+Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
+Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral a: {{TARGET_URL}} once via a review-first public professional profile; omit private/alternate routes. Review!=mode; code projects r.c per tactic; operations never outcomes.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
-target:evidence proves only typed target dimensions: never seller capability, relationship, private contacts, or paid demand unless live-paid-demand. Bind current offer/destination/attribution to exact approved IDs. Professional identity proves identity+prospective channel fit only; live-paid-demand alone grounds outside paid offer/application/compensated conversion.
-Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"). Field use: professional/local uses targetRoleTerms+organizationTerms and leaves jobTitle/skills empty; active job does the reverse; public demand leaves all four empty. The typed target stays professional. Copy IDs/tokens exactly. Return strict JSON only.`;
+Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral query may describe the population its professional counterparty serves. professional/local uses targetRoleTerms+organizationTerms; active job uses jobTitle+skills; public demand leaves all four empty. Copy IDs/tokens exactly. Return strict JSON only.`;
   const user = JSON.stringify({
     objective,
     commercialContext,
@@ -629,7 +699,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
       max_price: { ...budget.providerMaxPrice }
     },
     responseFormat: opportunityDiscoveryPlannerResponseFormat(
-      promptEvidenceCatalog
+      promptEvidenceCatalog,
+      allowedMotionKinds
     ),
     plugins: [{
       id: 'web',
@@ -711,8 +782,6 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
   const rawCardinalityIssue = opportunityDiscoveryRawPlanCardinalityIssue(
     completion?.data
   );
-  const rawCausalWitnessIssue =
-    opportunityDiscoveryRawCausalWitnessIssue(completion?.data);
   const normalized = normalizeOpportunityDiscoveryPlan(
     completion?.data,
     // The strict response enum is built from this exact projected catalog.
@@ -729,8 +798,17 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     observedAt: validDate(now).toISOString()
   });
   normalized.webSearchReceipt = webSearchReceipt;
-  const issue = rawCardinalityIssue || rawCausalWitnessIssue ||
-    opportunityDiscoveryPlanIssue(normalized);
+  const selection = selectValidOpportunityDiscoveryPlans({
+    rawValue: completion?.data,
+    normalizedEnvelope: normalized,
+    evidenceCatalog: promptEvidenceCatalog,
+    referenceTime: now,
+    webSearchReceipt,
+    allowedMotionKinds
+  });
+  normalized.plans = selection.plans;
+  normalized.planSelection = selection.diagnostics;
+  const issue = rawCardinalityIssue || selection.issue;
   const webSearchIssue = opportunityDiscoveryWebSearchReceiptIssue(
     webSearchReceipt
   );
@@ -757,7 +835,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
       },
       usage,
       llm: { discoveryPlanner: providerMetadata },
-      webSearchReceipt
+      webSearchReceipt,
+      planSelection: selection.diagnostics
     };
   }
   return {
@@ -777,7 +856,10 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
   };
 }
 
-function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
+function opportunityDiscoveryPlannerResponseFormat(
+  evidenceCatalog,
+  allowedMotionKinds = [...DISCOVERY_MOTION_ROUTES.keys()]
+) {
   const boundedText = (maxLength, allowEmpty = false) => ({
     type: 'string',
     pattern: `^[^\\r\\n]{${allowEmpty ? '0' : '1'},${maxLength}}$`
@@ -1022,6 +1104,18 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
                   pattern: '^[a-z][a-z0-9_-]{2,63}$'
                 },
                 priority: { type: 'integer', minimum: 1, maximum: 3 },
+                routeContractVersion: {
+                  type: 'string',
+                  enum: [COMMERCIAL_MOTION_ROUTE_CONTRACT]
+                },
+                motionKind: {
+                  type: 'string',
+                  enum: [...allowedMotionKinds]
+                },
+                demandArtifactKind: {
+                  type: 'string',
+                  enum: [...DISCOVERY_DEMAND_ARTIFACT_KINDS]
+                },
                 searchMode: {
                   type: 'string',
                   enum: [...DISCOVERY_PLAN_SEARCH_MODES]
@@ -1127,6 +1221,9 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
               required: [
                 'id',
                 'priority',
+                'routeContractVersion',
+                'motionKind',
+                'demandArtifactKind',
                 'searchMode',
                 'commercialRole',
                 'acquisitionMode',
@@ -1164,6 +1261,8 @@ function compactOpportunityDiscoveryOutputContract() {
   return {
     plan:
       'Return exactly 2 ranked, economically distinct plans; fill every required field.',
+    route:
+      'routeContractVersion=commercial_motion_route_v1; motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind typed or not_applicable',
     targetSlot:
       `${CONTINGENT_TARGET_NAME_TOKEN}/${CONTINGENT_TARGET_URL_TOKEN}/${CONTINGENT_TARGET_EVIDENCE_REF}; commercialRole=plan.commercialRole; live demand=live_paid_demand/single_exact_target`,
     targetRoleMap: {
@@ -1204,11 +1303,133 @@ function compactOpportunityDiscoveryHardRules() {
     'r.o describes that one terminal rm event, not objective alternatives. Reject or/either/attempt/pending/declined/failed/not received.',
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/o/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
-    'Tactics and motions differ. Pick actors/artifacts causing payment, never peer suppliers. paid_demand=current buyer/employer-authored compensated job/RFP/solicitation/explicit buying request only; a bare request term is insufficient; seller/competitor offers, marketplaces, directories, category availability, and accepts-insurance pages are not demand. Sensitive end buyer=>complementary professional referral_partner. Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel; buyer identity!=inbound.',
+    'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. paid demand needs employer_job_posting or buyer_rfp/rfq/tender/procurement_notice/paid_request. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional paid artifact.',
     'Adapters: professional_counterparty=person/single_exact_target; local_organization=person/organization_then_decision_maker(1-6); organization is never terminal.',
     `buyer/referral a: 1 ${CONTINGENT_TARGET_URL_TOKEN}; HTTPS LinkedIn /in verified public profile only; review-first; omit private-contact/form/submission/alternate routes.`,
     'No sensitive/private targets; population only in referral query. No external writes.'
   ];
+}
+
+function typedDiscoveryMotionRoute(planValue) {
+  const plan = asObject(planValue);
+  if (firstText(plan.routeContractVersion) !==
+      COMMERCIAL_MOTION_ROUTE_CONTRACT) {
+    return null;
+  }
+  const route = DISCOVERY_MOTION_ROUTES.get(firstText(plan.motionKind));
+  if (!route) return null;
+  return {
+    routeContractVersion: COMMERCIAL_MOTION_ROUTE_CONTRACT,
+    motionKind: firstText(plan.motionKind),
+    ...route,
+    demandArtifactKind: firstText(plan.demandArtifactKind)
+  };
+}
+
+function normalizeCommercialDiscoveryCapabilities(value) {
+  const raw = asObject(value);
+  if (Object.keys(raw).length === 0) {
+    // Direct rig callers that predate capability projection retain the full
+    // schema. The production worker always supplies explicit booleans and
+    // independently rejects any returned route it cannot execute.
+    return {
+      braveWebSearch: true,
+      pdlPersonSearch: true,
+      pdlJobPostingSearch: true
+    };
+  }
+  return {
+    braveWebSearch: raw.braveWebSearch === true,
+    pdlPersonSearch: raw.pdlPersonSearch === true,
+    pdlJobPostingSearch: raw.pdlJobPostingSearch === true
+  };
+}
+
+function commercialDiscoveryMotionKindsForCapabilities(value) {
+  const capabilities = normalizeCommercialDiscoveryCapabilities(value);
+  const allowed = [];
+  if (capabilities.pdlPersonSearch) {
+    allowed.push('referral_person', 'direct_buyer_person');
+  }
+  if (capabilities.braveWebSearch && capabilities.pdlPersonSearch) {
+    allowed.push(
+      'referral_org_decision_maker',
+      'direct_buyer_org_decision_maker'
+    );
+  }
+  if (capabilities.pdlJobPostingSearch) {
+    allowed.push('compensated_job');
+  }
+  if (capabilities.braveWebSearch) {
+    allowed.push('buyer_solicitation');
+  }
+  return allowed;
+}
+
+function discoveryDemandArtifactQueryLabel(value) {
+  return {
+    employer_job_posting: 'current compensated job hiring',
+    buyer_rfp: 'current buyer request for proposal RFP paid contract',
+    buyer_rfq: 'current buyer request for quotation RFQ paid contract',
+    buyer_tender: 'current buyer tender paid contract',
+    buyer_procurement_notice:
+      'current buyer procurement notice paid contract',
+    buyer_paid_request: 'current buyer seeking paid contractor'
+  }[firstText(value)] || '';
+}
+
+function canonicalCommercialDiscoveryQueryTerms(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    const term = firstText(value).replace(/\s+/g, ' ');
+    const key = term.toLowerCase();
+    if (!term || seen.has(key)) continue;
+    seen.add(key);
+    out.push(term);
+  }
+  return out;
+}
+
+function truncateCommercialDiscoveryQuery(value) {
+  const characters = [...firstText(value).replace(/\s+/g, ' ')];
+  if (characters.length <= 180) return characters.join('');
+  return `${characters.slice(0, 177).join('')}...`;
+}
+
+/**
+ * Typed route intent authorizes only a read-only search. Constructing the
+ * provider query locally prevents a model-authored supplier listing from
+ * masquerading as paid demand and avoids fragile keyword admission tests.
+ * Returned pages must still pass provider-source authorship, currency,
+ * recency, offer, target-role, and causal-path validation before use.
+ */
+function deterministicCommercialDiscoveryQuery(planValue) {
+  const plan = asObject(planValue);
+  const route = typedDiscoveryMotionRoute(plan);
+  if (!route) return truncate(firstText(plan.query), 240);
+  const terms = route.motionKind === 'compensated_job'
+    ? [
+        discoveryDemandArtifactQueryLabel(route.demandArtifactKind),
+        plan.jobTitle,
+        ...asArray(plan.skills),
+        plan.market
+      ]
+    : route.motionKind === 'buyer_solicitation'
+      ? [
+          discoveryDemandArtifactQueryLabel(route.demandArtifactKind),
+          plan.paidOffer,
+          plan.counterparty,
+          plan.market
+        ]
+      : [
+          ...asArray(plan.targetRoleTerms),
+          ...asArray(plan.organizationTerms),
+          plan.market
+        ];
+  return truncateCommercialDiscoveryQuery(
+    canonicalCommercialDiscoveryQueryTerms(terms).join(' ')
+  );
 }
 
 function normalizeOpportunityDiscoveryPlan(
@@ -1231,47 +1452,63 @@ function normalizeOpportunityDiscoveryPlan(
       : 2
   ).map((planValue) => {
     const plan = asObject(planValue);
+    const typedRoute = typedDiscoveryMotionRoute(plan);
+    const routedPlan = typedRoute
+      ? { ...plan, ...typedRoute }
+      : plan;
     const evidenceRefs = normalizedDiscoveryPlanEvidenceRefs(
-      plan,
+      routedPlan,
       knownEvidence
     );
-    const searchFields = normalizeOpportunityDiscoverySearchFields(plan);
+    const searchFields = normalizeOpportunityDiscoverySearchFields(
+      routedPlan
+    );
     const planWithCanonicalEvidence = {
-      ...plan,
+      ...routedPlan,
       ...searchFields,
       evidenceRefs
     };
     return {
-      id: truncate(firstText(plan.id), 64),
-      priority: clampInteger(plan.priority, 1, 3, 3),
-      searchMode: firstText(plan.searchMode),
-      commercialRole: firstText(plan.commercialRole),
-      acquisitionMode: firstText(plan.acquisitionMode),
-      buyer: truncate(firstText(plan.buyer), 180),
-      counterparty: truncate(firstText(plan.counterparty), 180),
-      paidOffer: truncate(firstText(plan.paidOffer), 180),
+      id: truncate(firstText(routedPlan.id), 64),
+      priority: clampInteger(routedPlan.priority, 1, 3, 3),
+      routeContractVersion: firstText(
+        routedPlan.routeContractVersion
+      ),
+      motionKind: firstText(routedPlan.motionKind),
+      demandArtifactKind: firstText(routedPlan.demandArtifactKind),
+      searchMode: firstText(routedPlan.searchMode),
+      commercialRole: firstText(routedPlan.commercialRole),
+      acquisitionMode: firstText(routedPlan.acquisitionMode),
+      buyer: truncate(firstText(routedPlan.buyer), 180),
+      counterparty: truncate(firstText(routedPlan.counterparty), 180),
+      paidOffer: truncate(firstText(routedPlan.paidOffer), 180),
       evidenceRefs,
-      query: truncate(firstText(plan.query), 240),
-      market: truncate(firstText(plan.market), 120),
+      query: deterministicCommercialDiscoveryQuery(
+        planWithCanonicalEvidence
+      ),
+      market: truncate(firstText(routedPlan.market), 120),
       ...searchFields,
       acquisitionMechanism: truncate(
-        firstText(plan.acquisitionMechanism),
+        firstText(routedPlan.acquisitionMechanism),
         220
       ),
       conversionDestination: truncate(
-        firstText(plan.conversionDestination),
+        firstText(routedPlan.conversionDestination),
         220
       ),
-      paidConversion: truncate(firstText(plan.paidConversion), 180),
-      attributionSignal: truncate(firstText(plan.attributionSignal), 220),
-      rationale: truncate(firstText(plan.rationale), 260)
+      paidConversion: truncate(firstText(routedPlan.paidConversion), 180),
+      attributionSignal: truncate(
+        firstText(routedPlan.attributionSignal),
+        220
+      ),
+      rationale: truncate(firstText(routedPlan.rationale), 260)
       ,
       targetSlot: normalizeContingentTargetSlot(
-        plan.targetSlot,
+        routedPlan.targetSlot,
         planWithCanonicalEvidence
       ),
       contingentFinalists: normalizeContingentFinalistBundle(
-        plan.contingentFinalists,
+        routedPlan.contingentFinalists,
         knownEvidence,
         referenceTime,
         planWithCanonicalEvidence,
@@ -1381,6 +1618,7 @@ function normalizeContingentTargetSlot(value, planValue) {
   const plan = asObject(planValue);
   const commercialRole = contractEnum(firstText(plan.commercialRole));
   const searchMode = contractEnum(firstText(plan.searchMode));
+  const typedRoute = typedDiscoveryMotionRoute(plan);
   const livePaidDemandRoute = commercialRole === 'paid_demand' && (
     searchMode === 'active_job_posting' ||
     searchMode === 'public_live_demand'
@@ -1396,13 +1634,22 @@ function normalizeContingentTargetSlot(value, planValue) {
     // record. The model still chooses that economic route, while provider
     // evidence must later prove and bind the actual target. Canonicalizing
     // this uniquely implied slot shape neither invents nor broadens demand.
-    finalTargetKind: livePaidDemandRoute
-      ? 'live_paid_demand'
-      : contractEnum(firstText(raw.finalTargetKind)),
+    finalTargetKind: typedRoute
+      ? livePaidDemandRoute ? 'live_paid_demand' : 'person'
+      : livePaidDemandRoute
+        ? 'live_paid_demand'
+        : contractEnum(firstText(raw.finalTargetKind)),
     commercialRole,
-    resolutionStrategy: livePaidDemandRoute
-      ? 'single_exact_target'
-      : contractEnum(firstText(raw.resolutionStrategy)),
+    resolutionStrategy: typedRoute
+      ? [
+          'referral_org_decision_maker',
+          'direct_buyer_org_decision_maker'
+        ].includes(typedRoute.motionKind)
+        ? 'organization_then_decision_maker'
+        : 'single_exact_target'
+      : livePaidDemandRoute
+        ? 'single_exact_target'
+        : contractEnum(firstText(raw.resolutionStrategy)),
     requiredEvidenceRoles: [
       ...requiredCommercialDiscoveryRolesForSlot({ commercialRole })
     ]
@@ -1473,6 +1720,7 @@ function normalizeContingentFinalistBundle(
     ]);
   }
   if (compactPlannerBundle && allowPlannerProjection === true) {
+    clone = canonicalizeContingentAcquisitionRoute(clone, planValue);
     clone = canonicalizeContingentConversionActions(clone, planValue);
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
@@ -1516,6 +1764,24 @@ function canonicalizeContingentConversionActions(value, planValue) {
       ));
     if (!action) continue;
     revenue.c = firstText(action.l);
+  }
+  return bundle;
+}
+
+function canonicalizeContingentAcquisitionRoute(value, planValue) {
+  const bundle = asObject(value);
+  const plan = asObject(planValue);
+  if (!typedDiscoveryMotionRoute(plan)) return bundle;
+  const acquisitionMode = firstText(plan.acquisitionMode);
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = asObject(bundle[familyKey]);
+    if (Object.keys(family).length === 0) continue;
+    family.m = acquisitionMode;
+    const dimensions = asObject(family.d);
+    for (const revenueValue of asArray(dimensions.r)) {
+      const revenue = asObject(revenueValue);
+      revenue.a = acquisitionMode;
+    }
   }
   return bundle;
 }
@@ -1813,7 +2079,7 @@ function contingentJSONShapeUnsafe(value, knownEvidence) {
   return unsafe;
 }
 
-function opportunityDiscoveryPlanIssue(value) {
+function opportunityDiscoveryPlanEnvelopeIssue(value) {
   const plan = asObject(value);
   const legacy = plan.contractVersion ===
     LEGACY_OPPORTUNITY_DISCOVERY_PLAN_CONTRACT;
@@ -1841,6 +2107,37 @@ function opportunityDiscoveryPlanIssue(value) {
       ? ''
       : 'Insufficient-supply planning must return no outside search plans and a reason.';
   }
+  return '';
+}
+
+function opportunityDiscoveryMotionSignature(value) {
+  const item = asObject(value);
+  const canonicalTerms = (values) => [
+    ...new Set(compactStrings(values).map(comparable).filter(Boolean))
+  ].sort();
+  return firstText(item.routeContractVersion) ===
+    COMMERCIAL_MOTION_ROUTE_CONTRACT
+    ? [
+        comparable(item.motionKind),
+        comparable(item.demandArtifactKind),
+        canonicalTerms(item.targetRoleTerms).join('|'),
+        canonicalTerms(item.organizationTerms).join('|'),
+        comparable(item.jobTitle),
+        canonicalTerms(item.skills).join('|')
+      ].join('\x00')
+    : `${item.searchMode}\x00${item.commercialRole}\x00${item.acquisitionMode}`;
+}
+
+function opportunityDiscoveryPlanIssue(
+  value,
+  { requireTypedRoute = false, allowedMotionKinds = null } = {}
+) {
+  const plan = asObject(value);
+  const envelopeIssue = opportunityDiscoveryPlanEnvelopeIssue(plan);
+  if (envelopeIssue) return envelopeIssue;
+  if (plan.status === 'insufficient_verified_supply') return '';
+  const legacy = plan.contractVersion ===
+    LEGACY_OPPORTUNITY_DISCOVERY_PLAN_CONTRACT;
   const plans = asArray(plan.plans);
   // New provider output is constrained to one outer motion by the strict
   // schema and the raw-cardinality gate. Retain read compatibility with a
@@ -1876,7 +2173,22 @@ function opportunityDiscoveryPlanIssue(value) {
       .get(item.commercialRole)?.has(item.acquisitionMode)) {
       return `Discovery plan ${item.id} uses an acquisition mode that cannot be source-bound to its unresolved ${item.commercialRole} target.`;
     }
-    const signature = `${item.searchMode}\x00${item.commercialRole}\x00${item.acquisitionMode}`;
+    const typedRouteIssue = requireTypedRoute &&
+        !typedDiscoveryMotionRoute(item)
+      ? 'must use the commercial_motion_route_v1 typed route contract.'
+      : typedDiscoveryMotionRouteIssue(item);
+    if (typedRouteIssue) {
+      return `Discovery plan ${item.id} ${typedRouteIssue}`;
+    }
+    if (allowedMotionKinds instanceof Set &&
+        !allowedMotionKinds.has(firstText(item.motionKind))) {
+      return `Discovery plan ${item.id} requires an unavailable read-only provider route.`;
+    }
+    if (item.commercialRole !== 'referral_partner' &&
+        discoveryPlanSensitiveEndBuyer(item)) {
+      return `Discovery plan ${item.id} must use a complementary professional referral motion rather than directly target a sensitive care recipient.`;
+    }
+    const signature = opportunityDiscoveryMotionSignature(item);
     if (signatures.has(signature)) {
       return 'Discovery plans repeat the same economic search motion.';
     }
@@ -2004,6 +2316,135 @@ function opportunityDiscoveryRawCausalWitnessIssue(value) {
     }
   }
   return '';
+}
+
+function selectValidOpportunityDiscoveryPlans({
+  rawValue,
+  normalizedEnvelope,
+  evidenceCatalog,
+  referenceTime,
+  webSearchReceipt,
+  allowedMotionKinds: allowedMotionKindsValue
+}) {
+  const raw = asObject(rawValue);
+  const envelope = {
+    ...asObject(normalizedEnvelope),
+    webSearchReceipt
+  };
+  const envelopeIssue = opportunityDiscoveryPlanEnvelopeIssue(envelope);
+  const allowedMotionKinds = new Set(
+    asArray(allowedMotionKindsValue).map(firstText).filter(Boolean)
+  );
+  if (envelopeIssue || firstText(envelope.status) !== 'planned') {
+    return {
+      plans: asArray(envelope.plans),
+      issue: envelopeIssue,
+      diagnostics: {
+        returnedPlanCount: asArray(raw.plans).length,
+        acceptedPlanCount: asArray(envelope.plans).length,
+        rejectedPlanCount: 0,
+        rejectedPlans: []
+      }
+    };
+  }
+
+  const candidates = asArray(raw.plans).map((rawPlan, sourceIndex) => {
+    const normalized = normalizeOpportunityDiscoveryPlan(
+      { ...raw, plans: [rawPlan] },
+      evidenceCatalog,
+      referenceTime,
+      { allowPlannerProjection: true }
+    );
+    normalized.webSearchReceipt = webSearchReceipt;
+    return {
+      rawPlan: asObject(rawPlan),
+      plan: asObject(asArray(normalized.plans)[0]),
+      sourceIndex
+    };
+  }).sort((left, right) =>
+    left.plan.priority - right.plan.priority ||
+    compareStableText(left.plan.id, right.plan.id) ||
+    left.sourceIndex - right.sourceIndex
+  );
+
+  const plans = [];
+  const rejectedPlans = [];
+  const ids = new Set();
+  const priorities = new Set();
+  const signatures = new Set();
+  for (const candidate of candidates) {
+    const normalizedID = firstText(candidate.plan.id);
+    const id = /^[a-z][a-z0-9_-]{2,63}$/.test(normalizedID)
+      ? normalizedID
+      : `plan_${candidate.sourceIndex + 1}`;
+    const rawPrivateIssue = discoveryPlanPrivateContactIssue(
+      candidate.rawPlan
+    );
+    const rawTypedRoute = typedDiscoveryMotionRoute(candidate.rawPlan);
+    const rawSafetyPlan = rawTypedRoute
+      ? {
+          ...candidate.rawPlan,
+          ...rawTypedRoute,
+          targetSlot: normalizeContingentTargetSlot(
+            candidate.rawPlan.targetSlot,
+            { ...candidate.rawPlan, ...rawTypedRoute }
+          )
+        }
+      : candidate.rawPlan;
+    const rawSensitiveIssue = discoveryPlanSensitiveTargetIssue(
+      rawSafetyPlan
+    );
+    let issue = rawPrivateIssue
+      ? `Discovery plan ${id} requests private-contact data [${rawPrivateIssue}].`
+      : rawSensitiveIssue || opportunityDiscoveryRawCausalWitnessIssue({
+          ...raw,
+          plans: [candidate.rawPlan]
+        }) || opportunityDiscoveryPlanIssue({
+          ...envelope,
+          plans: [candidate.plan]
+        }, {
+          requireTypedRoute: true,
+          allowedMotionKinds
+        });
+    const signature = opportunityDiscoveryMotionSignature(candidate.plan);
+    if (!issue && ids.has(candidate.plan.id)) {
+      issue = 'Discovery plans require unique stable ids.';
+    }
+    if (!issue && priorities.has(candidate.plan.priority)) {
+      issue = 'Discovery plan priorities must be unique.';
+    }
+    if (!issue && signatures.has(signature)) {
+      issue = 'Discovery plans repeat the same economic search motion.';
+    }
+    if (issue) {
+      rejectedPlans.push({ id, reason: truncate(issue, 320) });
+      continue;
+    }
+    ids.add(candidate.plan.id);
+    priorities.add(candidate.plan.priority);
+    signatures.add(signature);
+    plans.push(candidate.plan);
+  }
+
+  const issue = plans.length === 0
+    ? firstText(
+        asObject(rejectedPlans[0]).reason,
+        'Discovery planning returned zero valid commercial motions.'
+      )
+    : opportunityDiscoveryPlanIssue(
+        { ...envelope, plans },
+        { requireTypedRoute: true, allowedMotionKinds }
+      );
+  return {
+    plans,
+    issue,
+    diagnostics: {
+      returnedPlanCount: candidates.length,
+      acceptedPlanCount: plans.length,
+      rejectedPlanCount: rejectedPlans.length,
+      rejectedPlans
+    }
+  };
 }
 
 function contingentTargetSlotIssue(planValue) {
@@ -2253,6 +2694,19 @@ function contingentFinalistBundleIssue(planValue) {
 
 function buyerAuthoredPaidDemandQuery(planValue) {
   const plan = asObject(planValue);
+  const typedRoute = typedDiscoveryMotionRoute(plan);
+  if (typedRoute) {
+    if (typedRoute.motionKind === 'compensated_job') {
+      return typedRoute.demandArtifactKind ===
+        'employer_job_posting';
+    }
+    if (typedRoute.motionKind === 'buyer_solicitation') {
+      return BUYER_SOLICITATION_ARTIFACT_KINDS.has(
+        typedRoute.demandArtifactKind
+      );
+    }
+    return false;
+  }
   const query = comparable(plan.query);
   if (!query) return false;
   if (/\b(?:canceled|cancelled|closed|do not|does not|expired|no longer|not hiring|not seeking|unpaid|volunteer|withdrawn)\b/.test(query)) {
@@ -2275,6 +2729,62 @@ function buyerAuthoredPaidDemandQuery(planValue) {
     query
   );
   return explicitDemandArtifact || (buyerOrEmployer && compensatedAsk);
+}
+
+function typedDiscoveryMotionRouteIssue(planValue) {
+  const plan = asObject(planValue);
+  const hasTypedRoute = firstText(plan.routeContractVersion) ||
+    firstText(plan.motionKind) || firstText(plan.demandArtifactKind);
+  if (!hasTypedRoute) return '';
+  if (firstText(plan.routeContractVersion) !==
+      COMMERCIAL_MOTION_ROUTE_CONTRACT) {
+    return 'has an unsupported commercial motion route contract.';
+  }
+  const route = DISCOVERY_MOTION_ROUTES.get(firstText(plan.motionKind));
+  if (!route) return 'has an unsupported commercial motion kind.';
+  for (const field of [
+    'searchMode',
+    'commercialRole',
+    'acquisitionMode'
+  ]) {
+    if (firstText(plan[field]) !== firstText(route[field])) {
+      return `does not match the deterministic ${field} for its commercial motion kind.`;
+    }
+  }
+  const artifact = firstText(plan.demandArtifactKind);
+  if (!DISCOVERY_DEMAND_ARTIFACT_KINDS.has(artifact)) {
+    return 'has an unsupported paid-demand artifact kind.';
+  }
+  if (firstText(plan.motionKind) === 'compensated_job') {
+    return artifact === 'employer_job_posting'
+      ? ''
+      : 'must use an employer-authored job-posting artifact.';
+  }
+  if (firstText(plan.motionKind) === 'buyer_solicitation') {
+    return BUYER_SOLICITATION_ARTIFACT_KINDS.has(artifact)
+      ? ''
+      : 'must use a buyer-authored solicitation artifact.';
+  }
+  return artifact === 'not_applicable'
+    ? ''
+    : 'must not attach paid-demand metadata to a non-demand motion.';
+}
+
+function discoveryPlanSensitiveEndBuyer(value) {
+  const plan = asObject(value);
+  if (discoveryPlanTargetsSensitivePerson(plan.buyer)) return true;
+  const buyer = comparable(plan.buyer);
+  const commercial = comparable([
+    plan.buyer,
+    plan.paidOffer
+  ].join(' '));
+  const consumer = /\b(?:baby|babies|child|children|consumer|family|families|infant|infants|mother|mothers|newborn|newborns|parent|parents|patient|patients|pregnant|postpartum)\b/.test(
+    buyer
+  );
+  const sensitiveService = /\b(?:care|clinical|counseling|health|healthcare|lactation|medical|mental health|nursing|patient|therapy|treatment)\b/.test(
+    commercial
+  );
+  return consumer && sensitiveService;
 }
 
 function contingentPrimaryRevenueActionRoleIssue(value, planValue) {
@@ -3270,7 +3780,8 @@ function normalizeOpportunityDiscoveryWebSearchReceipt(value) {
       redactCommercialDiscoveryContactTokens(citation.content),
       700
     );
-    if (!url || !title || !content ||
+    if (!url || commercialDiscoveryURLContainsPrivateContact(url) ||
+        !title || !content ||
         seenURLs.has(comparableURL(url)) ||
         commercialDiscoveryContainsPrivateContact(title) ||
         commercialDiscoveryContainsPrivateContact(content)) {
@@ -5487,6 +5998,7 @@ function bindContingentMotionTarget({
     : firstText(candidate.displayLabel);
   const targetURL = safePublicHTTPSURL(candidate.publicUrl);
   if (!targetName || !targetURL || evidenceRefs.length === 0 ||
+      commercialDiscoveryURLContainsPrivateContact(targetURL) ||
       commercialDiscoveryContainsPrivateContact(targetName)) {
     return { valid: false };
   }
@@ -5799,6 +6311,12 @@ export function normalizeCommercialDiscoveryEvidence(
   if (asArray(raw.attempts).length > MAX_COMMERCIAL_DISCOVERY_ATTEMPTS ||
       base.attempts.length !== asArray(raw.attempts).length ||
       base.attempts.length !== base.paidProviderCalls ||
+      base.attempts.filter((attempt) =>
+        attempt.costIncludedInLLMReceipt === true
+      ).length > MAX_COMMERCIAL_DISCOVERY_LLM_INCLUDED_ATTEMPTS ||
+      base.attempts.filter((attempt) =>
+        attempt.costIncludedInLLMReceipt !== true
+      ).length > MAX_COMMERCIAL_DISCOVERY_CANONICAL_ATTEMPTS ||
       base.providerCalls < base.paidProviderCalls ||
       base.creditsUsed !== base.attempts.reduce(
         (sum, attempt) => sum + attempt.creditsUsed,
@@ -5967,6 +6485,16 @@ function normalizeCommercialDiscoveryAttempt(value) {
   const operation = contractEnum(firstText(raw.operation));
   const queryHash = firstText(raw.queryHash).toLowerCase();
   const status = contractEnum(firstText(raw.status));
+  const estimatedSpendMicros =
+    nonNegativeInteger(raw.estimatedSpendMicros) || 0;
+  const actualSpendMicros =
+    nonNegativeInteger(raw.actualSpendMicros) || 0;
+  const includedSpendMicros =
+    nonNegativeInteger(raw.includedSpendMicros) || 0;
+  const creditsUsed = nonNegativeInteger(raw.creditsUsed) || 0;
+  const resultCount = nonNegativeInteger(raw.resultCount) || 0;
+  const costIncludedInLLMReceipt =
+    raw.costIncludedInLLMReceipt === true;
   const statuses = new Set([
     'succeeded',
     'not_found',
@@ -5978,18 +6506,34 @@ function normalizeCommercialDiscoveryAttempt(value) {
       !statuses.has(status)) {
     return null;
   }
+  if (costIncludedInLLMReceipt) {
+    if (provider !== OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER ||
+        operation !== OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION ||
+        status !== 'not_found' ||
+        estimatedSpendMicros !==
+          OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS ||
+        actualSpendMicros !== 0 ||
+        includedSpendMicros !==
+          OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS ||
+        creditsUsed !== 1 || resultCount !== 0) {
+      return null;
+    }
+  } else if (provider === OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER ||
+      includedSpendMicros !== 0) {
+    return null;
+  }
   return compact({
     id,
     provider,
     operation,
     queryHash,
     status,
-    estimatedSpendMicros:
-      nonNegativeInteger(raw.estimatedSpendMicros) || 0,
-    actualSpendMicros:
-      nonNegativeInteger(raw.actualSpendMicros) || 0,
-    creditsUsed: nonNegativeInteger(raw.creditsUsed) || 0,
-    resultCount: nonNegativeInteger(raw.resultCount) || 0,
+    estimatedSpendMicros,
+    actualSpendMicros,
+    costIncludedInLLMReceipt,
+    includedSpendMicros,
+    creditsUsed,
+    resultCount,
     failureCode: /^[a-z0-9_.:-]{1,80}$/i.test(firstText(raw.failureCode))
       ? firstText(raw.failureCode).toLowerCase()
       : undefined,
@@ -6037,6 +6581,7 @@ function normalizeCommercialDiscoveryFact(
       requestedRoles.length === 0 ||
       roles.length !== requestedRoles.length ||
       !attemptedProviders.has(comparable(provider)) ||
+      commercialDiscoveryURLContainsPrivateContact(url) ||
       commercialDiscoveryContainsPrivateContact(label) ||
       commercialDiscoveryContainsPrivateContact(summary)) {
     return null;
@@ -6145,6 +6690,7 @@ function normalizeCommercialDiscoveryCandidate(
       raw.exactNamedCandidate !== true ||
       raw.identityResolved !== true ||
       !attemptedProviders.has(comparable(provider)) ||
+      commercialDiscoveryURLContainsPrivateContact(publicUrl) ||
       commercialDiscoveryContainsPrivateContact(displayLabel) ||
       commercialDiscoveryContainsPrivateContact(organization) ||
       commercialDiscoveryContainsPrivateContact(role) ||
@@ -6206,7 +6752,7 @@ function normalizeCommercialDiscoveryCandidate(
         const reference = firstText(path.reference, path.Reference);
         return reference && (
           !safePublicURL(reference) ||
-          commercialDiscoveryContainsPrivateContact(reference)
+          commercialDiscoveryURLContainsPrivateContact(reference)
         );
       })) {
     return null;
@@ -6320,12 +6866,9 @@ function commercialDiscoveryDecisionMakerCandidateFactsBound({
       continue;
     }
     const organizationProvider = firstText(fact.provider);
-    const expectedProvenance = organizationProvider ===
-        OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER
-      ? 'openrouter_exa_url_citation'
-      : organizationProvider === 'brave_web_search'
-        ? 'read_only_professional_provider'
-        : '';
+    const expectedProvenance = organizationProvider === 'brave_web_search'
+      ? 'read_only_professional_provider'
+      : '';
     if (organizationFact || !expectedProvenance ||
         firstText(fact.provenance) !== expectedProvenance ||
         !safePublicHTTPSURL(fact.url) ||
@@ -6374,6 +6917,27 @@ function commercialDiscoveryContainsPrivateContact(
     ) ||
     containsSocialHandle ||
     containsPhoneLikeValue;
+}
+
+function commercialDiscoveryURLContainsPrivateContact(value) {
+  let decoded = firstText(value);
+  if (!decoded) return false;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (commercialDiscoveryContainsPrivateContact(decoded, {
+      allowBareCodePackage: true
+    })) {
+      return true;
+    }
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) return false;
+      decoded = next;
+    } catch {
+      // Malformed percent-encoding is not a safe durable public route.
+      return true;
+    }
+  }
+  return decoded.includes('%');
 }
 
 function commercialDiscoveryAtTokenIsCodePackage(
@@ -15846,9 +16410,18 @@ function acquisitionEvidenceRefsSupportMode(
       // It does not prove contact permission or authorize execution; the
       // provider-attested review channel and exact candidate are checked
       // separately by the final gate.
-      return roles.has('defined_buyer') &&
-        firstText(evidence.commercialDiscoveryKind) ===
-          'verified_external_professional_target' &&
+      const kind = firstText(evidence.commercialDiscoveryKind);
+      if (kind === 'verified_external_professional_target') {
+        return roles.has('defined_buyer') &&
+          Boolean(safePublicHTTPSURL(evidence.url));
+      }
+      // A buyer/employer-authored paid request is also a review-first
+      // permissioned response route. The public artifact supplies the
+      // response channel; it never authorizes submitting through it.
+      return kind === 'verified_external_live_demand' &&
+        roles.has('defined_buyer') &&
+        roles.has('demand_signal') &&
+        roles.has('conversion_destination') &&
         Boolean(safePublicHTTPSURL(evidence.url));
     }
     // Public professional identity never by itself proves warmness or an
