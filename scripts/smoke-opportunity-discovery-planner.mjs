@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
 import {
+  COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
   OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
   PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID,
   buildEvidenceCatalog,
   commercialDiscoveryAttemptLedgerHash,
+  normalizeCommercialDiscoveryEvidence,
   runOpportunityTournament,
   runOpportunityDiscoveryPlanner
 } from '../bin/opportunity-tournament.mjs';
@@ -362,6 +364,8 @@ for (const scenario of cases) {
   if (!requestSeen ||
       requestSeen.responseFormat?.json_schema?.name !==
         OPPORTUNITY_DISCOVERY_PLAN_CONTRACT ||
+      requestSeen.responseFormat?.json_schema?.schema?.properties?.plans
+        ?.items?.properties?.evidenceRefs?.maxItems !== 14 ||
       requestSeen.plugins?.[0]?.id !== 'web' ||
       requestSeen.plugins?.[0]?.engine !== 'exa' ||
       requestSeen.plugins?.[0]?.max_results !== 5 ||
@@ -771,53 +775,44 @@ async function verifyOmittedChildEvidenceCanonicalization(
   primaryEvidenceRef
 ) {
   const job = structuredClone(baseJob);
-  job.payload.evidenceSnapshot.sources.push({
-    id: 'owner-booking',
-    label: 'Owner booking page',
-    url: 'https://owner.example/book',
-    status: 'approved',
-    profileControlled: true
-  }, {
-    id: 'owner-referral-proof',
-    label: 'Owner referral proof',
-    url: 'https://owner.example/referral',
-    status: 'approved',
-    profileControlled: true
+  const childFixtures = Array.from({ length: 13 }, (_, index) => {
+    const suffix = String(index + 1).padStart(2, '0');
+    return {
+      source: {
+        id: `owner-grounding-${suffix}`,
+        label: `Owner grounding page ${suffix}`,
+        url: `https://owner.example/grounding/${suffix}`,
+        status: 'approved',
+        profileControlled: true
+      },
+      observation: {
+        id: `separate-grounding-${suffix}`,
+        observationId: `separate-grounding-${suffix}`,
+        sourceId: `owner-grounding-${suffix}`,
+        label: `Current commercial grounding ${suffix}`,
+        summary:
+          `Current approved evidence for one causal commercial field ${suffix}.`,
+        url: `https://owner.example/grounding/${suffix}`,
+        observedAt: now.toISOString(),
+        status: 'approved'
+      }
+    };
   });
-  job.payload.evidenceSnapshot.sourceEvidence.push({
-    id: 'separate-booking-proof',
-    observationId: 'separate-booking-proof',
-    sourceId: 'owner-booking',
-    label: 'Current booking proof',
-    summary:
-      'The current owner booking page accepts a paid or reimbursable lactation consultation request.',
-    url: 'https://owner.example/book',
-    observedAt: now.toISOString(),
-    status: 'approved'
-  }, {
-    id: 'separate-referral-proof',
-    observationId: 'separate-referral-proof',
-    sourceId: 'owner-referral-proof',
-    label: 'Current referral proof',
-    summary:
-      'The current owner page explains the paid referral booking path.',
-    url: 'https://owner.example/referral',
-    observedAt: now.toISOString(),
-    status: 'approved'
-  });
+  job.payload.evidenceSnapshot.sources.push(
+    ...childFixtures.map((item) => item.source)
+  );
+  job.payload.evidenceSnapshot.sourceEvidence.push(
+    ...childFixtures.map((item) => item.observation)
+  );
   const catalog = buildEvidenceCatalog(job.payload, {}, now, {
     includeSystemAttributionCapability: true
   });
-  const omittedRef = catalog.find((item) =>
-    item.id === 'observation:separate-booking-proof'
-  )?.id;
-  const siblingOmittedRef = catalog.find((item) =>
-    item.id === 'observation:separate-referral-proof'
-  )?.id;
-  const identityRef = catalog.find((item) =>
-    item.id === 'profile:identity'
-  )?.id;
-  if (!omittedRef || !siblingOmittedRef || !identityRef) {
+  const childRefs = childFixtures.map((fixture) =>
+    catalog.find((item) =>
+      item.id === `observation:${fixture.observation.observationId}`
+    )?.id
+  );
+  if (childRefs.some((ref) => !ref)) {
     throw new Error(
       'child-evidence fixture produced no complete approved omitted-ref set'
     );
@@ -847,11 +842,31 @@ async function verifyOmittedChildEvidenceCanonicalization(
     },
     annotations: [annotation]
   });
+  const childEvidenceSlots = (candidate) => [
+    candidate.contingentFinalists.familyA.d.a[0].e,
+    candidate.contingentFinalists.familyB.d.a[0].e,
+    candidate.contingentFinalists.familyA.d.a[1].e,
+    candidate.contingentFinalists.familyB.d.a[1].e,
+    candidate.contingentFinalists.familyA.d.c[0].e,
+    candidate.contingentFinalists.familyB.d.c[0].e,
+    candidate.contingentFinalists.familyA.d.c[1].e,
+    candidate.contingentFinalists.familyB.d.c[1].e,
+    candidate.contingentFinalists.familyA.d.f[0].e,
+    candidate.contingentFinalists.familyB.d.f[0].e,
+    candidate.contingentFinalists.familyA.d.f[1].e,
+    candidate.contingentFinalists.familyB.d.f[1].e,
+    candidate.contingentFinalists.familyA.d.o[0].e
+  ];
+  const declareChildRefs = (candidate, refs) => {
+    const slots = childEvidenceSlots(candidate);
+    refs.forEach((ref, index) => {
+      slots[index][0] = ref;
+    });
+  };
 
   for (const shape of ['materialized', 'compact']) {
     const candidate = cases[0].plans(primaryEvidenceRef)[0];
-    candidate.contingentFinalists.familyA.d.a[0].e[0] = omittedRef;
-    candidate.contingentFinalists.familyB.d.a[0].e[0] = siblingOmittedRef;
+    declareChildRefs(candidate, childRefs.slice(0, 2));
     if (shape === 'compact') {
       candidate.contingentFinalists = compactContingentFinalists(
         candidate.contingentFinalists
@@ -868,18 +883,18 @@ async function verifyOmittedChildEvidenceCanonicalization(
     });
     const normalized = result.plans[0];
     if (result.status !== 'planned' ||
-        !normalized?.evidenceRefs?.includes(omittedRef) ||
-        !normalized?.evidenceRefs?.includes(siblingOmittedRef) ||
-        !normalized?.contingentFinalists?.familyA?.e?.includes(omittedRef) ||
+        !normalized?.evidenceRefs?.includes(childRefs[0]) ||
+        !normalized?.evidenceRefs?.includes(childRefs[1]) ||
+        !normalized?.contingentFinalists?.familyA?.e?.includes(childRefs[0]) ||
         normalized?.contingentFinalists?.familyA?.e?.includes(
-          siblingOmittedRef
+          childRefs[1]
         ) ||
         !normalized?.contingentFinalists?.familyB?.e?.includes(
-          siblingOmittedRef
+          childRefs[1]
         ) ||
-        normalized?.contingentFinalists?.familyB?.e?.includes(omittedRef) ||
+        normalized?.contingentFinalists?.familyB?.e?.includes(childRefs[0]) ||
         !normalized?.contingentFinalists?.familyA?.d?.a?.[0]?.e?.includes(
-          omittedRef
+          childRefs[0]
         )) {
       throw new Error(
         `approved omitted child evidence was not canonicalized from ${shape}: ${JSON.stringify(result)}`
@@ -889,8 +904,7 @@ async function verifyOmittedChildEvidenceCanonicalization(
 
   for (const shape of ['materialized', 'compact']) {
     const candidate = cases[0].plans(primaryEvidenceRef)[0];
-    candidate.contingentFinalists.familyA.d.a[0].e[0] =
-      'observation:unapproved-child-ref';
+    declareChildRefs(candidate, ['observation:unapproved-child-ref']);
     if (shape === 'compact') {
       candidate.contingentFinalists = compactContingentFinalists(
         candidate.contingentFinalists
@@ -915,29 +929,134 @@ async function verifyOmittedChildEvidenceCanonicalization(
     }
   }
 
-  const overflowCandidate = cases[0].plans(primaryEvidenceRef)[0];
-  overflowCandidate.contingentFinalists.familyA.d.a[0].e[0] = omittedRef;
-  overflowCandidate.contingentFinalists.familyB.d.a[0].e[0] =
-    siblingOmittedRef;
-  overflowCandidate.contingentFinalists.familyA.d.a[1].e[0] = identityRef;
-  overflowCandidate.contingentFinalists = compactContingentFinalists(
-    overflowCandidate.contingentFinalists
+  let expandedVisibleRefs = [];
+  const expandedResult = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      expandedVisibleRefs = request.responseFormat?.json_schema?.schema?.$defs
+        ?.evidenceRef?.enum?.filter((ref) => ref !== 'target:evidence') || [];
+      const candidate = cases[0].plans(primaryEvidenceRef)[0];
+      if (expandedVisibleRefs.length !== 14 ||
+          candidate.evidenceRefs.some((ref) =>
+            !expandedVisibleRefs.includes(ref)
+          )) {
+        throw new Error(
+          `expanded-bound fixture did not receive the exact 14-ref planner projection: ${JSON.stringify(expandedVisibleRefs)}`
+        );
+      }
+      const childVisibleRefs = expandedVisibleRefs.filter((ref) =>
+        !candidate.evidenceRefs.includes(ref)
+      );
+      if (childVisibleRefs.length !== 12) {
+        throw new Error(
+          `expanded-bound fixture did not retain twelve child-only refs: ${JSON.stringify(childVisibleRefs)}`
+        );
+      }
+      declareChildRefs(candidate, childVisibleRefs);
+      candidate.contingentFinalists = compactContingentFinalists(
+        candidate.contingentFinalists
+      );
+      return completionFor(
+        candidate,
+        'generation-child-evidence-expanded-bound'
+      );
+    }
+  });
+  const expandedPlan = expandedResult.plans[0];
+  if (expandedResult.status !== 'planned' ||
+      expandedPlan?.evidenceRefs?.length !== 14 ||
+      expandedVisibleRefs.some((ref) =>
+        !expandedPlan.evidenceRefs.includes(ref)
+      ) ||
+      expandedResult.preflight?.requestBodyByteCount > 36 * 1024 ||
+      expandedResult.preflight?.responseBodyByteCount >
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
+    throw new Error(
+      `fourteen-ref child evidence index did not pass intact: ${JSON.stringify(expandedResult)}`
+    );
+  }
+
+  const hiddenApprovedRef = childRefs.find((ref) =>
+    !expandedVisibleRefs.includes(ref)
   );
-  const overflowResult = await runOpportunityDiscoveryPlanner({
+  if (!hiddenApprovedRef) {
+    throw new Error('expanded-bound fixture produced no model-hidden approved ref');
+  }
+  const hiddenCandidate = cases[0].plans(primaryEvidenceRef)[0];
+  declareChildRefs(hiddenCandidate, [hiddenApprovedRef]);
+  hiddenCandidate.contingentFinalists = compactContingentFinalists(
+    hiddenCandidate.contingentFinalists
+  );
+  const hiddenResult = await runOpportunityDiscoveryPlanner({
     job,
     model: 'openai/gpt-4.1-mini',
     now,
     completeJSON: async () => completionFor(
-      overflowCandidate,
-      'generation-child-evidence-overflow'
+      hiddenCandidate,
+      'generation-model-hidden-child-evidence'
     )
   });
-  if (overflowResult.status !== 'blocked' ||
-      overflowResult.plans.length !== 0 ||
-      overflowResult.sideEffectsPerformed !== 0 ||
-      !/bounded approved evidence index/i.test(overflowResult.reason)) {
+  if (hiddenResult.status !== 'blocked' ||
+      hiddenResult.plans.length !== 0 ||
+      hiddenResult.sideEffectsPerformed !== 0 ||
+      !/contingent finalist contract/i.test(hiddenResult.reason)) {
     throw new Error(
-      `child evidence overflow was silently truncated: ${JSON.stringify(overflowResult)}`
+      `model-hidden approved child ref escaped the projected trust boundary: ${JSON.stringify(hiddenResult)}`
+    );
+  }
+
+  const persistedEnvelope = (plan, queryHash) => ({
+    contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
+    status: 'not_found',
+    attempted: true,
+    motion: expandedPlan.id,
+    buyerArchetype: expandedPlan.buyer,
+    market: expandedPlan.market,
+    queryHash,
+    providersAttempted: ['openrouter_exa_web_search'],
+    providerCalls: 1,
+    paidProviderCalls: 0,
+    creditsUsed: 0,
+    resultCount: 0,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    discoveredAt: now.toISOString(),
+    plan,
+    attempts: [],
+    evidence: [],
+    candidates: []
+  });
+  const persisted = normalizeCommercialDiscoveryEvidence(
+    persistedEnvelope(expandedResult, '7'.repeat(64)),
+    now
+  );
+  if (persisted.valid !== true ||
+      persisted.plan?.valid !== true ||
+      persisted.plan?.plans?.[0]?.evidenceRefs?.length !== 14) {
+    throw new Error(
+      `fourteen-ref discovery plan did not survive persistence normalization: ${JSON.stringify(persisted)}`
+    );
+  }
+
+  const overflowPlan = structuredClone(expandedResult);
+  const overflowRef = 'observation:persisted-overflow-ref';
+  overflowPlan.plans[0].evidenceRefs.push(overflowRef);
+  overflowPlan.plans[0].contingentFinalists
+    .familyA.d.a[0].e[0] = overflowRef;
+  const overflowResult = normalizeCommercialDiscoveryEvidence(
+    persistedEnvelope(overflowPlan, '8'.repeat(64)),
+    now
+  );
+  if (overflowResult.valid !== false ||
+      overflowResult.plan?.valid !== false ||
+      overflowResult.rejectedReasons?.invalid_discovery_plan !== 1 ||
+      !/bounded approved evidence index/i.test(
+        overflowResult.plan?.rejectedReason
+      )) {
+    throw new Error(
+      `fifteen-ref persisted evidence overflow was silently accepted: ${JSON.stringify(overflowResult)}`
     );
   }
 }

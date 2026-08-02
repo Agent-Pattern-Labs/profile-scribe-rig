@@ -171,7 +171,11 @@ const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 9_000;
 // required family-diverse critic comparison while preventing the duplicated
 // nested family envelope from exhausting the fixed completion-token ceiling.
 const MAX_DISCOVERY_PLANNER_PLANS = 1;
-const MAX_DISCOVERY_PLAN_EVIDENCE_REFS = 4;
+// The planner sees at most fourteen approved, non-target evidence records.
+// Its two family indexes can legitimately cite different subsets, so the
+// outer containment index must span that whole projected trust boundary even
+// though each individual family remains capped at twelve refs.
+const MAX_DISCOVERY_PLAN_EVIDENCE_REFS = 14;
 // Leave a small serialization margin above the model-facing compactness
 // target while still rejecting unexpectedly verbose structured output.
 const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 28 * 1_024;
@@ -468,7 +472,12 @@ export async function runOpportunityDiscoveryPlanner({
     evidenceCatalog,
     objective,
     now,
-    { maxItems: 14, labelChars: 120, summaryChars: 220, urlChars: 160 }
+    {
+      maxItems: MAX_DISCOVERY_PLAN_EVIDENCE_REFS,
+      labelChars: 120,
+      summaryChars: 220,
+      urlChars: 160
+    }
   );
   const commercialEvidenceGraph = buildCommercialEvidenceGraph(
     evidenceCatalog,
@@ -649,7 +658,10 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
   );
   const normalized = normalizeOpportunityDiscoveryPlan(
     completion?.data,
-    evidenceCatalog,
+    // The strict response enum is built from this exact projected catalog.
+    // Revalidate against the same trust boundary locally instead of allowing
+    // a ref that existed only in the larger, model-hidden catalog.
+    promptEvidenceCatalog,
     now
   );
   const webSearchReceipt = normalizeOpportunityDiscoveryWebSearchReceipt({
