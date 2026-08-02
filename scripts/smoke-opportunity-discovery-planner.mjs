@@ -1817,6 +1817,32 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
     }
   }
 
+  for (const [mechanismIndex, mechanism] of mechanisms.entries()) {
+    for (const [otherIndex, otherMechanism] of mechanisms.entries()) {
+      if (mechanism === otherMechanism) continue;
+      const motion = motionFor(
+        mechanism,
+        canonicalTerminalPaidOutcome(mechanism)
+      );
+      motion.contingentFinalists.familyA.d.r[0].o =
+        canonicalTerminalPaidOutcome(otherMechanism);
+      const result = await plannerResultForMotion({
+        job,
+        motion,
+        generationId:
+          `generation-cross-mechanism-prose-${mechanismIndex + 1}-${otherIndex + 1}`
+      });
+      if (result.status !== 'blocked' ||
+          !result.reason.includes('[observable_revenue]') ||
+          result.plans.length !== 0 ||
+          result.sideEffectsPerformed !== 0) {
+        throw new Error(
+          `${otherMechanism} prose passed for ${mechanism} typed terminal outcome: ${JSON.stringify(result)}`
+        );
+      }
+    }
+  }
+
   const crossRuntimeVariants = [
     ['paid_booking', 'One paid lactation visit was completed and recorded.'],
     ['direct_sale', 'One paid checkout was completed.'],

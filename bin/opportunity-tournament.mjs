@@ -2320,6 +2320,7 @@ function typedTerminalPaidOutcomeText(value, mechanism) {
 function typedTerminalCrossMechanismContradiction(value, mechanism) {
   const text = firstText(value);
   const markers = new Map([
+    ['paid_booking', /\bbookings?\b/i],
     ['direct_sale', /\b(?:checkout|order|purchase|retail sale)s?\b/i],
     ['signed_contract', /\b(?:consulting|paid services|service) contract\b|\bcontract award\b/i],
     ['paid_pilot', /\bpilot\b/i],
