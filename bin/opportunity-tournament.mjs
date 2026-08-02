@@ -820,6 +820,7 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
       }
     };
   };
+  const contingentFollowUpItem = boundedItemDefinition('followUpItem');
   const revenuePath = asObject(contingentSchema.$defs.revenuePath);
   const revenuePathProperties = asObject(revenuePath.properties);
   const revenueGrounding = asObject(revenuePathProperties.g);
@@ -893,7 +894,26 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
     },
     timingItem: boundedItemDefinition('timingItem'),
     proofItem: boundedItemDefinition('proofItem'),
-    followUpItem: boundedItemDefinition('followUpItem'),
+    followUpItem: {
+      ...contingentFollowUpItem,
+      properties: {
+        ...asObject(contingentFollowUpItem.properties),
+        l: {
+          type: 'string',
+          pattern:
+            '^[Ii]f no reply after [1-9][0-9]? days?, one review-first follow-up[.]?$'
+        },
+        e: {
+          type: 'array',
+          items: {
+            type: 'string',
+            pattern: '^observation:.+$'
+          },
+          minItems: 1,
+          maxItems: 2
+        }
+      }
+    },
     revenuePath: {
       ...revenuePath,
       properties: {
@@ -1172,7 +1192,7 @@ function compactOpportunityDiscoveryOutputContract() {
 function compactOpportunityDiscoveryHardRules() {
   return [
     '2 distinct motions: each pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
-    'Evidence IDs only; base+each tactic e has observation:*; system attribution is attribution-only; obey targetRoleMap.',
+    'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     'Each r: a=plan.acquisitionMode; k.i=counterfactual paid income; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.',
     'r.o describes that one terminal rm event, not objective alternatives. Reject or/either/attempt/pending/declined/failed/not received.',
@@ -1604,6 +1624,13 @@ function targetEvidenceDimensionKeysForRole(planValue) {
   if (commercialRole === 'buyer') return ['b', 'c'];
   if (commercialRole === 'paid_demand') return ['b', 'o', 'c'];
   return [];
+}
+
+function neutralContingentFollowUp(value) {
+  const match = /^if no reply after ([1-9][0-9]?) days?, one review-first follow-up\.?$/i.exec(
+    firstText(value).trim()
+  );
+  return Boolean(match) && Number(match[1]) <= 30;
 }
 
 /**
@@ -2046,6 +2073,14 @@ function contingentFinalistBundleIssue(planValue) {
       })) {
         return `has an incomplete ${dimension} finalist dimension.`;
       }
+    }
+    const unsupportedFollowUpIndex = asArray(dimensions.f).findIndex(
+      (item) => !neutralContingentFollowUp(
+        firstText(asObject(item).l)
+      )
+    );
+    if (unsupportedFollowUpIndex >= 0) {
+      return `family ${familyIndex + 1} follow-up ${unsupportedFollowUpIndex + 1} [follow_up_unverified_state]: must use the neutral bounded no-reply follow-up contract.`;
     }
     const familyViableActionSignatures = new Set();
     const rejectedActionIssues = [];

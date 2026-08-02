@@ -477,6 +477,10 @@ for (const scenario of cases) {
   const plannerDefinitions = requestSeen.responseFormat?.json_schema
     ?.schema?.$defs || {};
   const causalWitnessSchema = plannerDefinitions.causalWitness || {};
+  const followUpEvidenceSchema = plannerDefinitions.followUpItem
+    ?.properties?.e || {};
+  const followUpLabelPattern = plannerDefinitions.followUpItem
+    ?.properties?.l?.pattern || '';
   const promptWithoutContract = { ...plannerPrompt };
   delete promptWithoutContract.outputContract;
   delete promptWithoutContract.hardRules;
@@ -565,6 +569,13 @@ for (const scenario of cases) {
       plannerDefinitions.tactic?.properties?.c?.minItems !== 2 ||
       plannerDefinitions.tactic?.properties?.a?.maxItems !== 2 ||
       plannerDefinitions.tactic?.properties?.f?.maxItems !== 2 ||
+      followUpEvidenceSchema.maxItems !== 2 ||
+      followUpEvidenceSchema.items?.pattern !==
+        '^observation:.+$' ||
+      followUpEvidenceSchema.items?.$ref ||
+      !/no reply after.*one review-first follow-up/i.test(
+        followUpLabelPattern
+      ) ||
       !/^\^/.test(
         requestSeen.responseFormat?.json_schema?.schema?.$defs
           ?.actionItem?.properties?.l?.pattern || ''
@@ -1376,6 +1387,122 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       mixedPaidOfferResult.sideEffectsPerformed !== 0) {
     throw new Error(
       `mixed owner/target paid-offer contamination was not structurally repaired: ${JSON.stringify(mixedPaidOfferResult)}`
+    );
+  }
+
+  const mixedFollowUpContamination = structuredClone(
+    cases[0].plans(primaryEvidenceRef)[0]
+  );
+  mixedFollowUpContamination.contingentFinalists = replaceExactRef(
+    compactContingentFinalists(
+      mixedFollowUpContamination.contingentFinalists
+    ),
+    targetRef,
+    primaryEvidenceRef
+  );
+  for (const tacticKey of ['tacticA', 'tacticB']) {
+    for (const followUp of
+      mixedFollowUpContamination.contingentFinalists[tacticKey].f) {
+      followUp.e.push(targetRef);
+    }
+  }
+  const mixedFollowUpResult = await runOpportunityDiscoveryPlanner({
+    job: structuredClone(baseJob),
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => completionFor(
+      mixedFollowUpContamination,
+      'generation-mixed-unauthorized-follow-up-target-evidence'
+    )
+  });
+  const repairedFollowUpPlan = mixedFollowUpResult.plans.find((item) =>
+    item.id === mixedFollowUpContamination.id
+  );
+  if (mixedFollowUpResult.status !== 'planned' ||
+      mixedFollowUpResult.plans.length !== 2 ||
+      !repairedFollowUpPlan ||
+      !['familyA', 'familyB'].every((familyKey) =>
+        repairedFollowUpPlan.contingentFinalists[familyKey].d.f.every(
+          (followUp) =>
+            followUp.e.includes(primaryEvidenceRef) &&
+            !followUp.e.includes(targetRef)
+        )
+      ) ||
+      mixedFollowUpResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `mixed owner/target follow-up contamination was not structurally repaired: ${JSON.stringify(mixedFollowUpResult)}`
+    );
+  }
+
+  for (const [index, assertedState] of [
+    'Follow up because they have already expressed interest',
+    'Follow up after they expressed interest',
+    'Follow up when the partner agrees',
+    'Follow up after the buyer replied',
+    'Follow up after permission was granted',
+    'Follow up with the willing partner',
+    'Follow up after the partner accepted',
+    'Follow up after the partner said yes',
+    'Follow up after they requested more information',
+    'Follow up with our long-standing partner',
+    'Follow up after a positive reaction',
+    'If no reply after 31 days, one review-first follow-up'
+  ].entries()) {
+    const assertedFollowUpState = structuredClone(
+      cases[0].plans(primaryEvidenceRef)[0]
+    );
+    assertedFollowUpState.contingentFinalists = replaceExactRef(
+      compactContingentFinalists(
+        assertedFollowUpState.contingentFinalists
+      ),
+      targetRef,
+      primaryEvidenceRef
+    );
+    assertedFollowUpState.contingentFinalists.tacticA.f[0].l =
+      assertedState;
+    const assertedFollowUpResult = await runOpportunityDiscoveryPlanner({
+      job: structuredClone(baseJob),
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async () => completionFor(
+        assertedFollowUpState,
+        `generation-asserted-unverified-follow-up-state-${index + 1}`
+      )
+    });
+    if (assertedFollowUpResult.status !== 'blocked' ||
+        assertedFollowUpResult.plans.length !== 0 ||
+        assertedFollowUpResult.sideEffectsPerformed !== 0 ||
+        !/follow_up_unverified_state/i.test(assertedFollowUpResult.reason)) {
+      throw new Error(
+        `unverified follow-up state was not rejected: ${JSON.stringify({ assertedState, assertedFollowUpResult })}`
+      );
+    }
+  }
+
+  const neutralFollowUp = structuredClone(
+    cases[0].plans(primaryEvidenceRef)[0]
+  );
+  neutralFollowUp.contingentFinalists = replaceExactRef(
+    compactContingentFinalists(neutralFollowUp.contingentFinalists),
+    targetRef,
+    primaryEvidenceRef
+  );
+  neutralFollowUp.contingentFinalists.tacticA.f[0].l =
+    'If no reply after 5 days, one review-first follow-up';
+  const neutralFollowUpResult = await runOpportunityDiscoveryPlanner({
+    job: structuredClone(baseJob),
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async () => completionFor(
+      neutralFollowUp,
+      'generation-neutral-bounded-follow-up'
+    )
+  });
+  if (neutralFollowUpResult.status !== 'planned' ||
+      neutralFollowUpResult.plans.length !== 2 ||
+      neutralFollowUpResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `neutral bounded follow-up was rejected: ${JSON.stringify(neutralFollowUpResult)}`
     );
   }
 
@@ -5611,7 +5738,7 @@ function contingentFinalists(motion) {
         e: [ref, targetRef]
       })),
       f: [variantA, variantB].map((variant) => ({
-        l: `One approved follow-up (${variant})`,
+        l: 'If no reply after 5 days, one review-first follow-up',
         e: [ref]
       }))
     }
