@@ -544,12 +544,12 @@ for (const scenario of cases) {
         requestSeen.responseFormat?.json_schema?.schema?.$defs
           ?.actionItem?.properties?.l?.pattern || ''
       ) ||
-      !/one complete commercial ask.*never setup, support, or follow-up/is.test(
+      !/active cash ask:.*paid partner referral.*target purchase\/booking.*paid-demand response.*no setup\/support\/follow-up/is.test(
         requestSeen.responseFormat?.json_schema?.schema?.$defs
           ?.actionItem?.properties?.l?.description || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /tacticA\.a\/tacticB\.a: 2 complete asks each, never setup\/support/i.test(
+        /a:2\/tactic.*referral=partner referral\/introduction.*current paid offer.*paid booking\/payment.*buyer=ask target to book\/buy\/sign current paid offer.*paid_demand=paid application\/proposal response.*marketplace\/directory placement/is.test(
           rule
         )
       ) ||
@@ -567,11 +567,11 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /buyer\/referral c,a:.*only a review-first profile message\/introduction.*omit every private-contact/is.test(
+        /buyer\/referral c,a:.*TARGET_URL.*HTTPS LinkedIn \/in verified public profile only.*review-first.*omit private-contact/is.test(
           rule
         )
       ) ||
-      !/buyer\/referral_partner asks for a referral or introduction.*Never emit or mention any other route or private-contact term/is.test(
+      !/referral_partner=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*buyer=ask target to book\/buy\/sign current paid offer.*paid_demand=typed paid application\/proposal response.*marketplace\/directory placement are invalid/is.test(
         requestSeen.system || ''
       ) ||
       /claims no email\/phone\/form\/proposal route/i.test(
@@ -827,7 +827,7 @@ await verifyOmittedTargetEvidenceProtocolCanonicalization(
 );
 await verifyOneMotionWithTwoCausalFamilies(unsafeJob, unsafeRef);
 await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
-await verifyNaturalReviewFirstActionsPass(unsafeJob, unsafeRef);
+await verifyQualifiedPartnerReferralActionsPass(unsafeJob, unsafeRef);
 await verifyPaidDemandResponseActionVerbs(unsafeJob, unsafeRef);
 await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
 await verifyServicePaymentOutcomesPass(unsafeJob, unsafeRef);
@@ -852,7 +852,7 @@ if (smallestCompactResponseReduction < 0.25 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + child evidence-index canonicalization + target-slot protocol canonicalization + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + natural review-first/paid-demand response actions + artifact-submission rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + child evidence-index canonicalization + target-slot protocol canonicalization + shared pathBase/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative single-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyOmittedChildEvidenceCanonicalization(
@@ -1831,13 +1831,13 @@ async function verifySingleOperationalVariantCanBePruned(
   }
 }
 
-async function verifyNaturalReviewFirstActionsPass(job, evidenceRef) {
+async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
   const motion = cases[0].plans(evidenceRef)[0];
   const actions = [
-    'After review, ask {{TARGET_NAME}} to recommend the verified paid lactation home visit through its professional referral pathway (resource card).',
-    'Following human approval, ask {{TARGET_NAME}} to refer one appropriate inquiry to the verified paid lactation home visit (booking handoff).',
-    "Pending user review, ask {{TARGET_NAME}} to recommend Betty's paid lactation consultations to one appropriate family through its newborn referral workflow.",
-    'After explicit approval, ask {{TARGET_NAME}} to include one referral to the paid lactation booking page in its discharge process.'
+    'Review first: via verified professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner referral to the paid offer.',
+    'After review, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner introduction to one paid booking.',
+    'After review, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner referral to the paid booking offer.',
+    'After approval, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner introduction to the paid offer.'
   ];
   let index = 0;
   for (const familyKey of ['familyA', 'familyB']) {
@@ -1860,7 +1860,7 @@ async function verifyNaturalReviewFirstActionsPass(job, evidenceRef) {
         plans: [motion]
       },
       usage,
-      generationId: 'generation-natural-review-first-actions',
+      generationId: 'generation-qualified-partner-referral-actions',
       diagnostics: {
         finishReason: 'stop',
         nativeFinishReason: 'stop',
@@ -1885,7 +1885,7 @@ async function verifyNaturalReviewFirstActionsPass(job, evidenceRef) {
   if (result.status !== 'planned' || result.plans.length !== 1 ||
       JSON.stringify(returnedActions) !== JSON.stringify(actions)) {
     throw new Error(
-      `natural review-first revenue actions were rejected: ${JSON.stringify(result)}`
+      `qualified partner-referral revenue actions were rejected: ${JSON.stringify(result)}`
     );
   }
 }
@@ -2855,6 +2855,50 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
       reason: /causally advance acquisition/i
     },
     {
+      name: 'unqualified introduction production regression',
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, ask {{TARGET_NAME}} for an introduction through {{TARGET_URL}}.';
+      },
+      reason: /primary_action_non_revenue.*causally advance acquisition/i
+    },
+    {
+      name: 'article listing is not paid demand',
+      caseIndex: 3,
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, list a paid industry article for {{TARGET_NAME}} on a marketplace.';
+      },
+      reason: /primary_action_non_revenue.*causally advance acquisition/i
+    },
+    {
+      name: 'metrics listing is not paid demand',
+      caseIndex: 3,
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, publish paid-booking metrics for {{TARGET_NAME}} on a platform.';
+      },
+      reason: /primary_action_non_revenue.*causally advance acquisition/i
+    },
+    {
+      name: 'profile listing is not paid demand',
+      caseIndex: 3,
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, list {{TARGET_NAME}} professional profile on a paid marketplace.';
+      },
+      reason: /primary_action_(?:non_revenue|operational)/i
+    },
+    {
+      name: 'untyped paid listing target remains unsupported',
+      caseIndex: 3,
+      mutate(plans) {
+        plans[0].contingentFinalists.familyA.d.a[0].l =
+          'After review, list the current paid workflow-software subscription on {{TARGET_NAME}} marketplace.';
+      },
+      reason: /primary_action_non_revenue.*causally advance acquisition/i
+    },
+    {
       name: 'availability-check action drift',
       mutate(plans) {
         plans[0].contingentFinalists.familyA.d.a[0].l =
@@ -2932,7 +2976,8 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
   );
   for (const [checkIndex, check] of checks.entries()) {
     const plans = [
-      cases[0].plans(evidenceRef)[check.fixtureIndex || 0]
+      cases[check.caseIndex || 0]
+        .plans(evidenceRef)[check.fixtureIndex || 0]
     ];
     const originalFamilyActions = plans[0].contingentFinalists
       .familyA.d.a.map((action) => action.l);

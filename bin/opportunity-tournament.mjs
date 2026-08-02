@@ -592,10 +592,10 @@ Infer complementary roles: lactation→newborn-care referral authority; programm
 Plans are contingent, not proof of target, interest, referral, budget, or permission. Model prose proves no web target. Leave {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for provider binding; use target:evidence only for its typed dimensions.
 Return one plan with shared pathBase plus two tactic deltas. Modes: active_job_posting=paid role; professional_counterparty=person; local_organization=organization seed then person; public_live_demand=live paid demand.
 Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel. No warm_referral/existing_customer for unresolved targets; buyer identity!=inbound demand. professional_counterparty terminates in one person; local_organization uses the organization only as a seed and terminates in its named decision-maker person.
-pathBase owns e,r,o,b,t,p: one v3 revenue path with required typed k causal witnesses and two offer/buyer/timing/proof variants. tacticA/B each own l,m,tacticKey,e,s,c,a,f and exactly two channel/action/follow-up variants. Tactics differ causally but preserve the shared buyer-to-payment base. Include current paid offer, distinct acquisition and destination, paid conversion, attribution, numeric stop, positive value, spend, evidence, and active actions.
-Every tactic action contains {{TARGET_NAME}} once; buyer/referral_partner asks for a referral or introduction, while paid_demand asks for its typed conversion/application/listing; never setup/support/follow-up. For buyer/referral_partner, every c/a contains {{TARGET_URL}}, names the verified public professional profile, and describes only one review-first message or introduction request through that profile. Never emit or mention any other route or private-contact term in the returned JSON or web query. Review is authorization, not acquisitionMode. Code only materializes families and binds tokens/refs; operations cannot be the outcome.
+pathBase={e,r,o,b,t,p}: one v3 path+k and 2 o/b/t/p variants. tacticA/B={l,m,tacticKey,e,s,c,a,f}: 2 c/a/f variants; tactics differ causally over one buyer-to-payment base. Require current paid offer, separate acquisition/destination, paid conversion, attribution, numeric stop, positive value/spend, evidence, active actions.
+Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. No setup/support/follow-up. buyer/referral c,a: {{TARGET_URL}} once, only review-first public professional profile; omit private/alternate routes from JSON/query. Review!=mode; code only binds tokens/refs; operations never outcomes.
 Keep the complete JSON at or below 12 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
-target:evidence cannot prove seller capability, an existing/warm/permitted relationship, private contacts, or paid demand outside its typed slot. Ground the user's current offer, destination, and attribution in exact approved IDs. A professional-identity slot proves only exact identity and prospective channel fit; only live-paid-demand may ground an outside paid offer, application destination, and compensated conversion.
+target:evidence proves only typed target dimensions: never seller capability, relationship, private contacts, or paid demand unless live-paid-demand. Bind current offer/destination/attribution to exact approved IDs. Professional identity proves identity+prospective channel fit only; live-paid-demand alone grounds outside paid offer/application/compensated conversion.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral-partner query may describe the population its professional counterparty serves (e.g. "pediatric practice serving newborn patients"); the typed target stays a professional person/organization and targetRoleTerms, organizationTerms, jobTitle, skills never target that population. Copy IDs/tokens exactly. Return strict JSON only.`;
   const user = JSON.stringify({
     objective,
@@ -884,7 +884,7 @@ function opportunityDiscoveryPlannerResponseFormat(evidenceCatalog) {
           pattern:
             '^[^\\r\\n]{0,72}\\{\\{TARGET_NAME\\}\\}[^\\r\\n]{0,72}$',
           description:
-            'One complete commercial ask; never setup, support, or follow-up.'
+            'Active cash ask: paid partner referral, target purchase/booking, or paid-demand response; no setup/support/follow-up.'
         }
       }
     },
@@ -1170,14 +1170,14 @@ function compactOpportunityDiscoveryHardRules() {
   return [
     '1 motion: pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
     'Evidence IDs only; base+each tactic e has observation:*; system attribution is attribution-only; obey targetRoleMap.',
-    `tacticA.a/tacticB.a: 2 complete asks each, never setup/support; buyer/referral asks ${CONTINGENT_TARGET_NAME_TOKEN} for referral/introduction; paid_demand asks for its typed paid conversion/application/listing.`,
+    'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     'Each r: a=plan.acquisitionMode; k.i=counterfactual paid income; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.',
     'r.o describes that one terminal rm event, not objective alternatives. Reject or/either/attempt/pending/declined/failed/not received.',
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/c/o/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'Tactics differ; review!=mode. Routes: referral_partner=partner_channel; buyer=permissioned_outreach; paid_demand=inbound|permissioned_outreach|partner_channel; buyer identity!=inbound.',
     'Adapters: professional_counterparty=person/single_exact_target; local_organization=person/organization_then_decision_maker(1-6); organization is never terminal.',
-    'buyer/referral c,a: exactly 1 target URL each, canonical HTTPS LinkedIn /in profile+verified public professional profile; only a review-first profile message/introduction, and omit every private-contact, form, submission, or alternate-route term.',
+    `buyer/referral c,a: 1 ${CONTINGENT_TARGET_URL_TOKEN} each; HTTPS LinkedIn /in verified public profile only; review-first; omit private-contact/form/submission/alternate routes.`,
     'No sensitive/private targets; population only in referral query. No external writes.',
     'Audit once; return minified strict JSON.'
   ];
@@ -14871,6 +14871,7 @@ function incrementalIncomeText(value) {
 function revenueAdvancingAction(value) {
   const text = firstText(value);
   if (nonRevenueArtifactOrQuestionAction(text)) return false;
+  if (demandSurfacePlacementAction(text)) return false;
   const advancesAcquisition =
     /\b(inbound|warm|permission(?:ed)?|opt in|introduc(?:e|tion)|refer(?:s|red|ring|ral)?|recommend(?:s|ed|ing|ation)?|partner|invite|request|offer|proposal|quote|checkout|order|purchase|sale|sell|book(?:ed)?|contract|agreement|sign(?:ed)?|close|deposit|invoice|pay(?:ment|ing)?|subscribe|subscription|retainer|pilot|licen[cs](?:e|ing)|royalt(?:y|ies)|commission|sponsor(?:ship)?|payout|compensated|salary|wage|hire|role)\b/i.test(
       text
@@ -14894,6 +14895,19 @@ function revenueAdvancingAction(value) {
     );
   return (advancesAcquisition || advancesPaidDemandResponse) &&
     (namesPaidCommitment || namesPermissionedDemand);
+}
+
+function demandSurfacePlacementAction(value) {
+  const text = primaryActionSemanticText(value);
+  const placesListing = /\b(?:list|place|publish)\b/.test(text) ||
+    (/\bsubmit\b/.test(text) &&
+     /\b(?:listing|offer|package|plan|product|service|software|subscription)\b/.test(
+       text
+     ));
+  return placesListing &&
+    /\b(?:app store|comparison (?:listing|site)|demand surface|directory|marketplace|platform)\b/.test(
+      text
+    );
 }
 
 function passiveOrObservationalPrimaryAction(value) {
@@ -14972,7 +14986,7 @@ function nonRevenueArtifactOrQuestionAction(value) {
       text
     );
   if (!namesArtifact && !asksOnlyForEvidence) return false;
-  return !/\b(?:apply|book|buy|close|distribute|enroll|hire|introduce|invite|list|present|propose|purchase|recommend|refer|request|route|sell|sign|submit|subscribe)\b/.test(
+  return !/\b(?:apply|book|buy|close|distribute|enroll|hire|introduce|invite|present|propose|purchase|recommend|refer|request|route|sell|sign|submit|subscribe)\b/.test(
     text
   );
 }
