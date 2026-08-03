@@ -629,7 +629,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /buyer\/referral c\+a:.*TARGET_URL.*HTTPS LinkedIn \/in verified public profile only.*review-first.*omit private-contact/is.test(
+        /buyer\/referral c\+a: use that exact form.*URL=HTTPS LinkedIn \/in.*no message\/DM\/InMail\/connect\/email\/phone\/form/is.test(
           rule
         )
       ) ||
@@ -2629,6 +2629,41 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       allowedContactContext.plans.length !== 2) {
     throw new Error(
       `descriptive contact context was mistaken for private-contact acquisition: ${JSON.stringify(allowedContactContext)}`
+    );
+  }
+
+  const allowedBoundPublicMessageMotion = baseReferral({
+    id: 'safe_bound_public_profile_message',
+    acquisitionMechanism:
+      'One review-first public-professional-profile referral request'
+  });
+  const boundPublicMessageActions = [
+    'After review, send a LinkedIn message via {{TARGET_URL}} asking {{TARGET_NAME}} to recommend one qualified family book the current paid consultation.',
+    'After approval, send one LinkedIn message through {{TARGET_URL}} asking {{TARGET_NAME}} for one partner referral to the paid consultation.',
+    'Review first, then send a LinkedIn message via {{TARGET_URL}} asking {{TARGET_NAME}} to refer one qualified family to the paid booking offer.',
+    'After human review, write a LinkedIn message through {{TARGET_URL}} asking {{TARGET_NAME}} for one partner introduction to the paid consultation.'
+  ];
+  let boundPublicMessageIndex = 0;
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = allowedBoundPublicMessageMotion.contingentFinalists[
+      familyKey
+    ];
+    family.d.r[0].c = boundPublicMessageActions[
+      boundPublicMessageIndex
+    ];
+    for (const action of family.d.a) {
+      action.l = boundPublicMessageActions[boundPublicMessageIndex];
+      boundPublicMessageIndex += 1;
+    }
+  }
+  const allowedBoundPublicMessage = await run(
+    allowedBoundPublicMessageMotion,
+    'generation-safe-bound-public-profile-message'
+  );
+  if (allowedBoundPublicMessage.status !== 'planned' ||
+      allowedBoundPublicMessage.plans.length !== 2) {
+    throw new Error(
+      `a review-first message bound to the exact public professional URL was mistaken for private-contact acquisition: ${JSON.stringify(allowedBoundPublicMessage)}`
     );
   }
 
@@ -6823,6 +6858,56 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       result.gate?.sideEffects?.providerWrites !== 0) {
     throw new Error(
       `provider-attested buyer route did not complete safely: ${JSON.stringify({ requests: requests.length, result })}`
+    );
+  }
+
+  const publicMessagePayload = structuredClone(downstreamPayload);
+  const publicMessageMotion =
+    publicMessagePayload.commercialDiscoveryEvidence.plan.plans[0];
+  for (const [familyIndex, familyKey] of
+    ['familyA', 'familyB'].entries()) {
+    for (const dimension of ['c', 'a']) {
+      publicMessageMotion.contingentFinalists[familyKey].d[dimension] =
+        publicMessageMotion.contingentFinalists[familyKey].d[dimension]
+          .map((item, index) => ({
+            ...item,
+            l:
+              `After review, send a LinkedIn message via {{TARGET_URL}} asking {{TARGET_NAME}} to buy the paid workflow subscription (${familyIndex + 1}-${index + 1}).`
+          }));
+    }
+  }
+  let publicMessageCalls = 0;
+  const publicMessage = await runOpportunityTournament({
+    job: {
+      id: 'job-bound-public-profile-message-route',
+      kind: 'opportunity_tournament',
+      payload: publicMessagePayload
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      publicMessageCalls += 1;
+      const task = JSON.parse(request.user || '{}');
+      return acceptedCriticCompletion(
+        task.finalists || [],
+        'generation-bound-public-profile-message-critic'
+      );
+    }
+  });
+  if (publicMessageCalls !== 1 ||
+      publicMessage.status !== 'completed' ||
+      publicMessage.result?.resultType !== 'immediate_revenue_action' ||
+      publicMessage.result?.incrementalRevenueGate?.passed !== true ||
+      publicMessage.result?.allowedChannel !== 'public_professional_url' ||
+      publicMessage.result?.executionAuthorization !== 'none' ||
+      publicMessage.result?.requiresReview !== true ||
+      publicMessage.result?.sideEffectsPerformed !== 0 ||
+      !publicMessage.winner?.action?.includes(buyerPublicUrl) ||
+      publicMessage.gate?.sideEffects?.outreachAttempts !== 0 ||
+      publicMessage.gate?.sideEffects?.publishAttempts !== 0 ||
+      publicMessage.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `review-first message failed after exact public-profile binding: ${JSON.stringify({ calls: publicMessageCalls, result: publicMessage })}`
     );
   }
 

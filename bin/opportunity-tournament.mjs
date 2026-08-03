@@ -670,10 +670,10 @@ export async function runOpportunityDiscoveryPlanner({
   const system = `You are ProfileScribe's research-only commercial-motion generator. Find two distinct outside-world paths to one attributable payment within 30 days. Use verifiedFacts and read-only search; inferences stay unverified; no side effects. attribution proves only recording capability.
 Choose the outside actor or buyer-authored artifact that can cause payment, never a peer supplier. Choose only a motionKind allowed by the response schema. referral_person/referral_org_decision_maker find a complementary professional referral authority; direct_buyer_person/direct_buyer_org_decision_maker find a non-sensitive institutional buyer; compensated_job finds an employer job posting; buyer_solicitation finds a buyer-authored paid RFP/RFQ/tender/procurement notice/explicit request. Two referral motions with different counterparties are valid; diversity never requires paid_demand. For a sensitive end buyer, prefer referral unless targeting a real institutional compensated artifact. Supplier/competitor offers, directories, marketplaces, payer participation, "accepts insurance," and the seller's offer/booking page are supply, never demand. Website/booking=destination, not acquisition.
 Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind is not_applicable, employer_job_posting, or a buyer_* artifact. Code constructs the provider query; query prose never proves demand.
-Plans are hypotheses, not target, interest, relationship, budget, or permission evidence. Preserve {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for provider binding.
+Plans prove no target, interest, relationship, budget, or permission. Preserve {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for provider binding.
 Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas.
 Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
-Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a: {{TARGET_URL}} once via a review-first public professional profile; omit private/alternate routes. Review!=mode; code projects r.c per tactic; operations never outcomes.
+Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a exact: "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; no message/DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only referral query may name served population. professional/local: targetRoleTerms=one coherent current-title family; organizationTerms=context; job: jobTitle+skills; public demand: all four empty. Copy IDs/tokens exactly. Return strict JSON only.`;
   const user = JSON.stringify({
@@ -1312,7 +1312,7 @@ function compactOpportunityDiscoveryHardRules() {
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. paid demand needs employer_job_posting or buyer_rfp/rfq/tender/procurement_notice/paid_request. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional paid artifact.',
     'Adapters: professional=person/single; local_org=person/org->decision-maker(1-6); never terminal org; targetRoleTerms=1 title family; organizationTerms=context.',
-    `buyer/referral c+a: 1 ${CONTINGENT_TARGET_URL_TOKEN}; HTTPS LinkedIn /in verified public profile only; review-first; omit private-contact/form/submission/alternate routes.`,
+    'buyer/referral c+a: use that exact form; URL=HTTPS LinkedIn /in; no message/DM/InMail/connect/email/phone/form.',
     'No sensitive/private targets; population only in referral query. No external writes.'
   ];
 }
@@ -4009,14 +4009,22 @@ function discoveryAcquisitionRequestsPrivateContact(value) {
   )) {
     return true;
   }
+  const boundPublicProfessionalMessage =
+    discoveryAcquisitionUsesBoundPublicProfessionalMessage(rawText);
   const unnormalizedRouteText = comparable(routeText);
-  if (discoveryContactPatternsRequest(unnormalizedRouteText, [
+  if (!boundPublicProfessionalMessage &&
+      discoveryContactPatternsRequest(unnormalizedRouteText, [
     /\b(?:chat|connect|dm|inbox|message|ping|reach out)(?: [a-z0-9]+){0,8} (?:at|on|through|via) (?:linked in|linkedin) (?:public )?professional profile\b/g,
     /\b(?:ask|invite|request)(?: an?| the)? (?:target|target name|candidate|buyer|partner|professional|person)(?: [a-z0-9]+){0,3} to connect(?: [a-z0-9]+){0,3} on (?:linked in|linkedin) (?:public )?professional profile\b/g
   ])) {
     return true;
   }
-  const text = unnormalizedRouteText
+  const text = (boundPublicProfessionalMessage
+      ? unnormalizedRouteText.replace(
+          /\b(?:linked in|linkedin) message\b/g,
+          ' public professional profile interaction '
+        )
+      : unnormalizedRouteText)
     .replace(
       /\b(?:linked in|linkedin) (?:public )?professional profile\b/g,
       ' public professional profile '
@@ -4087,6 +4095,42 @@ function discoveryAcquisitionRequestsPrivateContact(value) {
     /\bdial(?: an?| the)? office line\b/g,
     /\buse(?: an?| the)? target (?:e mail|email) list\b/g
   ]);
+}
+
+/**
+ * A generic platform message does not request private contact data when the
+ * model routes it directly through the one unresolved target URL, or the one
+ * already-bound verified LinkedIn /in/ URL, and leaves execution review-first.
+ * This exception is deliberately narrow:
+ * DM, InMail, direct/private messages, notes, inboxes, and connection requests
+ * remain private/alternate routes, as do email, phone, handles, and literals
+ * caught by the surrounding validator.
+ */
+function discoveryAcquisitionUsesBoundPublicProfessionalMessage(value) {
+  const raw = firstText(value);
+  const unresolvedTarget =
+    countExactToken(raw, CONTINGENT_TARGET_URL_TOKEN) === 1;
+  const publicURLs = exactHTTPSURLsInText(raw);
+  const boundTargetURL = !unresolvedTarget && publicURLs.length === 1 &&
+    Boolean(safePublicProfessionalProfileURL(publicURLs[0]))
+      ? publicURLs[0]
+      : '';
+  if (!unresolvedTarget && !boundTargetURL) {
+    return false;
+  }
+  const text = comparable(boundTargetURL
+    ? raw.replace(boundTargetURL, CONTINGENT_TARGET_URL_TOKEN)
+    : raw);
+  if (!/\b(?:after (?:human )?(?:review|approval)|review first|reviewed|requires review)\b/.test(
+    text
+  ) || /\b(?:(?:direct|private) (?:linked in )?message|(?:linked in )?(?:dm|inmail|inbox|note|connection request))\b/.test(
+    text
+  )) {
+    return false;
+  }
+  return /\b(?:send|write)(?: one)?(?: an?| the)?(?: review first| reviewed)? (?:linked in|linkedin) message (?:at|on|through|using|via)(?: the)? target url\b/.test(
+    text
+  );
 }
 
 function discoveryContactPatternsRequest(value, expressions) {
