@@ -3499,14 +3499,16 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     organizationTerms: ['pediatric practice', 'birth center']
   }), 'generation-mixed-professional-title-family-salvage');
   if (mixedTitles.status !== 'planned' ||
-      mixedTitles.plans.length !== 1 ||
-      mixedTitles.planSelection?.acceptedPlanCount !== 1 ||
-      mixedTitles.planSelection?.rejectedPlanCount !== 1 ||
-      !/one coherent likely-current professional title family.*organization context only in organizationTerms/i.test(
-        mixedTitles.planSelection?.rejectedPlans?.[0]?.reason || ''
-      )) {
+      mixedTitles.plans.length !== 2 ||
+      mixedTitles.planSelection?.acceptedPlanCount !== 2 ||
+      mixedTitles.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(mixedTitles.plans[0].targetRoleTerms) !==
+        JSON.stringify(['pediatrician']) ||
+      !mixedTitles.plans[0].query.includes('pediatrician') ||
+      mixedTitles.plans[0].query.includes('practice manager') ||
+      mixedTitles.plans[0].query.includes('midwife')) {
     throw new Error(
-      `mixed professional title ORs were not pruned independently: ${JSON.stringify(mixedTitles)}`
+      `mixed professional title ORs were not narrowed to the first coherent provider family: ${JSON.stringify(mixedTitles)}`
     );
   }
 

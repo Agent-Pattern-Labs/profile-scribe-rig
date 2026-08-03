@@ -1554,6 +1554,19 @@ function normalizeOpportunityDiscoverySearchFields(planValue) {
   };
   switch (firstText(plan.searchMode)) {
   case 'professional_counterparty':
+    // A planner may enumerate several individually plausible professional
+    // title families in one motion. The person-search adapter executes one
+    // bounded role family at a time, so retain the first ranked family and
+    // its synonyms instead of rejecting the entire paid plan. This narrows
+    // provider scope; it does not invent a role, target, or evidence fact.
+    return {
+      ...allFields,
+      targetRoleTerms: coherentOpportunityDiscoveryTargetRoleTerms(
+        allFields.targetRoleTerms
+      ),
+      jobTitle: '',
+      skills: []
+    };
   case 'local_organization':
     // These adapters resolve a professional role, optionally through an
     // organization seed. Job-title and skill fields are not sent to either
@@ -1580,6 +1593,17 @@ function normalizeOpportunityDiscoverySearchFields(planValue) {
     // can reject it without normalization masking any supplied field.
     return allFields;
   }
+}
+
+function coherentOpportunityDiscoveryTargetRoleTerms(values) {
+  const terms = compactStrings(values);
+  const selectedFamily = terms
+    .map(opportunityDiscoveryTargetTitleFamily)
+    .find(Boolean);
+  if (!selectedFamily) return [];
+  return terms.filter((term) =>
+    opportunityDiscoveryTargetTitleFamily(term) === selectedFamily
+  );
 }
 
 function normalizedDiscoveryPlanEvidenceRefs(planValue, knownEvidence) {
