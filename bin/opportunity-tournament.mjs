@@ -10989,6 +10989,7 @@ function providerCallSpendPreflight(requestValue, budgetValue) {
     return {
       serializationSucceeded: false,
       requestBodyByteCount: 0,
+      maxRequestBodyByteCount: MAX_PROVIDER_REQUEST_BODY_BYTES,
       promptTokenCeiling: 0,
       injectedContextTokenReserve,
       serializedPromptTokenCeiling: 0,
@@ -11023,6 +11024,7 @@ function providerCallSpendPreflight(requestValue, budgetValue) {
   return {
     serializationSucceeded: true,
     requestBodyByteCount: requestByteCount,
+    maxRequestBodyByteCount: MAX_PROVIDER_REQUEST_BODY_BYTES,
     requestBodySha256: createHash('sha256')
       .update(serializedRequest, 'utf8')
       .digest('hex'),

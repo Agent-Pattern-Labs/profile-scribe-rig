@@ -7748,7 +7748,8 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   productionShapedPlannerRequestBytes = requestBytes;
   if (!requestSeen || result.status !== 'planned' ||
       requestBytes < 32 * 1_024 ||
-      requestBytes > 35 * 1_024) {
+      requestBytes > 35 * 1_024 ||
+      result.preflight?.maxRequestBodyByteCount !== 36 * 1_024) {
     throw new Error(
       `production-shaped planner request lacks bounded headroom: ${JSON.stringify({ requestBytes, evidenceCount: JSON.parse(requestSeen?.user || '{}').evidenceCatalog?.length, preflight: result.preflight, status: result.status, reason: result.reason })}`
     );
