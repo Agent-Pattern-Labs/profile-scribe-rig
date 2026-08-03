@@ -572,7 +572,7 @@ export async function runOpportunityDiscoveryPlanner({
     commercialDiscoveryMotionKindsForCapabilities(
       discoveryCapabilities
     );
-  const commercialContext = normalizeCommercialContext(
+  const unvalidatedCommercialContext = normalizeCommercialContext(
     payload,
     objective,
     constraints
@@ -581,6 +581,10 @@ export async function runOpportunityDiscoveryPlanner({
     commercialDiscovery: {},
     includeSystemAttributionCapability: true
   });
+  const commercialContext = opportunityDiscoveryCommercialContextWithApprovedMarkets(
+    unvalidatedCommercialContext,
+    evidenceCatalog
+  );
   const promptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
     objective,
@@ -669,9 +673,9 @@ Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMo
 Plans are hypotheses, not target, interest, relationship, budget, or permission evidence. Preserve {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for provider binding.
 Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas.
 Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
-Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral a: {{TARGET_URL}} once via a review-first public professional profile; omit private/alternate routes. Review!=mode; code projects r.c per tactic; operations never outcomes.
+Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a: {{TARGET_URL}} once via a review-first public professional profile; omit private/alternate routes. Review!=mode; code projects r.c per tactic; operations never outcomes.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
-Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only a referral query may describe the population its professional counterparty serves. professional/local uses targetRoleTerms+organizationTerms; active job uses jobTitle+skills; public demand leaves all four empty. Copy IDs/tokens exactly. Return strict JSON only.`;
+Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only referral query may name served population. professional/local: targetRoleTerms=one coherent current-title family; organizationTerms=context; job: jobTitle+skills; public demand: all four empty. Copy IDs/tokens exactly. Return strict JSON only.`;
   const user = JSON.stringify({
     objective,
     commercialContext,
@@ -802,6 +806,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     rawValue: completion?.data,
     normalizedEnvelope: normalized,
     evidenceCatalog: promptEvidenceCatalog,
+    marketEvidenceCatalog: evidenceCatalog,
+    commercialContext,
     referenceTime: now,
     webSearchReceipt,
     allowedMotionKinds
@@ -1135,7 +1141,7 @@ function opportunityDiscoveryPlannerResponseFormat(
                   MAX_DISCOVERY_PLAN_EVIDENCE_REFS
                 ),
                 query: boundedText(180),
-                market: boundedText(120, true),
+                market: boundedText(120),
                 targetRoleTerms: boundedStringArray(6),
                 organizationTerms: boundedStringArray(6),
                 jobTitle: boundedText(100, true),
@@ -1297,6 +1303,7 @@ function compactOpportunityDiscoveryOutputContract() {
 function compactOpportunityDiscoveryHardRules() {
   return [
     '2 distinct motions: each pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
+    'approvedMarkets|ServiceAreas|Location;local=region+country;Remote[+country]=available paid_demand;no guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `r.a=plan.acquisitionMode; r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; project valid tactic a; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.`,
@@ -1304,8 +1311,8 @@ function compactOpportunityDiscoveryHardRules() {
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/o/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. paid demand needs employer_job_posting or buyer_rfp/rfq/tender/procurement_notice/paid_request. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional paid artifact.',
-    'Adapters: professional_counterparty=person/single_exact_target; local_organization=person/organization_then_decision_maker(1-6); organization is never terminal.',
-    `buyer/referral a: 1 ${CONTINGENT_TARGET_URL_TOKEN}; HTTPS LinkedIn /in verified public profile only; review-first; omit private-contact/form/submission/alternate routes.`,
+    'Adapters: professional=person/single; local_org=person/org->decision-maker(1-6); never terminal org; targetRoleTerms=1 title family; organizationTerms=context.',
+    `buyer/referral c+a: 1 ${CONTINGENT_TARGET_URL_TOKEN}; HTTPS LinkedIn /in verified public profile only; review-first; omit private-contact/form/submission/alternate routes.`,
     'No sensitive/private targets; population only in referral query. No external writes.'
   ];
 }
@@ -1794,9 +1801,19 @@ function contingentViableActionItem(itemValue, familyValue, planValue) {
   const evidenceRefs = compactStrings(item.e);
   const familyRefs = new Set(compactStrings(family.e));
   const actionModes = acquisitionModesFromText(label);
+  const publicProfessionalRouteRequired = [
+    'buyer',
+    'referral_partner'
+  ].includes(firstText(plan.commercialRole));
   return evidenceRefs.length > 0 &&
     evidenceRefs.every((ref) => familyRefs.has(ref)) &&
     countExactToken(label, CONTINGENT_TARGET_NAME_TOKEN) === 1 &&
+    (!publicProfessionalRouteRequired || (
+      countExactToken(label, CONTINGENT_TARGET_URL_TOKEN) === 1 &&
+      /\b(?:linkedin|public professional profile|verified professional profile)\b/i.test(
+        label
+      )
+    )) &&
     firstText(family.m) === firstText(plan.acquisitionMode) &&
     actionModes.every((mode) =>
       mode === firstText(plan.acquisitionMode)
@@ -2128,6 +2145,79 @@ function opportunityDiscoveryMotionSignature(value) {
     : `${item.searchMode}\x00${item.commercialRole}\x00${item.acquisitionMode}`;
 }
 
+function opportunityDiscoveryTargetTitleFamily(value) {
+  const title = comparable(value)
+    .replace(/\bcoo\b/g, 'chief operating officer')
+    .replace(/\bcto\b/g, 'chief technology officer')
+    .replace(/\bceo\b/g, 'chief executive officer');
+  const explicitFamilies = [
+    [/\bpediatr(?:ic|ician|ics)\b/, 'pediatrics'],
+    [/\bmidwi(?:fe|fery|ves)\b/, 'midwifery'],
+    [/\b(?:ob gyn|obgyn|obstetric(?:ian|s)?|gynecologist)\b/, 'obgyn'],
+    [/\bdoula\b/, 'doula'],
+    [/\blactation\b|\bibclc\b/, 'lactation'],
+    [
+      /\b(?:clinic|office|practice)\b.*\b(?:administrator|manager)\b|\b(?:administrator|manager)\b.*\b(?:clinic|office|practice)\b/,
+      'practice_administration'
+    ],
+    [/\b(?:operation|operating|operational|operations)\b/, 'operations'],
+    [
+      /\b(?:information systems?|information technology|technical|technology)\b/,
+      'technology'
+    ],
+    [/\b(?:recruiting|recruitment|talent|hiring)\b/, 'talent'],
+    [/\bmarketing\b/, 'marketing'],
+    [/\b(?:nurse|nursing)\b/, 'nursing'],
+    [/\b(?:executive|president)\b/, 'executive']
+  ];
+  const explicit = explicitFamilies.find(([pattern]) =>
+    pattern.test(title)
+  );
+  if (explicit) return explicit[1];
+  const tokens = title.split(/\s+/).map((token) => ({
+    engineering: 'engineer',
+    engineers: 'engineer',
+    developers: 'developer',
+    physicians: 'physician',
+    specialists: 'specialist'
+  }[token] || token.replace(/s$/, ''))).filter((token) =>
+    token && !new Set([
+      'and',
+      'associate',
+      'chief',
+      'coordinator',
+      'director',
+      'head',
+      'junior',
+      'lead',
+      'manager',
+      'of',
+      'officer',
+      'owner',
+      'principal',
+      'senior',
+      'the',
+      'vice',
+      'president'
+    ]).has(token)
+  );
+  return [...new Set(tokens)].sort().join('_');
+}
+
+function opportunityDiscoveryTargetTitleFamilyIssue(planValue) {
+  const plan = asObject(planValue);
+  if (firstText(plan.searchMode) !== 'professional_counterparty') {
+    return '';
+  }
+  const terms = compactStrings(plan.targetRoleTerms);
+  const families = terms.map(opportunityDiscoveryTargetTitleFamily);
+  if (families.some((family) => !family) ||
+      new Set(families).size !== 1) {
+    return 'must use one coherent likely-current professional title family in targetRoleTerms; put organization context only in organizationTerms.';
+  }
+  return '';
+}
+
 function opportunityDiscoveryPlanIssue(
   value,
   { requireTypedRoute = false, allowedMotionKinds = null } = {}
@@ -2198,6 +2288,7 @@ function opportunityDiscoveryPlanIssue(
       'counterparty',
       'paidOffer',
       'query',
+      'market',
       'acquisitionMechanism',
       'conversionDestination',
       'paidConversion',
@@ -2255,6 +2346,12 @@ function opportunityDiscoveryPlanIssue(
     if (item.searchMode === 'professional_counterparty' &&
         asArray(item.targetRoleTerms).length === 0) {
       return 'Professional counterparty search requires bounded professional role terms.';
+    }
+    const targetTitleFamilyIssue = legacy
+      ? ''
+      : opportunityDiscoveryTargetTitleFamilyIssue(item);
+    if (targetTitleFamilyIssue) {
+      return `Discovery plan ${item.id} ${targetTitleFamilyIssue}`;
     }
     const sensitiveTargetIssue = discoveryPlanSensitiveTargetIssue(item);
     if (sensitiveTargetIssue) return sensitiveTargetIssue;
@@ -2318,10 +2415,422 @@ function opportunityDiscoveryRawCausalWitnessIssue(value) {
   return '';
 }
 
+function opportunityDiscoveryMarketParts(value) {
+  return firstText(value)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+const OPPORTUNITY_DISCOVERY_US_REGION_ALIASES = new Map([
+  ['alabama', 'al'], ['alaska', 'ak'], ['arizona', 'az'],
+  ['arkansas', 'ar'], ['california', 'ca'], ['colorado', 'co'],
+  ['connecticut', 'ct'], ['delaware', 'de'],
+  ['district of columbia', 'dc'], ['florida', 'fl'],
+  ['georgia', 'ga'], ['hawaii', 'hi'], ['idaho', 'id'],
+  ['illinois', 'il'], ['indiana', 'in'], ['iowa', 'ia'],
+  ['kansas', 'ks'], ['kentucky', 'ky'], ['louisiana', 'la'],
+  ['maine', 'me'], ['maryland', 'md'], ['massachusetts', 'ma'],
+  ['michigan', 'mi'], ['minnesota', 'mn'], ['mississippi', 'ms'],
+  ['missouri', 'mo'], ['montana', 'mt'], ['nebraska', 'ne'],
+  ['nevada', 'nv'], ['new hampshire', 'nh'], ['new jersey', 'nj'],
+  ['new mexico', 'nm'], ['new york', 'ny'],
+  ['north carolina', 'nc'], ['north dakota', 'nd'], ['ohio', 'oh'],
+  ['oklahoma', 'ok'], ['oregon', 'or'], ['pennsylvania', 'pa'],
+  ['rhode island', 'ri'], ['south carolina', 'sc'],
+  ['south dakota', 'sd'], ['tennessee', 'tn'], ['texas', 'tx'],
+  ['utah', 'ut'], ['vermont', 'vt'], ['virginia', 'va'],
+  ['washington', 'wa'], ['west virginia', 'wv'],
+  ['wisconsin', 'wi'], ['wyoming', 'wy']
+].flatMap(([name, abbreviation]) => [
+  [name, name],
+  [abbreviation, name]
+]));
+
+const OPPORTUNITY_DISCOVERY_CANADA_REGION_ALIASES = new Map([
+  ['alberta', 'ab'], ['british columbia', 'bc'], ['manitoba', 'mb'],
+  ['new brunswick', 'nb'], ['newfoundland and labrador', 'nl'],
+  ['northwest territories', 'nt'], ['nova scotia', 'ns'],
+  ['nunavut', 'nu'], ['ontario', 'on'],
+  ['prince edward island', 'pe'], ['quebec', 'qc'],
+  ['saskatchewan', 'sk'], ['yukon', 'yt']
+].flatMap(([name, abbreviation]) => [
+  [name, name],
+  [abbreviation, name]
+]));
+
+const OPPORTUNITY_DISCOVERY_COUNTRY_ALIASES = new Map([
+  ['united states', 'united states'],
+  ['united states of america', 'united states'],
+  ['us', 'united states'],
+  ['u s', 'united states'],
+  ['usa', 'united states'],
+  ['u s a', 'united states'],
+  ['canada', 'canada'],
+  ['can', 'canada'],
+  ['united kingdom', 'united kingdom'],
+  ['united kingdom of great britain and northern ireland',
+    'united kingdom'],
+  ['uk', 'united kingdom'],
+  ['u k', 'united kingdom'],
+  ['great britain', 'united kingdom'],
+  ['britain', 'united kingdom'],
+  ['gb', 'united kingdom'],
+  ['g b', 'united kingdom'],
+  ['gbr', 'united kingdom']
+]);
+
+const OPPORTUNITY_DISCOVERY_NYC_LOCALITY_ALIASES = new Map([
+  ['queens', 'queens'],
+  ['manhattan', 'manhattan'],
+  ['brooklyn', 'brooklyn'],
+  ['bronx', 'bronx'],
+  ['staten island', 'staten island'],
+  ['long island city', 'long island city'],
+  ['new york city', 'new york city'],
+  ['nyc', 'new york city']
+]);
+
+const OPPORTUNITY_DISCOVERY_APPROVED_MARKET_BASIS =
+  'approved_owner_canonical_root_local_business';
+
+function normalizeOpportunityDiscoveryApprovedMarkets(value) {
+  const seen = new Set();
+  return asArray(value).slice(0, 16).flatMap((entryValue) => {
+    const entry = asObject(entryValue);
+    const keys = Object.keys(entry).sort();
+    const market = firstText(entry.market);
+    const evidenceRef = firstText(entry.evidenceRef);
+    if (JSON.stringify(keys) !== JSON.stringify([
+      'basis',
+      'evidenceRef',
+      'market'
+    ]) ||
+        entry.basis !== OPPORTUNITY_DISCOVERY_APPROVED_MARKET_BASIS ||
+        !market || market.length > 120 ||
+        !/^observation:[^\r\n]{1,180}$/.test(evidenceRef) ||
+        opportunityDiscoveryMarketKey(market, {
+          completeApprovedHierarchy: true
+        }) === '') {
+      return [];
+    }
+    const signature = `${comparable(market)}\x00${evidenceRef}`;
+    if (seen.has(signature)) return [];
+    seen.add(signature);
+    return [{
+      market,
+      evidenceRef,
+      basis: OPPORTUNITY_DISCOVERY_APPROVED_MARKET_BASIS
+    }];
+  });
+}
+
+function opportunityDiscoveryApprovedMarketFacts(
+  commercialContextValue,
+  evidenceCatalogValue
+) {
+  const profile = asObject(asObject(commercialContextValue).profile);
+  const evidenceByID = new Map(asArray(evidenceCatalogValue).map(
+    (evidenceValue) => {
+      const evidence = asObject(evidenceValue);
+      return [firstText(evidence.id), evidence];
+    }
+  ));
+  return normalizeOpportunityDiscoveryApprovedMarkets(
+    profile.approvedMarkets
+  ).filter((entry) => {
+    const evidence = asObject(evidenceByID.get(entry.evidenceRef));
+    return evidence.approvedSourceObservation === true &&
+      evidence.profileControlledSource === true;
+  });
+}
+
+function opportunityDiscoveryCommercialContextWithApprovedMarkets(
+  commercialContextValue,
+  evidenceCatalogValue
+) {
+  const commercialContext = asObject(commercialContextValue);
+  const profile = asObject(commercialContext.profile);
+  return {
+    ...commercialContext,
+    profile: compact({
+      ...profile,
+      approvedMarkets: opportunityDiscoveryApprovedMarketFacts(
+        commercialContext,
+        evidenceCatalogValue
+      )
+    })
+  };
+}
+
+function opportunityDiscoveryRegionAlias(value, country = '') {
+  const key = comparable(value);
+  if (country === 'united states') {
+    return OPPORTUNITY_DISCOVERY_US_REGION_ALIASES.get(key) || '';
+  }
+  if (country === 'canada') {
+    return OPPORTUNITY_DISCOVERY_CANADA_REGION_ALIASES.get(key) || '';
+  }
+  return OPPORTUNITY_DISCOVERY_US_REGION_ALIASES.get(key) ||
+    OPPORTUNITY_DISCOVERY_CANADA_REGION_ALIASES.get(key) || '';
+}
+
+function opportunityDiscoveryCanonicalMarketParts(
+  value,
+  { completeApprovedHierarchy = false } = {}
+) {
+  const raw = opportunityDiscoveryMarketParts(value);
+  if (raw.length === 0) return [];
+  const parts = raw.map(comparable);
+  if (parts.length === 1 && parts[0] === 'remote') return parts;
+
+  if (parts.length === 2 && parts[0] === 'remote') {
+    parts[1] = OPPORTUNITY_DISCOVERY_COUNTRY_ALIASES.get(parts[1]) ||
+      parts[1];
+    return parts;
+  }
+
+  const explicitCountry = OPPORTUNITY_DISCOVERY_COUNTRY_ALIASES.get(
+    parts.at(-1)
+  ) || '';
+  if (explicitCountry) {
+    parts[parts.length - 1] = explicitCountry;
+    let region = '';
+    if (parts.length >= 2) {
+      region = opportunityDiscoveryRegionAlias(
+        parts[parts.length - 2],
+        explicitCountry
+      );
+      if (region) parts[parts.length - 2] = region;
+    }
+    if (completeApprovedHierarchy && parts.length === 2 &&
+        ['united states', 'canada'].includes(explicitCountry) &&
+        !region) {
+      return [];
+    }
+    return parts;
+  }
+
+  const region = opportunityDiscoveryRegionAlias(parts.at(-1));
+  if (region) {
+    const country = OPPORTUNITY_DISCOVERY_US_REGION_ALIASES.has(
+      parts.at(-1)
+    )
+      ? 'united states'
+      : 'canada';
+    parts[parts.length - 1] = region;
+    if (completeApprovedHierarchy) parts.push(country);
+    return parts;
+  }
+  if (completeApprovedHierarchy && parts.length === 1) return [];
+  return parts;
+}
+
+function opportunityDiscoveryMarketKey(
+  value,
+  { completeApprovedHierarchy = false } = {}
+) {
+  return opportunityDiscoveryCanonicalMarketParts(value, {
+    completeApprovedHierarchy
+  }).join('\x00');
+}
+
+function opportunityDiscoveryAffirmativeRemoteSignal(value) {
+  const text = comparable(value);
+  if (!/\b(?:remote|remotely|virtual|virtually|work from home)\b/.test(
+    text
+  ) || /\b(?:in person|onsite|on site) only\b/.test(text)) {
+    return false;
+  }
+  return ![
+    /\b(?:no|not|never)\s+(?:(?:currently|generally)\s+)?(?:(?:available|accepting|open)\s+)?(?:for\s+)?(?:an?\s+)?(?:remote|remotely|virtual|virtually|work from home)\b/,
+    /\b(?:unavailable|unable)\s+(?:for\s+|to\s+work\s+)?(?:remote|remotely|virtual|virtually|from home)\b/,
+    /\b(?:cannot|cant|wont|will not|does not)\s+(?:work|serve|offer|accept|provide)\b.{0,20}\b(?:remote|remotely|virtual|virtually|from home)\b/,
+    /\b(?:remote|virtual|work from home)\b.{0,24}\b(?:unavailable|not available|not offered|not accepted|disabled|prohibited|unknown|unconfirmed|unspecified)\b/,
+    /\b(?:may|might|possibly|potentially|could)\s+(?:be\s+)?(?:remote|virtual|work from home)\b/
+  ].some((pattern) => pattern.test(text));
+}
+
+function opportunityDiscoveryRemoteAvailabilityApproved(value) {
+  return opportunityDiscoveryAffirmativeRemoteSignal(value);
+}
+
+function opportunityDiscoveryMarketCountry(value) {
+  const raw = opportunityDiscoveryMarketParts(value);
+  const scoped = raw.length > 0 && comparable(raw[0]) === 'remote'
+    ? raw.slice(1)
+    : raw;
+  if (scoped.length === 0) return '';
+  const key = opportunityDiscoveryMarketKey(scoped.join(', '), {
+    completeApprovedHierarchy: true
+  });
+  const country = key.split('\x00').at(-1);
+  return [
+    'united states',
+    'canada',
+    'united kingdom'
+  ].includes(country)
+    ? country
+    : '';
+}
+
+function opportunityDiscoveryTextBindsCountry(value, country) {
+  const text = ` ${comparable(value)} `;
+  if (!country) return true;
+  const countryTerms = {
+    'united states': [
+      'united states',
+      'united states of america',
+      ...new Set(OPPORTUNITY_DISCOVERY_US_REGION_ALIASES.values())
+    ],
+    canada: [
+      'canada',
+      ...new Set(OPPORTUNITY_DISCOVERY_CANADA_REGION_ALIASES.values())
+    ],
+    'united kingdom': [
+      'united kingdom',
+      'great britain'
+    ]
+  }[country] || [];
+  return countryTerms.some((term) =>
+    text.includes(` ${term} `)
+  );
+}
+
+function opportunityDiscoveryRemoteProviderEvidenceBound({
+  motion: motionValue,
+  evidenceValues,
+  candidateMarket
+}) {
+  const motion = asObject(motionValue);
+  const marketKey = opportunityDiscoveryMarketKey(motion.market);
+  if (marketKey !== 'remote' && !marketKey.startsWith('remote\x00')) {
+    return true;
+  }
+  const providerText = asArray(evidenceValues).map((factValue) => {
+    const fact = asObject(factValue);
+    return `${firstText(fact.label)} ${firstText(fact.summary)}`;
+  }).join(' ');
+  if (!opportunityDiscoveryAffirmativeRemoteSignal(providerText)) {
+    return false;
+  }
+  const motionCountry = opportunityDiscoveryMarketCountry(motion.market);
+  return !motionCountry ||
+    opportunityDiscoveryMarketCountry(candidateMarket) === motionCountry ||
+    opportunityDiscoveryTextBindsCountry(providerText, motionCountry);
+}
+
+function approvedOpportunityDiscoveryMarketKeys(
+  commercialContextValue,
+  evidenceCatalogValue
+) {
+  const profile = asObject(asObject(commercialContextValue).profile);
+  const exact = new Set();
+  const explicitRemoteScopes = new Set();
+  const homeCountries = new Set();
+  const rememberCountry = (key) => {
+    const country = key.split('\x00').at(-1);
+    if ([
+      'united states',
+      'canada',
+      'united kingdom'
+    ].includes(country)) {
+      homeCountries.add(country);
+    }
+  };
+  const add = (value) => {
+    const rawParts = opportunityDiscoveryMarketParts(value);
+    const nycLocality = rawParts.length === 1
+      ? OPPORTUNITY_DISCOVERY_NYC_LOCALITY_ALIASES.get(
+          comparable(rawParts[0])
+        ) || ''
+      : '';
+    if (nycLocality) {
+      const key = [
+        nycLocality,
+        'new york',
+        'united states'
+      ].join('\x00');
+      exact.add(key);
+      rememberCountry(key);
+      return;
+    }
+    const key = opportunityDiscoveryMarketKey(value, {
+      completeApprovedHierarchy: true
+    });
+    if (key === 'remote' || key.startsWith('remote\x00')) {
+      explicitRemoteScopes.add(key);
+      rememberCountry(key);
+    } else if (key) {
+      exact.add(key);
+      rememberCountry(key);
+    }
+  };
+  add(profile.location);
+  for (const serviceArea of compactStrings(profile.serviceAreas)) {
+    add(serviceArea);
+  }
+  for (const approvedMarket of opportunityDiscoveryApprovedMarketFacts(
+    commercialContextValue,
+    evidenceCatalogValue
+  )) {
+    add(approvedMarket.market);
+  }
+  return {
+    exact,
+    explicitRemoteScopes,
+    homeCountries,
+    remoteAvailability: opportunityDiscoveryRemoteAvailabilityApproved(
+      profile.availability
+    )
+  };
+}
+
+function opportunityDiscoveryMotionMarketIssue(
+  planValue,
+  commercialContextValue,
+  evidenceCatalogValue
+) {
+  const market = firstText(asObject(planValue).market);
+  if (!market) {
+    return 'is missing a market grounded in approved profile geography.';
+  }
+  const approved = approvedOpportunityDiscoveryMarketKeys(
+    commercialContextValue,
+    evidenceCatalogValue
+  );
+  const marketKey = opportunityDiscoveryMarketKey(market);
+  if (marketKey === 'remote' || marketKey.startsWith('remote\x00')) {
+    if (approved.explicitRemoteScopes.has(marketKey)) return '';
+    const plan = asObject(planValue);
+    const paidDemandArtifact = firstText(plan.commercialRole) ===
+        'paid_demand' && [
+      'active_job_posting',
+      'public_live_demand'
+    ].includes(firstText(plan.searchMode));
+    if (approved.remoteAvailability && paidDemandArtifact) {
+      if (marketKey === 'remote') return '';
+      const marketParts = marketKey.split('\x00');
+      if (marketParts.length === 2 &&
+          approved.homeCountries.has(marketParts[1])) {
+        return '';
+      }
+      return 'uses Remote with a country outside the approved home-country scope.';
+    }
+    if (approved.remoteAvailability) {
+      return 'uses availability-based Remote for a professional target instead of a paid-demand artifact.';
+    }
+  }
+  if (approved.exact.has(marketKey)) return '';
+  return 'uses a market outside the exact approved service-area, location, or remote-availability scope; guessed, widened, or under-disambiguated geography is forbidden.';
+}
+
 function selectValidOpportunityDiscoveryPlans({
   rawValue,
   normalizedEnvelope,
   evidenceCatalog,
+  marketEvidenceCatalog,
+  commercialContext,
   referenceTime,
   webSearchReceipt,
   allowedMotionKinds: allowedMotionKindsValue
@@ -2394,12 +2903,19 @@ function selectValidOpportunityDiscoveryPlans({
     const rawSensitiveIssue = discoveryPlanSensitiveTargetIssue(
       rawSafetyPlan
     );
+    const marketIssue = opportunityDiscoveryMotionMarketIssue(
+      candidate.plan,
+      commercialContext,
+      marketEvidenceCatalog
+    );
     let issue = rawPrivateIssue
       ? `Discovery plan ${id} requests private-contact data [${rawPrivateIssue}].`
       : rawSensitiveIssue || opportunityDiscoveryRawCausalWitnessIssue({
           ...raw,
           plans: [candidate.rawPlan]
-        }) || opportunityDiscoveryPlanIssue({
+        }) || (marketIssue
+          ? `Discovery plan ${id} ${marketIssue}`
+          : '') || opportunityDiscoveryPlanIssue({
           ...envelope,
           plans: [candidate.plan]
         }, {
@@ -2598,6 +3114,24 @@ function contingentFinalistBundleIssue(planValue) {
         return `has an incomplete ${dimension} finalist dimension.`;
       }
     }
+    if (['buyer', 'referral_partner'].includes(plan.commercialRole)) {
+      for (const [channelIndex, channelValue] of
+        asArray(dimensions.c).entries()) {
+        const channel = firstText(asObject(channelValue).l);
+        const targetURLCount = countExactToken(
+          channel,
+          CONTINGENT_TARGET_URL_TOKEN
+        );
+        if (targetURLCount !== 1) {
+          return `family ${familyIndex + 1} channel ${channelIndex + 1} [channel_target_url_token]: must contain exactly one target-url token (url_count=${targetURLCount}).`;
+        }
+        if (!/\b(?:linkedin|public professional profile|verified professional profile)\b/i.test(
+          channel
+        )) {
+          return `family ${familyIndex + 1} channel ${channelIndex + 1} [channel_public_professional_route]: must name the review-first public professional profile route.`;
+        }
+      }
+    }
     const unsupportedFollowUpIndex = asArray(dimensions.f).findIndex(
       (item) => !neutralContingentFollowUp(
         firstText(asObject(item).l)
@@ -2615,11 +3149,11 @@ function contingentFinalistBundleIssue(planValue) {
         action,
         CONTINGENT_TARGET_NAME_TOKEN
       );
+      const targetURLCount = countExactToken(
+        action,
+        CONTINGENT_TARGET_URL_TOKEN
+      );
       if (targetNameCount !== 1) {
-        const targetURLCount = countExactToken(
-          action,
-          CONTINGENT_TARGET_URL_TOKEN
-        );
         return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_target_token]: must contain exactly one target-name token (name_count=${targetNameCount}, url_count=${targetURLCount}).`;
       }
       const signature = comparable(action);
@@ -2646,6 +3180,20 @@ function contingentFinalistBundleIssue(planValue) {
       } else if (roleIssue) {
         rejectedActionIssues.push(
           `family ${familyIndex + 1} action ${actionIndex + 1} [${roleIssue}]: must perform the typed commercial role's direct cash-advancing action.`
+        );
+      } else if (['buyer', 'referral_partner'].includes(
+        plan.commercialRole
+      ) && targetURLCount !== 1) {
+        rejectedActionIssues.push(
+          `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_target_url_token]: must contain exactly one target-url token (url_count=${targetURLCount}).`
+        );
+      } else if (['buyer', 'referral_partner'].includes(
+        plan.commercialRole
+      ) && !/\b(?:linkedin|public professional profile|verified professional profile)\b/i.test(
+        action
+      )) {
+        rejectedActionIssues.push(
+          `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_public_professional_route]: must name the review-first public professional profile route.`
         );
       } else if (acquisitionModesFromText(action).some((mode) =>
         mode !== firstText(plan.acquisitionMode)
@@ -4020,7 +4568,7 @@ async function runOpportunityTournamentCore({
   const objective = normalizeObjective(payload.objective, payload);
   const budget = normalizeBudget(payload.budget);
   const constraints = normalizeConstraints(objective, payload);
-  const commercialContext = normalizeCommercialContext(
+  const unvalidatedCommercialContext = normalizeCommercialContext(
     payload,
     objective,
     constraints
@@ -4059,6 +4607,10 @@ async function runOpportunityTournamentCore({
     context,
     now,
     { commercialDiscovery, includeSystemAttributionCapability }
+  );
+  const commercialContext = opportunityDiscoveryCommercialContextWithApprovedMarkets(
+    unvalidatedCommercialContext,
+    evidenceCatalog
   );
   let promptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
@@ -5120,6 +5672,7 @@ async function runOpportunityTournamentCore({
     timestamp
   });
   let initialHypotheses = expanded.finalists;
+  let criticRejectedHypotheses = [];
   const searchSpaceFor = (retainedHypotheses) => ({
     ...base.searchSpace,
     maxHypotheses: budget.maxHypotheses,
@@ -5359,9 +5912,20 @@ async function runOpportunityTournamentCore({
     const byID = new Map(
       deterministicFinalists.map((hypothesis) => [hypothesis.id, hypothesis])
     );
-    initialHypotheses = compactStrings(commercialCritic.selectedOrdering)
+    const criticOrderedHypotheses = compactStrings(
+      commercialCritic.selectedOrdering
+    )
       .map((id) => byID.get(id))
-      .filter((hypothesis) => hypothesis && acceptedIDs.has(hypothesis.id))
+      .filter(Boolean);
+    criticRejectedHypotheses = criticOrderedHypotheses
+      .filter((hypothesis) => !acceptedIDs.has(hypothesis.id))
+      .map((hypothesis) => ({
+        ...hypothesis,
+        rank: criticOrderedHypotheses.indexOf(hypothesis) + 1,
+        status: 'critic_rejected'
+      }));
+    initialHypotheses = criticOrderedHypotheses
+      .filter((hypothesis) => acceptedIDs.has(hypothesis.id))
       .map((hypothesis, index) => ({
         ...hypothesis,
         rank: index + 1,
@@ -5370,23 +5934,22 @@ async function runOpportunityTournamentCore({
           : index === 1 ? 'runner_up' : 'finalist'
       }));
     if (commercialCritic.verdict !== 'accepted' ||
-        initialHypotheses.length < 2) {
+        initialHypotheses.length < 1) {
       return {
         status: 'skipped',
         summary:
-          'The independent commercial critic did not accept two comparable causal revenue finalists.',
+          'The independent commercial critic did not accept a causal revenue finalist after comparing the bounded pair.',
         ...base,
         hypotheses: initialHypotheses.map(publicHypothesis),
         nextExperiment: nextExperimentFor([
-          'critic_rejected_commercial_motion',
-          'second_grounded_finalist'
+          'critic_rejected_commercial_motion'
         ]),
         searchSpace: searchSpaceFor(initialHypotheses),
         llm: llmTrace,
         usage,
         gate: researchOnlyGate(
           'needs_more_approved_evidence',
-          'The comparative critic rejected or could not rank two grounded causal revenue motions.'
+          'The comparative critic rejected every grounded causal revenue motion or could not rank the bounded pair.'
         )
       };
     }
@@ -5516,7 +6079,7 @@ async function runOpportunityTournamentCore({
     firstText(hypothesis._strategyFamily) !==
       firstText(winningHypothesis._strategyFamily)
   );
-  if (alternateFamilyIndex < 0) {
+  if (alternateFamilyIndex < 0 && !requiresCommercialCritic) {
     return {
       status: 'skipped',
       summary: 'The best candidate-grounded strategy had no family-diverse runner-up.',
@@ -5556,9 +6119,17 @@ async function runOpportunityTournamentCore({
         ? 'winner'
         : index === 1 ? 'runner_up' : 'finalist'
     }));
-  const publicHypotheses = hypotheses.map(publicHypothesis);
-  const searchSpace = searchSpaceFor(hypotheses);
-  if (hypotheses.length < 2) {
+  const publicHypotheses = [
+    ...hypotheses,
+    ...criticRejectedHypotheses
+  ]
+    .sort((left, right) => left.rank - right.rank)
+    .map(publicHypothesis);
+  const searchSpace = searchSpaceFor([
+    ...hypotheses,
+    ...criticRejectedHypotheses
+  ]);
+  if (hypotheses.length < 2 && !requiresCommercialCritic) {
     return {
       status: 'skipped',
       summary: 'The best candidate-grounded strategy had no distinct runner-up.',
@@ -6700,6 +7271,14 @@ function normalizeCommercialDiscoveryCandidate(
   const evidenceValues = evidenceRefs.map((ref) =>
     asObject(evidenceByID.get(ref))
   );
+  const plannedMotion = asObject(plannedMotionByID.get(motionId));
+  if (!opportunityDiscoveryRemoteProviderEvidenceBound({
+    motion: plannedMotion,
+    evidenceValues,
+    candidateMarket: market
+  })) {
+    return null;
+  }
   const standardProviderBinding = evidenceValues.every((fact) =>
     fact.motionId === motionId &&
     fact.provider === provider &&
@@ -6711,7 +7290,7 @@ function normalizeCommercialDiscoveryCandidate(
   );
   const decisionMakerChainBinding =
     commercialDiscoveryDecisionMakerCandidateFactsBound({
-      motion: asObject(plannedMotionByID.get(motionId)),
+      motion: plannedMotion,
       evidenceValues,
       candidate: {
         motionId,
@@ -8492,6 +9071,9 @@ function normalizeCommercialContext(payloadValue, objectiveValue, constraintsVal
       serviceAreas: compactStrings(profile.serviceAreas)
         .slice(0, 16)
         .map((value) => truncate(value, 100)),
+      approvedMarkets: normalizeOpportunityDiscoveryApprovedMarkets(
+        profile.approvedMarkets
+      ),
       currentFocus: focus
     }),
     distributionAccounts,
@@ -8982,12 +9564,16 @@ function commercialContextEvidenceNodes({
 }) {
   const nodes = [];
   const profile = asObject(commercialContext.profile);
+  const approvedMarkets = normalizeOpportunityDiscoveryApprovedMarkets(
+    profile.approvedMarkets
+  );
   const profileText = compactStrings([
     profile.profession,
     profile.location,
     profile.availability,
     ...asArray(profile.specialties),
     ...asArray(profile.serviceAreas),
+    ...approvedMarkets.map((item) => item.market),
     ...asArray(profile.currentFocus).flatMap((itemValue) => {
       const item = asObject(itemValue);
       return [item.name, item.description, item.status, item.priority];
@@ -8995,7 +9581,9 @@ function commercialContextEvidenceNodes({
   ]).join('; ');
   if (profileText) {
     const roles = commercialEvidenceRoles(profileText);
-    if (firstText(profile.location) || asArray(profile.serviceAreas).length > 0) {
+    if (firstText(profile.location) ||
+        asArray(profile.serviceAreas).length > 0 ||
+        approvedMarkets.length > 0) {
       roles.push('geographic_constraint');
     }
     if (firstText(profile.availability)) roles.push('capacity_constraint');
@@ -9008,6 +9596,7 @@ function commercialContextEvidenceNodes({
       location: firstText(profile.location),
       availability: firstText(profile.availability),
       serviceAreas: compactStrings(profile.serviceAreas),
+      approvedMarkets,
       approved: true,
       provenance: 'user_declared',
       ownerControlled: true
@@ -11455,7 +12044,7 @@ function normalizeCommercialCritic(
       finalistByID.get(id)?._strategyFamily
     )
   ));
-  const accepted = acceptedFinalistIds.length >= 2 &&
+  const accepted = acceptedFinalistIds.length >= 1 &&
     acceptedFinalistIds[0] === firstText(raw.selectedFinalistId);
   return {
     valid: true,
@@ -12758,10 +13347,15 @@ function recommendationFor({
   const why = candidateLabel
     ? `${revenueWhy} ${candidateLabel} is the ${candidateIsOwnedInboundAsset ? 'approved owned inbound execution asset' : candidateIsContextAnchor ? 'exact named evidence anchor' : 'exact named candidate'} attached to this strategy. ${grounding} It led ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations on objective fit, evidence strength, buyer authority, timing, incremental expected value, effort, cost, risk, and uncertainty.`
     : `${revenueWhy} ${grounding} This was one of ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations.`;
-  const whyOverRunnerUp = runnerUp
+  const comparedRunnerUp = runnerUp || compactStrings(
+    commercialCritic?.selectedOrdering
+  ).map((id) => ({ id })).find((item) =>
+    item.id !== firstText(hypothesis.id)
+  );
+  const whyOverRunnerUp = comparedRunnerUp
     ? comparisonReason(
         hypothesis,
-        runnerUp,
+        comparedRunnerUp,
         commercialCritic,
         objective.currency
       )
@@ -12926,6 +13520,11 @@ function comparisonReason(
       `The independent commercial critic ranked it ahead of the runner-up; the critic ordering, not that score alone, controlled final selection. Nearest-cash comparison: ${nearestCashComparison}. The decisive priority was ${decisivePriority}. Secondary assessment: ${dimensions}.`,
       600
     );
+  }
+  if (!asObject(runnerUp.score) || Object.keys(asObject(
+    runnerUp.score
+  )).length === 0) {
+    return '';
   }
   const fields = [
     ['objectiveFit', 'objective fit'],

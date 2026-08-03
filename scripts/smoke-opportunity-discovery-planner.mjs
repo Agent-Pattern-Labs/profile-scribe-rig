@@ -40,7 +40,7 @@ const cases = [
         headline: 'Paid newborn-feeding home visits',
         location: 'New York, New York, United States',
         specialties: ['newborn feeding', 'lactation home visits'],
-        serviceAreas: ['Queens', 'Manhattan']
+        serviceAreas: ['Queens, NY, USA', 'Manhattan, NY, USA']
       }
     },
     evidence: 'Parents can request current paid or reimbursable lactation home visits through the owner booking page.',
@@ -56,8 +56,8 @@ const cases = [
         paidOffer: 'Paid or reimbursable lactation home visit',
         evidenceRefs: [ref],
         query: 'pediatric practice serving newborn patients Queens New York',
-        market: 'Queens, New York',
-        targetRoleTerms: ['pediatrician', 'practice manager', 'midwife'],
+        market: 'Queens, New York, United States',
+        targetRoleTerms: ['pediatrician', 'pediatric physician'],
         organizationTerms: ['pediatric practice', 'birth center'],
         acquisitionMechanism: 'One review-first request for inclusion in a newborn referral resource',
         conversionDestination: 'The verified owner booking page',
@@ -75,7 +75,7 @@ const cases = [
         paidOffer: 'Paid or reimbursable lactation home visit',
         evidenceRefs: [ref],
         query: 'newborn pediatric practice Queens New York',
-        market: 'Queens, New York',
+        market: 'Queens, New York, United States',
         targetRoleTerms: [
           'pediatrician',
           'practice owner',
@@ -239,7 +239,7 @@ const cases = [
         evidenceRefs: [ref],
         query: 'field service operations technology director',
         market: 'United States',
-        targetRoleTerms: ['operations director', 'technology director'],
+        targetRoleTerms: ['operations director', 'director of operations'],
         organizationTerms: ['field service company'],
         acquisitionMechanism: 'One review-first tailored demo invitation',
         conversionDestination: 'The verified pricing and signup page',
@@ -270,6 +270,7 @@ function twoPlannerMotions(candidateValue, evidenceRef) {
   }
   const secondary = structuredClone(companion);
   secondary.priority = 2;
+  secondary.market = primary.market;
   return [primary, secondary];
 }
 
@@ -507,8 +508,16 @@ for (const scenario of cases) {
           rule
         )
       ) ||
+      !plannerPrompt.hardRules.some((rule) =>
+        /approvedMarkets\|ServiceAreas\|Location.*local=region\+country.*Remote\[\+country\]=available paid_demand.*no guess\/widen/is.test(
+          rule
+        )
+      ) ||
       requestSeen.responseFormat?.json_schema?.schema?.properties
         ?.plans?.maxItems !== 2 ||
+      requestSeen.responseFormat?.json_schema?.schema?.properties
+        ?.plans?.items?.properties?.market?.pattern !==
+          '^[^\\r\\n]{1,120}$' ||
       !requestSeen.responseFormat?.json_schema?.schema?.properties
         ?.plans?.items?.required?.includes('routeContractVersion') ||
       !requestSeen.responseFormat?.json_schema?.schema?.properties
@@ -615,12 +624,12 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /professional_counterparty=person\/single_exact_target.*local_organization=person\/organization_then_decision_maker.*organization is never terminal/is.test(
+        /professional=person\/single.*local_org=person\/org->decision-maker.*never terminal org.*targetRoleTerms=1 title family.*organizationTerms=context/is.test(
           rule
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /buyer\/referral a:.*TARGET_URL.*HTTPS LinkedIn \/in verified public profile only.*review-first.*omit private-contact/is.test(
+        /buyer\/referral c\+a:.*TARGET_URL.*HTTPS LinkedIn \/in verified public profile only.*review-first.*omit private-contact/is.test(
           rule
         )
       ) ||
@@ -894,6 +903,7 @@ if (unsafeResult.status !== 'planned' ||
 }
 
 await verifyTypedCommercialMotionSelection(unsafeJob, unsafeRef);
+await verifyPlannerMarketGroundingAndSiblingSalvage(unsafeJob, unsafeRef);
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifySensitiveTargetFieldPolicy(unsafeJob, unsafeRef);
 await verifyPrivateContactBearingURLsFailClosed();
@@ -1024,7 +1034,7 @@ async function verifyTypedCommercialMotionSelection(
     paidOffer: 'Paid lactation home visit',
     evidenceRefs: [referralEvidenceRef],
     query: 'postpartum patients seeking lactation home visits',
-    market: 'Queens, New York',
+    market: 'Queens, New York, United States',
     targetRoleTerms: ['postpartum patient'],
     acquisitionMechanism:
       'One review-first invitation to purchase a lactation home visit',
@@ -1136,9 +1146,11 @@ async function verifyTypedCommercialMotionSelection(
       ) ||
       new Set(referralQueries).size !== 2 ||
       !referralQueries.includes(
-        'pediatrician pediatric practice Queens, New York'
+        'pediatrician pediatric practice Queens, New York, United States'
       ) ||
-      !referralQueries.includes('midwife birth center Queens, New York') ||
+      !referralQueries.includes(
+        'midwife birth center Queens, New York, United States'
+      ) ||
       /lactation consultant|unitedhealthcare|supplier directory/i.test(
         referralQueries.join(' ')
       ) ||
@@ -1204,7 +1216,10 @@ async function verifyTypedCommercialMotionSelection(
 
   const duplicateBase = structuredClone(pediatricReferral);
   duplicateBase.id = 'pediatrician_referral_ordered';
-  duplicateBase.targetRoleTerms = ['pediatrician', 'medical director'];
+  duplicateBase.targetRoleTerms = [
+    'pediatrician',
+    'pediatric physician'
+  ];
   duplicateBase.organizationTerms = [
     'pediatric practice',
     'children clinic'
@@ -1232,6 +1247,520 @@ async function verifyTypedCommercialMotionSelection(
       duplicatePruned.sideEffectsPerformed !== 0) {
     throw new Error(
       `reordered typed terms bypassed duplicate pruning: ${JSON.stringify(duplicatePruned)}`
+    );
+  }
+}
+
+async function verifyPlannerMarketGroundingAndSiblingSalvage(
+  job,
+  evidenceRef
+) {
+  const run = async (marketJob, plans, generationId, inspectRequest) =>
+    runOpportunityDiscoveryPlanner({
+      job: structuredClone(marketJob),
+      model: 'openai/gpt-4.1-mini',
+      now,
+      completeJSON: async (request) => {
+        inspectRequest?.(request);
+        return {
+          data: {
+            contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+            status: 'planned',
+            reason: 'Two bounded outside-world motions.',
+            plans
+          },
+          usage,
+          generationId,
+          diagnostics: {
+            finishReason: 'stop',
+            nativeFinishReason: 'stop',
+            contentByteCount: 800,
+            contentSha256: '6'.repeat(64)
+          },
+          annotations: []
+        };
+      }
+    });
+
+  const typedMarket = {
+    market: 'New York City, New York, United States',
+    evidenceRef,
+    basis: 'approved_owner_canonical_root_local_business'
+  };
+  const typedMarketJob = structuredClone(job);
+  typedMarketJob.payload.commercialContext.profile.location = '';
+  typedMarketJob.payload.commercialContext.profile.serviceAreas = [];
+  typedMarketJob.payload.evidenceSnapshot.profile.identity.website =
+    'https://owner.example/';
+  typedMarketJob.payload.commercialContext.profile.approvedMarkets = [
+    typedMarket
+  ];
+  const typedMarketPlans = cases[0].plans(evidenceRef);
+  for (const motion of typedMarketPlans) {
+    motion.market = typedMarket.market;
+  }
+  let typedMarketRequest;
+  const typedMarketResult = await run(
+    typedMarketJob,
+    typedMarketPlans,
+    'generation-app-approved-owner-market',
+    (request) => {
+      typedMarketRequest = request;
+    }
+  );
+  const typedMarketPrompt = JSON.parse(typedMarketRequest?.user || '{}');
+  if (typedMarketResult.status !== 'planned' ||
+      typedMarketResult.plans.length !== 2 ||
+      typedMarketResult.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(
+        typedMarketPrompt.commercialContext?.profile?.approvedMarkets
+      ) !== JSON.stringify([typedMarket])) {
+    throw new Error(
+      `typed app-approved owner market did not bind exactly: ${JSON.stringify({ result: typedMarketResult, promptMarkets: typedMarketPrompt.commercialContext?.profile?.approvedMarkets })}`
+    );
+  }
+
+  for (const [index, invalidApprovedMarket] of [
+    {
+      ...typedMarket,
+      basis: 'approved_owner_article_local_business'
+    },
+    {
+      ...typedMarket,
+      evidenceRef: 'observation:missing-market-observation'
+    },
+    {
+      ...typedMarket,
+      summary: 'Lactation Consultant NYC'
+    }
+  ].entries()) {
+    const invalidTypedJob = structuredClone(typedMarketJob);
+    invalidTypedJob.payload.commercialContext.profile.location =
+      'Boston, Massachusetts, United States';
+    invalidTypedJob.payload.commercialContext.profile.approvedMarkets = [
+      invalidApprovedMarket
+    ];
+    const invalid = cases[0].plans(evidenceRef)[0];
+    invalid.id = `invalid_typed_market_${index + 1}`;
+    invalid.priority = 1;
+    invalid.market = typedMarket.market;
+    const valid = cases[0].plans(evidenceRef)[1];
+    valid.id = `valid_declared_location_${index + 1}`;
+    valid.priority = 2;
+    valid.market = 'Boston, Massachusetts, United States';
+    let invalidTypedRequest;
+    const result = await run(
+      invalidTypedJob,
+      [invalid, valid],
+      `generation-invalid-app-approved-owner-market-${index + 1}`,
+      (request) => {
+        invalidTypedRequest = request;
+      }
+    );
+    const prompt = JSON.parse(invalidTypedRequest?.user || '{}');
+    if (result.status !== 'planned' || result.plans.length !== 1 ||
+        result.plans[0]?.id !== valid.id ||
+        result.planSelection?.rejectedPlanCount !== 1 ||
+        prompt.commercialContext?.profile?.approvedMarkets !== undefined) {
+      throw new Error(
+        `invalid typed market provenance was not pruned independently: ${JSON.stringify({ invalidApprovedMarket, result, promptMarkets: prompt.commercialContext?.profile?.approvedMarkets })}`
+      );
+    }
+  }
+
+  const thirdPartyMarketJob = structuredClone(typedMarketJob);
+  thirdPartyMarketJob.payload.commercialContext.profile.location =
+    'Boston, Massachusetts, United States';
+  thirdPartyMarketJob.payload.evidenceSnapshot.sources[0].url =
+    'https://third-party.example/market';
+  thirdPartyMarketJob.payload.evidenceSnapshot.sourceEvidence[0].url =
+    'https://third-party.example/market';
+  const thirdPartyInvalid = cases[0].plans(evidenceRef)[0];
+  thirdPartyInvalid.market = typedMarket.market;
+  const thirdPartySibling = cases[0].plans(evidenceRef)[1];
+  thirdPartySibling.market = 'Boston, Massachusetts, United States';
+  const thirdPartyResult = await run(
+    thirdPartyMarketJob,
+    [thirdPartyInvalid, thirdPartySibling],
+    'generation-third-party-approved-market-rejected'
+  );
+  if (thirdPartyResult.status !== 'planned' ||
+      thirdPartyResult.plans.length !== 1 ||
+      thirdPartyResult.plans[0]?.id !== thirdPartySibling.id ||
+      thirdPartyResult.planSelection?.rejectedPlanCount !== 1) {
+    throw new Error(
+      `third-party observation authorized a typed owner market: ${JSON.stringify(thirdPartyResult)}`
+    );
+  }
+
+  const proseOnlyJob = structuredClone(typedMarketJob);
+  proseOnlyJob.payload.commercialContext.profile.approvedMarkets = [];
+  proseOnlyJob.payload.evidenceSnapshot.sources[0].url =
+    'https://owner.example/';
+  proseOnlyJob.payload.evidenceSnapshot.sourceEvidence[0].url =
+    'https://owner.example/';
+  proseOnlyJob.payload.evidenceSnapshot.sourceEvidence[0].label =
+    'Lactation Consultant NYC';
+  proseOnlyJob.payload.evidenceSnapshot.sourceEvidence[0].summary +=
+    ' An older article mentions Houston.';
+  const proseNYC = cases[0].plans(evidenceRef)[0];
+  proseNYC.market = typedMarket.market;
+  const proseHouston = cases[0].plans(evidenceRef)[1];
+  proseHouston.market = 'Houston, Texas, United States';
+  const proseOnlyResult = await run(
+    proseOnlyJob,
+    [proseNYC, proseHouston],
+    'generation-owner-prose-never-authorizes-market'
+  );
+  if (proseOnlyResult.status !== 'blocked' ||
+      proseOnlyResult.plans.length !== 0 ||
+      proseOnlyResult.planSelection?.rejectedPlanCount !== 2) {
+    throw new Error(
+      `owner title/summary prose was treated as approved geography: ${JSON.stringify(proseOnlyResult)}`
+    );
+  }
+
+  for (const [index, invalidMarket] of [
+    'Queens, New York',
+    'United States',
+    'Queens, California, United States',
+    'Remote'
+  ].entries()) {
+    const invalid = cases[0].plans(evidenceRef)[0];
+    invalid.id = `invalid_market_${index + 1}`;
+    invalid.priority = 1;
+    invalid.market = invalidMarket;
+    const valid = cases[0].plans(evidenceRef)[1];
+    valid.id = `grounded_market_${index + 1}`;
+    valid.priority = 2;
+    const result = await run(
+      job,
+      [invalid, valid],
+      `generation-market-salvage-${index + 1}`
+    );
+    const rejection = result.planSelection?.rejectedPlans?.find(
+      (item) => item.id === invalid.id
+    )?.reason || '';
+    if (result.status !== 'planned' ||
+        result.plans.length !== 1 ||
+        result.plans[0]?.id !== valid.id ||
+        result.plans[0]?.market !==
+          'Queens, New York, United States' ||
+        result.planSelection?.returnedPlanCount !== 2 ||
+        result.planSelection?.acceptedPlanCount !== 1 ||
+        result.planSelection?.rejectedPlanCount !== 1 ||
+        !/exact approved service-area, location, or remote-availability scope.*guessed, widened, or under-disambiguated geography/i.test(
+          rejection
+        ) ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `invalid market did not preserve its grounded sibling: ${JSON.stringify({ invalidMarket, result })}`
+      );
+    }
+  }
+
+  for (const [index, [approvedAlias, canonicalMarket]] of [
+    ['Queens', 'Queens, New York, United States'],
+    ['Manhattan', 'Manhattan, New York, United States'],
+    ['Brooklyn', 'Brooklyn, New York, United States'],
+    ['Bronx', 'Bronx, New York, United States'],
+    ['Staten Island', 'Staten Island, New York, United States'],
+    ['Long Island City', 'Long Island City, New York, United States'],
+    ['New York City', 'New York City, New York, United States'],
+    ['NYC', 'New York City, New York, United States']
+  ].entries()) {
+    const nycJob = structuredClone(job);
+    nycJob.payload.commercialContext.profile.location =
+      'Boston, MA, USA';
+    nycJob.payload.commercialContext.profile.serviceAreas = [
+      approvedAlias
+    ];
+    const plans = cases[0].plans(evidenceRef);
+    for (const motion of plans) motion.market = canonicalMarket;
+    const result = await run(
+      nycJob,
+      plans,
+      `generation-approved-nyc-alias-${index + 1}`
+    );
+    if (result.status !== 'planned' || result.plans.length !== 2 ||
+        result.planSelection?.rejectedPlanCount !== 0) {
+      throw new Error(
+        `approved NYC locality alias did not bind safely: ${JSON.stringify({ approvedAlias, canonicalMarket, result })}`
+      );
+    }
+  }
+
+  const portlandJob = structuredClone(job);
+  portlandJob.payload.commercialContext.profile.location =
+    'Boston, MA, USA';
+  portlandJob.payload.commercialContext.profile.serviceAreas = [
+    'Portland'
+  ];
+  for (const [index, invalidMarket] of [
+    'Portland',
+    'Portland, ME, USA',
+    'Portland, MA, USA'
+  ].entries()) {
+    const invalid = cases[0].plans(evidenceRef)[0];
+    invalid.id = `unsupported_portland_parent_${index + 1}`;
+    invalid.priority = 1;
+    invalid.market = invalidMarket;
+    const valid = cases[0].plans(evidenceRef)[1];
+    valid.id = `approved_boston_location_${index + 1}`;
+    valid.priority = 2;
+    valid.market = 'Boston, Massachusetts, United States';
+    const result = await run(
+      portlandJob,
+      [invalid, valid],
+      `generation-portland-parent-salvage-${index + 1}`
+    );
+    if (result.status !== 'planned' || result.plans.length !== 1 ||
+        result.plans[0]?.id !== valid.id ||
+        result.planSelection?.acceptedPlanCount !== 1 ||
+        result.planSelection?.rejectedPlanCount !== 1 ||
+        !/guessed, widened, or under-disambiguated geography/i.test(
+          result.planSelection?.rejectedPlans?.[0]?.reason || ''
+        )) {
+      throw new Error(
+        `bare Portland inherited an unsupported parent geography: ${JSON.stringify({ invalidMarket, result })}`
+      );
+    }
+  }
+
+  for (const [index, invalidMarket] of [
+    'Springfield, United States',
+    'Toronto, Canada'
+  ].entries()) {
+    const missingRegionJob = structuredClone(job);
+    missingRegionJob.payload.commercialContext.profile.location = 'Canada';
+    missingRegionJob.payload.commercialContext.profile.serviceAreas = [
+      invalidMarket
+    ];
+    const invalid = cases[0].plans(evidenceRef)[0];
+    invalid.id = `missing_approved_region_${index + 1}`;
+    invalid.priority = 1;
+    invalid.market = invalidMarket;
+    const valid = cases[0].plans(evidenceRef)[1];
+    valid.id = `explicit_country_sibling_${index + 1}`;
+    valid.priority = 2;
+    valid.market = 'Canada';
+    const result = await run(
+      missingRegionJob,
+      [invalid, valid],
+      `generation-missing-region-salvage-${index + 1}`
+    );
+    if (result.status !== 'planned' || result.plans.length !== 1 ||
+        result.plans[0]?.id !== valid.id ||
+        result.planSelection?.rejectedPlanCount !== 1) {
+      throw new Error(
+        `US/Canada locality without an approved region was accepted: ${JSON.stringify({ invalidMarket, result })}`
+      );
+    }
+  }
+
+  const canadaJob = structuredClone(job);
+  canadaJob.payload.commercialContext.profile.location =
+    'Toronto, ON, CAN';
+  canadaJob.payload.commercialContext.profile.serviceAreas = [
+    'London, ON, CAN'
+  ];
+  const canadaPlans = cases[0].plans(evidenceRef);
+  for (const motion of canadaPlans) {
+    motion.market = 'London, Ontario, Canada';
+  }
+  const canada = await run(
+    canadaJob,
+    canadaPlans,
+    'generation-canadian-region-country-aliases'
+  );
+  if (canada.status !== 'planned' || canada.plans.length !== 2 ||
+      canada.planSelection?.rejectedPlanCount !== 0) {
+    throw new Error(
+      `Canadian province/country aliases did not bind: ${JSON.stringify(canada)}`
+    );
+  }
+
+  const ukJob = structuredClone(job);
+  ukJob.payload.commercialContext.profile.location =
+    'London, England, UK';
+  ukJob.payload.commercialContext.profile.serviceAreas = [];
+  const ukPlans = cases[0].plans(evidenceRef);
+  for (const motion of ukPlans) {
+    motion.market = 'London, England, United Kingdom';
+  }
+  const uk = await run(
+    ukJob,
+    ukPlans,
+    'generation-uk-country-alias'
+  );
+  if (uk.status !== 'planned' || uk.plans.length !== 2 ||
+      uk.planSelection?.rejectedPlanCount !== 0) {
+    throw new Error(
+      `UK country alias did not bind: ${JSON.stringify(uk)}`
+    );
+  }
+
+  for (const [index, [approvedCountry, canonicalCountry]] of [
+    ['CAN', 'Canada'],
+    ['UK', 'United Kingdom']
+  ].entries()) {
+    const countryJob = structuredClone(job);
+    countryJob.payload.commercialContext.profile.location = approvedCountry;
+    countryJob.payload.commercialContext.profile.serviceAreas = [];
+    const plans = cases[0].plans(evidenceRef);
+    for (const motion of plans) motion.market = canonicalCountry;
+    const result = await run(
+      countryJob,
+      plans,
+      `generation-country-only-alias-${index + 1}`
+    );
+    if (result.status !== 'planned' || result.plans.length !== 2 ||
+        result.planSelection?.rejectedPlanCount !== 0) {
+      throw new Error(
+        `explicit country-only market did not bind: ${JSON.stringify({ approvedCountry, canonicalCountry, result })}`
+      );
+    }
+  }
+
+  const remoteJob = structuredClone(job);
+  remoteJob.payload.commercialContext.profile.availability =
+    'Available for remote professional work';
+  const remoteDemand = cases[1].plans(evidenceRef)[0];
+  remoteDemand.id = 'approved_remote_paid_demand';
+  remoteDemand.priority = 1;
+  remoteDemand.market = 'Remote';
+  const secondRemoteDemand = cases[1].plans(evidenceRef)[1];
+  secondRemoteDemand.id = 'approved_remote_solicitation';
+  secondRemoteDemand.priority = 2;
+  secondRemoteDemand.market = 'Remote';
+  const remote = await run(
+    remoteJob,
+    [remoteDemand, secondRemoteDemand],
+    'generation-approved-remote-market'
+  );
+  if (remote.status !== 'planned' || remote.plans.length !== 2 ||
+      remote.plans.some((motion) => motion.market !== 'Remote') ||
+      remote.planSelection?.rejectedPlanCount !== 0 ||
+      remote.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `explicit remote availability did not authorize the remote market: ${JSON.stringify(remote)}`
+    );
+  }
+
+  const qualifiedRemotePlans = cases[1].plans(evidenceRef);
+  qualifiedRemotePlans[0].market = 'Remote, United States';
+  qualifiedRemotePlans[1].market = 'Remote, USA';
+  const qualifiedRemote = await run(
+    remoteJob,
+    qualifiedRemotePlans,
+    'generation-approved-country-qualified-remote-market'
+  );
+  if (qualifiedRemote.status !== 'planned' ||
+      qualifiedRemote.plans.length !== 2 ||
+      qualifiedRemote.planSelection?.rejectedPlanCount !== 0) {
+    throw new Error(
+      `approved home country did not qualify Remote paid demand: ${JSON.stringify(qualifiedRemote)}`
+    );
+  }
+
+  const conflictingRemote = cases[1].plans(evidenceRef)[0];
+  conflictingRemote.id = 'conflicting_remote_country';
+  conflictingRemote.priority = 1;
+  conflictingRemote.market = 'Remote, Canada';
+  const approvedRemoteSibling = cases[1].plans(evidenceRef)[1];
+  approvedRemoteSibling.id = 'approved_remote_country_sibling';
+  approvedRemoteSibling.priority = 2;
+  approvedRemoteSibling.market = 'Remote, United States';
+  const remoteConflict = await run(
+    remoteJob,
+    [conflictingRemote, approvedRemoteSibling],
+    'generation-conflicting-remote-country-salvage'
+  );
+  if (remoteConflict.status !== 'planned' ||
+      remoteConflict.plans.length !== 1 ||
+      remoteConflict.plans[0]?.id !== approvedRemoteSibling.id ||
+      remoteConflict.planSelection?.rejectedPlanCount !== 1 ||
+      !/Remote.*country outside the approved home-country scope/i.test(
+        remoteConflict.planSelection?.rejectedPlans?.[0]?.reason || ''
+      )) {
+    throw new Error(
+      `conflicting Remote country was not pruned independently: ${JSON.stringify(remoteConflict)}`
+    );
+  }
+
+  for (const [index, professionalMotion] of [
+    cases[0].plans(evidenceRef)[0],
+    cases[2].plans(evidenceRef)[1]
+  ].entries()) {
+    professionalMotion.id = `forbidden_availability_remote_${index + 1}`;
+    professionalMotion.priority = 1;
+    professionalMotion.market = 'Remote';
+    const paidDemandSibling = structuredClone(remoteDemand);
+    paidDemandSibling.id = `remote_paid_demand_sibling_${index + 1}`;
+    paidDemandSibling.priority = 2;
+    const remoteRoleSalvage = await run(
+      remoteJob,
+      [professionalMotion, paidDemandSibling],
+      `generation-remote-role-salvage-${index + 1}`
+    );
+    if (remoteRoleSalvage.status !== 'planned' ||
+        remoteRoleSalvage.plans.length !== 1 ||
+        remoteRoleSalvage.plans[0]?.id !== paidDemandSibling.id ||
+        remoteRoleSalvage.planSelection?.rejectedPlanCount !== 1 ||
+        !/availability-based Remote.*professional target.*paid-demand artifact/i.test(
+          remoteRoleSalvage.planSelection?.rejectedPlans?.[0]?.reason || ''
+        )) {
+      throw new Error(
+        `availability-based Remote authorized a professional target: ${JSON.stringify(remoteRoleSalvage)}`
+      );
+    }
+  }
+
+  const explicitRemoteJob = structuredClone(job);
+  explicitRemoteJob.payload.commercialContext.profile.availability = '';
+  explicitRemoteJob.payload.commercialContext.profile.serviceAreas = [
+    'Remote'
+  ];
+  const explicitRemoteReferral = cases[0].plans(evidenceRef)[0];
+  explicitRemoteReferral.market = 'Remote';
+  const explicitRemoteBuyer = cases[2].plans(evidenceRef)[1];
+  explicitRemoteBuyer.market = 'Remote';
+  const explicitRemote = await run(
+    explicitRemoteJob,
+    [explicitRemoteReferral, explicitRemoteBuyer],
+    'generation-explicit-remote-service-area'
+  );
+  if (explicitRemote.status !== 'planned' ||
+      explicitRemote.plans.length !== 2 ||
+      explicitRemote.planSelection?.rejectedPlanCount !== 0) {
+    throw new Error(
+      `explicit Remote service area did not authorize professional targets: ${JSON.stringify(explicitRemote)}`
+    );
+  }
+
+  const negatedRemoteJob = structuredClone(job);
+  negatedRemoteJob.payload.commercialContext.profile.availability =
+    'Remote work is not available';
+  const negatedRemoteDemand = structuredClone(remoteDemand);
+  negatedRemoteDemand.id = 'negated_remote_paid_demand';
+  negatedRemoteDemand.priority = 1;
+  const localSibling = cases[0].plans(evidenceRef)[1];
+  localSibling.id = 'local_sibling_after_negated_remote';
+  localSibling.priority = 2;
+  const negatedRemote = await run(
+    negatedRemoteJob,
+    [negatedRemoteDemand, localSibling],
+    'generation-negated-remote-salvage'
+  );
+  if (negatedRemote.status !== 'planned' ||
+      negatedRemote.plans.length !== 1 ||
+      negatedRemote.plans[0]?.id !== localSibling.id ||
+      negatedRemote.planSelection?.rejectedPlanCount !== 1 ||
+      !/remote-availability scope.*geography is forbidden/i.test(
+        negatedRemote.planSelection?.rejectedPlans?.[0]?.reason || ''
+      )) {
+    throw new Error(
+      `negated remote availability authorized a remote market: ${JSON.stringify(negatedRemote)}`
     );
   }
 }
@@ -1603,6 +2132,9 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       ordinaryGrounding: ['t']
     }
   ];
+  for (const roleCase of roleCases) {
+    roleCase.candidate.market = 'Queens, New York, United States';
+  }
   const groundingRefs = (grounding, role) => role === 'd'
     ? grounding.d?.e || []
     : grounding[role] || [];
@@ -1871,6 +2403,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   ];
   for (const unauthorized of unauthorizedCases) {
     const candidate = structuredClone(unauthorized.candidate);
+    candidate.market = 'Queens, New York, United States';
     candidate.contingentFinalists = replaceExactRef(
       compactContingentFinalists(candidate.contingentFinalists),
       targetRef,
@@ -2023,8 +2556,8 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     paidOffer: 'Paid or reimbursable lactation home visit',
     evidenceRefs: [evidenceRef],
     query: 'pediatric practice serving newborn patients Queens New York',
-    market: 'Queens, New York',
-    targetRoleTerms: ['pediatrician', 'practice manager'],
+    market: 'Queens, New York, United States',
+    targetRoleTerms: ['pediatrician', 'pediatric physician'],
     organizationTerms: ['pediatric practice'],
     acquisitionMechanism: 'One review-first professional referral request',
     conversionDestination: 'The verified owner booking page',
@@ -2078,12 +2611,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       paidOffer: 'Paid consultation for email marketing',
       query: 'professional technology and marketing specialists Queens New York',
       targetRoleTerms: [
-        'email marketing director',
-        'contact database engineer',
-        'mobile phone repair owner',
-        'phone number portability specialist',
-        'contact information governance consultant',
-        'email address validation specialist'
+        'email marketing director'
       ],
       organizationTerms: ['marketing agency'],
       acquisitionMechanism:
@@ -2116,12 +2644,9 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       paidOffer: 'Paid phone consultation',
       evidenceRefs: [evidenceRef],
       query: 'telephone triage nurse Queens New York',
-      market: 'Queens, New York',
+      market: 'Queens, New York, United States',
       targetRoleTerms: [
-        'telephone triage nurse',
-        'Google Contacts app developer',
-        'transactional emails platform developer',
-        'lead list hygiene consultant'
+        'telephone triage nurse'
       ],
       organizationTerms: ['nurse-led health practice'],
       acquisitionMechanism:
@@ -2308,6 +2833,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
 
   const activeJob = cases[1].plans(evidenceRef)[0];
   activeJob.id = 'active_job_unused_sensitive_role_fields';
+  activeJob.market = 'Queens, New York, United States';
   activeJob.targetRoleTerms = ['postpartum patient'];
   activeJob.organizationTerms = ['pregnant people'];
   const activeResult = await run(
@@ -2330,6 +2856,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
 
   const publicDemand = cases[1].plans(evidenceRef)[1];
   publicDemand.id = 'public_demand_unused_sensitive_filter_fields';
+  publicDemand.market = 'Queens, New York, United States';
   publicDemand.targetRoleTerms = ['postpartum patient'];
   publicDemand.organizationTerms = ['pregnant people'];
   publicDemand.jobTitle = 'newborn patient';
@@ -2879,7 +3406,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     paidOffer: 'Paid advisory engagement',
     evidenceRefs: [evidenceRef],
     query: 'operations decision maker professional services firm',
-    market: 'United States',
+    market: 'Queens, New York, United States',
     targetRoleTerms: ['operations director'],
     organizationTerms: ['professional services firm'],
     acquisitionMechanism: 'One review-first tailored paid-service invitation',
@@ -2911,6 +3438,42 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         annotations: []
       })
     });
+
+  const coherentTitles = await run(candidate({
+    id: 'coherent_operations_title_family',
+    targetRoleTerms: [
+      'chief operating officer',
+      'head of operations'
+    ]
+  }), 'generation-coherent-professional-title-family');
+  if (coherentTitles.status !== 'planned' ||
+      coherentTitles.plans.length !== 2 ||
+      coherentTitles.planSelection?.rejectedPlanCount !== 0) {
+    throw new Error(
+      `coherent professional title synonyms were rejected: ${JSON.stringify(coherentTitles)}`
+    );
+  }
+
+  const mixedTitles = await run(candidate({
+    id: 'mixed_professional_title_families',
+    targetRoleTerms: [
+      'pediatrician',
+      'practice manager',
+      'midwife'
+    ],
+    organizationTerms: ['pediatric practice', 'birth center']
+  }), 'generation-mixed-professional-title-family-salvage');
+  if (mixedTitles.status !== 'planned' ||
+      mixedTitles.plans.length !== 1 ||
+      mixedTitles.planSelection?.acceptedPlanCount !== 1 ||
+      mixedTitles.planSelection?.rejectedPlanCount !== 1 ||
+      !/one coherent likely-current professional title family.*organization context only in organizationTerms/i.test(
+        mixedTitles.planSelection?.rejectedPlans?.[0]?.reason || ''
+      )) {
+    throw new Error(
+      `mixed professional title ORs were not pruned independently: ${JSON.stringify(mixedTitles)}`
+    );
+  }
 
   const rejectedRoutes = [
     ['referral_partner', 'inbound'],
@@ -3337,6 +3900,7 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
 
 async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
   const motion = cases[2].plans(evidenceRef)[0];
+  motion.market = 'Queens, New York, United States';
   const actions = [
     'After review, submit one paid application to {{TARGET_NAME}} through the official response page.',
     'After review, apply to {{TARGET_NAME}} through one paid-role application.',
@@ -3363,6 +3927,7 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
   }
 
   const artifactOnly = cases[2].plans(evidenceRef)[0];
+  artifactOnly.market = 'Queens, New York, United States';
   artifactOnly.contingentFinalists.familyA.d.a[0].l =
     'After review, submit one research report to {{TARGET_NAME}}.';
   artifactOnly.contingentFinalists.familyA.d.a[1].l =
@@ -4578,6 +5143,9 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
       scenarioPlans[primaryIndex],
       scenarioPlans.find((_, index) => index !== primaryIndex)
     ];
+    for (const motion of plans) {
+      motion.market = 'Queens, New York, United States';
+    }
     const originalFamilyActions = plans[0].contingentFinalists
       .familyA.d.a.map((action) => action.l);
     check.mutate(plans);
@@ -5503,7 +6071,7 @@ async function verifyTwoStageTargetBinding() {
     family.d.a = family.d.a.map((action, index) => ({
       ...action,
       l:
-        `After review via {{TARGET_URL}}, use permissioned outreach to ask {{TARGET_NAME}} to refer one buyer to a paid booking (${familyName}-${index + 1}).`
+        `After review via public professional profile {{TARGET_URL}}, use permissioned outreach to ask {{TARGET_NAME}} to refer one buyer to a paid booking (${familyName}-${index + 1}).`
     }));
   }
   let conflictingModeCalls = 0;
@@ -6784,6 +7352,56 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       discoveredAt: '2026-08-01T12:00:00Z'
     }
   };
+
+  const remoteEvidencePayload = structuredClone(
+    downstreamPayload.commercialDiscoveryEvidence
+  );
+  remoteEvidencePayload.market = 'Remote, United States';
+  remoteEvidencePayload.plan.plans[0].market =
+    'Remote, United States';
+  remoteEvidencePayload.candidates[0].market = 'Remote, New York';
+  remoteEvidencePayload.evidence[0].summary +=
+    ' This is a fully remote engagement open to consultants located in New York.';
+  const normalizedRemoteEvidence = normalizeCommercialDiscoveryEvidence(
+    remoteEvidencePayload,
+    now
+  );
+  if (normalizedRemoteEvidence.valid !== true ||
+      normalizedRemoteEvidence.candidates.length !== 1) {
+    throw new Error(
+      `affirmative remote provider evidence with an implied home country was rejected: ${JSON.stringify(normalizedRemoteEvidence)}`
+    );
+  }
+
+  for (const [index, mutateRemoteEvidence] of [
+    (payload) => {
+      payload.evidence[0].summary =
+        downstreamPayload.commercialDiscoveryEvidence.evidence[0].summary;
+    },
+    (payload) => {
+      payload.evidence[0].summary +=
+        ' This role is not remote and virtual work is unavailable in the United States.';
+    },
+    (payload) => {
+      payload.candidates[0].market = 'Remote, Ontario, Canada';
+      payload.evidence[0].summary =
+        `${downstreamPayload.commercialDiscoveryEvidence.evidence[0].summary} This is a remote engagement open only in Ontario, Canada.`;
+    }
+  ].entries()) {
+    const invalidRemoteEvidence = structuredClone(remoteEvidencePayload);
+    mutateRemoteEvidence(invalidRemoteEvidence);
+    const normalized = normalizeCommercialDiscoveryEvidence(
+      invalidRemoteEvidence,
+      now
+    );
+    if (normalized.valid !== false ||
+        normalized.rejectedReasons?.invalid_candidate !== 1) {
+      throw new Error(
+        `unsupported remote provider binding ${index + 1} was accepted: ${JSON.stringify(normalized)}`
+      );
+    }
+  }
+
   const unverifiedLiveDemandPayload = structuredClone(downstreamPayload);
   unverifiedLiveDemandPayload.commercialDiscoveryEvidence.evidence[0].kind =
     'verified_external_professional_identity';
@@ -6907,6 +7525,57 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       `paid-demand target protocol did not survive provider binding and critic: ${JSON.stringify({ criticIssue, requests: requests.length, result })}`
     );
   }
+
+  let oneAcceptedCriticCalls = 0;
+  const oneAccepted = await runOpportunityTournament({
+    job: {
+      id: 'job-paid-demand-one-critic-accepted',
+      kind: 'opportunity_tournament',
+      payload: structuredClone(downstreamPayload)
+    },
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      oneAcceptedCriticCalls += 1;
+      const task = JSON.parse(request.user || '{}');
+      const completion = acceptedCriticCompletion(
+        task.finalists || [],
+        'generation-paid-demand-one-critic-accepted'
+      );
+      const rejected = completion.data.comparisons[1];
+      rejected.verdict = 'reject';
+      rejected.activeRevenueAction = false;
+      rejected.causalAcquisitionPath = false;
+      rejected.incrementalRevenueOutcome = false;
+      rejected.reasonCode = 'unsupported_evidence';
+      rejected.reason =
+        'The runner-up is weaker and is not accepted as actionable.';
+      return completion;
+    }
+  });
+  const oneAcceptedCritic = oneAccepted.searchSpace?.commercialCritic;
+  if (oneAcceptedCriticCalls !== 1 ||
+      oneAccepted.status !== 'completed' ||
+      oneAccepted.result?.resultType !== 'immediate_revenue_action' ||
+      oneAccepted.hypotheses?.length !== 2 ||
+      oneAccepted.searchSpace?.retainedCount !==
+        oneAccepted.hypotheses?.length ||
+      oneAccepted.hypotheses?.[0]?.status !== 'winner' ||
+      oneAccepted.hypotheses?.[1]?.status !== 'critic_rejected' ||
+      oneAccepted.runnerUp !== null ||
+      !oneAccepted.winner ||
+      !/independent commercial critic/i.test(
+        oneAccepted.winner?.whyOverRunnerUp || ''
+      ) ||
+      oneAcceptedCritic?.comparisons?.length !== 2 ||
+      oneAcceptedCritic?.acceptedFinalistIds?.length !== 1 ||
+      oneAcceptedCritic?.rejectedFinalistCount !== 1 ||
+      oneAcceptedCritic?.verdict !== 'accepted' ||
+      oneAccepted.result?.incrementalRevenueGate?.passed !== true) {
+    throw new Error(
+      `one accepted finalist did not complete after the critic compared two: ${JSON.stringify({ calls: oneAcceptedCriticCalls, result: oneAccepted })}`
+    );
+  }
 }
 
 async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
@@ -6964,6 +7633,8 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
     completeJSON: async (request) => {
       requestSeen = request;
       const productionMotion = cases[0].plans(evidenceRef)[0];
+      productionMotion.market =
+        'New York, New York, United States';
       productionMotion.contingentFinalists = compactContingentFinalists(
         productionMotion.contingentFinalists
       );
@@ -7159,6 +7830,15 @@ function plannerJob(scenario) {
         maxLLMCalls: 1,
         maxOutputTokens: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
         hardStop: true
+      },
+      commercialContext: {
+        profile: {
+          profession: scenario.profile?.identity?.profession,
+          location: scenario.profile?.identity?.location,
+          availability: scenario.profile?.identity?.availability,
+          specialties: scenario.profile?.identity?.specialties,
+          serviceAreas: scenario.profile?.identity?.serviceAreas
+        }
       },
       evidenceSnapshot: {
         profile: scenario.profile,
