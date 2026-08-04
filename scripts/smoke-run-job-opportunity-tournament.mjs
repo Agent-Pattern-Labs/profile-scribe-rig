@@ -832,7 +832,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   }
   assertEqual(dimensions.r?.minItems, 1, 'generator schema lost its revenue path');
   assertEqual(dimensions.r?.maxItems, 1, 'generator schema allowed extra revenue paths');
-  assertEqual(call.envelope.temperature, 0, 'generator was nondeterministic');
+  assertEqual(call.envelope.temperature, undefined, 'generator must omit temperature for Luna require_parameters');
+  assertEqual(call.envelope.model, 'openai/gpt-5.6-luna', 'generator must use pinned Luna OpenRouter model');
   assertEqual(
     call.envelope.provider?.data_collection,
     'deny',
@@ -928,7 +929,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'openai/gpt-4.1-mini',
+          'openai/gpt-5.6-luna',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

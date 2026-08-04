@@ -57,7 +57,8 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION =
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE = 'exa';
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
-const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE = 1_047_576;
+// GPT-5.6 Luna native context window on OpenRouter (openai/gpt-5.6-luna).
+const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE = 1_050_000;
 
 const MAX_HYPOTHESES = 10_000;
 const MAX_FINALISTS = 20;
@@ -73,10 +74,15 @@ const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
 // only a ceiling on a provider's fixed per-request fee; it does not cap token
 // spend or the total price of a generation. Callers may tighten, but never
 // loosen, these tournament-specific caps.
+//
+// Pinned openai/gpt-5.6-luna OpenRouter list prices (2026-08): base $0.10/$0.60
+// per 1M, high-context (>=272k prompt) $0.20/$0.90 per 1M, no fixed request
+// fee. Caps use the high-context tier so a full-context web-search call stays
+// inside the preflight ceiling.
 const MAX_PROVIDER_PRICE = {
-  prompt: 0.4,
-  completion: 1.6,
-  request: 0.12
+  prompt: 0.2,
+  completion: 0.9,
+  request: 0
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
@@ -677,10 +683,12 @@ export function buildOpenRouterJSONRequestBody({
   maxTokens,
   provider,
   responseFormat,
-  plugins,
-  temperature
+  plugins
+  // temperature is intentionally not sent. The pinned tournament route
+  // (openai/gpt-5.6-luna) does not advertise temperature under OpenRouter
+  // require_parameters:true; including it filters the only allowed OpenAI
+  // route out.
 }) {
-  const requestedTemperature = Number(temperature);
   const requestedPlugins = asArray(plugins)
     .filter((item) =>
       item && typeof item === 'object' && !Array.isArray(item)
@@ -688,11 +696,6 @@ export function buildOpenRouterJSONRequestBody({
   const requestedMaxTokens = Number(maxTokens);
   return {
     model: firstText(model),
-    temperature: Number.isFinite(requestedTemperature) &&
-      requestedTemperature >= 0 &&
-      requestedTemperature <= 2
-      ? requestedTemperature
-      : 0.25,
     max_tokens: Number.isFinite(requestedMaxTokens) &&
       requestedMaxTokens > 0
       ? requestedMaxTokens
@@ -955,7 +958,6 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
         OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
       fixedToolFeeMicros:
         OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
-      temperature: 0.15
     };
     preflight = providerCallSpendPreflight(request, budget);
     const issue = providerPromptEnvelopeIssue(preflight);
@@ -5522,7 +5524,6 @@ async function runOpportunityTournamentCore({
             REPAIR_FAMILY_VARIANT_COUNT
           ),
         plugins: [{ id: 'response-healing' }],
-        temperature: 0,
         provider: {
           ...TOURNAMENT_PROVIDER_ROUTING,
           max_price: {
@@ -10228,7 +10229,6 @@ function boundedStrategyGenerationRequest({
         INITIAL_FAMILY_VARIANT_COUNT
       ),
       plugins: [{ id: 'response-healing' }],
-      temperature: 0,
       provider: {
         ...TOURNAMENT_PROVIDER_ROUTING,
         max_price: budget.providerMaxPrice
@@ -11539,7 +11539,7 @@ function providerCallSpendPreflight(requestValue, budgetValue) {
   const maxLLMSpendMicros =
     nonNegativeInteger(budget.maxLLMSpendMicros) || 0;
   const injectedContextTokenReserve = Math.min(
-    1_047_576,
+    OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
     nonNegativeInteger(request.additionalPromptTokenReserve) || 0
   );
   const fixedToolFeeMicros = Math.min(
@@ -11575,7 +11575,7 @@ function providerCallSpendPreflight(requestValue, budgetValue) {
   const serializedPromptTokenCeiling =
     requestByteCount + OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
   // Forced web search can inject provider-owned context after serialization.
-  // For the pinned GPT-4.1-mini route, use its complete native context window
+  // For the pinned GPT-5.6 Luna route, use its complete native context window
   // as the absolute prompt ceiling instead of adding it to the serialized
   // request (which would claim an impossible over-context request).
   const promptTokenCeiling = Math.max(
@@ -12733,7 +12733,6 @@ async function runCommercialCritic({
     ),
     responseFormat: commercialCriticResponseFormat(finalists),
     plugins: [{ id: 'response-healing' }],
-    temperature: 0,
     provider: {
       ...TOURNAMENT_PROVIDER_ROUTING,
       max_price: {

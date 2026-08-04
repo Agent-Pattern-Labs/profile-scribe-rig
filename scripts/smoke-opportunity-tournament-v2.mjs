@@ -2590,13 +2590,13 @@ async function verifyLengthFinishedStructuredRepair() {
       requests[1]?.maxTokens !== 4000 ||
       requests.some((request) =>
         request.model !== 'test/v2' ||
-        request.temperature !== 0 ||
+        request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !== '["openai"]' ||
         JSON.stringify(request.provider?.only) !== '["openai"]' ||
         request.provider?.allow_fallbacks !== false ||
         request.provider?.require_parameters !== true ||
-        request.provider?.max_price?.prompt !== 0.4 ||
-        request.provider?.max_price?.completion !== 1.6
+        request.provider?.max_price?.prompt !== 0.2 ||
+        request.provider?.max_price?.completion !== 0.9
       ) ||
       repairSchema?.properties?.familyA?.$ref !== '#/$defs/family' ||
       repairSchema?.properties?.familyB?.$ref !== '#/$defs/family' ||
@@ -2779,9 +2779,10 @@ async function verifyProviderSpendBudgetRecovery() {
       diagnostics: [{ finishReason: 'stop' }, { finishReason: 'stop' }],
       usages: [initialUsage, usage],
       budgetOverrides: {
-        // This authorizes the initial call, but not a repair after its full
-        // conservative ceiling is reserved for invalid cost accounting.
-        maxLLMSpendMicros: 250_000
+        // Authorizes the initial Luna-priced call, but not a repair once the
+        // full conservative first-call ceiling is reserved for invalid cost
+        // accounting (request fee is $0 for openai/gpt-5.6-luna).
+        maxLLMSpendMicros: 15_000
       },
       onRequest: () => {
         unreportedCalls += 1;
@@ -2802,7 +2803,7 @@ async function verifyProviderSpendBudgetRecovery() {
         unreported.searchSpace?.structuredRepair
           ?.initialCallSpendCeilingMicros <= 0 ||
         unreported.searchSpace?.structuredRepair
-          ?.initialFixedRequestFeeCeilingMicros !== 120_000 ||
+          ?.initialFixedRequestFeeCeilingMicros !== 0 ||
         unreported.searchSpace?.structuredRepair
           ?.repairCallSpendCeilingMicros <=
             unreported.searchSpace?.structuredRepair
@@ -3044,7 +3045,7 @@ async function verifyProviderSpendBudgetRecovery() {
   }
 
   const circularProvider = {
-    max_price: { prompt: 0.4, completion: 1.6, request: 0.12 }
+    max_price: { prompt: 0.2, completion: 0.9, request: 0 }
   };
   circularProvider.circular = circularProvider;
   const serializationFailureCeiling = providerCallSpendCeilingMicros({
@@ -3057,9 +3058,9 @@ async function verifyProviderSpendBudgetRecovery() {
   }, {
     maxLLMSpendMicros: 400_000,
     providerMaxPrice: {
-      prompt: 0.4,
-      completion: 1.6,
-      request: 0.12
+      prompt: 0.2,
+      completion: 0.9,
+      request: 0
     }
   });
   if (serializationFailureCeiling !== 400_001) {
@@ -3165,9 +3166,9 @@ async function verifyMaximumTournamentSpendCeiling() {
   const budget = {
     maxLLMSpendMicros: 400_000,
     providerMaxPrice: {
-      prompt: 0.4,
-      completion: 1.6,
-      request: 0.12
+      prompt: 0.2,
+      completion: 0.9,
+      request: 0
     }
   };
   const serializedInitial = serializeOpenRouterJSONRequestBody(
@@ -3220,8 +3221,8 @@ async function verifyMaximumTournamentSpendCeiling() {
       )?.url ||
       requests[0]?.maxTokens !== 10_000 ||
       requests[1]?.maxTokens !== 4_000 ||
-      repairTrace.initialFixedRequestFeeCeilingMicros !== 120_000 ||
-      repairTrace.repairFixedRequestFeeCeilingMicros !== 120_000 ||
+      repairTrace.initialFixedRequestFeeCeilingMicros !== 0 ||
+      repairTrace.repairFixedRequestFeeCeilingMicros !== 0 ||
       repairTrace.initialCallSpendCeilingMicros !== initialCeiling ||
       repairTrace.repairCallSpendCeilingMicros !== repairCeiling ||
       repairTrace.initialPromptTokenCanary?.requestBodyByteCount !==
