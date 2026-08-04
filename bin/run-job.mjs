@@ -39,7 +39,7 @@ Environment:
 
 const DEFAULT_OPENROUTER_MODEL = 'deepseek/deepseek-v4-pro';
 const DEFAULT_OPENROUTER_TOURNAMENT_MODEL = 'openai/gpt-5.6-luna';
-const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-4.8';
+const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-5';
 const DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 function argValue(name) {
