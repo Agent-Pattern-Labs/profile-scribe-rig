@@ -941,7 +941,7 @@ if (smallestCompactResponseReduction < 0.25 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyTypedCommercialMotionSelection(
@@ -7823,6 +7823,187 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
       )) {
     throw new Error(
       `production-shaped planner request did not compact adaptively: ${JSON.stringify({ overflowCalls, status: overflowResult.status, reason: overflowResult.reason, envelope: overflowEnvelope, promptEvidenceCount: visibleOverflowRefs.size, objectiveEvidenceRefs: overflowUser.objective?.evidenceRefs })}`
+    );
+  }
+
+  const maxCardinalityJob = structuredClone(productionJob);
+  const longValues = (label, count, repeat = 40) => Array.from(
+    { length: count },
+    (_, index) =>
+      `${label} ${index + 1} ${'bounded professional context '.repeat(repeat)}`
+  );
+  maxCardinalityJob.payload.objective.allowedChannels = [
+    'partner_channel',
+    ...longValues('Allowed research channel', 63)
+  ];
+  maxCardinalityJob.payload.objective.allowedActions = [
+    'research',
+    'recommend',
+    'review',
+    ...longValues('Review-only action', 61)
+  ];
+  maxCardinalityJob.payload.objective.constraints = [
+    'No outreach or publishing during research',
+    ...longValues('Approved commercial constraint', 63)
+  ];
+  const maxContext = maxCardinalityJob.payload.commercialContext;
+  maxContext.allowedChannels = [
+    'partner_channel',
+    ...longValues('Configured context channel', 31)
+  ];
+  maxContext.allowedActions = [
+    'research',
+    'recommend',
+    'review',
+    ...longValues('Configured context action', 29)
+  ];
+  maxContext.constraints = [
+    'No outreach or publishing during research',
+    ...longValues('Context constraint', 31)
+  ];
+  maxContext.profile.specialties = longValues('Verified specialty', 32);
+  maxContext.profile.serviceAreas = longValues('Verified service area', 32);
+  maxContext.profile.currentFocus = Array.from(
+    { length: 12 },
+    (_, index) => ({
+      name: `Current focus ${index + 1}`,
+      description: longValues('Source-backed focus', 1)[0],
+      status: 'current',
+      priority: 'high'
+    })
+  );
+  maxContext.distributionAccounts = Array.from(
+    { length: 20 },
+    (_, index) => ({
+      provider: `connected-provider-${index + 1}`,
+      status: 'connected',
+      mode: 'review',
+      capabilities: longValues('Capability', 12, 8)
+    })
+  );
+  maxContext.priorAttributedOutcomes = Array.from(
+    { length: 16 },
+    (_, index) => ({
+      kind: `paid_booking_${index + 1}`,
+      status: 'completed',
+      verified: true,
+      offer: longValues('Verified paid professional offer', 1, 8)[0],
+      buyerSegment: longValues('Verified professional buyer', 1, 8)[0],
+      channel: 'partner_channel',
+      action: longValues('Attributed review-first action', 1, 10)[0],
+      evidenceRefs: [evidenceRef],
+      attribution: {
+        objectiveId: `prior-objective-${index + 1}`,
+        tournamentId: `prior-tournament-${index + 1}`,
+        hypothesisId: `prior-hypothesis-${index + 1}`,
+        candidateId: `prior-candidate-${index + 1}`,
+        actionId: `prior-action-${index + 1}`,
+        evidenceExperimentId: `prior-experiment-${index + 1}`,
+        algorithmVersion: 'opportunity_tournament_v5',
+        experimentArm: 'treatment',
+        selectionProbability: 0.5
+      },
+      occurredAt: new Date(
+        now.getTime() - index * 60_000
+      ).toISOString()
+    })
+  );
+  let maxCardinalityRequestSeen;
+  let maxCardinalityCalls = 0;
+  const maxCardinalityResult = await runOpportunityDiscoveryPlanner({
+    job: maxCardinalityJob,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      maxCardinalityCalls += 1;
+      maxCardinalityRequestSeen = request;
+      const productionMotion = cases[0].plans(evidenceRef)[0];
+      productionMotion.market = 'New York, New York, United States';
+      productionMotion.contingentFinalists = compactContingentFinalists(
+        productionMotion.contingentFinalists
+      );
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: 'Two compact source-bound professional motions.',
+          plans: twoPlannerMotions(productionMotion, evidenceRef)
+        },
+        usage,
+        generationId: 'generation-max-cardinality-envelope',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '7'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const maxEnvelope =
+    maxCardinalityResult.preflight?.providerPromptEnvelope || {};
+  const maxAttempts = maxEnvelope.attempts || [];
+  const maxPrompt = JSON.parse(maxCardinalityRequestSeen?.user || '{}');
+  const maxVisibleRefs = new Set(
+    (maxPrompt.evidenceCatalog || []).map((item) => item.id)
+  );
+  const maxContextNodes =
+    maxPrompt.commercialEvidenceGraph?.nodes || [];
+  const attemptsStrictlyDecrease = maxAttempts.every(
+    (attempt, index) => index === 0 ||
+      attempt.requestBodyByteCount <
+        maxAttempts[index - 1].requestBodyByteCount
+  );
+  if (maxCardinalityCalls !== 1 ||
+      maxCardinalityResult.status !== 'planned' ||
+      maxEnvelope.profile !== 'essential' ||
+      maxEnvelope.originalRequestBodyByteCount <= 36 * 1_024 ||
+      maxEnvelope.requestBodyByteCount > 36 * 1_024 ||
+      maxAttempts.length !== 4 ||
+      !attemptsStrictlyDecrease ||
+      maxPrompt.objective?.outcome !==
+        maxCardinalityJob.payload.objective.outcome ||
+      maxPrompt.objective?.successMetric !==
+        maxCardinalityJob.payload.objective.successMetric ||
+      maxPrompt.objective?.allowedChannels?.length > 4 ||
+      JSON.stringify(maxPrompt.objective?.allowedActions) !==
+        JSON.stringify(['research', 'recommend', 'review']) ||
+      maxPrompt.objective?.constraints?.[0] !==
+        'No outreach or publishing during research' ||
+      maxPrompt.commercialContext?.profile?.profession !==
+        maxContext.profile.profession ||
+      maxPrompt.commercialContext?.profile?.location !==
+        maxContext.profile.location ||
+      maxPrompt.commercialContext?.priorAttributedOutcomes?.length !== 1 ||
+      maxPrompt.commercialContext?.priorAttributedOutcomes?.[0]
+        ?.attribution?.tournamentId !== 'prior-tournament-1' ||
+      maxPrompt.commercialContext?.permissionRequired !==
+        'explicit_user_approval' ||
+      !(maxPrompt.objective?.evidenceRefs || []).every((ref) =>
+        maxVisibleRefs.has(ref)
+      ) ||
+      !(maxPrompt.commercialContext?.priorAttributedOutcomes?.[0]
+        ?.evidenceRefs || []).every((ref) => maxVisibleRefs.has(ref)) ||
+      maxContextNodes.filter((node) =>
+        /^commercial_context:constraint:/i.test(node.evidenceRef)
+      ).length > 4 ||
+      maxContextNodes.filter((node) =>
+        /^commercial_context:allowed_channel:/i.test(node.evidenceRef)
+      ).length > 4 ||
+      maxContextNodes.filter((node) =>
+        /^commercial_context:prior_outcome:/i.test(node.evidenceRef)
+      ).length !== 1 ||
+      !maxContextNodes.some((node) =>
+        node.evidenceRef === 'commercial_context:profile' &&
+        node.provenance === 'user_declared'
+      ) ||
+      !maxContextNodes.some((node) =>
+        node.evidenceRef === 'commercial_context:prior_outcome:1' &&
+        node.provenance === 'verified_prior_outcome'
+      )) {
+    throw new Error(
+      `max-cardinality planner prompt was not bounded semantically: ${JSON.stringify({ calls: maxCardinalityCalls, status: maxCardinalityResult.status, reason: maxCardinalityResult.reason, envelope: maxEnvelope, objective: maxPrompt.objective, commercialContext: maxPrompt.commercialContext, contextNodes: maxContextNodes })}`
     );
   }
 }

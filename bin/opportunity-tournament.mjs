@@ -133,6 +133,139 @@ const MAX_PROVIDER_REQUEST_BODY_BYTES = 36 * 1_024;
 // though each individual family remains capped at twelve refs. The adaptive
 // prompt profiles share this exact model-visible evidence trust boundary.
 const MAX_DISCOVERY_PLAN_EVIDENCE_REFS = 14;
+// The exact serialized provider request is still the final authority. These
+// nested projection limits make every adaptive profile a strict subset of the
+// previous one so non-evidence context cannot defeat evidence compaction.
+const DISCOVERY_PLANNER_PROMPT_PROJECTION_LIMITS = {
+  standard: {
+    idChars: 120,
+    outcomeChars: 320,
+    successMetricChars: 320,
+    channelItems: 20,
+    channelChars: 80,
+    actionItems: 24,
+    actionChars: 100,
+    constraintItems: 20,
+    constraintChars: 240,
+    professionChars: 160,
+    locationChars: 120,
+    availabilityChars: 160,
+    specialtyItems: 16,
+    specialtyChars: 100,
+    serviceAreaItems: 16,
+    serviceAreaChars: 100,
+    approvedMarketItems: 16,
+    focusItems: 8,
+    focusNameChars: 120,
+    focusDescriptionChars: 240,
+    accountItems: 16,
+    accountProviderChars: 80,
+    accountCapabilityItems: 12,
+    accountCapabilityChars: 80,
+    priorOutcomeItems: 16,
+    priorOutcomeTextChars: 240,
+    priorOutcomeAttributionChars: 120,
+    graphConstraintNodes: 20,
+    graphChannelNodes: 20,
+    graphPriorOutcomeNodes: 16
+  },
+  dense: {
+    idChars: 112,
+    outcomeChars: 280,
+    successMetricChars: 280,
+    channelItems: 12,
+    channelChars: 72,
+    actionItems: 12,
+    actionChars: 88,
+    constraintItems: 10,
+    constraintChars: 176,
+    professionChars: 136,
+    locationChars: 104,
+    availabilityChars: 136,
+    specialtyItems: 10,
+    specialtyChars: 84,
+    serviceAreaItems: 10,
+    serviceAreaChars: 84,
+    approvedMarketItems: 8,
+    focusItems: 4,
+    focusNameChars: 104,
+    focusDescriptionChars: 184,
+    accountItems: 8,
+    accountProviderChars: 72,
+    accountCapabilityItems: 8,
+    accountCapabilityChars: 72,
+    priorOutcomeItems: 6,
+    priorOutcomeTextChars: 184,
+    priorOutcomeAttributionChars: 96,
+    graphConstraintNodes: 10,
+    graphChannelNodes: 12,
+    graphPriorOutcomeNodes: 6
+  },
+  focused: {
+    idChars: 104,
+    outcomeChars: 240,
+    successMetricChars: 240,
+    channelItems: 8,
+    channelChars: 64,
+    actionItems: 8,
+    actionChars: 76,
+    constraintItems: 6,
+    constraintChars: 144,
+    professionChars: 120,
+    locationChars: 96,
+    availabilityChars: 120,
+    specialtyItems: 6,
+    specialtyChars: 72,
+    serviceAreaItems: 6,
+    serviceAreaChars: 72,
+    approvedMarketItems: 4,
+    focusItems: 3,
+    focusNameChars: 96,
+    focusDescriptionChars: 152,
+    accountItems: 6,
+    accountProviderChars: 64,
+    accountCapabilityItems: 6,
+    accountCapabilityChars: 64,
+    priorOutcomeItems: 3,
+    priorOutcomeTextChars: 152,
+    priorOutcomeAttributionChars: 88,
+    graphConstraintNodes: 6,
+    graphChannelNodes: 8,
+    graphPriorOutcomeNodes: 3
+  },
+  essential: {
+    idChars: 96,
+    outcomeChars: 200,
+    successMetricChars: 200,
+    channelItems: 4,
+    channelChars: 56,
+    actionItems: 3,
+    actionChars: 64,
+    constraintItems: 4,
+    constraintChars: 112,
+    professionChars: 104,
+    locationChars: 88,
+    availabilityChars: 104,
+    specialtyItems: 4,
+    specialtyChars: 64,
+    serviceAreaItems: 4,
+    serviceAreaChars: 64,
+    approvedMarketItems: 2,
+    focusItems: 2,
+    focusNameChars: 88,
+    focusDescriptionChars: 120,
+    accountItems: 4,
+    accountProviderChars: 56,
+    accountCapabilityItems: 4,
+    accountCapabilityChars: 56,
+    priorOutcomeItems: 1,
+    priorOutcomeTextChars: 120,
+    priorOutcomeAttributionChars: 80,
+    graphConstraintNodes: 4,
+    graphChannelNodes: 4,
+    graphPriorOutcomeNodes: 1
+  }
+};
 const DISCOVERY_PLANNER_PROMPT_ENVELOPE_PROFILES = [
   {
     name: 'standard',
@@ -729,6 +862,9 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
   let preflight = {};
   let selectedProfile = 'standard';
   for (const profile of DISCOVERY_PLANNER_PROMPT_ENVELOPE_PROFILES) {
+    const projectionLimits =
+      DISCOVERY_PLANNER_PROMPT_PROJECTION_LIMITS[profile.name] ||
+      DISCOVERY_PLANNER_PROMPT_PROJECTION_LIMITS.essential;
     let selectedEvidenceRefs = standardEvidenceRefs;
     let maxItems = profile.maxItems;
     if (profile.name === 'focused') {
@@ -765,15 +901,24 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
       projectCommercialEvidenceGraphForPrompt(
         commercialEvidenceGraph,
         promptEvidenceCatalog,
-        { compactProjection: profile.compactGraph }
+        {
+          compactProjection: profile.compactGraph,
+          contextNodeLimits: projectionLimits
+        }
       );
     const promptObjective = projectObjectiveForPrompt(
       objective,
-      promptEvidenceCatalog
+      promptEvidenceCatalog,
+      projectionLimits
+    );
+    const promptCommercialContext = projectCommercialContextForPrompt(
+      commercialContext,
+      promptEvidenceCatalog,
+      projectionLimits
     );
     user = JSON.stringify({
       objective: promptObjective,
-      commercialContext,
+      commercialContext: promptCommercialContext,
       evidenceCatalog: promptEvidenceCatalog,
       commercialEvidenceGraph: promptCommercialEvidenceGraph,
       task:
@@ -9504,25 +9649,92 @@ function buildCommercialEvidenceGraph(evidenceCatalogValue, optionsValue = {}) {
   };
 }
 
+function boundedPromptGraphNodeRefs(nodesValue, maxItems, coverageRoles = []) {
+  const nodes = asArray(nodesValue).map(asObject);
+  const limit = Math.max(0, nonNegativeInteger(maxItems));
+  const selected = new Set();
+  const add = (nodeValue) => {
+    const node = asObject(nodeValue);
+    const evidenceRef = firstText(node.evidenceRef);
+    if (!evidenceRef || selected.size >= limit) return;
+    selected.add(evidenceRef);
+  };
+  for (const role of coverageRoles) {
+    add(nodes.find((node) =>
+      asArray(node.roles).includes(role) &&
+      !selected.has(firstText(node.evidenceRef))
+    ));
+  }
+  for (const node of nodes) add(node);
+  return selected;
+}
+
+function boundedCommercialContextGraphNodeRefs(nodesValue, limitsValue) {
+  const nodes = asArray(nodesValue).map(asObject);
+  const limits = asObject(limitsValue);
+  const refs = new Set();
+  const addGroup = (pattern, maxItems, coverageRoles = []) => {
+    const groupRefs = boundedPromptGraphNodeRefs(
+      nodes.filter((node) => pattern.test(firstText(node.evidenceRef))),
+      maxItems,
+      coverageRoles
+    );
+    for (const ref of groupRefs) refs.add(ref);
+  };
+  addGroup(/^commercial_context:profile$/i, 1);
+  addGroup(
+    /^commercial_context:constraint:/i,
+    limits.graphConstraintNodes,
+    [
+      'geographic_constraint',
+      'capacity_constraint',
+      'timing_constraint'
+    ]
+  );
+  addGroup(
+    /^commercial_context:allowed_channel:/i,
+    limits.graphChannelNodes
+  );
+  addGroup(
+    /^commercial_context:prior_outcome:/i,
+    limits.graphPriorOutcomeNodes,
+    ['defined_buyer', 'channel_fit', 'attribution']
+  );
+  addGroup(
+    /^commercial_context:(?!(?:profile|constraint:|allowed_channel:|prior_outcome:))/i,
+    2
+  );
+  return refs;
+}
+
 function projectCommercialEvidenceGraphForPrompt(
   graphValue,
   promptEvidenceCatalogValue,
   optionsValue = {}
 ) {
   const graph = asObject(graphValue);
-  const compactProjection =
-    asObject(optionsValue).compactProjection === true;
+  const options = asObject(optionsValue);
+  const compactProjection = options.compactProjection === true;
   const descriptiveChars = compactProjection ? 64 : 100;
   const allowedEvidenceRefs = new Set(
     asArray(promptEvidenceCatalogValue)
       .map((item) => firstText(asObject(item).id))
       .filter(Boolean)
   );
-  const nodes = asArray(graph.nodes)
-    .map(asObject)
+  const graphNodes = asArray(graph.nodes).map(asObject);
+  const contextNodeLimits = asObject(options.contextNodeLimits);
+  const boundedContextRefs = Object.keys(contextNodeLimits).length > 0
+    ? boundedCommercialContextGraphNodeRefs(
+        graphNodes,
+        contextNodeLimits
+      )
+    : null;
+  const nodes = graphNodes
     .filter((node) =>
-      /^commercial_context:/i.test(firstText(node.evidenceRef)) ||
-      allowedEvidenceRefs.has(firstText(node.evidenceRef))
+      /^commercial_context:/i.test(firstText(node.evidenceRef))
+        ? !boundedContextRefs ||
+          boundedContextRefs.has(firstText(node.evidenceRef))
+        : allowedEvidenceRefs.has(firstText(node.evidenceRef))
     )
     .map((node) => compact({
       evidenceRef: firstText(node.evidenceRef),
@@ -10162,17 +10374,228 @@ function essentialPromptEvidenceRefs(
   return standardEvidenceRefs.filter((ref) => essential.has(ref));
 }
 
-function projectObjectiveForPrompt(objectiveValue, evidenceCatalogValue) {
-  const objective = asObject(objectiveValue);
-  const visibleEvidenceRefs = new Set(
+function boundedPromptStrings(value, maxItems, maxChars) {
+  return compactStrings(
+    compactStrings(value)
+      .slice(0, Math.max(0, nonNegativeInteger(maxItems)))
+      .map((item) => truncate(item, maxChars))
+  );
+}
+
+function promptEvidenceRefSet(evidenceCatalogValue) {
+  return new Set(
     asArray(evidenceCatalogValue)
       .map((item) => firstText(asObject(item).id))
       .filter(Boolean)
   );
+}
+
+function projectPriorOutcomeForPrompt(
+  outcomeValue,
+  visibleEvidenceRefs,
+  limits
+) {
+  const outcome = asObject(outcomeValue);
+  const attribution = asObject(outcome.attribution);
   return compact({
-    ...objective,
+    kind: truncate(outcome.kind, Math.min(100,
+      limits.priorOutcomeTextChars)),
+    status: truncate(outcome.status, 60),
+    verified: outcome.verified === true ? true : undefined,
+    offer: truncate(outcome.offer, limits.priorOutcomeTextChars),
+    buyerSegment: truncate(
+      outcome.buyerSegment,
+      limits.priorOutcomeTextChars
+    ),
+    channel: truncate(outcome.channel, limits.channelChars),
+    action: truncate(outcome.action, limits.priorOutcomeTextChars),
+    evidenceRefs: compactStrings(outcome.evidenceRefs)
+      .filter((ref) => visibleEvidenceRefs.has(ref))
+      .slice(0, 8),
+    attribution: compact({
+      objectiveId: truncate(
+        attribution.objectiveId,
+        limits.priorOutcomeAttributionChars
+      ),
+      tournamentId: truncate(
+        attribution.tournamentId,
+        limits.priorOutcomeAttributionChars
+      ),
+      hypothesisId: truncate(
+        attribution.hypothesisId,
+        limits.priorOutcomeAttributionChars
+      ),
+      candidateId: truncate(
+        attribution.candidateId,
+        limits.priorOutcomeAttributionChars
+      ),
+      actionId: truncate(
+        attribution.actionId,
+        limits.priorOutcomeAttributionChars
+      ),
+      evidenceExperimentId: truncate(
+        attribution.evidenceExperimentId,
+        limits.priorOutcomeAttributionChars
+      ),
+      algorithmVersion: truncate(attribution.algorithmVersion, 80),
+      experimentArm: truncate(attribution.experimentArm, 80),
+      selectionProbability: Number.isFinite(
+        attribution.selectionProbability
+      )
+        ? attribution.selectionProbability
+        : undefined
+    }),
+    occurredAt: truncate(outcome.occurredAt, 48)
+  });
+}
+
+function projectCommercialContextForPrompt(
+  commercialContextValue,
+  evidenceCatalogValue,
+  limitsValue
+) {
+  const commercialContext = asObject(commercialContextValue);
+  const profile = asObject(commercialContext.profile);
+  const limits = asObject(limitsValue);
+  const visibleEvidenceRefs = promptEvidenceRefSet(evidenceCatalogValue);
+  const currentFocus = asArray(profile.currentFocus)
+    .slice(0, limits.focusItems)
+    .map(asObject)
+    .map((item) => compact({
+      name: truncate(item.name, limits.focusNameChars),
+      description: truncate(
+        item.description,
+        limits.focusDescriptionChars
+      ),
+      status: truncate(item.status, 40),
+      priority: truncate(item.priority, 40)
+    }))
+    .filter((item) => Object.keys(item).length > 0);
+  const approvedMarkets = asArray(profile.approvedMarkets)
+    .slice(0, limits.approvedMarketItems)
+    .map(asObject)
+    .map((item) => compact({
+      market: firstText(item.market),
+      evidenceRef: firstText(item.evidenceRef),
+      basis: firstText(item.basis)
+    }))
+    .filter((item) =>
+      item.market && item.evidenceRef && item.basis &&
+      visibleEvidenceRefs.has(item.evidenceRef)
+    );
+  const distributionAccounts = asArray(
+    commercialContext.distributionAccounts
+  )
+    .slice(0, limits.accountItems)
+    .map(asObject)
+    .map((account) => compact({
+      provider: truncate(
+        account.provider,
+        limits.accountProviderChars
+      ),
+      status: truncate(account.status, 40),
+      mode: truncate(account.mode, 40),
+      capabilities: boundedPromptStrings(
+        account.capabilities,
+        limits.accountCapabilityItems,
+        limits.accountCapabilityChars
+      )
+    }))
+    .filter((account) => Boolean(account.provider));
+  const priorAttributedOutcomes = asArray(
+    commercialContext.priorAttributedOutcomes
+  )
+    .filter((outcome) => asObject(outcome).verified === true)
+    .slice(0, limits.priorOutcomeItems)
+    .map((outcome) => projectPriorOutcomeForPrompt(
+      outcome,
+      visibleEvidenceRefs,
+      limits
+    ));
+  return compact({
+    allowedChannels: boundedPromptStrings(
+      commercialContext.allowedChannels,
+      limits.channelItems,
+      limits.channelChars
+    ),
+    allowedActions: boundedPromptStrings(
+      commercialContext.allowedActions,
+      limits.actionItems,
+      limits.actionChars
+    ),
+    constraints: boundedPromptStrings(
+      commercialContext.constraints,
+      limits.constraintItems,
+      limits.constraintChars
+    ),
+    profile: compact({
+      profession: truncate(profile.profession, limits.professionChars),
+      location: truncate(profile.location, limits.locationChars),
+      availability: truncate(
+        profile.availability,
+        limits.availabilityChars
+      ),
+      specialties: boundedPromptStrings(
+        profile.specialties,
+        limits.specialtyItems,
+        limits.specialtyChars
+      ),
+      serviceAreas: boundedPromptStrings(
+        profile.serviceAreas,
+        limits.serviceAreaItems,
+        limits.serviceAreaChars
+      ),
+      approvedMarkets,
+      currentFocus
+    }),
+    distributionAccounts,
+    priorAttributedOutcomes,
+    permissionRequired: truncate(
+      commercialContext.permissionRequired,
+      80
+    )
+  });
+}
+
+function projectObjectiveForPrompt(
+  objectiveValue,
+  evidenceCatalogValue,
+  limitsValue = DISCOVERY_PLANNER_PROMPT_PROJECTION_LIMITS.standard
+) {
+  const objective = asObject(objectiveValue);
+  const limits = asObject(limitsValue);
+  const visibleEvidenceRefs = promptEvidenceRefSet(evidenceCatalogValue);
+  return compact({
+    id: truncate(objective.id, limits.idChars),
+    outcome: truncate(objective.outcome, limits.outcomeChars),
+    successMetric: truncate(
+      objective.successMetric,
+      limits.successMetricChars
+    ),
+    targetCount: positiveInteger(objective.targetCount) || 1,
+    deadline: validISOString(objective.deadline),
+    estimatedValueMicros: nonNegativeInteger(
+      objective.estimatedValueMicros
+    ),
+    currency: truncate(objective.currency, 12),
+    allowedChannels: boundedPromptStrings(
+      objective.allowedChannels,
+      limits.channelItems,
+      limits.channelChars
+    ),
+    allowedActions: boundedPromptStrings(
+      objective.allowedActions,
+      limits.actionItems,
+      limits.actionChars
+    ),
+    constraints: boundedPromptStrings(
+      objective.constraints,
+      limits.constraintItems,
+      limits.constraintChars
+    ),
     evidenceRefs: compactStrings(objective.evidenceRefs)
       .filter((ref) => visibleEvidenceRefs.has(ref))
+      .slice(0, MAX_DISCOVERY_PLAN_EVIDENCE_REFS)
   });
 }
 
