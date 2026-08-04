@@ -7754,6 +7754,77 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
       `production-shaped planner request lacks bounded headroom: ${JSON.stringify({ requestBytes, evidenceCount: JSON.parse(requestSeen?.user || '{}').evidenceCatalog?.length, preflight: result.preflight, status: result.status, reason: result.reason })}`
     );
   }
+
+  const overflowJob = structuredClone(productionJob);
+  const overflowEvidence = overflowJob.payload.evidenceSnapshot.sourceEvidence;
+  overflowEvidence.forEach((item, index) => {
+    item.approvedSourceUrl = item.url;
+    item.publishedAt = new Date(now.getTime() - index * 60_000).toISOString();
+    item.startDate = '2026-01-01T00:00:00.000Z';
+    item.confidence = 'verified_current';
+  });
+  overflowJob.payload.objective.evidenceRefs = overflowEvidence
+    .slice(0, 20)
+    .map((item) => item.id);
+  overflowJob.payload.objective.allowedActions = Array.from(
+    { length: 8 },
+    (_, index) =>
+      `Review-only professional research permission ${index + 1} with no outreach, publishing, or provider writes`
+  );
+  let overflowRequestSeen;
+  let overflowCalls = 0;
+  const overflowResult = await runOpportunityDiscoveryPlanner({
+    job: overflowJob,
+    model: 'openai/gpt-4.1-mini',
+    now,
+    completeJSON: async (request) => {
+      overflowCalls += 1;
+      overflowRequestSeen = request;
+      const productionMotion = cases[0].plans(evidenceRef)[0];
+      productionMotion.market =
+        'New York, New York, United States';
+      productionMotion.contingentFinalists = compactContingentFinalists(
+        productionMotion.contingentFinalists
+      );
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: 'Two compact source-bound professional motions.',
+          plans: twoPlannerMotions(productionMotion, evidenceRef)
+        },
+        usage,
+        generationId: 'generation-production-shaped-adaptive-envelope',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '8'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const overflowEnvelope =
+    overflowResult.preflight?.providerPromptEnvelope || {};
+  const overflowUser = JSON.parse(overflowRequestSeen?.user || '{}');
+  const visibleOverflowRefs = new Set(
+    (overflowUser.evidenceCatalog || []).map((item) => item.id)
+  );
+  if (overflowCalls !== 1 ||
+      overflowResult.status !== 'planned' ||
+      overflowEnvelope.adaptiveCompactionAttempted !== true ||
+      overflowEnvelope.adaptiveCompactionApplied !== true ||
+      overflowEnvelope.originalRequestBodyByteCount <= 36 * 1_024 ||
+      overflowEnvelope.requestBodyByteCount > 36 * 1_024 ||
+      overflowEnvelope.profile === 'standard' ||
+      !(overflowUser.objective?.evidenceRefs || []).every((ref) =>
+        visibleOverflowRefs.has(ref)
+      )) {
+    throw new Error(
+      `production-shaped planner request did not compact adaptively: ${JSON.stringify({ overflowCalls, status: overflowResult.status, reason: overflowResult.reason, envelope: overflowEnvelope, promptEvidenceCount: visibleOverflowRefs.size, objectiveEvidenceRefs: overflowUser.objective?.evidenceRefs })}`
+    );
+  }
 }
 
 function assertTechnicalRecovery(result, calls, label) {

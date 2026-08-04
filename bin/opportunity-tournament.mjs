@@ -127,6 +127,50 @@ const MAX_PROMPT_EVIDENCE_LABEL_CHARS = 160;
 const MAX_PROMPT_EVIDENCE_SUMMARY_CHARS = 320;
 const MAX_PROMPT_EVIDENCE_URL_CHARS = 240;
 const MAX_PROVIDER_REQUEST_BODY_BYTES = 36 * 1_024;
+// The planner sees at most fourteen approved, non-target evidence records.
+// Its two family indexes can legitimately cite different subsets, so the
+// outer containment index must span that whole projected trust boundary even
+// though each individual family remains capped at twelve refs. The adaptive
+// prompt profiles share this exact model-visible evidence trust boundary.
+const MAX_DISCOVERY_PLAN_EVIDENCE_REFS = 14;
+const DISCOVERY_PLANNER_PROMPT_ENVELOPE_PROFILES = [
+  {
+    name: 'standard',
+    maxItems: MAX_DISCOVERY_PLAN_EVIDENCE_REFS,
+    labelChars: 96,
+    summaryChars: 160,
+    urlChars: 136,
+    coreMetadataOnly: false,
+    compactGraph: false
+  },
+  {
+    name: 'dense',
+    maxItems: MAX_DISCOVERY_PLAN_EVIDENCE_REFS,
+    labelChars: 80,
+    summaryChars: 112,
+    urlChars: 112,
+    coreMetadataOnly: true,
+    compactGraph: true
+  },
+  {
+    name: 'focused',
+    maxItems: 10,
+    labelChars: 72,
+    summaryChars: 104,
+    urlChars: 104,
+    coreMetadataOnly: true,
+    compactGraph: true
+  },
+  {
+    name: 'essential',
+    maxItems: 0,
+    labelChars: 64,
+    summaryChars: 96,
+    urlChars: 96,
+    coreMetadataOnly: true,
+    compactGraph: true
+  }
+];
 const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
   {
     name: 'standard',
@@ -176,11 +220,6 @@ const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 9_000;
 // carries only one shared path plus two tactic deltas, keeping the response
 // inside the fixed envelope without adding a model call.
 const MAX_DISCOVERY_PLANNER_PLANS = 2;
-// The planner sees at most fourteen approved, non-target evidence records.
-// Its two family indexes can legitimately cite different subsets, so the
-// outer containment index must span that whole projected trust boundary even
-// though each individual family remains capped at twelve refs.
-const MAX_DISCOVERY_PLAN_EVIDENCE_REFS = 14;
 // Leave a small serialization margin above the model-facing compactness
 // target while still rejecting unexpectedly verbose structured output.
 const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 28 * 1_024;
@@ -585,7 +624,7 @@ export async function runOpportunityDiscoveryPlanner({
     unvalidatedCommercialContext,
     evidenceCatalog
   );
-  const promptEvidenceCatalog = compactPromptEvidenceCatalog(
+  const initialPromptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
     objective,
     now,
@@ -609,11 +648,6 @@ export async function runOpportunityDiscoveryPlanner({
       constraints
     }
   );
-  const promptCommercialEvidenceGraph =
-    projectCommercialEvidenceGraphForPrompt(
-      commercialEvidenceGraph,
-      promptEvidenceCatalog
-    );
   const evidenceHash = stableHash(evidenceCatalog);
   const base = {
     contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
@@ -647,7 +681,8 @@ export async function runOpportunityDiscoveryPlanner({
       reason: 'Opportunity discovery planning requires research-only authority.'
     };
   }
-  if (evidenceCatalog.length === 0 || promptEvidenceCatalog.length === 0) {
+  if (evidenceCatalog.length === 0 ||
+      initialPromptEvidenceCatalog.length === 0) {
     return {
       ...base,
       reason: 'No approved professional evidence can ground an outside-world search plan.'
@@ -676,48 +711,142 @@ Routes: referral_person=professional_counterparty/referral_partner/partner_chann
 Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a exact: "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; no message/DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only referral query may name served population. professional/local: targetRoleTerms=one coherent current-title family; organizationTerms=context; job: jobTitle+skills; public demand: all four empty. Copy IDs/tokens exactly. Return strict JSON only.`;
-  const user = JSON.stringify({
-    objective,
-    commercialContext,
-    evidenceCatalog: promptEvidenceCatalog,
-    commercialEvidenceGraph: promptCommercialEvidenceGraph,
-    task:
-      'Plan the two strongest economically distinct outside-world searches most likely to reveal one exact, review-first path to payment within 30 days; rank by attributable payment probability, then time-to-cash and one-to-many or recurring leverage.',
-    outputContract: compactOpportunityDiscoveryOutputContract(),
-    hardRules: compactOpportunityDiscoveryHardRules(),
-    constraints: [
-      RESEARCH_ONLY_CONSTRAINT,
-      'Forced Exa returns <=5 sanitized URL citations; app adapters may make only separately budgeted bounded provider reads.'
-    ]
-  });
-  const request = {
-    model,
-    system,
-    user,
-    maxTokens: Math.min(
-      MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS,
-      Math.max(600, budget.maxOutputTokens)
-    ),
-    provider: {
-      ...TOURNAMENT_PROVIDER_ROUTING,
-      max_price: { ...budget.providerMaxPrice }
-    },
-    responseFormat: opportunityDiscoveryPlannerResponseFormat(
-      promptEvidenceCatalog,
-      allowedMotionKinds
-    ),
-    plugins: [{
-      id: 'web',
-      engine: OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE,
-      max_results: OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS
-    }],
-    additionalPromptTokenReserve:
-      OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
-    fixedToolFeeMicros:
-      OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
-    temperature: 0.15
+  const standardEvidenceRefs = initialPromptEvidenceCatalog
+    .map((item) => firstText(item.id))
+    .filter(Boolean);
+  const essentialEvidenceRefs = essentialPromptEvidenceRefs(
+    evidenceCatalog,
+    initialPromptEvidenceCatalog,
+    commercialEvidenceGraph,
+    { ...objective, evidenceRefs: [] },
+    now
+  );
+  const attempts = [];
+  let promptEvidenceCatalog = initialPromptEvidenceCatalog;
+  let promptCommercialEvidenceGraph = {};
+  let user = '';
+  let request = {};
+  let preflight = {};
+  let selectedProfile = 'standard';
+  for (const profile of DISCOVERY_PLANNER_PROMPT_ENVELOPE_PROFILES) {
+    let selectedEvidenceRefs = standardEvidenceRefs;
+    let maxItems = profile.maxItems;
+    if (profile.name === 'focused') {
+      selectedEvidenceRefs = boundedPromptEvidenceRefs(
+        standardEvidenceRefs,
+        essentialEvidenceRefs,
+        profile.maxItems
+      );
+      maxItems = selectedEvidenceRefs.length;
+    } else if (profile.name === 'essential') {
+      selectedEvidenceRefs = boundedPromptEvidenceRefs(
+        standardEvidenceRefs,
+        essentialEvidenceRefs,
+        essentialEvidenceRefs.length || 1
+      );
+      maxItems = selectedEvidenceRefs.length;
+    }
+    promptEvidenceCatalog = profile.name === 'standard'
+      ? initialPromptEvidenceCatalog
+      : compactPromptEvidenceCatalog(
+          evidenceCatalog,
+          objective,
+          now,
+          {
+            selectedEvidenceRefs,
+            maxItems,
+            labelChars: profile.labelChars,
+            summaryChars: profile.summaryChars,
+            urlChars: profile.urlChars,
+            coreMetadataOnly: profile.coreMetadataOnly
+          }
+        );
+    promptCommercialEvidenceGraph =
+      projectCommercialEvidenceGraphForPrompt(
+        commercialEvidenceGraph,
+        promptEvidenceCatalog,
+        { compactProjection: profile.compactGraph }
+      );
+    const promptObjective = projectObjectiveForPrompt(
+      objective,
+      promptEvidenceCatalog
+    );
+    user = JSON.stringify({
+      objective: promptObjective,
+      commercialContext,
+      evidenceCatalog: promptEvidenceCatalog,
+      commercialEvidenceGraph: promptCommercialEvidenceGraph,
+      task:
+        'Plan the two strongest economically distinct outside-world searches most likely to reveal one exact, review-first path to payment within 30 days; rank by attributable payment probability, then time-to-cash and one-to-many or recurring leverage.',
+      outputContract: compactOpportunityDiscoveryOutputContract(),
+      hardRules: compactOpportunityDiscoveryHardRules(),
+      constraints: [
+        RESEARCH_ONLY_CONSTRAINT,
+        'Forced Exa returns <=5 sanitized URL citations; app adapters may make only separately budgeted bounded provider reads.'
+      ]
+    });
+    request = {
+      model,
+      system,
+      user,
+      maxTokens: Math.min(
+        MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS,
+        Math.max(600, budget.maxOutputTokens)
+      ),
+      provider: {
+        ...TOURNAMENT_PROVIDER_ROUTING,
+        max_price: { ...budget.providerMaxPrice }
+      },
+      responseFormat: opportunityDiscoveryPlannerResponseFormat(
+        promptEvidenceCatalog,
+        allowedMotionKinds
+      ),
+      plugins: [{
+        id: 'web',
+        engine: OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE,
+        max_results: OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS
+      }],
+      additionalPromptTokenReserve:
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
+      fixedToolFeeMicros:
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
+      temperature: 0.15
+    };
+    preflight = providerCallSpendPreflight(request, budget);
+    const issue = providerPromptEnvelopeIssue(preflight);
+    attempts.push(compact({
+      profile: profile.name,
+      promptEvidenceCount: promptEvidenceCatalog.length,
+      promptEvidenceHash: stableHash(promptEvidenceCatalog),
+      serializationSucceeded: preflight.serializationSucceeded,
+      requestBodyByteCount: preflight.requestBodyByteCount,
+      withinEnvelope: !issue
+    }));
+    selectedProfile = profile.name;
+    if (!issue || issue === 'provider_request_serialization') break;
+  }
+  const firstAttempt = attempts[0] || {};
+  const finalAttempt = attempts[attempts.length - 1] || {};
+  preflight = {
+    ...preflight,
+    providerPromptEnvelope: compact({
+      authorized: !providerPromptEnvelopeIssue(preflight),
+      cause: providerPromptEnvelopeIssue(preflight),
+      profile: selectedProfile,
+      adaptiveCompactionAttempted: attempts.length > 1,
+      adaptiveCompactionApplied:
+        !providerPromptEnvelopeIssue(preflight) &&
+        selectedProfile !== 'standard',
+      originalRequestBodyByteCount: firstAttempt.requestBodyByteCount,
+      requestBodyByteCount: finalAttempt.requestBodyByteCount,
+      maxRequestBodyByteCount: MAX_PROVIDER_REQUEST_BODY_BYTES,
+      originalPromptEvidenceCount: firstAttempt.promptEvidenceCount,
+      promptEvidenceCount: finalAttempt.promptEvidenceCount,
+      essentialEvidenceCount: essentialEvidenceRefs.length,
+      essentialEvidenceHash: stableHash(essentialEvidenceRefs),
+      attempts
+    })
   };
-  const preflight = providerCallSpendPreflight(request, budget);
   const promptEnvelopeIssue = providerPromptEnvelopeIssue(preflight);
   if (promptEnvelopeIssue ||
       preflight.callSpendCeilingMicros > budget.maxLLMSpendMicros) {
@@ -10031,6 +10160,20 @@ function essentialPromptEvidenceRefs(
   // Preserve the standard deterministic order even when an adaptive profile
   // removes nonessential records.
   return standardEvidenceRefs.filter((ref) => essential.has(ref));
+}
+
+function projectObjectiveForPrompt(objectiveValue, evidenceCatalogValue) {
+  const objective = asObject(objectiveValue);
+  const visibleEvidenceRefs = new Set(
+    asArray(evidenceCatalogValue)
+      .map((item) => firstText(asObject(item).id))
+      .filter(Boolean)
+  );
+  return compact({
+    ...objective,
+    evidenceRefs: compactStrings(objective.evidenceRefs)
+      .filter((ref) => visibleEvidenceRefs.has(ref))
+  });
 }
 
 function compactPromptEvidenceCatalog(
