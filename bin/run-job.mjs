@@ -1117,16 +1117,18 @@ function opportunityTournamentProviderRecoveryExperiment(tournamentId) {
 }
 
 async function loadOpportunityTournamentContext(payload) {
-  const profile = await callMCPTool('read_profile', {});
-  const sources = await callMCPTool('read_sources', {});
+  const [profile, sources, sourceEvidenceRaw] = await Promise.all([
+    callMCPTool('read_profile', {}),
+    callMCPTool('read_sources', {}),
+    readSourceEvidence(
+      numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_EVIDENCE_LIMIT, 160)
+    )
+  ]);
   const sourceList = Array.isArray(sources) ? sources : [];
-  const sourceEvidence = await readSourceEvidence(
-    numberOr(process.env.PROFILESCRIBE_RIG_SOURCE_EVIDENCE_LIMIT, 160)
-  );
   return {
     profile,
     sources: sourceList,
-    sourceEvidence,
+    sourceEvidence: sourceEvidenceRaw,
     // Opportunity tournaments consume only persisted safe crawl evidence.
     // They neither fetch source URLs nor consume the global timeline feed.
     sourceExtracts: []
@@ -2985,7 +2987,8 @@ async function callOpenRouterJSON({
   provider,
   responseFormat,
   plugins,
-  temperature
+  temperature,
+  timeoutMs
 }) {
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
@@ -3001,16 +3004,37 @@ async function callOpenRouterJSON({
     temperature
   });
 
-  const response = await fetch(openRouterChatCompletionsURL(), {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://profilescribe.com',
-      'X-Title': 'ProfileScribe Rig'
-    },
-    body: requestBody
-  });
+  const controller = new AbortController();
+  const resolvedTimeoutMs = numberOr(
+    timeoutMs,
+    numberOr(process.env.PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS, 120_000)
+  );
+  const timer = setTimeout(() => controller.abort(), resolvedTimeoutMs);
+  let response;
+  try {
+    response = await fetch(openRouterChatCompletionsURL(), {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://profilescribe.com',
+        'X-Title': 'ProfileScribe Rig'
+      },
+      body: requestBody,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error(
+        `OpenRouter request timed out after ${resolvedTimeoutMs}ms`
+      );
+      timeoutError.openRouterFailureCode = 'openrouter_timeout';
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const body = await response.text();
   if (!response.ok) {

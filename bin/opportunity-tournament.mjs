@@ -933,6 +933,9 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
         'Forced Exa returns <=5 sanitized URL citations; app adapters may make only separately budgeted bounded provider reads.'
       ]
     });
+    const skipExaSearch = Boolean(
+      asObject(job?.payload).skipExaSearch
+    );
     request = {
       model,
       system,
@@ -949,15 +952,18 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
         promptEvidenceCatalog,
         allowedMotionKinds
       ),
-      plugins: [{
+      plugins: skipExaSearch ? [] : [{
         id: 'web',
         engine: OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE,
         max_results: OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS
       }],
-      additionalPromptTokenReserve:
-        OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
-      fixedToolFeeMicros:
-        OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
+      additionalPromptTokenReserve: skipExaSearch
+        ? 0
+        : OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
+      fixedToolFeeMicros: skipExaSearch
+        ? 0
+        : OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
+      timeoutMs: 120_000,
     };
     preflight = providerCallSpendPreflight(request, budget);
     const issue = providerPromptEnvelopeIssue(preflight);
@@ -5535,7 +5541,8 @@ async function runOpportunityTournamentCore({
               remainingSpendMicros / 1_000_000
             ))
           }
-        }
+        },
+        timeoutMs: 90_000
       };
       const repairProviderSpendPreflight =
         providerCallSpendPreflight(repairCompletionRequest, budget);
@@ -10232,7 +10239,8 @@ function boundedStrategyGenerationRequest({
       provider: {
         ...TOURNAMENT_PROVIDER_ROUTING,
         max_price: budget.providerMaxPrice
-      }
+      },
+      timeoutMs: 90_000
     };
     const preflight = providerCallSpendPreflight(request, budget);
     const issue = providerPromptEnvelopeIssue(preflight);
@@ -12742,7 +12750,8 @@ async function runCommercialCritic({
           remainingSpendMicros / 1_000_000
         ))
       }
-    }
+    },
+    timeoutMs: 60_000
   };
   const preflight = providerCallSpendPreflight(request, budget);
   const envelopeIssue = providerPromptEnvelopeIssue(preflight);
