@@ -351,7 +351,12 @@ const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
 ];
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
-const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 9_000;
+// The provider may pretty-print strict structured output. Keep enough token
+// headroom for that transport representation while the independently parsed,
+// minified plan remains capped by MAX_DISCOVERY_PLANNER_RESPONSE_BYTES. A
+// production two-motion trace exhausted 9,000 tokens at 45,055 raw bytes even
+// though representative parsed plans remain well inside the 28 KiB gate.
+const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
 // Call 1 must retain two economically distinct outside-world motions until
 // provider evidence can bind or reject them. Prematurely collapsing to one
 // motion lets a plausible but wrong route (for example, peer supplier pages
@@ -1062,6 +1067,7 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
   try {
     completion = await completeJSON(request);
   } catch (error) {
+    const failureCode = openRouterFailureCode(error);
     const providerMetadata = openRouterMetadata({
       model,
       purpose: 'opportunity_tournament_discovery_planning',
@@ -1071,11 +1077,13 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
       generationId: error?.openRouterGenerationId,
       diagnostics: error?.openRouterDiagnostics,
       promptHash,
-      error: openRouterFailureCode(error)
+      error: failureCode
     });
     return {
       ...base,
-      reason: 'The bounded discovery planner did not return a usable plan.',
+      reason: failureCode === 'openrouter_truncated_structured_output'
+        ? 'The discovery planner reached its bounded output limit before completing the structured plan.'
+        : 'The bounded discovery planner did not return a usable plan.',
       preflight: { ...preflight, authorized: true },
       usage: aggregateUsage([providerMetadata], budget),
       llm: { discoveryPlanner: providerMetadata }
@@ -9527,7 +9535,7 @@ function normalizeBudget(value) {
     // fails closed as technical recovery because an uncriticized result is
     // never immediate-action eligible.
     maxLLMCalls: clampInteger(raw.maxLLMCalls, 0, 2, 2),
-    maxOutputTokens: clampInteger(raw.maxOutputTokens, 600, 10_000, 8_000),
+    maxOutputTokens: clampInteger(raw.maxOutputTokens, 600, 16_000, 8_000),
     minimumScore: clampNumber(raw.minimumScore, 0.2, 0.9, 0.42),
     hardStop: raw.hardStop !== false
   };

@@ -20,8 +20,8 @@ const usage = {
 };
 const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 28 * 1024;
 const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 20 * 1024;
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 9_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 223_100;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 229_400;
 let largestPlannerResponseBytes = 0;
 let largestPlannerRequestBytes = 0;
 let largestPlannerContractBytes = 0;
@@ -5008,7 +5008,7 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
         ?.plans?.maxItems !== 2 ||
       result.status !== 'blocked' ||
       result.reason !==
-        'The bounded discovery planner did not return a usable plan.' ||
+        'The discovery planner reached its bounded output limit before completing the structured plan.' ||
       result.plans.length !== 0 ||
       result.usage?.calls !== 1 ||
       result.usage?.successfulCalls !== 0 ||
