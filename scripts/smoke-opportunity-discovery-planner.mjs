@@ -5060,8 +5060,13 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     description:
       'Agent-managed professional profiles and source-backed updates.',
     status: 'active',
-    priority: 'primary'
+    priority: 'primary',
+    evidenceRef: 'profile:focus:1'
   }];
+  job.payload.commercialSellerContract = {
+    requiredPrimaryFocus: 'ProfileScribe',
+    requiredEvidenceRefs: ['profile:focus:1']
+  };
   job.payload.evidenceSnapshot.profile.currentFocus = [{
     name: 'ProfileScribe',
     description:
@@ -5165,6 +5170,91 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
         'ProfileScribe paid professional-presence subscription') {
     throw new Error(
       `primary seller focus was not enforced: ${JSON.stringify({ prompt, result })}`
+    );
+  }
+
+  const projectedProfileJob = structuredClone(job);
+  projectedProfileJob.payload.evidenceSnapshot.profile.currentFocus = [];
+  const projectedProfileMotions = scenario.plans(evidenceRef).map(
+    (motion) => {
+      motion.paidOffer =
+        'ProfileScribe paid professional-presence subscription';
+      motion.evidenceRefs = [
+        ...motion.evidenceRefs,
+        sellerFocusEvidence.id
+      ];
+      motion.contingentFinalists = compactContingentFinalists(
+        motion.contingentFinalists
+      );
+      return motion;
+    }
+  );
+  let projectedRequest;
+  const projectedProfileResult = await runOpportunityDiscoveryPlanner({
+    job: projectedProfileJob,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      projectedRequest = request;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason:
+            'Compare two worker-bound ProfileScribe commercial motions.',
+          plans: projectedProfileMotions
+        },
+        usage,
+        generationId: 'generation-worker-seller-contract',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '9'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const projectedPrompt = JSON.parse(projectedRequest?.user || '{}');
+  if (projectedProfileResult.status !== 'planned' ||
+      projectedProfileResult.plans.length !== 2 ||
+      JSON.stringify(projectedPrompt.sellerContract) !== JSON.stringify({
+        requiredPrimaryFocus: 'ProfileScribe',
+        requiredEvidenceRefs: ['profile:focus:1']
+      }) ||
+      !projectedPrompt.evidenceCatalog?.some((item) =>
+        item.id === 'profile:focus:1' &&
+        item.type === 'current_focus' &&
+        item.priority === 'primary'
+      )) {
+    throw new Error(
+      `worker seller contract did not survive a divergent MCP profile projection: ${JSON.stringify({ projectedPrompt, projectedProfileResult })}`
+    );
+  }
+
+  const mismatchedWorkerContractJob = structuredClone(job);
+  mismatchedWorkerContractJob.payload.commercialSellerContract
+    .requiredEvidenceRefs = ['profile:focus:2'];
+  let mismatchedWorkerProviderCalls = 0;
+  const mismatchedWorkerContractResult =
+    await runOpportunityDiscoveryPlanner({
+      job: mismatchedWorkerContractJob,
+      model: 'openai/gpt-5.6-luna',
+      now,
+      completeJSON: async () => {
+        mismatchedWorkerProviderCalls += 1;
+        throw new Error('seller-contract preflight reached the provider');
+      }
+    });
+  if (mismatchedWorkerProviderCalls !== 0 ||
+      mismatchedWorkerContractResult.status !== 'blocked' ||
+      mismatchedWorkerContractResult.usage?.calls !== 0 ||
+      !/seller evidence reference is not present/i.test(
+        mismatchedWorkerContractResult.reason || ''
+      )) {
+    throw new Error(
+      `mismatched worker seller contract was not blocked before paid planning: ${JSON.stringify({ mismatchedWorkerProviderCalls, mismatchedWorkerContractResult })}`
     );
   }
 

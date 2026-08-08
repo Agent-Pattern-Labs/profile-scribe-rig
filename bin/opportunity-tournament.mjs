@@ -788,10 +788,16 @@ export async function runOpportunityDiscoveryPlanner({
     objective,
     constraints
   );
-  const evidenceCatalog = buildEvidenceCatalog(payload, context, now, {
-    commercialDiscovery: {},
-    includeSystemAttributionCapability: true
-  });
+  const workerSellerContract = normalizeCommercialSellerContract(
+    payload.commercialSellerContract
+  );
+  const evidenceCatalog = evidenceCatalogWithCommercialSellerFocus(
+    buildEvidenceCatalog(payload, context, now, {
+      commercialDiscovery: {},
+      includeSystemAttributionCapability: true
+    }),
+    unvalidatedCommercialContext
+  );
   const commercialContext = opportunityDiscoveryCommercialContextWithApprovedMarkets(
     unvalidatedCommercialContext,
     evidenceCatalog
@@ -800,10 +806,29 @@ export async function runOpportunityDiscoveryPlanner({
     commercialContext,
     evidenceCatalog
   );
-  const requiredSellerFocus = opportunityDiscoveryRequiredSellerFocus(
+  const derivedSellerFocus = opportunityDiscoveryRequiredSellerFocus(
     objective,
     commercialContext
   );
+  const requiredSellerFocus = firstText(
+    workerSellerContract.requiredPrimaryFocus,
+    derivedSellerFocus
+  );
+  const derivedSellerEvidenceRefs = sellerFocusEvidenceRefs(
+    evidenceCatalog,
+    requiredSellerFocus
+  );
+  const requiredSellerEvidenceRefs =
+    workerSellerContract.requiredEvidenceRefs.length > 0
+      ? workerSellerContract.requiredEvidenceRefs
+      : derivedSellerEvidenceRefs;
+  const sellerContractIssue = commercialSellerContractIssue({
+    workerSellerContract,
+    derivedSellerFocus,
+    requiredSellerFocus,
+    requiredSellerEvidenceRefs,
+    derivedSellerEvidenceRefs
+  });
   const initialPromptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
     objective,
@@ -859,6 +884,12 @@ export async function runOpportunityDiscoveryPlanner({
     return {
       ...base,
       reason: 'Opportunity discovery planning requires research-only authority.'
+    };
+  }
+  if (sellerContractIssue) {
+    return {
+      ...base,
+      reason: sellerContractIssue
     };
   }
   if (evidenceCatalog.length === 0 ||
@@ -972,10 +1003,7 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
       sellerContract: requiredSellerFocus
         ? {
             requiredPrimaryFocus: requiredSellerFocus,
-            requiredEvidenceRefs: sellerFocusEvidenceRefs(
-              promptEvidenceCatalog,
-              requiredSellerFocus
-            )
+            requiredEvidenceRefs: requiredSellerEvidenceRefs
           }
         : {},
       evidenceCatalog: promptEvidenceCatalog,
@@ -1154,7 +1182,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     referenceTime: now,
     webSearchReceipt,
     allowedMotionKinds,
-    requiredSellerFocus
+    requiredSellerFocus,
+    requiredSellerEvidenceRefs
   });
   normalized.plans = selection.plans;
   normalized.planSelection = selection.diagnostics;
@@ -1734,6 +1763,102 @@ function opportunityDiscoveryRequiredSellerFocus(
     )
     .map((focus) => truncate(firstText(focus.name), 120))
     .find((name) => exactTextContains(objectiveText, name)) || '';
+}
+
+function normalizeCommercialSellerContract(value) {
+  const raw = asObject(value);
+  const evidenceRefs = compactStrings(raw.requiredEvidenceRefs);
+  return {
+    provided: Boolean(value && typeof value === 'object' &&
+      !Array.isArray(value)),
+    requiredPrimaryFocus: truncate(
+      firstText(raw.requiredPrimaryFocus),
+      120
+    ),
+    requiredEvidenceRefs: evidenceRefs.filter((ref) =>
+      /^profile:focus:\d+$/i.test(ref)
+    ),
+    evidenceRefCount: evidenceRefs.length,
+    hasInvalidEvidenceRef: evidenceRefs.some((ref) =>
+      !/^profile:focus:\d+$/i.test(ref)
+    )
+  };
+}
+
+function evidenceCatalogWithCommercialSellerFocus(
+  evidenceCatalogValue,
+  commercialContextValue
+) {
+  const catalog = asArray(evidenceCatalogValue).map((item) => ({
+    ...asObject(item)
+  }));
+  const indexByID = new Map(catalog.map((item, index) => [
+    firstText(item.id),
+    index
+  ]));
+  for (const focusValue of asArray(
+    asObject(asObject(commercialContextValue).profile).currentFocus
+  )) {
+    const focus = asObject(focusValue);
+    const id = firstText(focus.evidenceRef);
+    const name = firstText(focus.name);
+    if (!/^profile:focus:\d+$/i.test(id) || !name ||
+        (firstText(focus.status) &&
+          comparable(focus.status) !== 'active') ||
+        comparable(focus.priority) !== 'primary') {
+      continue;
+    }
+    const projected = {
+      id,
+      type: 'current_focus',
+      label: truncate(name, 180),
+      summary: truncate(firstText(focus.description, name), 600),
+      status: firstText(focus.status, 'active'),
+      priority: 'primary',
+      confidence: 'high'
+    };
+    const existingIndex = indexByID.get(id);
+    if (existingIndex == null) {
+      indexByID.set(id, catalog.length);
+      catalog.push(projected);
+      continue;
+    }
+    catalog[existingIndex] = compact({
+      ...catalog[existingIndex],
+      ...projected
+    });
+  }
+  return catalog;
+}
+
+function commercialSellerContractIssue({
+  workerSellerContract: workerValue,
+  derivedSellerFocus,
+  requiredSellerFocus,
+  requiredSellerEvidenceRefs,
+  derivedSellerEvidenceRefs
+}) {
+  const worker = asObject(workerValue);
+  const workerFocus = firstText(worker.requiredPrimaryFocus);
+  if (worker.provided && requiredSellerFocus &&
+      (!workerFocus || worker.evidenceRefCount !== 1 ||
+        worker.hasInvalidEvidenceRef ||
+        asArray(worker.requiredEvidenceRefs).length !== 1)) {
+    return 'The control-plane seller contract omitted its single valid primary-focus evidence binding.';
+  }
+  if (workerFocus && (!derivedSellerFocus ||
+      comparable(workerFocus) !== comparable(derivedSellerFocus))) {
+    return 'The control-plane seller contract does not match the objective-bound active primary focus.';
+  }
+  if (!requiredSellerFocus) return '';
+  if (asArray(requiredSellerEvidenceRefs).length !== 1) {
+    return 'The control-plane seller contract omitted its single approved primary-focus evidence reference.';
+  }
+  const derived = new Set(compactStrings(derivedSellerEvidenceRefs));
+  if (!derived.has(firstText(requiredSellerEvidenceRefs[0]))) {
+    return 'The control-plane seller evidence reference is not present in the approved planner evidence catalog.';
+  }
+  return '';
 }
 
 function evidenceTextSupportsSellerFocus(evidenceValue, focusValue) {
@@ -3417,7 +3542,8 @@ function selectValidOpportunityDiscoveryPlans({
   referenceTime,
   webSearchReceipt,
   allowedMotionKinds: allowedMotionKindsValue,
-  requiredSellerFocus = ''
+  requiredSellerFocus = '',
+  requiredSellerEvidenceRefs: requiredSellerEvidenceRefsValue = []
 }) {
   const raw = asObject(rawValue);
   const envelope = {
@@ -3428,10 +3554,11 @@ function selectValidOpportunityDiscoveryPlans({
   const allowedMotionKinds = new Set(
     asArray(allowedMotionKindsValue).map(firstText).filter(Boolean)
   );
-  const sellerEvidenceRefs = sellerFocusEvidenceRefs(
-    evidenceCatalog,
-    requiredSellerFocus
-  );
+  const sellerEvidenceRefs = compactStrings(
+    requiredSellerEvidenceRefsValue
+  ).length > 0
+    ? compactStrings(requiredSellerEvidenceRefsValue)
+    : sellerFocusEvidenceRefs(evidenceCatalog, requiredSellerFocus);
   if (envelopeIssue || firstText(envelope.status) !== 'planned') {
     return {
       plans: asArray(envelope.plans),
@@ -9774,7 +9901,10 @@ function normalizeCommercialContext(payloadValue, objectiveValue, constraintsVal
       name: truncate(firstText(item.name, item.title), 120),
       description: truncate(firstText(item.description, item.summary), 240),
       status: truncate(firstText(item.status), 40),
-      priority: truncate(firstText(item.priority), 40)
+      priority: truncate(firstText(item.priority), 40),
+      evidenceRef: /^profile:focus:\d+$/i.test(firstText(item.evidenceRef))
+        ? firstText(item.evidenceRef)
+        : undefined
     }))
     .filter((item) => Boolean(item.name || item.description));
   return {
