@@ -480,6 +480,8 @@ for (const scenario of cases) {
     );
   }
   const plannerPrompt = JSON.parse(requestSeen.user || '{}');
+  const plannerPlanSchema = requestSeen.responseFormat?.json_schema
+    ?.schema?.properties?.plans?.items?.properties || {};
   const contingentResponseSchema = requestSeen.responseFormat?.json_schema
     ?.schema?.properties?.plans?.items?.properties?.contingentFinalists;
   const contingentProperties = contingentResponseSchema?.properties || {};
@@ -489,6 +491,10 @@ for (const scenario of cases) {
   const followUpEvidenceSchema = plannerDefinitions.followUpItem
     ?.properties?.e || {};
   const followUpLabelPattern = plannerDefinitions.followUpItem
+    ?.properties?.l?.pattern || '';
+  const channelLabelPattern = plannerDefinitions.channelItem
+    ?.properties?.l?.pattern || '';
+  const actionLabelPattern = plannerDefinitions.actionItem
     ?.properties?.l?.pattern || '';
   const promptWithoutContract = { ...plannerPrompt };
   delete promptWithoutContract.outputContract;
@@ -532,6 +538,17 @@ for (const scenario of cases) {
         ?.plans?.items?.required?.includes('motionKind') ||
       !requestSeen.responseFormat?.json_schema?.schema?.properties
         ?.plans?.items?.required?.includes('demandArtifactKind') ||
+      JSON.stringify(plannerPlanSchema.acquisitionMechanism?.enum) !==
+        JSON.stringify([
+          'Review-first public professional profile',
+          'Review-first official paid-demand page'
+        ]) ||
+      !/Review-first public professional profile.*TARGET_URL.*Review-first official paid-demand page.*TARGET_URL/is.test(
+        channelLabelPattern
+      ) ||
+      !/After review via public professional profile.*TARGET_URL.*ask.*TARGET_NAME.*After review via official paid-demand page.*TARGET_URL.*apply\|bid\|respond\|submit.*TARGET_NAME/is.test(
+        actionLabelPattern
+      ) ||
       !contingentProperties.pathBase ||
       !contingentProperties.tacticA ||
       !contingentProperties.tacticB ||
@@ -614,7 +631,7 @@ for (const scenario of cases) {
         requestSeen.responseFormat?.json_schema?.schema?.$defs
           ?.actionItem?.properties?.l?.pattern || ''
       ) ||
-      !/active cash ask:.*paid partner referral.*target purchase\/booking.*paid-demand response.*no setup\/support\/follow-up/is.test(
+      !/active cash ask.*paid partner referral.*target purchase\/booking.*paid-demand response.*no private contact.*setup.*support.*follow-up/is.test(
         requestSeen.responseFormat?.json_schema?.schema?.$defs
           ?.actionItem?.properties?.l?.description || ''
       ) ||
@@ -637,6 +654,11 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
+        /acquisitionMechanism exact.*buyer\/referral="Review-first public professional profile".*paid_demand="Review-first official paid-demand page"/is.test(
+          rule
+        )
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
         /buyer\/referral c\+a: use that exact form.*URL=HTTPS LinkedIn \/in.*no message\/DM\/InMail\/connect\/email\/phone\/form/is.test(
           rule
         )
@@ -647,6 +669,9 @@ for (const scenario of cases) {
         )
       ) ||
       !/projects r\.c per tactic/is.test(
+        requestSeen.system || ''
+      ) ||
+      !/acquisitionMechanism is exact and structural.*buyer\/referral="Review-first public professional profile".*paid_demand="Review-first official paid-demand page"/is.test(
         requestSeen.system || ''
       ) ||
       !/referral_partner=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*buyer=ask target to book\/buy\/sign current paid offer.*paid_demand=typed paid application\/proposal response.*marketplace\/directory placement are invalid/is.test(
@@ -2641,6 +2666,24 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
   if (allowed.status !== 'planned' || allowed.plans.length !== 2) {
     throw new Error(
       `professional referral population query was rejected: ${JSON.stringify(allowed)}`
+    );
+  }
+
+  const crossedCanonicalRoute = await run(
+    baseReferral({
+      id: 'crossed_canonical_public_route',
+      acquisitionMechanism: 'Review-first official paid-demand page'
+    }),
+    'generation-crossed-canonical-public-route'
+  );
+  if (crossedCanonicalRoute.status !== 'planned' ||
+      crossedCanonicalRoute.plans.length !== 2 ||
+      crossedCanonicalRoute.plans.find(
+        (item) => item.id === 'crossed_canonical_public_route'
+      )?.acquisitionMechanism !==
+        'Review-first public professional profile') {
+    throw new Error(
+      `canonical public-route role projection failed: ${JSON.stringify(crossedCanonicalRoute)}`
     );
   }
 

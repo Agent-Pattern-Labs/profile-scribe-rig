@@ -133,6 +133,7 @@ const MAX_PROMPT_EVIDENCE_LABEL_CHARS = 160;
 const MAX_PROMPT_EVIDENCE_SUMMARY_CHARS = 320;
 const MAX_PROMPT_EVIDENCE_URL_CHARS = 240;
 const MAX_PROVIDER_REQUEST_BODY_BYTES = 36 * 1_024;
+const DISCOVERY_PLANNER_TARGET_REQUEST_BODY_BYTES = 35 * 1_024;
 // The planner sees at most fourteen approved, non-target evidence records.
 // Its two family indexes can legitimately cite different subsets, so the
 // outer containment index must span that whole projected trust boundary even
@@ -431,6 +432,14 @@ const DISCOVERY_PLAN_ACQUISITION_MODES_BY_ROLE = new Map([
     'paid_demand',
     new Set(['inbound', 'permissioned_outreach', 'partner_channel'])
   ]
+]);
+const DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION =
+  'Review-first public professional profile';
+const DISCOVERY_PAID_DEMAND_ACQUISITION =
+  'Review-first official paid-demand page';
+const DISCOVERY_PLAN_ACQUISITION_MECHANISMS = new Set([
+  DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION,
+  DISCOVERY_PAID_DEMAND_ACQUISITION
 ]);
 
 const DEFAULT_JUDGE_WEIGHTS = {
@@ -850,6 +859,7 @@ Plans prove no target, interest, relationship, budget, or permission. buyer alwa
 Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas.
 Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
 Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a exact: "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; no message/DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
+acquisitionMechanism is exact and structural: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page". paid_demand c+a use that official page and {{TARGET_URL}}; never name a private contact route.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only referral query may name served population. professional/local: targetRoleTerms=one coherent current-title family; organizationTerms=context; job: jobTitle+skills; public demand: all four empty. Copy IDs/tokens exactly. Return strict JSON only.`;
   const standardEvidenceRefs = initialPromptEvidenceCatalog
@@ -970,16 +980,20 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     };
     preflight = providerCallSpendPreflight(request, budget);
     const issue = providerPromptEnvelopeIssue(preflight);
+    const withinTarget = !issue &&
+      preflight.requestBodyByteCount <=
+        DISCOVERY_PLANNER_TARGET_REQUEST_BODY_BYTES;
     attempts.push(compact({
       profile: profile.name,
       promptEvidenceCount: promptEvidenceCatalog.length,
       promptEvidenceHash: stableHash(promptEvidenceCatalog),
       serializationSucceeded: preflight.serializationSucceeded,
       requestBodyByteCount: preflight.requestBodyByteCount,
-      withinEnvelope: !issue
+      withinEnvelope: !issue,
+      withinTarget
     }));
     selectedProfile = profile.name;
-    if (!issue || issue === 'provider_request_serialization') break;
+    if (withinTarget || issue === 'provider_request_serialization') break;
   }
   const firstAttempt = attempts[0] || {};
   const finalAttempt = attempts[attempts.length - 1] || {};
@@ -996,6 +1010,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
       originalRequestBodyByteCount: firstAttempt.requestBodyByteCount,
       requestBodyByteCount: finalAttempt.requestBodyByteCount,
       maxRequestBodyByteCount: MAX_PROVIDER_REQUEST_BODY_BYTES,
+      targetRequestBodyByteCount:
+        DISCOVERY_PLANNER_TARGET_REQUEST_BODY_BYTES,
       originalPromptEvidenceCount: firstAttempt.promptEvidenceCount,
       promptEvidenceCount: finalAttempt.promptEvidenceCount,
       essentialEvidenceCount: essentialEvidenceRefs.length,
@@ -1255,7 +1271,19 @@ function opportunityDiscoveryPlannerResponseFormat(
     scores: contingentSchema.$defs.scores,
     offerItem: boundedItemDefinition('offerItem'),
     buyerItem: boundedItemDefinition('buyerItem'),
-    channelItem: boundedItemDefinition('channelItem'),
+    channelItem: {
+      ...asObject(contingentSchema.$defs.channelItem),
+      properties: {
+        ...asObject(asObject(contingentSchema.$defs.channelItem).properties),
+        l: {
+          type: 'string',
+          pattern:
+            '^(?:Review-first public professional profile \\{\\{TARGET_URL\\}\\}|Review-first official paid-demand page \\{\\{TARGET_URL\\}\\}): [^\\r\\n]{1,72}$',
+          description:
+            'One review-only public route bound to TARGET_URL; no private contact medium, message, connection, form, or execution claim.'
+        }
+      }
+    },
     actionItem: {
       ...contingentActionItem,
       properties: {
@@ -1263,9 +1291,9 @@ function opportunityDiscoveryPlannerResponseFormat(
         l: {
           type: 'string',
           pattern:
-            '^[^\\r\\n]{0,72}\\{\\{TARGET_NAME\\}\\}[^\\r\\n]{0,72}$',
+            '^(?:After review via public professional profile \\{\\{TARGET_URL\\}\\}, ask \\{\\{TARGET_NAME\\}\\} [^\\r\\n]{1,96}|After review via official paid-demand page \\{\\{TARGET_URL\\}\\}, (?:apply|bid|respond|submit) [^\\r\\n]{0,56}\\{\\{TARGET_NAME\\}\\}[^\\r\\n]{1,80})$',
           description:
-            'Active cash ask: paid partner referral, target purchase/booking, or paid-demand response; no setup/support/follow-up.'
+            'Active cash ask through the one review-only public route: paid partner referral, target purchase/booking, or paid-demand response; no private contact, setup, support, or follow-up.'
         }
       }
     },
@@ -1432,7 +1460,12 @@ function opportunityDiscoveryPlannerResponseFormat(
                 organizationTerms: boundedStringArray(6),
                 jobTitle: boundedText(100, true),
                 skills: boundedStringArray(6),
-                acquisitionMechanism: boundedText(180),
+                acquisitionMechanism: {
+                  type: 'string',
+                  enum: [...DISCOVERY_PLAN_ACQUISITION_MECHANISMS],
+                  description:
+                    'Use the public-professional-profile value for buyer/referral routes and the official-paid-demand-page value for paid-demand routes.'
+                },
                 conversionDestination: boundedText(180),
                 paidConversion: boundedText(140),
                 attributionSignal: boundedText(180),
@@ -1600,6 +1633,7 @@ function compactOpportunityDiscoveryHardRules() {
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. paid demand needs employer_job_posting or buyer_rfp/rfq/tender/procurement_notice/paid_request. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional paid artifact.',
     'Adapters: professional=person/single; local_org=person/org->decision-maker(1-6); never terminal org; targetRoleTerms=1 title family; organizationTerms=context.',
+    'acquisitionMechanism exact: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page".',
     'buyer/referral c+a: use that exact form; URL=HTTPS LinkedIn /in; no message/DM/InMail/connect/email/phone/form.',
     'No sensitive/private targets; population only in referral query. No external writes.'
   ];
@@ -1638,7 +1672,11 @@ function typedDiscoveryMotionRoute(planValue) {
     routeContractVersion: COMMERCIAL_MOTION_ROUTE_CONTRACT,
     motionKind: firstText(plan.motionKind),
     ...route,
-    demandArtifactKind: firstText(plan.demandArtifactKind)
+    demandArtifactKind: firstText(plan.demandArtifactKind),
+    acquisitionMechanism:
+      route.commercialRole === 'paid_demand'
+        ? DISCOVERY_PAID_DEMAND_ACQUISITION
+        : DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION
   };
 }
 
@@ -2608,6 +2646,11 @@ function opportunityDiscoveryPlanIssue(
       : typedDiscoveryMotionRouteIssue(item);
     if (typedRouteIssue) {
       return `Discovery plan ${item.id} ${typedRouteIssue}`;
+    }
+    const acquisitionMechanismIssue =
+      typedDiscoveryAcquisitionMechanismIssue(item);
+    if (acquisitionMechanismIssue) {
+      return `Discovery plan ${item.id} ${acquisitionMechanismIssue}`;
     }
     if (allowedMotionKinds instanceof Set &&
         !allowedMotionKinds.has(firstText(item.motionKind))) {
@@ -3683,6 +3726,22 @@ function typedDiscoveryMotionRouteIssue(planValue) {
   return artifact === 'not_applicable'
     ? ''
     : 'must not attach paid-demand metadata to a non-demand motion.';
+}
+
+function typedDiscoveryAcquisitionMechanismIssue(planValue) {
+  const plan = asObject(planValue);
+  const mechanism = firstText(plan.acquisitionMechanism);
+  // Historical receipts used concise model-authored descriptions here and
+  // remain subject to the private-contact validator. Fresh strict output can
+  // emit only these canonical public-route values; when one is present, its
+  // role binding is structural and must not be crossed.
+  if (!DISCOVERY_PLAN_ACQUISITION_MECHANISMS.has(mechanism)) return '';
+  const expected = firstText(plan.commercialRole) === 'paid_demand'
+    ? DISCOVERY_PAID_DEMAND_ACQUISITION
+    : DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION;
+  return mechanism === expected
+    ? ''
+    : 'uses the canonical public acquisition route for the wrong commercial role.';
 }
 
 function discoveryPlanSensitiveEndBuyer(value) {
