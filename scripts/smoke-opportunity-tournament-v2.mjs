@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import {
   buildEvidenceCatalog,
   commercialDiscoveryAttemptLedgerHash,
+  normalizeIncrementalRevenueGateForResult,
   normalizeCommercialDiscoveryEvidence,
   normalizeProposedCommercialMotions,
   providerCallSpendCeilingMicros,
@@ -326,6 +327,7 @@ await verifyInsufficientGroundedFinalistCause();
 await verifyCriticReorderingControlsWinner();
 await verifyCriticNearestCashOrderingFailsClosed();
 await verifyCriticNearestCashStrictTypesFailClosed();
+verifyNoGroundedPathClearsReadyAcquisitionClaims();
 await verifyPriorOutcomePolarityAndDedup();
 await verifyInvalidSeedContractsRejected();
 await verifyLengthFinishedStructuredRepair();
@@ -2355,6 +2357,49 @@ async function verifyCriticNearestCashStrictTypesFailClosed() {
     zeroProbabilityResult,
     'zero paid-outcome probability'
   );
+}
+
+function verifyNoGroundedPathClearsReadyAcquisitionClaims() {
+  // Production 2026-08-08 returned a no-grounded-path experiment while
+  // retaining the discarded winner's ready-acquisition flags. The app
+  // correctly rejected that contradictory result as
+  // invalid_next_revenue_experiment. Project the public result gate from the
+  // final result type so a safe fallback cannot inherit execution claims.
+  const projected = normalizeIncrementalRevenueGateForResult({
+    passed: false,
+    reachableBuyer: true,
+    currentPaidOffer: true,
+    namedAcquisitionMechanism: true,
+    actionCanBeginNow: true,
+    knownPermissions: true,
+    allowedChannel: 'Review-first public professional profile',
+    allowedChannelSource: 'provider_attested_review_route',
+    discoveryRouteRequiresApproval: true,
+    activeRevenueAction: true,
+    causalAcquisitionPath: true
+  }, 'no_grounded_path');
+  for (const field of [
+    'namedAcquisitionMechanism',
+    'actionCanBeginNow',
+    'knownPermissions',
+    'discoveryRouteRequiresApproval',
+    'activeRevenueAction',
+    'causalAcquisitionPath'
+  ]) {
+    if (projected[field] !== false) {
+      throw new Error(
+        `no-grounded-path result retained ${field}: ${JSON.stringify(projected)}`
+      );
+    }
+  }
+  if (projected.allowedChannel !== '' ||
+      projected.allowedChannelSource !== '' ||
+      projected.reachableBuyer !== true ||
+      projected.currentPaidOffer !== true) {
+    throw new Error(
+      `no-grounded-path gate projection erased diagnostics or retained a route: ${JSON.stringify(projected)}`
+    );
+  }
 }
 
 function assertNearestCashCriticContractRecovery(result, label) {

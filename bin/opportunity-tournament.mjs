@@ -883,7 +883,7 @@ export async function runOpportunityDiscoveryPlanner({
   }
 
   const system = `You are ProfileScribe's research-only commercial-motion generator. Find two distinct outside-world paths to one attributable payment within 30 days. Use verifiedFacts and read-only search; inferences stay unverified; no side effects. attribution proves only recording capability.
-The objective and declared primary current focus identify the seller and what must earn revenue. A source page about a profession, audience segment, directory listing, or marketplace category may describe a potential buyer or market, but it never changes the seller or proves that the seller offers that profession's service. If sellerContract.requiredPrimaryFocus is present, every paidOffer must name that focus exactly.
+The objective and declared primary current focus identify the seller and what must earn revenue. A source page about a profession, audience segment, directory listing, or marketplace category may describe a potential buyer or market, but it never changes the seller or proves that the seller offers that profession's service. If sellerContract.requiredPrimaryFocus is present, every paidOffer must name that focus exactly and every plan must include at least one sellerContract.requiredEvidenceRefs value in evidenceRefs.
 Choose the outside actor or buyer-authored artifact that can cause payment, never a peer supplier. Choose only a motionKind allowed by the response schema. referral_person/referral_org_decision_maker find a complementary professional referral authority; direct_buyer_person/direct_buyer_org_decision_maker find a non-sensitive institutional buyer; compensated_job finds an employer job posting; buyer_solicitation finds a buyer-authored paid RFP/RFQ/tender/procurement notice/explicit request. Two referral motions with different counterparties are valid; diversity never requires paid_demand. For a sensitive end buyer, prefer referral unless targeting a real institutional compensated artifact. Supplier/competitor offers, directories, marketplaces, payer participation, "accepts insurance," and the seller's offer/booking page are supply, never demand. Website/booking=destination, not acquisition.
 Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind is not_applicable, employer_job_posting, or a buyer_* artifact. Code constructs the provider query; query prose never proves demand.
 Plans prove no outside fact or authority. Top-level buyer is the payer archetype and has no tokens. {{TARGET_URL}} appears only in targetSlot and contingent c/a text. {{TARGET_NAME}} also appears once in each b.l for buyer/paid_demand and zero times in referral b.l. target:evidence appears only as targetSlot.evidenceRefToken; code binds all e refs by typed role. No target token belongs in other top-level plan prose.
@@ -901,7 +901,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     initialPromptEvidenceCatalog,
     commercialEvidenceGraph,
     { ...objective, evidenceRefs: [] },
-    now
+    now,
+    requiredSellerFocus
   );
   const attempts = [];
   let promptEvidenceCatalog = initialPromptEvidenceCatalog;
@@ -969,7 +970,13 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
       objective: promptObjective,
       commercialContext: promptCommercialContext,
       sellerContract: requiredSellerFocus
-        ? { requiredPrimaryFocus: requiredSellerFocus }
+        ? {
+            requiredPrimaryFocus: requiredSellerFocus,
+            requiredEvidenceRefs: sellerFocusEvidenceRefs(
+              promptEvidenceCatalog,
+              requiredSellerFocus
+            )
+          }
         : {},
       evidenceCatalog: promptEvidenceCatalog,
       commercialEvidenceGraph: promptCommercialEvidenceGraph,
@@ -1691,7 +1698,7 @@ function compactOpportunityDiscoveryOutputContract() {
 function compactOpportunityDiscoveryHardRules() {
   return [
     'Exactly 2 distinct motions: each pathBase+2 causal tactics. Unknown outside identities require the declared target slot and bounded read-only discovery; never return 0 plans or treat a missing exact target as missing supply evidence.',
-    'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names; every paidOffer must include that exact focus. Audience/directory/category pages can inform buyer context but cannot redefine the seller or become proof that the seller offers the listed profession service.',
+    'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names; every paidOffer must include that exact focus and every plan.evidenceRefs must include a sellerContract.requiredEvidenceRefs value. Audience/directory/category pages can inform buyer context but cannot redefine the seller or become proof that the seller offers the listed profession service.',
     `top-level buyer is the payer/end-buyer archetype and contains no target token. Contingent b.l has {{TARGET_NAME}} once for buyer/paid_demand and zero times for referral_partner; action/channel use typed target tokens. ${CONTINGENT_TARGET_EVIDENCE_REF} appears only as targetSlot.evidenceRefToken, never in a returned e array; code binds it after typed-role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
@@ -1727,6 +1734,36 @@ function opportunityDiscoveryRequiredSellerFocus(
     )
     .map((focus) => truncate(firstText(focus.name), 120))
     .find((name) => exactTextContains(objectiveText, name)) || '';
+}
+
+function evidenceTextSupportsSellerFocus(evidenceValue, focusValue) {
+  const evidence = asObject(evidenceValue);
+  const focus = firstText(focusValue);
+  return Boolean(focus) && exactTextContains(compactStrings([
+    evidence.label,
+    evidence.summary,
+    evidence.url,
+    evidence.approvedSourceLabel,
+    evidence.approvedSourceUrl
+  ]).join(' '), focus);
+}
+
+function sellerFocusEvidenceRefs(evidenceCatalogValue, focusValue) {
+  const focus = firstText(focusValue);
+  if (!focus) return [];
+  return asArray(evidenceCatalogValue)
+    .map(asObject)
+    .filter((evidence) =>
+      (firstText(evidence.type) === 'current_focus' ||
+        /^profile:focus:\d+$/i.test(firstText(evidence.id))) &&
+      (!firstText(evidence.status) ||
+        comparable(evidence.status) === 'active') &&
+      comparable(evidence.priority) === 'primary' &&
+      evidenceTextSupportsSellerFocus(evidence, focus)
+    )
+    .map((evidence) => firstText(evidence.id))
+    .filter(Boolean)
+    .slice(0, 1);
 }
 
 function typedDiscoveryMotionRoute(planValue) {
@@ -2685,7 +2722,8 @@ function opportunityDiscoveryPlanIssue(
   {
     requireTypedRoute = false,
     allowedMotionKinds = null,
-    requiredSellerFocus = ''
+    requiredSellerFocus = '',
+    sellerEvidenceRefs: sellerEvidenceRefsValue = []
   } = {}
 ) {
   const plan = asObject(value);
@@ -2772,6 +2810,16 @@ function opportunityDiscoveryPlanIssue(
     if (requiredSellerFocus &&
         !exactTextContains(item.paidOffer, requiredSellerFocus)) {
       return `Discovery plan ${item.id} paidOffer must remain bound to the objective's primary seller focus "${truncate(requiredSellerFocus, 120)}".`;
+    }
+    const requiredSellerEvidenceRefs = new Set(
+      compactStrings(sellerEvidenceRefsValue)
+    );
+    if (requiredSellerFocus &&
+        (requiredSellerEvidenceRefs.size === 0 ||
+          !asArray(item.evidenceRefs).some((ref) =>
+            requiredSellerEvidenceRefs.has(firstText(ref))
+          ))) {
+      return `Discovery plan ${item.id} must cite approved evidence for the objective's primary seller focus "${truncate(requiredSellerFocus, 120)}".`;
     }
     for (const field of [
       'buyer',
@@ -3380,6 +3428,10 @@ function selectValidOpportunityDiscoveryPlans({
   const allowedMotionKinds = new Set(
     asArray(allowedMotionKindsValue).map(firstText).filter(Boolean)
   );
+  const sellerEvidenceRefs = sellerFocusEvidenceRefs(
+    evidenceCatalog,
+    requiredSellerFocus
+  );
   if (envelopeIssue || firstText(envelope.status) !== 'planned') {
     return {
       plans: asArray(envelope.plans),
@@ -3457,7 +3509,8 @@ function selectValidOpportunityDiscoveryPlans({
         }, {
           requireTypedRoute: true,
           allowedMotionKinds,
-          requiredSellerFocus
+          requiredSellerFocus,
+          sellerEvidenceRefs
         });
     const signature = opportunityDiscoveryMotionSignature(candidate.plan);
     if (!issue && ids.has(candidate.plan.id)) {
@@ -3489,7 +3542,8 @@ function selectValidOpportunityDiscoveryPlans({
         {
           requireTypedRoute: true,
           allowedMotionKinds,
-          requiredSellerFocus
+          requiredSellerFocus,
+          sellerEvidenceRefs
         }
       );
   return {
@@ -8628,6 +8682,26 @@ function exactHTTPSURLsInText(value) {
     .filter(Boolean);
 }
 
+export function normalizeIncrementalRevenueGateForResult(
+  gateValue,
+  resultTypeValue
+) {
+  const gate = { ...asObject(gateValue) };
+  if (firstText(resultTypeValue) !== 'no_grounded_path') return gate;
+  return {
+    ...gate,
+    passed: false,
+    namedAcquisitionMechanism: false,
+    actionCanBeginNow: false,
+    knownPermissions: false,
+    allowedChannel: '',
+    allowedChannelSource: '',
+    discoveryRouteRequiresApproval: false,
+    activeRevenueAction: false,
+    causalAcquisitionPath: false
+  };
+}
+
 function finalizeOpportunityTournamentResult(rawValue, argsValue) {
   const raw = asObject(rawValue);
   const args = asObject(argsValue);
@@ -8875,6 +8949,10 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
       comparable(firstText(coherentExperiment.acquisitionMechanism))
         .includes(comparable(channel))
   ) || '';
+  const resultGate = normalizeIncrementalRevenueGateForResult(
+    gate,
+    resultType
+  );
   return {
     ...coherent,
     result: {
@@ -8890,7 +8968,7 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
           ? experimentAllowedChannel
           : 'none',
       permissionRequired: 'explicit_user_approval',
-      incrementalRevenueGate: gate
+      incrementalRevenueGate: resultGate
     }
   };
 }
@@ -10648,7 +10726,8 @@ function essentialPromptEvidenceRefs(
   promptEvidenceCatalogValue,
   commercialEvidenceGraphValue,
   objectiveValue,
-  referenceTime
+  referenceTime,
+  requiredSellerFocus = ''
 ) {
   const standardEvidenceRefs = asArray(promptEvidenceCatalogValue)
     .map((item) => firstText(asObject(item).id))
@@ -10676,6 +10755,17 @@ function essentialPromptEvidenceRefs(
     addRef(ref);
   };
 
+  for (const ref of sellerFocusEvidenceRefs(
+    fullEvidenceCatalogValue,
+    requiredSellerFocus
+  )) {
+    addRef(ref);
+  }
+  addFirst((evidence) =>
+    evidence.approvedSourceObservation === true &&
+    evidence.profileControlledSource === true &&
+    evidenceTextSupportsSellerFocus(evidence, requiredSellerFocus)
+  );
   addFirst((evidence) => firstText(evidence.revenueAssetRole) ===
     'current_owner_paid_conversion_asset');
   for (const ref of standardEvidenceRefs) {
@@ -11115,6 +11205,9 @@ function compactPromptEvidenceCatalog(
           ? item.current
           : undefined,
         status: truncate(firstText(item.status), 64),
+        priority: firstText(item.type) === 'current_focus'
+          ? truncate(firstText(item.priority), 32)
+          : undefined,
         confidence: coreMetadataOnly
           ? undefined
           : truncate(firstText(item.confidence), 16),

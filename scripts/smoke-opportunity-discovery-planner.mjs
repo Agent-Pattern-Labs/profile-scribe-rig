@@ -5095,9 +5095,13 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   const directoryEvidence = catalog.find((item) =>
     item.id === 'observation:profilescribe-lactation-directory'
   );
-  if (directoryEvidence?.revenueAssetRole !== 'informational_only') {
+  const sellerFocusEvidence = catalog.find((item) =>
+    item.id === 'profile:focus:1'
+  );
+  if (!sellerFocusEvidence ||
+      directoryEvidence?.revenueAssetRole !== 'informational_only') {
     throw new Error(
-      `ProfileScribe profession directory became seller offer evidence: ${JSON.stringify(directoryEvidence)}`
+      `ProfileScribe seller focus or directory role was invalid: ${JSON.stringify({ sellerFocusEvidence, directoryEvidence })}`
     );
   }
   const evidenceRef = directoryEvidence.id;
@@ -5105,6 +5109,10 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   const motions = scenario.plans(evidenceRef).map((motion) => {
     motion.paidOffer =
       'ProfileScribe paid professional-presence subscription';
+    motion.evidenceRefs = [
+      ...motion.evidenceRefs,
+      sellerFocusEvidence.id
+    ];
     motion.contingentFinalists = compactContingentFinalists(
       motion.contingentFinalists
     );
@@ -5140,6 +5148,11 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   const rejectedReason =
     result.planSelection?.rejectedPlans?.[0]?.reason || '';
   if (prompt.sellerContract?.requiredPrimaryFocus !== 'ProfileScribe' ||
+      JSON.stringify(prompt.sellerContract?.requiredEvidenceRefs) !==
+        JSON.stringify([sellerFocusEvidence.id]) ||
+      !prompt.evidenceCatalog?.some((item) =>
+        item.id === sellerFocusEvidence.id
+      ) ||
       requestSeen?.plugins?.[0]?.engine !== 'exa' ||
       result.preflight?.fixedToolFeeMicros !== 5_000 ||
       !requestSeen?.system?.includes(
@@ -5155,11 +5168,58 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     );
   }
 
+  const mismatchedSellerMotions = scenario.plans(evidenceRef).map(
+    (motion) => {
+      motion.paidOffer =
+        'ProfileScribe paid professional-presence subscription';
+      motion.contingentFinalists = compactContingentFinalists(
+        motion.contingentFinalists
+      );
+      return motion;
+    }
+  );
+  const mismatchedSellerResult = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason:
+          'The offer prose names ProfileScribe but cites only unrelated directory evidence.',
+        plans: mismatchedSellerMotions
+      },
+      usage,
+      generationId: 'generation-mismatched-primary-seller-evidence',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 900,
+        contentSha256: '8'.repeat(64)
+      },
+      annotations: []
+    })
+  });
+  if (mismatchedSellerResult.status !== 'blocked' ||
+      mismatchedSellerResult.plans.length !== 0 ||
+      !/must cite approved evidence.*primary seller focus.*ProfileScribe/i.test(
+        mismatchedSellerResult.reason || ''
+      )) {
+    throw new Error(
+      `seller-focus prose escaped without its approved focus evidence: ${JSON.stringify(mismatchedSellerResult)}`
+    );
+  }
+
   const targetTokenMotions = scenario.plans(evidenceRef).map((motion) => {
     motion.buyer =
       'The payer represented by {{TARGET_NAME}}';
     motion.paidOffer =
       'ProfileScribe paid professional-presence subscription';
+    motion.evidenceRefs = [
+      ...motion.evidenceRefs,
+      sellerFocusEvidence.id
+    ];
     motion.contingentFinalists = compactContingentFinalists(
       motion.contingentFinalists
     );
