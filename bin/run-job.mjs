@@ -1001,8 +1001,7 @@ async function runOpportunityDiscoveryPlanningJob(
       }
     }
   });
-  const planned = discoveryPlan.status === 'planned' ||
-    discoveryPlan.status === 'insufficient_verified_supply';
+  const planned = discoveryPlan.status === 'planned';
   // Always complete the discovery-planning wrapper when a plan artifact is
   // returned. Local acceptance may still block the plan (private-contact
   // routes, missing evidence, preflight). Completing here lets the worker

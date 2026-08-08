@@ -402,6 +402,14 @@ for (const scenario of cases) {
         OPPORTUNITY_DISCOVERY_PLAN_CONTRACT ||
       requestSeen.responseFormat?.json_schema?.schema?.properties?.plans
         ?.items?.properties?.evidenceRefs?.maxItems !== 14 ||
+      requestSeen.responseFormat?.json_schema?.schema?.properties?.plans
+        ?.minItems !== 2 ||
+      requestSeen.responseFormat?.json_schema?.schema?.properties?.plans
+        ?.maxItems !== 2 ||
+      JSON.stringify(
+        requestSeen.responseFormat?.json_schema?.schema?.properties?.status
+          ?.enum
+      ) !== JSON.stringify(['planned']) ||
       requestSeen.plugins?.[0]?.id !== 'web' ||
       requestSeen.plugins?.[0]?.engine !== 'exa' ||
       requestSeen.plugins?.[0]?.max_results !== 5 ||
@@ -836,6 +844,38 @@ if (overflowResponse.status !== 'blocked' ||
       MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
   throw new Error(
     `planner did not enforce its 28 KiB response gate: ${JSON.stringify(overflowResponse)}`
+  );
+}
+
+const zeroMotionEscape = await runOpportunityDiscoveryPlanner({
+  job: envelopeJob,
+  model: 'openai/gpt-5.6-luna',
+  now,
+  completeJSON: async () => ({
+    data: {
+      contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+      status: 'insufficient_verified_supply',
+      reason: 'No exact outside target was supplied.',
+      plans: []
+    },
+    usage,
+    generationId: 'generation-zero-motion-escape',
+    diagnostics: {
+      finishReason: 'stop',
+      nativeFinishReason: 'stop',
+      contentByteCount: 144,
+      contentSha256: '0'.repeat(64)
+    },
+    annotations: []
+  })
+});
+if (zeroMotionEscape.status !== 'blocked' ||
+    zeroMotionEscape.plans.length !== 0 ||
+    !/cannot replace required commercial motions.*typed target slots/i.test(
+      zeroMotionEscape.reason
+    )) {
+  throw new Error(
+    `fresh zero-motion escape was not classified as an AI contract failure: ${JSON.stringify(zeroMotionEscape)}`
   );
 }
 

@@ -1377,12 +1377,12 @@ function opportunityDiscoveryPlannerResponseFormat(
           },
           status: {
             type: 'string',
-            enum: ['planned', 'insufficient_verified_supply']
+            enum: ['planned']
           },
           reason: boundedText(320, true),
           plans: {
             type: 'array',
-            minItems: 0,
+            minItems: MAX_DISCOVERY_PLANNER_PLANS,
             maxItems: MAX_DISCOVERY_PLANNER_PLANS,
             items: {
               type: 'object',
@@ -1584,7 +1584,7 @@ function compactOpportunityDiscoveryOutputContract() {
 
 function compactOpportunityDiscoveryHardRules() {
   return [
-    '2 distinct motions: each pathBase+2 causal tactics; insufficient_verified_supply=0 plans+reason.',
+    'Exactly 2 distinct motions: each pathBase+2 causal tactics. Unknown outside identities require the declared target slot and bounded read-only discovery; never return 0 plans or treat a missing exact target as missing supply evidence.',
     'approvedMarkets|ServiceAreas|Location;local=region+country;Remote[+country]=available paid_demand;no guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
@@ -2410,7 +2410,10 @@ function opportunityDiscoveryPlanEnvelopeIssue(value) {
       plan.contractVersion !== OPPORTUNITY_DISCOVERY_PLAN_CONTRACT) {
     return 'Discovery planner returned the wrong contract version.';
   }
-  if (!['planned', 'insufficient_verified_supply'].includes(plan.status)) {
+  if ((!legacy && plan.status !== 'planned') ||
+      (legacy && !['planned', 'insufficient_verified_supply'].includes(
+        plan.status
+      ))) {
     return 'Discovery planner returned an unsupported status.';
   }
   if (commercialDiscoveryContainsPrivateContact(plan.reason)) {
@@ -2425,7 +2428,7 @@ function opportunityDiscoveryPlanEnvelopeIssue(value) {
     );
     if (webSearchIssue) return webSearchIssue;
   }
-  if (plan.status === 'insufficient_verified_supply') {
+  if (legacy && plan.status === 'insufficient_verified_supply') {
     return asArray(plan.plans).length === 0 && firstText(plan.reason)
       ? ''
       : 'Insufficient-supply planning must return no outside search plans and a reason.';
@@ -2531,15 +2534,14 @@ function opportunityDiscoveryPlanIssue(
   const plan = asObject(value);
   const envelopeIssue = opportunityDiscoveryPlanEnvelopeIssue(plan);
   if (envelopeIssue) return envelopeIssue;
-  if (plan.status === 'insufficient_verified_supply') return '';
   const legacy = plan.contractVersion ===
     LEGACY_OPPORTUNITY_DISCOVERY_PLAN_CONTRACT;
+  if (legacy && plan.status === 'insufficient_verified_supply') return '';
   const plans = asArray(plan.plans);
-  // New provider output is constrained to one outer motion by the strict
-  // schema and the raw-cardinality gate. Retain read compatibility with a
-  // previously persisted two-motion v2 plan so an already-paid run can still
-  // compare one family from each bound motion instead of being stranded by
-  // this output-compaction change.
+  // Fresh provider output is constrained to exactly two outer motions by the
+  // strict schema and raw-cardinality gate. Local causal validation may prune
+  // one motion while retaining its grounded sibling and two authored tactics.
+  // Retain broader legacy cardinality only for previously persisted v1 plans.
   if ((!legacy && (plans.length < 1 || plans.length > 2)) ||
       (legacy && (plans.length < 2 || plans.length > 3))) {
     return legacy
@@ -2686,8 +2688,8 @@ function opportunityDiscoveryRawPlanCardinalityIssue(value) {
     return 'Discovery planning requires exactly two grounded, economically distinct commercial motions with two causal families each.';
   }
   if (status === 'insufficient_verified_supply' &&
-      raw.plans.length !== 0) {
-    return 'Insufficient-supply planning must return no outside search plans and a reason.';
+      raw.plans.length === 0) {
+    return 'Fresh discovery planning cannot replace required commercial motions with an insufficient-supply result; unknown outside targets must remain typed target slots for bounded read-only discovery.';
   }
   return '';
 }
