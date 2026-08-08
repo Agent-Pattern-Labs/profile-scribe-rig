@@ -523,15 +523,12 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /approvedMarkets\|ServiceAreas\|Location.*local=region\+country.*Remote\[\+country\]=available paid_demand.*no guess\/widen/is.test(
+        /market copies one exact response-schema enum value.*approvedMarkets\|ServiceAreas\|Location.*Remote is available only to paid_demand.*no expand\/abbreviate\/guess\/widen/is.test(
           rule
         )
       ) ||
       requestSeen.responseFormat?.json_schema?.schema?.properties
         ?.plans?.maxItems !== 2 ||
-      requestSeen.responseFormat?.json_schema?.schema?.properties
-        ?.plans?.items?.properties?.market?.pattern !==
-          '^[^\\r\\n]{1,120}$' ||
       !requestSeen.responseFormat?.json_schema?.schema?.properties
         ?.plans?.items?.required?.includes('routeContractVersion') ||
       !requestSeen.responseFormat?.json_schema?.schema?.properties
@@ -543,6 +540,14 @@ for (const scenario of cases) {
           'Review-first public professional profile',
           'Review-first official paid-demand page'
         ]) ||
+      !Array.isArray(plannerPlanSchema.market?.enum) ||
+      plannerPlanSchema.market.enum.length === 0 ||
+      !plannerPlanSchema.market.enum.includes(
+        scenario.profile?.identity?.location
+      ) ||
+      !/copy one exact approved market value.*do not expand.*abbreviate.*widen/is.test(
+        plannerPlanSchema.market?.description || ''
+      ) ||
       !/Review-first public professional profile.*TARGET_URL.*Review-first official paid-demand page.*TARGET_URL/is.test(
         channelLabelPattern
       ) ||
@@ -672,6 +677,9 @@ for (const scenario of cases) {
         requestSeen.system || ''
       ) ||
       !/acquisitionMechanism is exact and structural.*buyer\/referral="Review-first public professional profile".*paid_demand="Review-first official paid-demand page"/is.test(
+        requestSeen.system || ''
+      ) ||
+      !/market must copy one response-schema enum value exactly.*never expand.*abbreviate.*widen/is.test(
         requestSeen.system || ''
       ) ||
       !/referral_partner=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*buyer=ask target to book\/buy\/sign current paid offer.*paid_demand=typed paid application\/proposal response.*marketplace\/directory placement are invalid/is.test(
@@ -1375,14 +1383,58 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
     }
   );
   const typedMarketPrompt = JSON.parse(typedMarketRequest?.user || '{}');
+  const typedMarketSchema = typedMarketRequest?.responseFormat?.json_schema
+    ?.schema?.properties?.plans?.items?.properties?.market;
   if (typedMarketResult.status !== 'planned' ||
       typedMarketResult.plans.length !== 2 ||
       typedMarketResult.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(typedMarketSchema?.enum) !==
+        JSON.stringify([typedMarket.market]) ||
       JSON.stringify(
         typedMarketPrompt.commercialContext?.profile?.approvedMarkets
       ) !== JSON.stringify([typedMarket])) {
     throw new Error(
       `typed app-approved owner market did not bind exactly: ${JSON.stringify({ result: typedMarketResult, promptMarkets: typedMarketPrompt.commercialContext?.profile?.approvedMarkets })}`
+    );
+  }
+
+  const exactSurfaceJob = structuredClone(job);
+  exactSurfaceJob.payload.commercialContext.profile.location =
+    'New York, NY';
+  exactSurfaceJob.payload.commercialContext.profile.serviceAreas = [];
+  exactSurfaceJob.payload.commercialContext.profile.approvedMarkets = [];
+  const expandedSurface = cases[0].plans(evidenceRef)[0];
+  expandedSurface.id = 'expanded_new_york_surface';
+  expandedSurface.priority = 1;
+  expandedSurface.market = 'New York City, New York, United States';
+  const exactSurface = cases[0].plans(evidenceRef)[1];
+  exactSurface.id = 'exact_new_york_surface';
+  exactSurface.priority = 2;
+  exactSurface.market = 'New York, NY';
+  let exactSurfaceRequest;
+  const exactSurfaceResult = await run(
+    exactSurfaceJob,
+    [expandedSurface, exactSurface],
+    'generation-exact-profile-market-surface',
+    (request) => {
+      exactSurfaceRequest = request;
+    }
+  );
+  const exactSurfaceEnum = exactSurfaceRequest?.responseFormat?.json_schema
+    ?.schema?.properties?.plans?.items?.properties?.market?.enum;
+  if (exactSurfaceResult.status !== 'planned' ||
+      exactSurfaceResult.plans.length !== 1 ||
+      exactSurfaceResult.plans[0]?.id !== exactSurface.id ||
+      exactSurfaceResult.planSelection?.rejectedPlanCount !== 1 ||
+      JSON.stringify(exactSurfaceEnum) !==
+        JSON.stringify(['New York, NY']) ||
+      !/outside the exact approved service-area/i.test(
+        exactSurfaceResult.planSelection?.rejectedPlans?.find(
+          (item) => item.id === expandedSurface.id
+        )?.reason || ''
+      )) {
+    throw new Error(
+      `profile market surface was not schema-bound exactly: ${JSON.stringify({ result: exactSurfaceResult, marketEnum: exactSurfaceEnum })}`
     );
   }
 

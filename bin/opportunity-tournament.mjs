@@ -769,6 +769,10 @@ export async function runOpportunityDiscoveryPlanner({
     unvalidatedCommercialContext,
     evidenceCatalog
   );
+  const allowedMarketValues = opportunityDiscoveryAllowedMarketValues(
+    commercialContext,
+    evidenceCatalog
+  );
   const requiredSellerFocus = opportunityDiscoveryRequiredSellerFocus(
     objective,
     commercialContext
@@ -861,7 +865,7 @@ Routes: referral_person=professional_counterparty/referral_partner/partner_chann
 Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a exact: "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; no message/DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
 acquisitionMechanism is exact and structural: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page". paid_demand c+a use that official page and {{TARGET_URL}}; never name a private contact route.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
-Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only referral query may name served population. professional/local: targetRoleTerms=one coherent current-title family; organizationTerms=context; job: jobTitle+skills; public demand: all four empty. Copy IDs/tokens exactly. Return strict JSON only.`;
+Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only referral query may name served population. market must copy one response-schema enum value exactly; never expand, abbreviate, or widen it. professional/local: targetRoleTerms=one coherent current-title family; organizationTerms=context; job: jobTitle+skills; public demand: all four empty. Copy IDs/tokens exactly. Return strict JSON only.`;
   const standardEvidenceRefs = initialPromptEvidenceCatalog
     .map((item) => firstText(item.id))
     .filter(Boolean);
@@ -965,7 +969,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
       },
       responseFormat: opportunityDiscoveryPlannerResponseFormat(
         promptEvidenceCatalog,
-        allowedMotionKinds
+        allowedMotionKinds,
+        allowedMarketValues
       ),
       plugins: [{
         id: 'web',
@@ -1166,7 +1171,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
 
 function opportunityDiscoveryPlannerResponseFormat(
   evidenceCatalog,
-  allowedMotionKinds = [...DISCOVERY_MOTION_ROUTES.keys()]
+  allowedMotionKinds = [...DISCOVERY_MOTION_ROUTES.keys()],
+  allowedMarketValues = []
 ) {
   const boundedText = (maxLength, allowEmpty = false) => ({
     type: 'string',
@@ -1455,7 +1461,14 @@ function opportunityDiscoveryPlannerResponseFormat(
                   MAX_DISCOVERY_PLAN_EVIDENCE_REFS
                 ),
                 query: boundedText(180),
-                market: boundedText(120),
+                market: asArray(allowedMarketValues).length > 0
+                  ? {
+                      type: 'string',
+                      enum: [...allowedMarketValues],
+                      description:
+                        'Copy one exact approved market value; do not expand, abbreviate, or widen it.'
+                    }
+                  : boundedText(120),
                 targetRoleTerms: boundedStringArray(6),
                 organizationTerms: boundedStringArray(6),
                 jobTitle: boundedText(100, true),
@@ -1624,7 +1637,7 @@ function compactOpportunityDiscoveryHardRules() {
     'Exactly 2 distinct motions: each pathBase+2 causal tactics. Unknown outside identities require the declared target slot and bounded read-only discovery; never return 0 plans or treat a missing exact target as missing supply evidence.',
     'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names; every paidOffer must include that exact focus. Audience/directory/category pages can inform buyer context but cannot redefine the seller or become proof that the seller offers the listed profession service.',
     'buyer is the payer/end-buyer archetype and contains no target token. {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence appear only in targetSlot and contract-reserved contingent-finalist fields, never plan prose.',
-    'approvedMarkets|ServiceAreas|Location;local=region+country;Remote[+country]=available paid_demand;no guess/widen.',
+    'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `r.a=plan.acquisitionMode; r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; project valid tactic a; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.`,
@@ -2967,6 +2980,42 @@ function opportunityDiscoveryCommercialContextWithApprovedMarkets(
   };
 }
 
+function opportunityDiscoveryAllowedMarketValues(
+  commercialContextValue,
+  evidenceCatalogValue
+) {
+  const commercialContext = asObject(commercialContextValue);
+  const profile = asObject(commercialContext.profile);
+  const candidates = [
+    ...compactStrings(profile.serviceAreas),
+    ...opportunityDiscoveryApprovedMarketFacts(
+      commercialContext,
+      evidenceCatalogValue
+    ).map((item) => firstText(item.market)),
+    firstText(profile.location),
+    opportunityDiscoveryRemoteAvailabilityApproved(profile.availability)
+      ? 'Remote'
+      : ''
+  ];
+  const seen = new Set();
+  return compactStrings(candidates).flatMap((market) => {
+    const key = comparable(market);
+    if (seen.has(key) || opportunityDiscoveryMotionMarketIssue(
+      {
+        market,
+        commercialRole: 'paid_demand',
+        searchMode: 'active_job_posting'
+      },
+      commercialContext,
+      evidenceCatalogValue
+    )) {
+      return [];
+    }
+    seen.add(key);
+    return [truncate(market, 120)];
+  }).slice(0, 8);
+}
+
 function opportunityDiscoveryRegionAlias(value, country = '') {
   const key = comparable(value);
   if (country === 'united states') {
@@ -3167,6 +3216,13 @@ function approvedOpportunityDiscoveryMarketKeys(
       rememberCountry(key);
     } else if (key) {
       exact.add(key);
+      // The exact owner-declared surface is itself approved even when it uses
+      // a region abbreviation and omits a country (for example,
+      // "New York, NY"). Retain the completed hierarchy for equivalent fully
+      // qualified spellings, but do not grant this exception to a different
+      // under-specified or widened model-authored market.
+      const exactSurfaceKey = opportunityDiscoveryMarketKey(value);
+      if (exactSurfaceKey) exact.add(exactSurfaceKey);
       rememberCountry(key);
     }
   };
