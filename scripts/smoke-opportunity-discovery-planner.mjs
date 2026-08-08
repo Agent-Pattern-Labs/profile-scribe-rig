@@ -968,6 +968,7 @@ await verifyCausalPathDiagnosticsAreFieldSpecific(unsafeJob, unsafeRef);
 await verifyTypedCausalWitnessContract(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
+await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyTwoStageTargetBinding();
 await verifyProviderAttestedBuyerReviewRoute();
 await verifyPaidDemandTargetProtocolEndToEnd();
@@ -4895,6 +4896,158 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `truncated planner did not fail once with a safe cause-matched receipt: ${JSON.stringify({ calls, requestMaxTokens: requestSeen?.maxTokens, result })}`
+    );
+  }
+}
+
+async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
+  const scenario = cases[3];
+  const job = plannerJob(scenario);
+  job.payload.objective.outcome =
+    'Create one verifiable, attributable incremental-income outcome for ProfileScribe';
+  // Legacy workers used this hint when owner-source crawls were fresh. Exact
+  // outside targets are still unresolved, so call one must ignore it and
+  // preserve the bounded folded search.
+  job.payload.skipExaSearch = true;
+  job.payload.commercialContext.profile.currentFocus = [{
+    name: 'ProfileScribe',
+    description:
+      'Agent-managed professional profiles and source-backed updates.',
+    status: 'active',
+    priority: 'primary'
+  }];
+  job.payload.evidenceSnapshot.profile.currentFocus = [{
+    name: 'ProfileScribe',
+    description:
+      'Agent-managed professional profiles and source-backed updates.',
+    status: 'active',
+    priority: 'primary',
+    evidence: ['The owner confirmed ProfileScribe is the primary business.']
+  }];
+  job.payload.evidenceSnapshot.sources[0] = {
+    id: 'profilescribe-owner-site',
+    label: 'ProfileScribe',
+    url: 'https://profilescribe.com',
+    status: 'approved',
+    profileControlled: true
+  };
+  job.payload.evidenceSnapshot.sourceEvidence = [{
+    id: 'profilescribe-lactation-directory',
+    observationId: 'profilescribe-lactation-directory',
+    sourceId: 'profilescribe-owner-site',
+    label: 'Find Lactation consultants | ProfileScribe',
+    summary:
+      'This SearchResultsPage contains an ItemList for finding lactation consultants.',
+    url: 'https://profilescribe.com/profession/lactation-consultants',
+    observedAt: now.toISOString(),
+    status: 'approved'
+  }];
+
+  const catalog = buildEvidenceCatalog(job.payload, {}, now, {
+    includeSystemAttributionCapability: true
+  });
+  const directoryEvidence = catalog.find((item) =>
+    item.id === 'observation:profilescribe-lactation-directory'
+  );
+  if (directoryEvidence?.revenueAssetRole !== 'informational_only') {
+    throw new Error(
+      `ProfileScribe profession directory became seller offer evidence: ${JSON.stringify(directoryEvidence)}`
+    );
+  }
+  const evidenceRef = directoryEvidence.id;
+  let requestSeen;
+  const motions = scenario.plans(evidenceRef).map((motion) => {
+    motion.paidOffer =
+      'ProfileScribe paid professional-presence subscription';
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    return motion;
+  });
+  motions[0].paidOffer = 'Paid newborn lactation home visit';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      requestSeen = request;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: 'Compare two source-bound commercial motions.',
+          plans: motions
+        },
+        usage,
+        generationId: 'generation-primary-seller-focus',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '6'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const prompt = JSON.parse(requestSeen?.user || '{}');
+  const rejectedReason =
+    result.planSelection?.rejectedPlans?.[0]?.reason || '';
+  if (prompt.sellerContract?.requiredPrimaryFocus !== 'ProfileScribe' ||
+      requestSeen?.plugins?.[0]?.engine !== 'exa' ||
+      result.preflight?.fixedToolFeeMicros !== 5_000 ||
+      !requestSeen?.system?.includes(
+        'never changes the seller or proves that the seller offers that profession'
+      ) ||
+      result.status !== 'planned' ||
+      result.plans.length !== 1 ||
+      !/paidOffer must remain bound.*ProfileScribe/i.test(rejectedReason) ||
+      result.plans[0]?.paidOffer !==
+        'ProfileScribe paid professional-presence subscription') {
+    throw new Error(
+      `primary seller focus was not enforced: ${JSON.stringify({ prompt, result })}`
+    );
+  }
+
+  const targetTokenMotions = scenario.plans(evidenceRef).map((motion) => {
+    motion.buyer =
+      'The payer represented by {{TARGET_NAME}}';
+    motion.paidOffer =
+      'ProfileScribe paid professional-presence subscription';
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    return motion;
+  });
+  const targetTokenResult = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: 'The target tokens were put in plan prose.',
+        plans: targetTokenMotions
+      },
+      usage,
+      generationId: 'generation-target-token-in-buyer',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 900,
+        contentSha256: '7'.repeat(64)
+      },
+      annotations: []
+    })
+  });
+  if (targetTokenResult.status !== 'blocked' ||
+      targetTokenResult.plans.length !== 0 ||
+      !/only targetSlot and contract-reserved contingent-finalist fields/i.test(
+        targetTokenResult.reason || ''
+      )) {
+    throw new Error(
+      `target token in buyer was accepted: ${JSON.stringify(targetTokenResult)}`
     );
   }
 }

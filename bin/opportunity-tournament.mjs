@@ -760,6 +760,10 @@ export async function runOpportunityDiscoveryPlanner({
     unvalidatedCommercialContext,
     evidenceCatalog
   );
+  const requiredSellerFocus = opportunityDiscoveryRequiredSellerFocus(
+    objective,
+    commercialContext
+  );
   const initialPromptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
     objective,
@@ -839,9 +843,10 @@ export async function runOpportunityDiscoveryPlanner({
   }
 
   const system = `You are ProfileScribe's research-only commercial-motion generator. Find two distinct outside-world paths to one attributable payment within 30 days. Use verifiedFacts and read-only search; inferences stay unverified; no side effects. attribution proves only recording capability.
+The objective and declared primary current focus identify the seller and what must earn revenue. A source page about a profession, audience segment, directory listing, or marketplace category may describe a potential buyer or market, but it never changes the seller or proves that the seller offers that profession's service. If sellerContract.requiredPrimaryFocus is present, every paidOffer must name that focus exactly.
 Choose the outside actor or buyer-authored artifact that can cause payment, never a peer supplier. Choose only a motionKind allowed by the response schema. referral_person/referral_org_decision_maker find a complementary professional referral authority; direct_buyer_person/direct_buyer_org_decision_maker find a non-sensitive institutional buyer; compensated_job finds an employer job posting; buyer_solicitation finds a buyer-authored paid RFP/RFQ/tender/procurement notice/explicit request. Two referral motions with different counterparties are valid; diversity never requires paid_demand. For a sensitive end buyer, prefer referral unless targeting a real institutional compensated artifact. Supplier/competitor offers, directories, marketplaces, payer participation, "accepts insurance," and the seller's offer/booking page are supply, never demand. Website/booking=destination, not acquisition.
 Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind is not_applicable, employer_job_posting, or a buyer_* artifact. Code constructs the provider query; query prose never proves demand.
-Plans prove no target, interest, relationship, budget, or permission. Preserve {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence for provider binding.
+Plans prove no target, interest, relationship, budget, or permission. buyer always describes the payer/end-buyer archetype independently of the unresolved outside target. Keep {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence only in targetSlot and contingent-finalist fields that the contract explicitly reserves for deterministic provider binding; never put them in buyer, counterparty, paidOffer, query, market, rationale, or other plan prose.
 Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas.
 Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
 Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a exact: "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; no message/DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
@@ -922,6 +927,9 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     user = JSON.stringify({
       objective: promptObjective,
       commercialContext: promptCommercialContext,
+      sellerContract: requiredSellerFocus
+        ? { requiredPrimaryFocus: requiredSellerFocus }
+        : {},
       evidenceCatalog: promptEvidenceCatalog,
       commercialEvidenceGraph: promptCommercialEvidenceGraph,
       task:
@@ -933,9 +941,6 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
         'Forced Exa returns <=5 sanitized URL citations; app adapters may make only separately budgeted bounded provider reads.'
       ]
     });
-    const skipExaSearch = Boolean(
-      asObject(job?.payload).skipExaSearch
-    );
     request = {
       model,
       system,
@@ -952,17 +957,15 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
         promptEvidenceCatalog,
         allowedMotionKinds
       ),
-      plugins: skipExaSearch ? [] : [{
+      plugins: [{
         id: 'web',
         engine: OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE,
         max_results: OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS
       }],
-      additionalPromptTokenReserve: skipExaSearch
-        ? 0
-        : OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
-      fixedToolFeeMicros: skipExaSearch
-        ? 0
-        : OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
+      additionalPromptTokenReserve:
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
+      fixedToolFeeMicros:
+        OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
       timeoutMs: 120_000,
     };
     preflight = providerCallSpendPreflight(request, budget);
@@ -1092,7 +1095,8 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     commercialContext,
     referenceTime: now,
     webSearchReceipt,
-    allowedMotionKinds
+    allowedMotionKinds,
+    requiredSellerFocus
   });
   normalized.plans = selection.plans;
   normalized.planSelection = selection.diagnostics;
@@ -1585,6 +1589,8 @@ function compactOpportunityDiscoveryOutputContract() {
 function compactOpportunityDiscoveryHardRules() {
   return [
     'Exactly 2 distinct motions: each pathBase+2 causal tactics. Unknown outside identities require the declared target slot and bounded read-only discovery; never return 0 plans or treat a missing exact target as missing supply evidence.',
+    'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names; every paidOffer must include that exact focus. Audience/directory/category pages can inform buyer context but cannot redefine the seller or become proof that the seller offers the listed profession service.',
+    'buyer is the payer/end-buyer archetype and contains no target token. {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence appear only in targetSlot and contract-reserved contingent-finalist fields, never plan prose.',
     'approvedMarkets|ServiceAreas|Location;local=region+country;Remote[+country]=available paid_demand;no guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
@@ -1597,6 +1603,27 @@ function compactOpportunityDiscoveryHardRules() {
     'buyer/referral c+a: use that exact form; URL=HTTPS LinkedIn /in; no message/DM/InMail/connect/email/phone/form.',
     'No sensitive/private targets; population only in referral query. No external writes.'
   ];
+}
+
+function opportunityDiscoveryRequiredSellerFocus(
+  objectiveValue,
+  commercialContextValue
+) {
+  const objective = asObject(objectiveValue);
+  const objectiveText = compactStrings([
+    objective.outcome,
+    objective.successMetric
+  ]).join(' ');
+  return asArray(asObject(commercialContextValue).profile?.currentFocus)
+    .map(asObject)
+    .filter((focus) =>
+      firstText(focus.name) &&
+      (!firstText(focus.status) ||
+        comparable(focus.status) === 'active') &&
+      comparable(focus.priority) === 'primary'
+    )
+    .map((focus) => truncate(firstText(focus.name), 120))
+    .find((name) => exactTextContains(objectiveText, name)) || '';
 }
 
 function typedDiscoveryMotionRoute(planValue) {
@@ -2529,7 +2556,11 @@ function opportunityDiscoveryTargetTitleFamilyIssue(planValue) {
 
 function opportunityDiscoveryPlanIssue(
   value,
-  { requireTypedRoute = false, allowedMotionKinds = null } = {}
+  {
+    requireTypedRoute = false,
+    allowedMotionKinds = null,
+    requiredSellerFocus = ''
+  } = {}
 ) {
   const plan = asObject(value);
   const envelopeIssue = opportunityDiscoveryPlanEnvelopeIssue(plan);
@@ -2605,6 +2636,28 @@ function opportunityDiscoveryPlanIssue(
     ]) {
       if (!firstText(item[field])) {
         return `Discovery plan ${item.id} is missing ${field}.`;
+      }
+    }
+    if (requiredSellerFocus &&
+        !exactTextContains(item.paidOffer, requiredSellerFocus)) {
+      return `Discovery plan ${item.id} paidOffer must remain bound to the objective's primary seller focus "${truncate(requiredSellerFocus, 120)}".`;
+    }
+    for (const field of [
+      'buyer',
+      'counterparty',
+      'paidOffer',
+      'query',
+      'market',
+      'acquisitionMechanism',
+      'conversionDestination',
+      'paidConversion',
+      'attributionSignal',
+      'rationale'
+    ]) {
+      if (countExactToken(item[field], CONTINGENT_TARGET_NAME_TOKEN) > 0 ||
+          countExactToken(item[field], CONTINGENT_TARGET_URL_TOKEN) > 0 ||
+          firstText(item[field]).includes(CONTINGENT_TARGET_EVIDENCE_REF)) {
+        return `Discovery plan ${item.id} must keep unresolved target tokens out of ${field}; only targetSlot and contract-reserved contingent-finalist fields may contain them.`;
       }
     }
     if (item.commercialRole === 'referral_partner' &&
@@ -3141,7 +3194,8 @@ function selectValidOpportunityDiscoveryPlans({
   commercialContext,
   referenceTime,
   webSearchReceipt,
-  allowedMotionKinds: allowedMotionKindsValue
+  allowedMotionKinds: allowedMotionKindsValue,
+  requiredSellerFocus = ''
 }) {
   const raw = asObject(rawValue);
   const envelope = {
@@ -3228,7 +3282,8 @@ function selectValidOpportunityDiscoveryPlans({
           plans: [candidate.plan]
         }, {
           requireTypedRoute: true,
-          allowedMotionKinds
+          allowedMotionKinds,
+          requiredSellerFocus
         });
     const signature = opportunityDiscoveryMotionSignature(candidate.plan);
     if (!issue && ids.has(candidate.plan.id)) {
@@ -3257,7 +3312,11 @@ function selectValidOpportunityDiscoveryPlans({
       )
     : opportunityDiscoveryPlanIssue(
         { ...envelope, plans },
-        { requireTypedRoute: true, allowedMotionKinds }
+        {
+          requireTypedRoute: true,
+          allowedMotionKinds,
+          requiredSellerFocus
+        }
       );
   return {
     plans,
@@ -16297,7 +16356,19 @@ function informationalAssetEvidence(evidenceValue) {
     /\b(?:initiative|policy|program)\s+(?:in|within|across)\s+(?:businesses|companies|hospitals|institutions|organizations|schools|workplaces)\b/.test(
       label
     );
-  return informationalType || informationalPath || informationalTitle;
+  const directorySchemaSignal =
+    /\b(?:directory|itemlist|searchaction|searchresultspage|search results page)\b/.test(
+      `${type} ${label} ${summary}`
+    );
+  const directorySchemaType =
+    /\b(?:directory|itemlist|searchaction|searchresultspage|search results page)\b/.test(
+      type
+    );
+  const professionDirectoryPage =
+    /\/(?:profession|professions)(?:\/|$)/.test(pathname) &&
+    (/\bfind\b/.test(label) || directorySchemaSignal);
+  return informationalType || informationalPath || informationalTitle ||
+    directorySchemaType || professionDirectoryPage;
 }
 
 function inboundAssetEvidenceSupportsPaidConversion(
