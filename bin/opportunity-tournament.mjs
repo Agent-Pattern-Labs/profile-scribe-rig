@@ -499,6 +499,23 @@ const REVENUE_MECHANISMS = new Set([
   'platform_payout',
   'compensated_role'
 ]);
+// Call 1 selects one exact, settled terminal outcome instead of drafting
+// free-form success prose. These are counterfactual success conditions, not
+// claims that payment already occurred. The mechanism-specific witness and
+// local semantic gate still have to match the selected outcome.
+const REVENUE_TERMINAL_OUTCOME_BY_MECHANISM = Object.freeze({
+  paid_booking: 'Paid booking completed; payment received.',
+  direct_sale: 'Sale completed; payment received.',
+  signed_contract: 'Service contract signed; payment received.',
+  paid_pilot: 'Paid pilot signed; payment received.',
+  subscription_or_retainer: 'Paid subscription started; payment received.',
+  insurance_reimbursement: 'Claim paid; reimbursement received.',
+  license_or_royalty: 'License signed; payment received.',
+  commission_or_referral: 'Commission paid; payment received.',
+  sponsorship: 'Sponsorship contract signed; payment received.',
+  platform_payout: 'Platform payout received.',
+  compensated_role: 'Compensated offer accepted; salary payment received.'
+});
 const ACQUISITION_MODES = new Set([
   'inbound',
   'warm_referral',
@@ -859,7 +876,7 @@ export async function runOpportunityDiscoveryPlanner({
 The objective and declared primary current focus identify the seller and what must earn revenue. A source page about a profession, audience segment, directory listing, or marketplace category may describe a potential buyer or market, but it never changes the seller or proves that the seller offers that profession's service. If sellerContract.requiredPrimaryFocus is present, every paidOffer must name that focus exactly.
 Choose the outside actor or buyer-authored artifact that can cause payment, never a peer supplier. Choose only a motionKind allowed by the response schema. referral_person/referral_org_decision_maker find a complementary professional referral authority; direct_buyer_person/direct_buyer_org_decision_maker find a non-sensitive institutional buyer; compensated_job finds an employer job posting; buyer_solicitation finds a buyer-authored paid RFP/RFQ/tender/procurement notice/explicit request. Two referral motions with different counterparties are valid; diversity never requires paid_demand. For a sensitive end buyer, prefer referral unless targeting a real institutional compensated artifact. Supplier/competitor offers, directories, marketplaces, payer participation, "accepts insurance," and the seller's offer/booking page are supply, never demand. Website/booking=destination, not acquisition.
 Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind is not_applicable, employer_job_posting, or a buyer_* artifact. Code constructs the provider query; query prose never proves demand.
-Plans prove no target, interest, relationship, budget, or permission. The top-level plan buyer always describes the payer/end-buyer archetype independently of the unresolved outside target. Keep {{TARGET_URL}} only in targetSlot and contingent action/channel text. Keep {{TARGET_NAME}} there and, only for buyer or paid_demand routes, once in each contingent pathBase.b label so the resolved payer is exact; referral pathBase.b labels contain no target token. Return target:evidence only as targetSlot.evidenceRefToken, never in any contingent e array; deterministic code binds it after validating the typed commercial role. Never put target tokens in top-level buyer, counterparty, paidOffer, query, market, rationale, or other plan prose.
+Plans prove no outside fact or authority. Top-level buyer is the payer archetype and has no tokens. {{TARGET_URL}} appears only in targetSlot and contingent c/a text. {{TARGET_NAME}} also appears once in each b.l for buyer/paid_demand and zero times in referral b.l. target:evidence appears only as targetSlot.evidenceRefToken; code binds all e refs by typed role. No target token belongs in other top-level plan prose.
 Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas.
 Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
 Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a exact: "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; no message/DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
@@ -1338,7 +1355,12 @@ function opportunityDiscoveryPlannerResponseFormat(
           type: 'string',
           enum: [CONTINGENT_CONVERSION_ACTION_PROJECTION]
         },
-        o: boundedText(180),
+        o: {
+          type: 'string',
+          enum: Object.values(REVENUE_TERMINAL_OUTCOME_BY_MECHANISM),
+          description:
+            'Copy the one settled terminal outcome whose wording matches rm.'
+        },
         atm: { $ref: '#/$defs/attributionMethod' },
         ats: boundedText(220),
         cd: boundedText(180),
@@ -1628,7 +1650,7 @@ function compactOpportunityDiscoveryOutputContract() {
       `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}; b.l has ${CONTINGENT_TARGET_NAME_TOKEN} once for buyer/paid_demand and zero times for referral_partner`,
     item: '{l,e}; t={l,e,q}; exact evidence IDs',
     revenuePath:
-      `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,k,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; k={v,i,c,o,p,t,d,s,n,u}; p=rm+"_terminal"; g binds evidence`,
+      `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,k,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; o copies the response-schema terminal outcome matching rm; k={v,i,c,o,p,t,d,s,n,u}; p=rm+"_terminal"; g binds evidence`,
     evidence:
       `base+tactic e has observation:* and all child refs; returned e arrays use only approved plan refs and never ${CONTINGENT_TARGET_EVIDENCE_REF}; code binds that sentinel after typed-role validation`
   };
@@ -1643,7 +1665,7 @@ function compactOpportunityDiscoveryHardRules() {
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `r.a=plan.acquisitionMode; r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; project valid tactic a; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.`,
-    'r.o describes that one terminal rm event, not objective alternatives. Reject or/either/attempt/pending/declined/failed/not received.',
+    'r.o copies the one response-schema settled terminal outcome matching rm; never use an alternative, attempt, pending, declined, failed, or unpaid state.',
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/o/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. paid demand needs employer_job_posting or buyer_rfp/rfq/tender/procurement_notice/paid_request. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional paid artifact.',
@@ -3900,7 +3922,12 @@ function contingentCausalRevenuePathIssues(
     ],
     [semantic.incrementalIncome, 'incremental_income'],
     [semantic.conversionAction, 'conversion_action'],
-    [semantic.observableRevenue, 'observable_revenue'],
+    [
+      semantic.observableRevenue &&
+        firstText(revenue.o) ===
+          REVENUE_TERMINAL_OUTCOME_BY_MECHANISM[firstText(revenue.rm)],
+      'observable_revenue'
+    ],
     [semantic.attributionSignal, 'attribution_signal'],
     [semantic.conversionDestination, 'conversion_destination'],
     [semantic.numericStop, 'numeric_stop'],

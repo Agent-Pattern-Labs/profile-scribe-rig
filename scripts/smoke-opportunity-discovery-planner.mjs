@@ -486,6 +486,8 @@ for (const scenario of cases) {
     ?.schema?.$defs || {};
   const causalWitnessSchema = plannerDefinitions.causalWitness || {};
   const plannerEvidenceRefSchema = plannerDefinitions.evidenceRef || {};
+  const terminalOutcomeEnum = plannerDefinitions.revenuePath
+    ?.properties?.o?.enum || [];
   const followUpEvidenceSchema = plannerDefinitions.followUpItem
     ?.properties?.e || {};
   const followUpLabelPattern = plannerDefinitions.followUpItem
@@ -579,6 +581,24 @@ for (const scenario of cases) {
       JSON.stringify(
         plannerDefinitions.revenuePath?.properties?.c?.enum
       ) !== JSON.stringify(['project_first_viable_tactic_action']) ||
+      JSON.stringify(terminalOutcomeEnum) !== JSON.stringify([
+        'paid_booking',
+        'direct_sale',
+        'signed_contract',
+        'paid_pilot',
+        'subscription_or_retainer',
+        'insurance_reimbursement',
+        'license_or_royalty',
+        'commission_or_referral',
+        'sponsorship',
+        'platform_payout',
+        'compensated_role'
+      ].map(canonicalTerminalPaidOutcome)) ||
+      terminalOutcomeEnum.some((outcome) =>
+        /\b(?:or|either|attempt|pending|declined|failed|unpaid)\b/i.test(
+          outcome
+        )
+      ) ||
       JSON.stringify(causalWitnessSchema.required) !== JSON.stringify([
         'v',
         'i',
@@ -701,7 +721,7 @@ for (const scenario of cases) {
         requestSeen.system || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /r\.o describes that one terminal rm event.*not objective alternatives/is.test(
+        /r\.o copies the one response-schema settled terminal outcome matching rm.*never use an alternative.*attempt.*pending.*unpaid/is.test(
           rule
         )
       )) {
@@ -996,7 +1016,7 @@ await verifyQualifiedPartnerReferralActionsPass(unsafeJob, unsafeRef);
 await verifyCompactConversionActionProjection(unsafeJob, unsafeRef);
 await verifyPaidDemandResponseActionVerbs(unsafeJob, unsafeRef);
 await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
-await verifyServicePaymentOutcomesPass(unsafeJob, unsafeRef);
+await verifyNonCanonicalServicePaymentOutcomesFail(unsafeJob, unsafeRef);
 await verifyUnpaidServiceOutcomeFails(unsafeJob, unsafeRef);
 await verifyMechanismSpecificTerminalOutcomes(unsafeJob, unsafeRef);
 await verifyRevenueStopUnits(unsafeJob, unsafeRef);
@@ -4144,7 +4164,10 @@ async function verifyOptionalSupportingBottleneckPasses(job, evidenceRef) {
   }
 }
 
-async function verifyServicePaymentOutcomesPass(job, evidenceRef) {
+async function verifyNonCanonicalServicePaymentOutcomesFail(
+  job,
+  evidenceRef
+) {
   const outcomes = [
     'One completed paid lactation consultation recorded.',
     'One completed reimbursed lactation home visit recorded.',
@@ -4171,9 +4194,14 @@ async function verifyServicePaymentOutcomesPass(job, evidenceRef) {
       motion,
       generationId: `generation-service-payment-outcome-${index + 1}`
     });
-    if (result.status !== 'planned' || result.plans.length !== 2) {
+    if (result.status !== 'planned' ||
+        !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
+          .includes('[observable_revenue]') ||
+        result.plans.length !== 1 ||
+        result.planSelection?.rejectedPlanCount !== 1 ||
+        result.sideEffectsPerformed !== 0) {
       throw new Error(
-        `explicit service payment outcome was rejected (${outcome}): ${JSON.stringify(result)}`
+        `non-canonical service payment outcome passed (${outcome}): ${JSON.stringify(result)}`
       );
     }
   }
@@ -4299,9 +4327,14 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
       motion: motionFor(mechanism, outcome),
       generationId: `generation-cross-runtime-terminal-${index + 1}`
     });
-    if (result.status !== 'planned' || result.plans.length !== 2) {
+    if (result.status !== 'planned' ||
+        !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
+          .includes('[observable_revenue]') ||
+        result.plans.length !== 1 ||
+        result.planSelection?.rejectedPlanCount !== 1 ||
+        result.sideEffectsPerformed !== 0) {
       throw new Error(
-        `cross-runtime ${mechanism} terminal outcome was rejected (${outcome}): ${JSON.stringify(result)}`
+        `non-canonical ${mechanism} terminal outcome passed (${outcome}): ${JSON.stringify(result)}`
       );
     }
   }
@@ -4847,7 +4880,6 @@ async function verifyTypedCausalWitnessContract(job, evidenceRef) {
   );
   const legacyUnsupportedClaims = [
     'incremental_income',
-    'observable_revenue',
     'attribution_signal',
     'conversion_destination',
     'numeric_stop'
@@ -8758,27 +8790,27 @@ function causalWitness(
 function canonicalTerminalPaidOutcome(mechanism) {
   const outcomes = {
     paid_booking:
-      'One paid consultation booking is completed and its payment receipt is recorded.',
+      'Paid booking completed; payment received.',
     direct_sale:
-      'One paid order is completed and its payment receipt is recorded.',
+      'Sale completed; payment received.',
     signed_contract:
-      'One paid services contract is signed and its first invoice payment is received and recorded.',
+      'Service contract signed; payment received.',
     paid_pilot:
-      'One paid pilot agreement is signed and its deposit payment is received and recorded.',
+      'Paid pilot signed; payment received.',
     subscription_or_retainer:
-      'One paid subscription is activated and its first payment receipt is recorded.',
+      'Paid subscription started; payment received.',
     insurance_reimbursement:
-      'One completed reimbursable consultation has a paid claim and reimbursement payment received.',
+      'Claim paid; reimbursement received.',
     license_or_royalty:
-      'One paid license agreement is signed and its license payment is received and recorded.',
+      'License signed; payment received.',
     commission_or_referral:
-      'One attributed sale produces a commission payment that is received and recorded.',
+      'Commission paid; payment received.',
     sponsorship:
-      'One sponsorship agreement is signed and its first sponsorship payment is received and recorded.',
+      'Sponsorship contract signed; payment received.',
     platform_payout:
-      'One marketplace payout is received and its payout record is recorded.',
+      'Platform payout received.',
     compensated_role:
-      'One compensated job offer is accepted and its employment source record is recorded.'
+      'Compensated offer accepted; salary payment received.'
   };
   return outcomes[mechanism] || '';
 }
@@ -8791,7 +8823,7 @@ function applyNovelTypedCausalSemantics(value) {
       'Cash reaches the owner only because this reviewed path succeeds.';
     revenue.c =
       'Invite {{TARGET_NAME}} as the named partner to refer one suitable family to the current paid service and booking destination.';
-    revenue.o = 'Funds are received and recorded for one completed visit.';
+    revenue.o = canonicalTerminalPaidOutcome(revenue.rm);
     revenue.ats =
       'Persist the originating practice beside the transaction.';
     revenue.cd = 'https://owner.example/offer';
