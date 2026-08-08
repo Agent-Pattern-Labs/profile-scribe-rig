@@ -859,7 +859,7 @@ export async function runOpportunityDiscoveryPlanner({
 The objective and declared primary current focus identify the seller and what must earn revenue. A source page about a profession, audience segment, directory listing, or marketplace category may describe a potential buyer or market, but it never changes the seller or proves that the seller offers that profession's service. If sellerContract.requiredPrimaryFocus is present, every paidOffer must name that focus exactly.
 Choose the outside actor or buyer-authored artifact that can cause payment, never a peer supplier. Choose only a motionKind allowed by the response schema. referral_person/referral_org_decision_maker find a complementary professional referral authority; direct_buyer_person/direct_buyer_org_decision_maker find a non-sensitive institutional buyer; compensated_job finds an employer job posting; buyer_solicitation finds a buyer-authored paid RFP/RFQ/tender/procurement notice/explicit request. Two referral motions with different counterparties are valid; diversity never requires paid_demand. For a sensitive end buyer, prefer referral unless targeting a real institutional compensated artifact. Supplier/competitor offers, directories, marketplaces, payer participation, "accepts insurance," and the seller's offer/booking page are supply, never demand. Website/booking=destination, not acquisition.
 Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind is not_applicable, employer_job_posting, or a buyer_* artifact. Code constructs the provider query; query prose never proves demand.
-Plans prove no target, interest, relationship, budget, or permission. buyer always describes the payer/end-buyer archetype independently of the unresolved outside target. Keep {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence only in targetSlot and contingent-finalist fields that the contract explicitly reserves for deterministic provider binding; never put them in buyer, counterparty, paidOffer, query, market, rationale, or other plan prose.
+Plans prove no target, interest, relationship, budget, or permission. The top-level plan buyer always describes the payer/end-buyer archetype independently of the unresolved outside target. Keep {{TARGET_URL}} only in targetSlot and contingent action/channel text. Keep {{TARGET_NAME}} there and, only for buyer or paid_demand routes, once in each contingent pathBase.b label so the resolved payer is exact; referral pathBase.b labels contain no target token. Return target:evidence only as targetSlot.evidenceRefToken, never in any contingent e array; deterministic code binds it after validating the typed commercial role. Never put target tokens in top-level buyer, counterparty, paidOffer, query, market, rationale, or other plan prose.
 Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas.
 Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
 Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a exact: "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; no message/DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
@@ -1188,11 +1188,13 @@ function opportunityDiscoveryPlannerResponseFormat(
     items: boundedText(maxLength),
     maxItems
   });
+  // The unresolved target ref is allocated locally from the typed commercial
+  // role after the provider response is decoded. It must not be available to
+  // the model as ordinary evidence: a referral partner is not the buyer, and
+  // allowing the sentinel in arbitrary item refs lets an otherwise strict
+  // response strand a dimension when role canonicalization removes it.
   const contingentSchema = tournamentStructuredResponseFormat(
-    [
-      ...asArray(evidenceCatalog),
-      { id: CONTINGENT_TARGET_EVIDENCE_REF }
-    ],
+    evidenceCatalog,
     INITIAL_FAMILY_VARIANT_COUNT
   ).json_schema.schema;
   const contingentFamily = asObject(contingentSchema.$defs.family);
@@ -1623,12 +1625,12 @@ function compactOpportunityDiscoveryOutputContract() {
     finalists:
       `{seedContract:${SEED_CONTRACT_VERSION},pathBase,tacticA,tacticB,w}; pathBase={e,r,o,b,t,p}; tactic={l,m,tacticKey,e,s,c,a,f}; m=plan.acquisitionMode; tacticKey unique`,
     dimensions:
-      `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}`,
+      `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}; b.l has ${CONTINGENT_TARGET_NAME_TOKEN} once for buyer/paid_demand and zero times for referral_partner`,
     item: '{l,e}; t={l,e,q}; exact evidence IDs',
     revenuePath:
       `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,k,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; k={v,i,c,o,p,t,d,s,n,u}; p=rm+"_terminal"; g binds evidence`,
     evidence:
-      `base+tactic e has ${CONTINGENT_TARGET_EVIDENCE_REF}, observation:*, all child refs; child refs⊆plan refs+target`
+      `base+tactic e has observation:* and all child refs; returned e arrays use only approved plan refs and never ${CONTINGENT_TARGET_EVIDENCE_REF}; code binds that sentinel after typed-role validation`
   };
 }
 
@@ -1636,7 +1638,7 @@ function compactOpportunityDiscoveryHardRules() {
   return [
     'Exactly 2 distinct motions: each pathBase+2 causal tactics. Unknown outside identities require the declared target slot and bounded read-only discovery; never return 0 plans or treat a missing exact target as missing supply evidence.',
     'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names; every paidOffer must include that exact focus. Audience/directory/category pages can inform buyer context but cannot redefine the seller or become proof that the seller offers the listed profession service.',
-    'buyer is the payer/end-buyer archetype and contains no target token. {{TARGET_NAME}}/{{TARGET_URL}}/target:evidence appear only in targetSlot and contract-reserved contingent-finalist fields, never plan prose.',
+    `top-level buyer is the payer/end-buyer archetype and contains no target token. Contingent b.l has {{TARGET_NAME}} once for buyer/paid_demand and zero times for referral_partner; action/channel use typed target tokens. ${CONTINGENT_TARGET_EVIDENCE_REF} appears only as targetSlot.evidenceRefToken, never in a returned e array; code binds it after typed-role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
@@ -2208,18 +2210,19 @@ function contingentViableActionItem(itemValue, familyValue, planValue) {
 
 /**
  * The unresolved target sentinel is protocol structure, not evidence that an
- * outside person, organization, or paid-demand record exists. Canonicalize
- * that structure locally so a model cannot strand an otherwise complete paid
- * path merely by omitting the sentinel from a repeated containment array or
- * by copying it into a role the eventual provider record cannot prove.
+ * outside person, organization, or paid-demand record exists. The provider
+ * response schema excludes it from every evidence array. Canonicalize that
+ * structure locally so only the typed commercial role can allocate it; this
+ * prevents a referral target from masquerading as buyer evidence and then
+ * stranding an otherwise complete paid path when that invalid ref is removed.
  *
  * This does not choose or synthesize a target. The sentinel must still be
  * replaced later by a validated public provider candidate whose typed roles
  * satisfy the canonical target slot. Only those canonical roles are projected
- * into revenue grounding. Unauthorized sentinel copies are removed without
- * removing any approved owner evidence; a field left with no evidence then
- * fails the ordinary completeness gate. No observation or seller-side fact is
- * added here.
+ * into revenue grounding. Legacy or tampered unauthorized sentinel copies are
+ * removed without removing any approved owner evidence; a field left with no
+ * evidence then fails the ordinary completeness gate. No observation or
+ * seller-side fact is added here.
  */
 function canonicalizeContingentTargetEvidence(value, planValue) {
   const bundle = asObject(value);
@@ -2241,17 +2244,24 @@ function canonicalizeContingentTargetEvidence(value, planValue) {
       ref !== CONTINGENT_TARGET_EVIDENCE_REF
     )
   );
-  const canonicalTargetRefs = (refsValue, allowed) => compactStrings([
-    ...withoutTargetRef(refsValue),
-    ...(allowed ? [CONTINGENT_TARGET_EVIDENCE_REF] : [])
-  ]);
+  // A role-specific target field is grounded by the eventual provider record,
+  // not by the seller-side placeholder evidence used to author the motion.
+  // Replacing those refs avoids collapsing seller offer proof into buyer,
+  // channel, demand, or destination proof. Non-target roles retain only their
+  // approved owner/profile refs.
+  const canonicalRoleRefs = (refsValue, allowed) => allowed
+    ? [CONTINGENT_TARGET_EVIDENCE_REF]
+    : withoutTargetRef(refsValue);
   const canonicalizeTargetBearingItem = (itemValue) => {
     const item = asObject(itemValue);
     const targetBearing = countExactToken(
       firstText(item.l),
       CONTINGENT_TARGET_NAME_TOKEN
     ) === 1;
-    item.e = canonicalTargetRefs(item.e, targetBearing);
+    item.e = compactStrings([
+      ...withoutTargetRef(item.e),
+      ...(targetBearing ? [CONTINGENT_TARGET_EVIDENCE_REF] : [])
+    ]);
   };
 
   for (const familyKey of ['familyA', 'familyB']) {
@@ -2266,7 +2276,7 @@ function canonicalizeContingentTargetEvidence(value, planValue) {
           continue;
         }
         const normalizedItem = asObject(item);
-        normalizedItem.e = canonicalTargetRefs(
+        normalizedItem.e = canonicalRoleRefs(
           normalizedItem.e,
           roleDimensions.includes(dimension)
         );
@@ -2275,29 +2285,29 @@ function canonicalizeContingentTargetEvidence(value, planValue) {
     for (const revenueValue of asArray(dimensions.r)) {
       const revenue = asObject(revenueValue);
       const grounding = asObject(revenue.g);
-      grounding.b = canonicalTargetRefs(
+      grounding.b = canonicalRoleRefs(
         grounding.b,
         targetRoles.has('defined_buyer')
       );
-      grounding.o = canonicalTargetRefs(
+      grounding.o = canonicalRoleRefs(
         grounding.o,
         targetRoles.has('paid_offer')
       );
-      grounding.a = canonicalTargetRefs(
+      grounding.a = canonicalRoleRefs(
         grounding.a,
         targetRoles.has('acquisition') && targetRoles.has('channel_fit')
       );
       const destination = asObject(grounding.d);
-      destination.e = canonicalTargetRefs(
+      destination.e = canonicalRoleRefs(
         destination.e,
         targetRoles.has('conversion_destination')
       );
       grounding.d = destination;
-      grounding.c = canonicalTargetRefs(
+      grounding.c = canonicalRoleRefs(
         grounding.c,
         targetRoles.has('paid_conversion')
       );
-      grounding.t = canonicalTargetRefs(grounding.t, false);
+      grounding.t = canonicalRoleRefs(grounding.t, false);
       revenue.g = grounding;
     }
   }
@@ -3579,6 +3589,22 @@ function contingentFinalistBundleIssue(planValue) {
       })) {
         return `has an incomplete ${dimension} finalist dimension.`;
       }
+    }
+    const buyerTargetTokenCount = firstText(plan.commercialRole) ===
+      'referral_partner' ? 0 : 1;
+    if (asArray(dimensions.b).some((item) =>
+      countExactToken(
+        firstText(asObject(item).l),
+        CONTINGENT_TARGET_NAME_TOKEN
+      ) !== buyerTargetTokenCount ||
+      countExactToken(
+        firstText(asObject(item).l),
+        CONTINGENT_TARGET_URL_TOKEN
+      ) !== 0
+    )) {
+      return firstText(plan.commercialRole) === 'referral_partner'
+        ? 'must keep the prospective referral target out of its buyer finalists.'
+        : 'must bind each buyer finalist to exactly one unresolved payer target.';
     }
     if (['buyer', 'referral_partner'].includes(plan.commercialRole)) {
       for (const [channelIndex, channelValue] of

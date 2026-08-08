@@ -341,16 +341,13 @@ for (const scenario of cases) {
         plans: responsePlans
       };
       if (scenario.name === 'lactation referral reasoning') {
-        // These values are individually schema-valid but contradict their
-        // containing motion. They are protocol structure, not commercial
-        // facts, so normalization must bind them deterministically without a
-        // second model call.
+        // These target-slot values are individually schema-valid but
+        // contradict their containing motion. They are protocol structure,
+        // not commercial facts, so normalization must bind them
+        // deterministically without a second model call.
         responseData.plans[0].targetSlot.commercialRole = 'buyer';
         responseData.plans[0].targetSlot.requiredEvidenceRoles = [
           'defined_buyer'
-        ];
-        responseData.plans[0].contingentFinalists.pathBase.e = [
-          'target:evidence'
         ];
       }
       for (const responsePlan of responseData.plans) {
@@ -488,6 +485,7 @@ for (const scenario of cases) {
   const plannerDefinitions = requestSeen.responseFormat?.json_schema
     ?.schema?.$defs || {};
   const causalWitnessSchema = plannerDefinitions.causalWitness || {};
+  const plannerEvidenceRefSchema = plannerDefinitions.evidenceRef || {};
   const followUpEvidenceSchema = plannerDefinitions.followUpItem
     ?.properties?.e || {};
   const followUpLabelPattern = plannerDefinitions.followUpItem
@@ -569,6 +567,12 @@ for (const scenario of cases) {
       JSON.stringify(
         plannerDefinitions.pathBase?.required
       ) !== JSON.stringify(['e', 'r', 'o', 'b', 't', 'p']) ||
+      !Array.isArray(plannerEvidenceRefSchema.enum) ||
+      !plannerEvidenceRefSchema.enum.includes(evidenceRef) ||
+      plannerEvidenceRefSchema.enum.includes('target:evidence') ||
+      JSON.stringify(
+        plannerPlanSchema.targetSlot?.properties?.evidenceRefToken?.enum
+      ) !== JSON.stringify(['target:evidence']) ||
       !plannerDefinitions.revenuePath?.required?.includes('k') ||
       plannerDefinitions.revenuePath?.properties?.k?.$ref !==
         '#/$defs/causalWitness' ||
@@ -2290,7 +2294,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
         roleCase.targetDimensions.every((dimension) =>
           (family?.d?.[dimension] || []).every((item) =>
             item.e.includes(targetRef) &&
-            item.e.includes(primaryEvidenceRef)
+            !item.e.includes(primaryEvidenceRef)
           )
         ) &&
         roleCase.ordinaryDimensions.every((dimension) =>
@@ -2300,7 +2304,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
         ) &&
         roleCase.targetGrounding.every((role) =>
           groundingRefs(revenue?.g || {}, role).includes(targetRef) &&
-          groundingRefs(revenue?.g || {}, role).includes(primaryEvidenceRef)
+          !groundingRefs(revenue?.g || {}, role).includes(primaryEvidenceRef)
         ) &&
         roleCase.ordinaryGrounding.every((role) =>
           !groundingRefs(revenue?.g || {}, role).includes(targetRef)
@@ -2358,10 +2362,10 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
         action.e.includes(targetRef)
       ) &&
       family.d.c.every((channel) =>
-        channel.e.includes(primaryEvidenceRef) &&
+        !channel.e.includes(primaryEvidenceRef) &&
         channel.e.includes(targetRef)
       ) &&
-      revenue.g.a.includes(primaryEvidenceRef) &&
+      !revenue.g.a.includes(primaryEvidenceRef) &&
       revenue.g.a.includes(targetRef);
   });
   if (mixedPaidOfferResult.status !== 'planned' ||
@@ -8593,10 +8597,10 @@ function contingentFinalists(motion) {
   const ref = motion.evidenceRefs[0];
   const attributionRef =
     PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID;
-  const targetRef = 'target:evidence';
-  const buyerRef = motion.commercialRole === 'referral_partner'
-    ? ref
-    : targetRef;
+  // Call 1 may cite only approved profile/observation evidence. The target
+  // sentinel is attached locally to the route-authorized dimensions after
+  // decoding, so it cannot become the sole basis of a buyer variant.
+  const buyerRef = ref;
   const paidDemand = motion.commercialRole === 'paid_demand';
   const mechanism = motion.searchMode === 'active_job_posting'
     ? 'compensated_role'
@@ -8655,7 +8659,7 @@ function contingentFinalists(motion) {
   const sharedDimensions = {
     r: [{
       l: `${motion.paidOffer}: attributable payment`,
-      e: [ref, targetRef, attributionRef],
+      e: [ref, attributionRef],
       v: 'incremental_revenue_v3',
       rm: mechanism,
       io: `One additional paid income outcome from ${motion.paidOffer}.`,
@@ -8669,13 +8673,13 @@ function contingentFinalists(motion) {
       k: causalWitness(mechanism, attributionMethod),
       g: {
         b: [buyerRef],
-        o: paidDemand ? [targetRef] : [ref],
-        a: [targetRef],
+        o: [ref],
+        a: [ref],
         d: {
           l: conversionDestination,
-          e: paidDemand ? [targetRef] : [ref]
+          e: [ref]
         },
-        c: paidDemand ? [targetRef] : [ref],
+        c: [ref],
         t: [attributionRef]
       },
       sb: 'Prepare only the evidence-backed action artifact.',
@@ -8683,10 +8687,12 @@ function contingentFinalists(motion) {
     }],
     o: sharedVariants.map((variant) => ({
       l: `${motion.paidOffer} (${variant})`,
-      e: paidDemand ? [targetRef] : [ref]
+      e: [ref]
     })),
     b: sharedVariants.map((variant) => ({
-      l: `${motion.buyer} via {{TARGET_NAME}} (${variant})`,
+      l: motion.commercialRole === 'referral_partner'
+        ? `${motion.buyer} (${variant})`
+        : `{{TARGET_NAME}}: ${motion.buyer} (${variant})`,
       e: [buyerRef]
     })),
     t: sharedVariants.map((variant) => ({
@@ -8702,18 +8708,18 @@ function contingentFinalists(motion) {
   const makeFamily = (key, variantA, variantB) => ({
     l: `${motion.id} ${key}`,
     m: motion.acquisitionMode,
-    e: [ref, targetRef, attributionRef],
+    e: [ref, attributionRef],
     s: scores,
     tacticKey: key,
     d: {
       ...structuredClone(sharedDimensions),
       c: [variantA, variantB].map((variant) => ({
         l: channel(variant),
-        e: [targetRef]
+        e: [ref]
       })),
       a: [variantA, variantB].map((variant) => ({
         l: acquisitionAction(variant),
-        e: [ref, targetRef]
+        e: [ref]
       })),
       f: [variantA, variantB].map((variant) => ({
         l: 'If no reply after 5 days, one review-first follow-up',
