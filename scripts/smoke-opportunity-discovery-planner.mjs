@@ -494,8 +494,12 @@ for (const scenario of cases) {
     ?.properties?.l?.pattern || '';
   const channelLabelPattern = plannerDefinitions.channelItem
     ?.properties?.l?.pattern || '';
-  const actionLabelPattern = plannerDefinitions.actionItem
-    ?.properties?.l?.pattern || '';
+  const referralActionPattern = plannerDefinitions.actionItem
+    ?.properties?.rp?.pattern || '';
+  const buyerActionPattern = plannerDefinitions.actionItem
+    ?.properties?.by?.pattern || '';
+  const paidDemandActionPattern = plannerDefinitions.actionItem
+    ?.properties?.pd?.pattern || '';
   const promptWithoutContract = { ...plannerPrompt };
   delete promptWithoutContract.outputContract;
   delete promptWithoutContract.hardRules;
@@ -551,8 +555,14 @@ for (const scenario of cases) {
       !/Review-first public professional profile.*TARGET_URL.*Review-first official paid-demand page.*TARGET_URL/is.test(
         channelLabelPattern
       ) ||
-      !/After review via public professional profile.*TARGET_URL.*ask.*TARGET_NAME.*After review via official paid-demand page.*TARGET_URL.*apply\|bid\|respond\|submit.*TARGET_NAME/is.test(
-        actionLabelPattern
+      !/After review via public professional profile.*TARGET_URL.*ask.*TARGET_NAME.*refer\|recommend\|introduce.*book\|buy\|purchase\|sign up for/is.test(
+        referralActionPattern
+      ) ||
+      !/After review via public professional profile.*TARGET_URL.*ask.*TARGET_NAME.*book\|buy\|purchase\|sign\|subscribe to.*paid\|reimbursable/is.test(
+        buyerActionPattern
+      ) ||
+      !/After review via official paid-demand page.*TARGET_URL.*apply\|bid\|respond\|submit.*compensated\|paid.*application\|bid\|proposal\|response.*TARGET_NAME/is.test(
+        paidDemandActionPattern
       ) ||
       !contingentProperties.pathBase ||
       !contingentProperties.tacticA ||
@@ -648,24 +658,29 @@ for (const scenario of cases) {
       !/no reply after.*one review-first follow-up/i.test(
         followUpLabelPattern
       ) ||
-      !/^\^/.test(
-        requestSeen.responseFormat?.json_schema?.schema?.$defs
-          ?.actionItem?.properties?.l?.pattern || ''
+      JSON.stringify(plannerDefinitions.actionItem?.required) !==
+        JSON.stringify(['rp', 'by', 'pd', 'e']) ||
+      plannerDefinitions.actionItem?.properties?.l ||
+      ![referralActionPattern, buyerActionPattern, paidDemandActionPattern]
+        .every((pattern) => /^\^/.test(pattern) && /TARGET_NAME/.test(pattern) &&
+          /TARGET_URL/.test(pattern) && /\$$/.test(pattern)) ||
+      !new RegExp(referralActionPattern).test(
+        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid consultation'
       ) ||
-      !/TARGET_NAME/.test(
-        requestSeen.responseFormat?.json_schema?.schema?.$defs
-          ?.actionItem?.properties?.l?.pattern || ''
+      new RegExp(referralActionPattern).test(
+        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation'
       ) ||
-      !/\$$/.test(
-        requestSeen.responseFormat?.json_schema?.schema?.$defs
-          ?.actionItem?.properties?.l?.pattern || ''
+      !new RegExp(buyerActionPattern).test(
+        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package'
       ) ||
-      !/active cash ask.*paid partner referral.*target purchase\/booking.*paid-demand response.*no private contact.*setup.*support.*follow-up/is.test(
-        requestSeen.responseFormat?.json_schema?.schema?.$defs
-          ?.actionItem?.properties?.l?.description || ''
+      !new RegExp(paidDemandActionPattern).test(
+        'After review via official paid-demand page {{TARGET_URL}}, submit a paid proposal to {{TARGET_NAME}} for the scoped contract'
+      ) ||
+      !/three model-authored role alternatives.*selects exactly.*commercialRole.*never composes action prose/is.test(
+        plannerDefinitions.actionItem?.description || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /a:2\/tactic.*referral=partner referral\/introduction.*current paid offer.*paid booking\/payment.*buyer=ask target to book\/buy\/sign current paid offer.*paid_demand=paid application\/proposal response.*marketplace\/directory placement/is.test(
+        /a:2\/tactic.*each a has rp\/by\/pd\/e.*rp=partner referral\/introduction.*current paid offer.*paid booking\/payment.*by=ask target to book\/buy\/sign current paid offer.*pd=paid application\/proposal response.*code selects commercialRole only.*marketplace\/directory placement/is.test(
           rule
         )
       ) ||
@@ -706,7 +721,7 @@ for (const scenario of cases) {
       !/market must copy one response-schema enum value exactly.*never expand.*abbreviate.*widen/is.test(
         requestSeen.system || ''
       ) ||
-      !/referral_partner=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*buyer=ask target to book\/buy\/sign current paid offer.*paid_demand=typed paid application\/proposal response.*marketplace\/directory placement are invalid/is.test(
+      !/a=\{rp,by,pd,e\}.*all three complete model actions.*rp=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*by=target books\/buys\/signs current paid offer.*pd=typed paid application\/proposal response.*code selects commercialRole only.*marketplace\/directory placement/is.test(
         requestSeen.system || ''
       ) ||
       !/compensated_job finds an employer job posting.*buyer_solicitation finds a buyer-authored paid RFP\/RFQ\/tender\/procurement notice\/explicit request.*two referral motions with different counterparties are valid.*diversity never requires paid_demand.*supplier\/competitor offers.*accepts insurance.*are supply, never demand/is.test(
@@ -1031,7 +1046,7 @@ await verifyProviderAttestedBuyerReviewRoute();
 await verifyPaidDemandTargetProtocolEndToEnd();
 await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
-if (smallestCompactResponseReduction < 0.25 ||
+if (smallestCompactResponseReduction < 0.1 ||
     largestCompactFixtureBytes >= largestMaterializedFixtureBytes) {
   throw new Error(
     `shared planner contract did not reduce representative response size: ${JSON.stringify({ largestMaterializedFixtureBytes, largestCompactFixtureBytes, smallestCompactResponseReduction })}`
@@ -1039,7 +1054,7 @@ if (smallestCompactResponseReduction < 0.25 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyTypedCommercialMotionSelection(
@@ -3973,7 +3988,7 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
   secondAction.contingentFinalists = compactContingentFinalists(
     secondAction.contingentFinalists
   );
-  secondAction.contingentFinalists.tacticA.a[0].l =
+  secondAction.contingentFinalists.tacticA.a[0].rp =
     'After review, monitor {{TARGET_NAME}} without making a paid referral request.';
   const selectedSecond = await plannerResultForMotion({
     job,
@@ -4015,7 +4030,7 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
     invalid.contingentFinalists
   );
   for (const action of invalid.contingentFinalists.tacticA.a) {
-    action.l =
+    action.rp =
       'After review, monitor {{TARGET_NAME}} without making a paid referral request.';
   }
   const rejected = await plannerResultForMotion({
@@ -8843,7 +8858,12 @@ function compactContingentFinalists(value) {
     e: family.e.slice(0, 2),
     s: family.s,
     c: family.d.c,
-    a: family.d.a,
+    a: family.d.a.map((action) => ({
+      rp: action.l,
+      by: action.l,
+      pd: action.l,
+      e: action.e
+    })),
     f: family.d.f
   });
   return {

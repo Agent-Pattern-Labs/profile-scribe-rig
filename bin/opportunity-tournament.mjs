@@ -50,6 +50,11 @@ const CONTINGENT_TARGET_URL_TOKEN = '{{TARGET_URL}}';
 const CONTINGENT_TARGET_EVIDENCE_REF = 'target:evidence';
 const CONTINGENT_CONVERSION_ACTION_PROJECTION =
   'project_first_viable_tactic_action';
+const CONTINGENT_PLANNER_ACTION_FIELD_BY_COMMERCIAL_ROLE = Object.freeze({
+  referral_partner: 'rp',
+  buyer: 'by',
+  paid_demand: 'pd'
+});
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER =
   'openrouter_exa_web_search';
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION =
@@ -884,7 +889,7 @@ Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMo
 Plans prove no outside fact or authority. Top-level buyer is the payer archetype and has no tokens. {{TARGET_URL}} appears only in targetSlot and contingent c/a text. {{TARGET_NAME}} also appears once in each b.l for buyer/paid_demand and zero times in referral b.l. target:evidence appears only as targetSlot.evidenceRefToken; code binds all e refs by typed role. No target token belongs in other top-level plan prose.
 Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas.
 Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
-Every a: {{TARGET_NAME}} once; active cash ask. referral_partner=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=typed paid application/proposal response. Bare introduce/share/connect/message/conversation and marketplace/directory placement are invalid. buyer/referral c+a exact: "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; no message/DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
+Every a={rp,by,pd,e}; author all three complete model actions. rp=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; by=target books/buys/signs current paid offer; pd=typed paid application/proposal response. Code selects commercialRole only; never composes prose. Each action has {{TARGET_NAME}}/{{TARGET_URL}} once. Bare introduce/share/connect/message/conversation, marketplace/directory placement, and setup are invalid. rp/by use "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; pd uses the official paid-demand page. No DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
 acquisitionMechanism is exact and structural: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page". paid_demand c+a use that official page and {{TARGET_URL}}; never name a private contact route.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
 Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only referral query may name served population. market must copy one response-schema enum value exactly; never expand, abbreviate, or widen it. professional/local: targetRoleTerms=one coherent current-title family; organizationTerms=context; job: jobTitle+skills; public demand: all four empty. Copy IDs/tokens exactly. Return strict JSON only.`;
@@ -1318,17 +1323,35 @@ function opportunityDiscoveryPlannerResponseFormat(
       }
     },
     actionItem: {
-      ...contingentActionItem,
+      type: 'object',
       properties: {
-        ...asObject(contingentActionItem.properties),
-        l: {
+        rp: {
           type: 'string',
           pattern:
-            '^(?:After review via public professional profile \\{\\{TARGET_URL\\}\\}, ask \\{\\{TARGET_NAME\\}\\} [^\\r\\n]{1,96}|After review via official paid-demand page \\{\\{TARGET_URL\\}\\}, (?:apply|bid|respond|submit) [^\\r\\n]{0,56}\\{\\{TARGET_NAME\\}\\}[^\\r\\n]{1,80})$',
+            '^After review via public professional profile \\{\\{TARGET_URL\\}\\}, ask \\{\\{TARGET_NAME\\}\\} to (?:refer|recommend|introduce) [^\\r\\n]{1,72} to (?:book|buy|purchase|sign up for) [^\\r\\n]{1,72}$',
           description:
-            'Active cash ask through the one review-only public route: paid partner referral, target purchase/booking, or paid-demand response; no private contact, setup, support, or follow-up.'
-        }
-      }
+            'Referral action: target introduces or recommends a qualified buyer to book or buy the paid offer.'
+        },
+        by: {
+          type: 'string',
+          pattern:
+            '^After review via public professional profile \\{\\{TARGET_URL\\}\\}, ask \\{\\{TARGET_NAME\\}\\} to (?:book|buy|purchase|sign|subscribe to) the current (?:paid|reimbursable) [^\\r\\n]{1,96}$',
+          description:
+            'Buyer action: target books, buys, signs, or subscribes to the current paid offer.'
+        },
+        pd: {
+          type: 'string',
+          pattern:
+            '^After review via official paid-demand page \\{\\{TARGET_URL\\}\\}, (?:apply|bid|respond|submit) (?:a|one|the) (?:compensated|paid) (?:application|bid|proposal|response) (?:to|for) \\{\\{TARGET_NAME\\}\\}[^\\r\\n]{0,80}$',
+          description:
+            'Demand action: paid application, bid, proposal, or response via the official demand page.'
+        },
+        e: asObject(asObject(contingentActionItem.properties).e)
+      },
+      required: ['rp', 'by', 'pd', 'e'],
+      additionalProperties: false,
+      description:
+        'Three model-authored role alternatives; code selects exactly commercialRole and never composes action prose.'
     },
     timingItem: boundedItemDefinition('timingItem'),
     proofItem: boundedItemDefinition('proofItem'),
@@ -1656,7 +1679,8 @@ function compactOpportunityDiscoveryOutputContract() {
       `{seedContract:${SEED_CONTRACT_VERSION},pathBase,tacticA,tacticB,w}; pathBase={e,r,o,b,t,p}; tactic={l,m,tacticKey,e,s,c,a,f}; m=plan.acquisitionMode; tacticKey unique`,
     dimensions:
       `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}; b.l has ${CONTINGENT_TARGET_NAME_TOKEN} once for buyer/paid_demand and zero times for referral_partner`,
-    item: '{l,e}; t={l,e,q}; exact evidence IDs',
+    item:
+      '{l,e}; a={rp,by,pd,e}: complete model role actions, code selects commercialRole; t={l,e,q}; exact evidence IDs',
     revenuePath:
       `{l,e,v,rm,io,a,c,o,atm,ats,cd,st,k,g:{b,o,a,d:{l,e},c,t},sb,vm}; v=${REVENUE_PATH_CONTRACT_VERSION}; o copies the response-schema terminal outcome matching rm; k={v,i,c,o,p,t,d,s,n,u}; p=rm+"_terminal"; g binds evidence`,
     evidence:
@@ -1671,7 +1695,7 @@ function compactOpportunityDiscoveryHardRules() {
     `top-level buyer is the payer/end-buyer archetype and contains no target token. Contingent b.l has {{TARGET_NAME}} once for buyer/paid_demand and zero times for referral_partner; action/channel use typed target tokens. ${CONTINGENT_TARGET_EVIDENCE_REF} appears only as targetSlot.evidenceRefToken, never in a returned e array; code binds it after typed-role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
-    'a:2/tactic. referral=partner referral/introduction -> current paid offer -> paid booking/payment; buyer=ask target to book/buy/sign current paid offer; paid_demand=paid application/proposal response. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
+    'a:2/tactic; each a has rp/by/pd/e. rp=partner referral/introduction -> current paid offer -> paid booking/payment; by=ask target to book/buy/sign current paid offer; pd=paid application/proposal response. Author all three complete actions; code selects commercialRole only. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `r.a=plan.acquisitionMode; r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; project valid tactic a; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.`,
     'r.o copies the one response-schema settled terminal outcome matching rm; never use an alternative, attempt, pending, declined, failed, or unpaid state.',
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/o/ats/cd/st; vm>0.',
@@ -2109,7 +2133,7 @@ function normalizeContingentFinalistBundle(
     return {};
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
-  clone = materializePlannerContingentFinalistBundle(clone);
+  clone = materializePlannerContingentFinalistBundle(clone, planValue);
   if (Object.keys(asObject(clone)).length === 0) return {};
   clone = canonicalizeContingentTargetEvidence(clone, planValue);
   const plan = asObject(planValue);
@@ -2429,7 +2453,7 @@ function neutralContingentFollowUp(value) {
  * retains read compatibility while preventing a mixed compact/materialized
  * object from widening the durable contract.
  */
-function materializePlannerContingentFinalistBundle(value) {
+function materializePlannerContingentFinalistBundle(value, planValue) {
   const raw = asObject(value);
   const materializedFamilyA = asObject(raw.familyA);
   const materializedFamilyB = asObject(raw.familyB);
@@ -2452,6 +2476,17 @@ function materializePlannerContingentFinalistBundle(value) {
     return raw;
   }
   const copy = (item) => JSON.parse(JSON.stringify(item));
+  const actionField =
+    CONTINGENT_PLANNER_ACTION_FIELD_BY_COMMERCIAL_ROLE[
+      firstText(asObject(planValue).commercialRole)
+    ] || '';
+  const roleActions = (items) => asArray(items).map((itemValue) => {
+    const item = asObject(itemValue);
+    return {
+      l: firstText(item[actionField]),
+      e: copy(asArray(item.e))
+    };
+  });
   const family = (tactic) => ({
     l: tactic.l,
     m: tactic.m,
@@ -2466,7 +2501,7 @@ function materializePlannerContingentFinalistBundle(value) {
       o: copy(asArray(pathBase.o)),
       b: copy(asArray(pathBase.b)),
       c: copy(asArray(tactic.c)),
-      a: copy(asArray(tactic.a)),
+      a: roleActions(tactic.a),
       t: copy(asArray(pathBase.t)),
       p: copy(asArray(pathBase.p)),
       f: copy(asArray(tactic.f))
