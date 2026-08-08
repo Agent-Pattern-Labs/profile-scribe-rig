@@ -6787,6 +6787,9 @@ async function verifyTwoStageTargetBinding() {
     commercialDiscoveryAttemptLedgerHash(noTargetAttempts);
   noTargetPayload.commercialDiscoveryEvidence.status = 'not_found';
   noTargetPayload.commercialDiscoveryEvidence.resultCount = 0;
+  noTargetPayload.commercialDiscoveryEvidence.rejectedReasons = {
+    provider_zero_results: 2
+  };
   noTargetPayload.commercialDiscoveryEvidence.evidence = [];
   noTargetPayload.commercialDiscoveryEvidence.candidates = [];
   let noTargetCalls = 0;
@@ -6808,6 +6811,20 @@ async function verifyTwoStageTargetBinding() {
     noTargetCalls,
     'valid provider not-found without source-bound finalists'
   );
+  if (noTarget.nextExperiment?.kind !==
+        'commercial_discovery_target_resolution_recovery' ||
+      noTarget.nextExperiment?.missingEvidence?.[0] !==
+        'commercial_discovery_exact_target_resolution' ||
+      noTarget.trace?.commercialDiscovery?.status !== 'not_found' ||
+      noTarget.trace?.commercialDiscovery?.resultCount !== 0 ||
+      noTarget.trace?.commercialDiscovery?.rejectedReasons
+        ?.provider_zero_results !== 2 ||
+      noTarget.searchSpace?.contingentFinalists?.cause !==
+        'exact_target_not_found') {
+    throw new Error(
+      `valid provider not-found did not retain its exact cause-matched recovery trace: ${JSON.stringify(noTarget)}`
+    );
+  }
 
   const incompleteFamiliesPayload = structuredClone(downstreamPayload);
   const selectedPersistedMotion =
@@ -8348,11 +8365,25 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
 }
 
 function assertTechnicalRecovery(result, calls, label) {
+  const experiment = result.nextExperiment || {};
+  const acceptedKinds = new Set([
+    'commercial_discovery_provider_recovery',
+    'commercial_discovery_target_resolution_recovery',
+    'commercial_discovery_target_binding_recovery',
+    'commercial_discovery_contract_recovery',
+    'strategy_generation_shape_recovery'
+  ]);
   if (calls !== 0 ||
       result.status !== 'skipped' ||
       result.gate?.decision !== 'technical_recovery' ||
       result.result?.resultType !== 'technical_recovery' ||
-      result.nextExperiment !== null ||
+      !acceptedKinds.has(experiment.kind) ||
+      experiment.contractVersion !== 'revenue_evidence_experiment_v1' ||
+      experiment.requiresReview !== true ||
+      experiment.rerunPolicy?.maxReruns !== 1 ||
+      !Array.isArray(experiment.missingEvidence) ||
+      experiment.missingEvidence.length !== 1 ||
+      result.result?.recommendedAction !== experiment.action ||
       result.usage?.calls !== 0 ||
       result.gate?.sideEffects?.outreachAttempts !== 0 ||
       result.gate?.sideEffects?.publishAttempts !== 0 ||

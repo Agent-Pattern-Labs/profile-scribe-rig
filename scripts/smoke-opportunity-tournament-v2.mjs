@@ -443,7 +443,10 @@ async function verifyV6RequiresMaterializedOutsideTarget() {
       result.result?.resultType !== 'technical_recovery' ||
       result.gate?.decision !== 'technical_recovery' ||
       result.winner !== null ||
-      result.nextExperiment !== null ||
+      result.nextExperiment?.kind !==
+        'commercial_discovery_contract_recovery' ||
+      result.nextExperiment?.missingEvidence?.[0] !==
+        'commercial_discovery_contract_validation' ||
       result.searchSpace?.modelCalls !== 0 ||
       result.searchSpace?.structuredRepair?.attempted === true ||
       providerCalls !== 0) {

@@ -5422,7 +5422,9 @@ async function runOpportunityTournamentCore({
       summary:
         'The v6 tournament requires a valid, source-bindable outside-target discovery plan before recommendation.',
       ...base,
-      nextExperiment: null,
+      nextExperiment: nextExperimentFor([
+        'commercial_discovery_contract_validation'
+      ]),
       searchSpace: {
         ...base.searchSpace,
         modelCalls: 0,
@@ -5435,39 +5437,27 @@ async function runOpportunityTournamentCore({
     };
   }
   if (hasV2ContingentPlan && !useContingentFinalists) {
-    const technicalFailure = [
-      'provider_unavailable',
-      'provider_failed',
-      'invalid_discovery_envelope',
-      'invalid_contingent_contract',
-      'target_source_binding_failed',
-      'exact_target_not_found'
-    ].includes(firstText(contingentFinalists.cause));
+    const contingentCause = firstText(contingentFinalists.cause);
+    const recoveryEvidence =
+      commercialDiscoveryRecoveryEvidence(contingentCause);
     return {
       status: 'skipped',
-      summary: technicalFailure
-        ? 'The bounded outside-discovery or contingent-finalist contract could not be completed safely.'
-        : 'The completed bounded outside search found no exact public target for the selected commercial motion.',
+      summary: contingentCause === 'exact_target_not_found'
+        ? 'The completed bounded outside search found no exact public target for the selected commercial motions.'
+        : 'The bounded outside-discovery or contingent-finalist contract could not be completed safely.',
       ...base,
-      nextExperiment: null,
+      nextExperiment: nextExperimentFor([recoveryEvidence]),
       searchSpace: {
         ...base.searchSpace,
         modelCalls: 0,
         contingentFinalists: contingentFinalists.trace
       },
       gate: researchOnlyGate(
-        technicalFailure
-          ? 'technical_recovery'
-          : 'technical_recovery',
-        technicalFailure
-          ? firstText(
-              contingentFinalists.reason,
-              'Outside discovery failed its exact provider or contract boundary.'
-            )
-          : firstText(
-              contingentFinalists.reason,
-              'The target result could not be classified safely.'
-            )
+        'technical_recovery',
+        firstText(
+          contingentFinalists.reason,
+          'Outside discovery failed its exact provider, target-resolution, or contract boundary.'
+        )
       )
     };
   }
@@ -6091,7 +6081,9 @@ async function runOpportunityTournamentCore({
       summary:
         'The first AI stage did not preserve two complete source-bindable commercial finalists.',
       ...base,
-      nextExperiment: null,
+      nextExperiment: nextExperimentFor([
+        'structured_strategy_family_repair'
+      ]),
       llm: llmTrace,
       usage,
       searchSpace: {
@@ -6345,7 +6337,9 @@ async function runOpportunityTournamentCore({
       ...base,
       hypotheses: initialHypotheses.map(publicHypothesis),
       nextExperiment: useContingentFinalists
-        ? null
+        ? nextExperimentFor([
+            'structured_strategy_family_repair'
+          ])
         : nextExperimentFor([
             ...Object.keys(expanded.revenueRejectionReasons),
             'second_grounded_finalist'
@@ -6395,7 +6389,9 @@ async function runOpportunityTournamentCore({
         ...base,
         hypotheses: initialHypotheses.map(publicHypothesis),
         nextExperiment: useContingentFinalists
-          ? null
+          ? nextExperimentFor([
+              'structured_strategy_family_repair'
+            ])
           : nextExperimentFor([
               'active_causal_revenue_finalist',
               'second_grounded_finalist'
@@ -6709,7 +6705,9 @@ async function runOpportunityTournamentCore({
       hypotheses: initialHypotheses.map(publicHypothesis),
       candidates: provisionalCandidates,
       nextExperiment: useContingentFinalists
-        ? null
+        ? nextExperimentFor([
+            'structured_strategy_family_repair'
+          ])
         : nextExperimentFor([
             'family_diverse_revenue_path'
           ]),
@@ -6758,7 +6756,9 @@ async function runOpportunityTournamentCore({
       ...base,
       hypotheses: publicHypotheses,
       nextExperiment: useContingentFinalists
-        ? null
+        ? nextExperimentFor([
+            'structured_strategy_family_repair'
+          ])
         : nextExperimentFor([
             'distinct_runner_up'
           ]),
@@ -7115,6 +7115,23 @@ function materializeContingentFinalistsFromDiscovery({
   };
 }
 
+function commercialDiscoveryRecoveryEvidence(causeValue) {
+  switch (firstText(causeValue)) {
+    case 'provider_unavailable':
+    case 'provider_failed':
+      return 'read_only_commercial_discovery_health';
+    case 'exact_target_not_found':
+      return 'commercial_discovery_exact_target_resolution';
+    case 'target_source_binding_failed':
+      return 'commercial_discovery_target_source_binding';
+    case 'no_v2_contingent_plan':
+    case 'invalid_discovery_envelope':
+    case 'invalid_contingent_contract':
+    default:
+      return 'commercial_discovery_contract_validation';
+  }
+}
+
 function bindContingentMotionTarget({
   motion: motionValue,
   candidates: candidateValues,
@@ -7391,7 +7408,10 @@ export function normalizeCommercialDiscoveryEvidence(
 ) {
   const raw = asObject(value);
   const present = Object.keys(raw).length > 0;
-  const rejectedReasons = {};
+  const durableRejections = commercialDiscoveryRejectionReasons(
+    raw.rejectedReasons
+  );
+  const rejectedReasons = { ...durableRejections.reasons };
   const reject = (reason) => {
     rejectedReasons[reason] = (rejectedReasons[reason] || 0) + 1;
   };
@@ -7425,6 +7445,10 @@ export function normalizeCommercialDiscoveryEvidence(
     rejectedReasons
   };
   if (!present) return base;
+  if (!durableRejections.valid) {
+    reject('invalid_rejection_diagnostic');
+    return base;
+  }
   if (base.contractVersion !== COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT) {
     reject('invalid_contract');
     return base;
@@ -7669,6 +7693,34 @@ export function commercialDiscoveryAttemptLedgerHash(attemptsValue) {
       firstText(attempt.queryHash).toLowerCase()
     ];
   }));
+}
+
+function commercialDiscoveryRejectionReasons(value) {
+  const allowed = new Set([
+    'provider_zero_results',
+    'missing_professional_fields',
+    'role_mismatch',
+    'organization_mismatch',
+    'workplace_market_mismatch',
+    'missing_public_person_identity',
+    'missing_public_organization_identity',
+    'previously_contacted'
+  ]);
+  const raw = asObject(value);
+  const reasons = {};
+  let total = 0;
+  for (const [reason, rawCount] of Object.entries(raw)) {
+    const count = nonNegativeInteger(rawCount);
+    if (!allowed.has(reason) || !count || count > 2) {
+      return { valid: false, reasons: {} };
+    }
+    reasons[reason] = count;
+    total += count;
+  }
+  return {
+    valid: Object.keys(reasons).length <= 4 && total <= 4,
+    reasons
+  };
 }
 
 function normalizeCommercialDiscoveryAttempt(value) {
@@ -16361,6 +16413,10 @@ function strategyGenerationRecoveryExperiment({
 }) {
   const missing = compactStrings(missingEvidence);
   const recoveryCause = [
+    'read_only_commercial_discovery_health',
+    'commercial_discovery_exact_target_resolution',
+    'commercial_discovery_target_source_binding',
+    'commercial_discovery_contract_validation',
     'provider_request_serialization',
     'bounded_prompt_envelope',
     'usable_strategy_generation',
@@ -16374,6 +16430,49 @@ function strategyGenerationRecoveryExperiment({
   ].find((cause) => missing.includes(cause));
   if (!recoveryCause) return null;
   const recoveryByCause = {
+    read_only_commercial_discovery_health: {
+      kind: 'commercial_discovery_provider_recovery',
+      title: 'Retry once after read-only commercial discovery recovers',
+      action:
+        'Preserve the objective, approved evidence, and commercial motions and make no business, outreach, publishing, or provider-write changes. Verify the configured read-only commercial-discovery provider with one non-billable health check, then retry the same bounded tournament exactly once; do not repeat paid discovery until provider health is proven.',
+      stopCondition:
+        'Stop after 1 non-billable provider health check and 1 linked retry; if discovery fails again, surface the exact provider failure and do not spend again automatically.',
+      trigger:
+        'Rerun once only after the read-only commercial-discovery provider passes its non-billable health check; new business evidence is not required.'
+    },
+    commercial_discovery_exact_target_resolution: {
+      kind: 'commercial_discovery_target_resolution_recovery',
+      title:
+        'Retry once after exact-target discovery is verified against a fixture',
+      action:
+        'Preserve the objective, approved evidence, and two commercial motions and make no business, outreach, publishing, or provider-write changes. Verify and, if needed, repair each typed target query and local result filter with one non-billable fixture that resolves an exact public professional identity, then retry the same bounded tournament exactly once; do not blindly repeat the paid provider searches.',
+      stopCondition:
+        'Stop after 1 non-billable exact-target fixture check and 1 linked retry; if no exact target binds again, preserve the rejection reason and do not spend again automatically.',
+      trigger:
+        'Rerun once only after every typed commercial motion resolves an exact source-bindable public target in the non-billable fixture; new business evidence is not required.'
+    },
+    commercial_discovery_target_source_binding: {
+      kind: 'commercial_discovery_target_binding_recovery',
+      title:
+        'Retry once after exact target-to-source binding is verified',
+      action:
+        'Preserve the objective, approved evidence, two commercial motions, and durable discovery receipts and make no business, outreach, publishing, or provider-write changes. Repair and verify the deterministic provider-record-to-public-identity and evidence-role binding with a non-billable fixture, then retry the same bounded tournament exactly once; do not promote model prose into target evidence.',
+      stopCondition:
+        'Stop after 1 non-billable target-binding fixture check and 1 linked retry; if source binding fails again, preserve the exact rejected role and do not spend again automatically.',
+      trigger:
+        'Rerun once only after the exact provider-record, public-identity, and evidence-role binding passes its non-billable fixture; new business evidence is not required.'
+    },
+    commercial_discovery_contract_validation: {
+      kind: 'commercial_discovery_contract_recovery',
+      title:
+        'Retry once after the outside-discovery contract is verified',
+      action:
+        'Preserve the objective and approved evidence and make no business, outreach, publishing, or provider-write changes. Repair and verify the persisted discovery plan, bounded provider envelope, and deterministic contingent-finalist contract with non-billable fixtures, then retry the same bounded tournament exactly once; do not treat the contract failure as missing market evidence.',
+      stopCondition:
+        'Stop after 1 non-billable discovery-contract verification and 1 linked retry; if the same contract fails again, preserve its exact structural cause and do not spend again automatically.',
+      trigger:
+        'Rerun once only after the discovery plan, provider envelope, and contingent-finalist fixtures pass; new business evidence is not required.'
+    },
     provider_request_serialization: {
       kind: 'strategy_generation_request_serialization_recovery',
       title:
