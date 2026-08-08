@@ -799,6 +799,7 @@ async function runOpportunityTournamentJob(job, options) {
       llm: object(tournament.llm),
       result: object(tournament.result),
       trace: {
+        ...object(tournament.trace),
         tools: researchTools,
         steps: [
           { name: 'validate_objective', status: tournament.objective?.outcome ? 'completed' : 'skipped' },
@@ -4047,6 +4048,7 @@ function withRunTraceMetadata(job, result, startedAt) {
   const completedAt = new Date();
   const started = startedAt instanceof Date && Number.isFinite(startedAt.getTime()) ? startedAt : completedAt;
   metadata.trace = compact({
+    ...existing,
     kind: 'profile-scribe-rig-run',
     jobId: text(result.jobId || job.id),
     jobKind: text(result.jobKind || job.kind),

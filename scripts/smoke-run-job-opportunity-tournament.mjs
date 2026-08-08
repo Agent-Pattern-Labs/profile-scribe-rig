@@ -493,6 +493,11 @@ function verifySuccessfulTournament(receipt, job, calls) {
     /^[a-f0-9]{64}$/.test(metadata.commercialEvidenceGraphHash || ''),
     'success path lost the deterministic commercial graph hash'
   );
+  assert(
+    metadata.trace?.commercialDiscovery &&
+      typeof metadata.trace.commercialDiscovery === 'object',
+    'run-job wrapper discarded the tournament commercial-discovery trace'
+  );
   assertEqual(
     metadata.result?.resultContract,
     'opportunity_tournament_result_v2',
