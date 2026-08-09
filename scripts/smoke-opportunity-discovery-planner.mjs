@@ -43,6 +43,7 @@ function productionCitation(url, title, content) {
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
 const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 229_400;
+const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v1';
 let largestPlannerResponseBytes = 0;
 let largestPlannerRequestBytes = 0;
 let largestPlannerContractBytes = 0;
@@ -1083,7 +1084,7 @@ if (smallestCompactResponseReduction < 0.1 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024 - 512} 512-byte-headroom floor; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyTypedCommercialMotionSelection(
@@ -1134,6 +1135,8 @@ async function verifyTypedCommercialMotionSelection(
   compensatedMotions[0].searchMode = 'local_organization';
   compensatedMotions[0].commercialRole = 'buyer';
   compensatedMotions[0].acquisitionMode = 'partner_channel';
+  compensatedMotions[1].professionalRoleQueryContract =
+    'professional_role_query_v999';
   const compensated = await run({
     job: programmerJob,
     plans: compensatedMotions,
@@ -1152,6 +1155,7 @@ async function verifyTypedCommercialMotionSelection(
       compensatedJob?.searchMode !== 'active_job_posting' ||
       compensatedJob?.commercialRole !== 'paid_demand' ||
       compensatedJob?.acquisitionMode !== 'permissioned_outreach' ||
+      compensatedJob?.professionalRoleQueryContract ||
       compensatedJob?.query !==
         'current compensated job hiring Go backend engineer Go PostgreSQL United States' ||
       /consultancy|supplier|rfp services available/i.test(
@@ -3703,6 +3707,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     );
   }
 
+  let productionPartnershipsPlan;
   for (const [label, targetRoleTerms] of [
     [
       'sustainability',
@@ -3712,9 +3717,17 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     ['business', ['Business Advisor', 'Business Consultant']],
     ['engineering', ['Software Engineer', 'Technical Developer']],
     ['pediatric', ['Pediatrician', 'Pediatric Physician']],
-    ['obstetrics', ['OBGYN', 'Obstetrician Gynecologist']]
+    ['obstetrics', ['OBGYN', 'Obstetrician Gynecologist']],
+    [
+      'production partnerships',
+      [
+        'SLED partnerships director',
+        'Public-sector partnerships director',
+        'Government sales partnerships lead'
+      ]
+    ]
   ]) {
-    const id = `coherent_${label}_title_family`;
+    const id = `coherent_${label.replace(/\W+/g, '_')}_title_family`;
     const accepted = await run(candidate({
       id,
       targetRoleTerms
@@ -3722,6 +3735,10 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     const acceptedMotion = accepted.plans.find((motion) => motion.id === id);
     if (accepted.status !== 'planned' || accepted.plans.length !== 2 ||
         accepted.planSelection?.rejectedPlanCount !== 0 ||
+        accepted.plans.some((motion) =>
+          motion.professionalRoleQueryContract !==
+            PROFESSIONAL_ROLE_QUERY_CONTRACT
+        ) ||
         JSON.stringify(acceptedMotion?.targetRoleTerms) !==
           JSON.stringify(targetRoleTerms) || targetRoleTerms.some((term) =>
           !acceptedMotion?.query.includes(term)
@@ -3730,6 +3747,141 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         `${label} title synonyms did not reach the exact provider query: ${JSON.stringify(accepted)}`
       );
     }
+    if (label === 'production partnerships') {
+      productionPartnershipsPlan = structuredClone(accepted);
+    }
+  }
+
+  const persistedRoleEnvelope = (planResult, queryHash) => ({
+    contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
+    status: 'not_found',
+    attempted: true,
+    motion: planResult.plans[0].id,
+    buyerArchetype: planResult.plans[0].buyer,
+    market: planResult.plans[0].market,
+    queryHash,
+    providersAttempted: ['openrouter_exa_web_search'],
+    providerCalls: 1,
+    paidProviderCalls: 0,
+    creditsUsed: 0,
+    resultCount: 0,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    discoveredAt: now.toISOString(),
+    plan: planResult,
+    attempts: [],
+    evidence: [],
+    candidates: []
+  });
+  const persistedProductionPartnerships =
+    normalizeCommercialDiscoveryEvidence(
+      persistedRoleEnvelope(productionPartnershipsPlan, 'a'.repeat(64)),
+      now
+    );
+  if (persistedProductionPartnerships.valid !== true ||
+      persistedProductionPartnerships.plan?.valid !== true ||
+      persistedProductionPartnerships.plan?.plans?.some((motion) =>
+        motion.professionalRoleQueryContract !==
+          PROFESSIONAL_ROLE_QUERY_CONTRACT
+      )) {
+    throw new Error(
+      `marked production partnerships plan did not survive durable normalization: ${JSON.stringify(persistedProductionPartnerships)}`
+    );
+  }
+
+  const unmarkedProductionPartnerships = structuredClone(
+    productionPartnershipsPlan
+  );
+  for (const motion of unmarkedProductionPartnerships.plans) {
+    delete motion.professionalRoleQueryContract;
+  }
+  const rejectedUnmarkedCurrent = normalizeCommercialDiscoveryEvidence(
+    persistedRoleEnvelope(unmarkedProductionPartnerships, 'b'.repeat(64)),
+    now
+  );
+  if (rejectedUnmarkedCurrent.valid !== false ||
+      rejectedUnmarkedCurrent.plan?.valid !== false ||
+      !/professional title family/i.test(
+        rejectedUnmarkedCurrent.plan?.rejectedReason || ''
+      )) {
+    throw new Error(
+      `unmarked current partnerships shape gained fresh provider authority: ${JSON.stringify(rejectedUnmarkedCurrent)}`
+    );
+  }
+
+  const historicalUnmarked = structuredClone(coherentTitles);
+  for (const motion of historicalUnmarked.plans) {
+    delete motion.professionalRoleQueryContract;
+  }
+  const readableHistorical = normalizeCommercialDiscoveryEvidence(
+    persistedRoleEnvelope(historicalUnmarked, 'c'.repeat(64)),
+    now
+  );
+  if (readableHistorical.valid !== true ||
+      readableHistorical.plan?.valid !== true ||
+      readableHistorical.plan?.plans?.some((motion) =>
+        motion.professionalRoleQueryContract
+      )) {
+    throw new Error(
+      `unmarked historical plan lost legacy read compatibility: ${JSON.stringify(readableHistorical)}`
+    );
+  }
+
+  for (const [label, mutate, reason] of [
+    [
+      'unknown role query contract',
+      (planResult) => {
+        planResult.plans[0].professionalRoleQueryContract =
+          'professional_role_query_v999';
+      },
+      /unsupported professional role query contract/i
+    ],
+    [
+      'marked one-term role query',
+      (planResult) => {
+        planResult.plans[0].targetRoleTerms =
+          ['SLED partnerships director'];
+      },
+      /two to four distinct atomic likely-current title alternatives/i
+    ],
+    [
+      'marked cross-family role query',
+      (planResult) => {
+        planResult.plans[0].targetRoleTerms = [
+          'SLED partnerships director',
+          'Pediatric physician'
+        ];
+      },
+      /one coherent likely-current professional title family/i
+    ]
+  ]) {
+    const adversary = structuredClone(productionPartnershipsPlan);
+    mutate(adversary);
+    const normalized = normalizeCommercialDiscoveryEvidence(
+      persistedRoleEnvelope(adversary, createHash('sha256')
+        .update(label).digest('hex')),
+      now
+    );
+    if (normalized.valid !== false || normalized.plan?.valid !== false ||
+        !reason.test(normalized.plan?.rejectedReason || '')) {
+      throw new Error(
+        `${label} escaped persisted role-query validation: ${JSON.stringify(normalized)}`
+      );
+    }
+  }
+
+  const forgedModelMarker = await run(candidate({
+    id: 'model_authored_role_query_contract_is_ignored',
+    professionalRoleQueryContract: 'professional_role_query_v999'
+  }), 'generation-model-authored-role-query-contract');
+  if (forgedModelMarker.status !== 'planned' ||
+      forgedModelMarker.plans.some((motion) =>
+        motion.professionalRoleQueryContract !==
+          PROFESSIONAL_ROLE_QUERY_CONTRACT
+      )) {
+    throw new Error(
+      `model-authored role-query marker was not deterministically replaced: ${JSON.stringify(forgedModelMarker)}`
+    );
   }
 
   // Production regression: the planner returned one referral motion with a
@@ -7146,6 +7298,42 @@ async function verifyTwoStageTargetBinding() {
     );
   }
 
+  const unmarkedFoundPayload = structuredClone(downstreamPayload);
+  for (const motion of unmarkedFoundPayload.commercialDiscoveryEvidence
+    .plan.plans) {
+    delete motion.professionalRoleQueryContract;
+  }
+  let unmarkedFoundCriticCalls = 0;
+  const unmarkedFound = await runOpportunityTournament({
+    job: {
+      id: 'job-two-stage-unmarked-found-plan',
+      kind: 'opportunity_tournament',
+      payload: unmarkedFoundPayload
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => {
+      unmarkedFoundCriticCalls += 1;
+      throw new Error('unmarked found plan reached the critic');
+    }
+  });
+  assertTechnicalRecovery(
+    unmarkedFound,
+    unmarkedFoundCriticCalls,
+    'unmarked found professional-role plan'
+  );
+  if (unmarkedFound.trace?.commercialDiscovery?.plan?.valid !== true ||
+      unmarkedFound.searchSpace?.contingentFinalists?.materialized !== false ||
+      unmarkedFound.searchSpace?.contingentFinalists?.cause !==
+        'invalid_contingent_contract' ||
+      !/cannot authorize target materialization without professional_role_query_v1/i.test(
+        unmarkedFound.searchSpace?.contingentFinalists?.reason || ''
+      )) {
+    throw new Error(
+      `unmarked historical readability leaked into execution authority: ${JSON.stringify(unmarkedFound)}`
+    );
+  }
+
   const prunedVariantPayload = structuredClone(downstreamPayload);
   prunedVariantPayload.commercialDiscoveryEvidence.plan.plans[0]
     .contingentFinalists.familyA.d.a[1].l =
@@ -7355,6 +7543,8 @@ async function verifyTwoStageTargetBinding() {
   const multiMotionPayload = structuredClone(downstreamPayload);
   const firstMotion = structuredClone(scenario.plans(evidenceRef)[0]);
   firstMotion.priority = 1;
+  firstMotion.professionalRoleQueryContract =
+    PROFESSIONAL_ROLE_QUERY_CONTRACT;
   const secondMotion = structuredClone(selectedMotion);
   secondMotion.priority = 2;
   if (firstMotion.contingentFinalists.familyA.d.a[0].l !==
@@ -7645,8 +7835,9 @@ async function verifyTwoStageTargetBinding() {
   noTargetFirstMotion.searchMode = 'professional_counterparty';
   noTargetFirstMotion.motionKind = 'referral_person';
   noTargetFirstMotion.targetRoleTerms = [
-    'pediatrician',
-    'pediatric doctor'
+    'SLED partnerships director',
+    'Public-sector partnerships director',
+    'Government sales partnerships lead'
   ];
   noTargetFirstMotion.targetSlot.finalTargetKind = 'person';
   noTargetFirstMotion.targetSlot.resolutionStrategy =
@@ -7822,6 +8013,14 @@ async function verifyTwoStageTargetBinding() {
   for (const [label, mutate] of [
     ['planless envelope', (fixture) => {
       delete fixture.commercialDiscoveryEvidence.plan;
+    }],
+    ['unmarked current role-query plan', (fixture) => {
+      delete fixture.commercialDiscoveryEvidence.plan.plans[0]
+        .professionalRoleQueryContract;
+    }],
+    ['wrong current role-query contract', (fixture) => {
+      fixture.commercialDiscoveryEvidence.plan.plans[0]
+        .professionalRoleQueryContract = 'professional_role_query_v999';
     }],
     ['two-citation receipt', (fixture) => {
       const receipt = fixture.commercialDiscoveryEvidence.plan
@@ -9395,7 +9594,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   productionShapedPlannerRequestBytes = requestBytes;
   if (!requestSeen || result.status !== 'planned' ||
       requestBytes < 32 * 1_024 ||
-      requestBytes > 35 * 1_024 ||
+      requestBytes > 35 * 1_024 - 512 ||
       result.preflight?.maxRequestBodyByteCount !== 36 * 1_024) {
     throw new Error(
       `production-shaped planner request lacks bounded headroom: ${JSON.stringify({ requestBytes, evidenceCount: JSON.parse(requestSeen?.user || '{}').evidenceCatalog?.length, preflight: result.preflight, status: result.status, reason: result.reason })}`

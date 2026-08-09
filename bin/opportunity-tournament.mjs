@@ -721,6 +721,11 @@ const MAX_COMMERCIAL_DISCOVERY_REJECTION_TOTAL = 12;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v1';
 const PROFESSIONAL_ROLE_QUERY_MIN_TERMS = 2;
 const PROFESSIONAL_ROLE_QUERY_MAX_TERMS = 4;
+const PROFESSIONAL_ROLE_QUERY_PRODUCTION_DISCRIMINATOR_TERMS = Object.freeze([
+  'SLED partnerships director',
+  'Public-sector partnerships director',
+  'Government sales partnerships lead'
+]);
 const PROFESSIONAL_ROLE_QUERY_RULES = Object.freeze([
   'atomic',
   'distinct_after_normalization',
@@ -827,6 +832,11 @@ export function opportunityCommercialDiscoveryCapabilities() {
     rejectionTotalMax: MAX_COMMERCIAL_DISCOVERY_REJECTION_TOTAL,
     professionalRoleQuery: {
       contractVersion: PROFESSIONAL_ROLE_QUERY_CONTRACT,
+      motionField: 'professionalRoleQueryContract',
+      appliesTo: [
+        'professional_counterparty',
+        'local_organization:organization_then_decision_maker'
+      ],
       minTerms: PROFESSIONAL_ROLE_QUERY_MIN_TERMS,
       maxTerms: PROFESSIONAL_ROLE_QUERY_MAX_TERMS,
       rules: [...PROFESSIONAL_ROLE_QUERY_RULES],
@@ -1078,17 +1088,17 @@ export async function runOpportunityDiscoveryPlanner({
     };
   }
 
-  const system = `You are ProfileScribe's research-only commercial-motion generator. Find two distinct outside-world paths to one attributable payment within 30 days. Use verifiedFacts and read-only search; inferences stay unverified; no side effects. attribution proves only recording capability.
-The objective and declared primary current focus identify the seller and what must earn revenue. A source page about a profession, audience segment, directory listing, or marketplace category may describe a potential buyer or market, but it never changes the seller or proves that the seller offers that profession's service. If sellerContract.requiredPrimaryFocus is present, every paidOffer must name that focus exactly and every plan must include at least one sellerContract.requiredEvidenceRefs value in evidenceRefs.
-Choose the outside actor or buyer-authored artifact that can cause payment, never a peer supplier. Choose only a motionKind allowed by the response schema. referral_person/referral_org_decision_maker find a complementary professional referral authority; direct_buyer_person/direct_buyer_org_decision_maker find a non-sensitive institutional buyer; compensated_job finds an employer job posting; buyer_solicitation finds a buyer-authored paid RFP/RFQ/tender/procurement notice/explicit request. Two referral motions with different counterparties are valid; diversity never requires paid_demand. For a sensitive end buyer, prefer referral unless targeting a real institutional compensated artifact. Supplier/competitor offers, directories, marketplaces, payer participation, "accepts insurance," and the seller's offer/booking page are supply, never demand. Website/booking=destination, not acquisition.
-Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind is not_applicable, employer_job_posting, or a buyer_* artifact. Code constructs the provider query; query prose never proves demand.
-Plans prove no outside fact or authority. Top-level buyer is the payer archetype and has no tokens. {{TARGET_URL}} appears only in targetSlot and contingent c/a text. {{TARGET_NAME}} also appears once in each b.l for buyer/paid_demand and zero times in referral b.l. target:evidence appears only as targetSlot.evidenceRefToken; code binds all e refs by typed role. No target token belongs in other top-level plan prose.
+  const system = `Research-only ProfileScribe commercial-motion generator. Find two outside paths to attributable payment in 30 days. verifiedFacts+read-only search; inferences unverified; no effects. attribution=recording only.
+objective+sellerContract.requiredPrimaryFocus fix seller/revenue focus. Profession/audience/directory/marketplace pages may inform buyer context but never changes the seller or proves that the seller offers that profession's service. With focus, each paidOffer names it exactly; each plan cites sellerContract.requiredEvidenceRefs.
+Choose a payment-causing outside actor or buyer-authored artifact, never peer supplier. Use schema-allowed motionKind only. referral_person/referral_org_decision_maker find a complementary referral authority; direct_buyer_person/direct_buyer_org_decision_maker find a non-sensitive institutional buyer; compensated_job finds an employer job posting; buyer_solicitation finds a buyer-authored paid RFP/RFQ/tender/procurement notice/explicit request. Two referral motions with different counterparties are valid; diversity never requires paid_demand. Sensitive end buyer=>referral unless a real institutional compensated artifact. Supplier/competitor offers, directories, marketplaces, payer participation, "accepts insurance," and seller offer/booking are supply, never demand. Website/booking=destination, not acquisition.
+routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind=not_applicable, employer_job_posting, or buyer_* artifact. Code constructs queries; query prose never proves demand.
+Plans prove no outside facts. buyer=payer archetype, no tokens. {{TARGET_URL}} appears only in targetSlot and contingent c/a. {{TARGET_NAME}} appears once in buyer/paid_demand b.l and zero times in referral b.l. target:evidence appears only as targetSlot.evidenceRefToken; code binds e refs by role. No target token in other top-level prose.
 Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas. Selected rp/by/pd actions: prefer four distinct; at least two across both tactics must be text-distinct and viable. tacticKey/unselected fields do not count.
-Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. Decision-maker targetRoleTerms=2..4 distinct atomic same-family titles; each needs a domain anchor; no Boolean, duplicate, generic, or mixed-family terms. No warm_referral/existing_customer.
-Every a={rp,by,pd,e}; author all three complete model actions. rp=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; by=target books/buys/signs current paid offer; pd=typed paid application/proposal response. Code selects commercialRole only; never composes prose. Each action has {{TARGET_NAME}}/{{TARGET_URL}} once. Bare introduce/share/connect/message/conversation, marketplace/directory placement, and setup are invalid. rp/by use "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; pd uses the official paid-demand page. No DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
-acquisitionMechanism is exact and structural: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page". paid_demand c+a use that official page and {{TARGET_URL}}; never name a private contact route.
+Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one decision-maker person. targetRoleTerms=2..4 distinct atomic same-family domain-anchored titles; no Boolean, duplicate, generic, or mixed-family terms. No warm_referral/existing_customer.
+Every a={rp,by,pd,e}; author all three complete model actions. rp=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; by=target books/buys/signs current paid offer; pd=typed paid application/proposal response. Code selects commercialRole only; never composes prose. Each action uses {{TARGET_NAME}}/{{TARGET_URL}} once. Bare introduce/share/connect/message/conversation, marketplace/directory placement, or setup is invalid. rp/by use "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; pd uses the official paid-demand page. No DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
+acquisitionMechanism is exact and structural: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page". paid_demand c+a use it with {{TARGET_URL}}; no private contact route.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
-Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only referral query may name served population. market must copy one response-schema enum value exactly; never expand, abbreviate, or widen it. organizationTerms=context; job: jobTitle+skills; public demand: all four search fields empty. Copy IDs/tokens exactly. Return strict JSON only.`;
+Never target patients, health/family-status consumers, sensitive traits, or private contacts. Only referral query may name served population. market must copy one response-schema enum value exactly; never expand, abbreviate, or widen it. organizationTerms=context; job=jobTitle+skills; public demand has empty search fields. Copy IDs/tokens exactly. Strict JSON only.`;
   const standardEvidenceRefs = initialPromptEvidenceCatalog
     .map((item) => firstText(item.id))
     .filter(Boolean);
@@ -1329,7 +1339,10 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
     // a ref that existed only in the larger, model-hidden catalog.
     promptEvidenceCatalog,
     now,
-    { allowPlannerProjection: true }
+    {
+      allowPlannerProjection: true,
+      stampProfessionalRoleQueryContract: true
+    }
   );
   const webSearchReceipt = normalizeOpportunityDiscoveryWebSearchReceipt({
     annotations: completion?.annotations,
@@ -2210,6 +2223,10 @@ function normalizeOpportunityDiscoveryPlan(
 ) {
   const raw = asObject(value);
   const options = asObject(optionsValue);
+  const currentPlanContract = firstText(raw.contractVersion) ===
+    OPPORTUNITY_DISCOVERY_PLAN_CONTRACT;
+  const stampProfessionalRoleQueryContract = currentPlanContract &&
+    options.stampProfessionalRoleQueryContract === true;
   const knownEvidence = new Set(
     asArray(evidenceCatalog).map((item) => firstText(asObject(item).id))
   );
@@ -2238,12 +2255,30 @@ function normalizeOpportunityDiscoveryPlan(
       ...searchFields,
       evidenceRefs
     };
+    const targetSlot = normalizeContingentTargetSlot(
+      routedPlan.targetSlot,
+      planWithCanonicalEvidence
+    );
+    const professionalRoleQueryApplies = currentPlanContract &&
+      opportunityDiscoveryProfessionalRoleQueryApplies({
+        ...planWithCanonicalEvidence,
+        targetSlot
+      });
+    const professionalRoleQueryContract =
+      stampProfessionalRoleQueryContract
+        ? professionalRoleQueryApplies
+          ? PROFESSIONAL_ROLE_QUERY_CONTRACT
+          : ''
+        : firstText(routedPlan.professionalRoleQueryContract);
     return {
       id: truncate(firstText(routedPlan.id), 64),
       priority: clampInteger(routedPlan.priority, 1, 3, 3),
       routeContractVersion: firstText(
         routedPlan.routeContractVersion
       ),
+      ...(professionalRoleQueryContract
+        ? { professionalRoleQueryContract }
+        : {}),
       motionKind: firstText(routedPlan.motionKind),
       demandArtifactKind: firstText(routedPlan.demandArtifactKind),
       searchMode: firstText(routedPlan.searchMode),
@@ -2273,10 +2308,7 @@ function normalizeOpportunityDiscoveryPlan(
       ),
       rationale: truncate(firstText(routedPlan.rationale), 260)
       ,
-      targetSlot: normalizeContingentTargetSlot(
-        routedPlan.targetSlot,
-        planWithCanonicalEvidence
-      ),
+      targetSlot,
       contingentFinalists: normalizeContingentFinalistBundle(
         routedPlan.contingentFinalists,
         knownEvidence,
@@ -3111,6 +3143,15 @@ function opportunityDiscoveryTargetTitleFamilyIssue(planValue) {
   return '';
 }
 
+function opportunityDiscoveryProfessionalRoleQueryApplies(planValue) {
+  const plan = asObject(planValue);
+  const searchMode = firstText(plan.searchMode);
+  return searchMode === 'professional_counterparty' ||
+    (searchMode === 'local_organization' &&
+      firstText(asObject(plan.targetSlot).resolutionStrategy) ===
+        'organization_then_decision_maker');
+}
+
 function opportunityDiscoveryFreshTargetTitleAlternativesIssue(planValue) {
   const plan = asObject(planValue);
   if (!['professional_counterparty', 'local_organization'].includes(
@@ -3288,6 +3329,21 @@ function opportunityDiscoveryPlanIssue(
     if (typedRouteIssue) {
       return `Discovery plan ${item.id} ${typedRouteIssue}`;
     }
+    const professionalRoleQueryContract = firstText(
+      item.professionalRoleQueryContract
+    );
+    const professionalRoleQueryApplies =
+      opportunityDiscoveryProfessionalRoleQueryApplies(item);
+    if (professionalRoleQueryContract && (legacy ||
+        !professionalRoleQueryApplies ||
+        professionalRoleQueryContract !== PROFESSIONAL_ROLE_QUERY_CONTRACT)) {
+      return `Discovery plan ${item.id} uses an unsupported professional role query contract.`;
+    }
+    if (requireFreshTargetTitleAlternatives &&
+        professionalRoleQueryApplies &&
+        professionalRoleQueryContract !== PROFESSIONAL_ROLE_QUERY_CONTRACT) {
+      return `Discovery plan ${item.id} must use ${PROFESSIONAL_ROLE_QUERY_CONTRACT} before fresh provider execution.`;
+    }
     const acquisitionMechanismIssue =
       typedDiscoveryAcquisitionMechanismIssue(item);
     if (acquisitionMechanismIssue) {
@@ -3405,14 +3461,19 @@ function opportunityDiscoveryPlanIssue(
     // Fresh provider authority uses the versioned shared anchor vocabulary
     // below. Keep the older dynamic signature only for non-executing durable
     // normalization so legacy terminal traces remain readable as written.
+    const usesSharedProfessionalRoleQuery =
+      professionalRoleQueryApplies &&
+      professionalRoleQueryContract === PROFESSIONAL_ROLE_QUERY_CONTRACT;
     const targetTitleFamilyIssue = legacy ||
-        requireFreshTargetTitleAlternatives
+        requireFreshTargetTitleAlternatives ||
+        usesSharedProfessionalRoleQuery
       ? ''
       : opportunityDiscoveryTargetTitleFamilyIssue(item);
     if (targetTitleFamilyIssue) {
       return `Discovery plan ${item.id} ${targetTitleFamilyIssue}`;
     }
-    const freshTargetTitleIssue = requireFreshTargetTitleAlternatives
+    const freshTargetTitleIssue = requireFreshTargetTitleAlternatives ||
+        usesSharedProfessionalRoleQuery
       ? opportunityDiscoveryFreshTargetTitleAlternativesIssue(item)
       : '';
     if (freshTargetTitleIssue) {
@@ -3977,7 +4038,10 @@ function selectValidOpportunityDiscoveryPlans({
       { ...raw, plans: [rawPlan] },
       evidenceCatalog,
       referenceTime,
-      { allowPlannerProjection: true }
+      {
+        allowPlannerProjection: true,
+        stampProfessionalRoleQueryContract: true
+      }
     );
     normalized.webSearchReceipt = webSearchReceipt;
     return {
@@ -5827,6 +5891,12 @@ export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(
   const rawAttempts = asArray(rawDiscovery.attempts);
   const rawProviders = asArray(rawDiscovery.providersAttempted);
   const rawRejections = asObject(rawDiscovery.rejectedReasons);
+  const rawMotions = asArray(rawPlan.plans).map(asObject);
+  const hasProductionRoleQueryDiscriminator = rawMotions.some((motion) =>
+    JSON.stringify(asArray(motion.targetRoleTerms)) === JSON.stringify(
+      PROFESSIONAL_ROLE_QUERY_PRODUCTION_DISCRIMINATOR_TERMS
+    )
+  );
   const exactProductionShape =
     firstText(rawDiscovery.contractVersion) ===
       COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT &&
@@ -5846,10 +5916,12 @@ export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(
     firstText(rawPlan.contractVersion) ===
       OPPORTUNITY_DISCOVERY_PLAN_CONTRACT &&
     firstText(rawPlan.status) === 'planned' &&
-    asArray(rawPlan.plans).length === 2 &&
-    asArray(rawPlan.plans).every((motionValue) => {
-      const motion = asObject(motionValue);
+    rawMotions.length === 2 &&
+    hasProductionRoleQueryDiscriminator &&
+    rawMotions.every((motion) => {
       return motion.motionKind === 'referral_person' &&
+        motion.professionalRoleQueryContract ===
+          PROFESSIONAL_ROLE_QUERY_CONTRACT &&
         motion.searchMode === 'professional_counterparty' &&
         asObject(motion.targetSlot).finalTargetKind === 'person' &&
         asObject(motion.targetSlot).resolutionStrategy ===
@@ -5888,6 +5960,24 @@ export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(
   const discoveredAt = validDate(
     firstText(input.referenceTime, commercialDiscoveryEvidence.discoveredAt)
   );
+  const normalizedProbe = normalizeCommercialDiscoveryEvidence(
+    commercialDiscoveryEvidence,
+    discoveredAt
+  );
+  const normalizedRoleQuerySurvived = normalizedProbe.valid === true &&
+    asArray(asObject(normalizedProbe.plan).plans).map(asObject)
+      .some((motion) =>
+        motion.professionalRoleQueryContract ===
+          PROFESSIONAL_ROLE_QUERY_CONTRACT &&
+        JSON.stringify(asArray(motion.targetRoleTerms)) === JSON.stringify(
+          PROFESSIONAL_ROLE_QUERY_PRODUCTION_DISCRIMINATOR_TERMS
+        )
+      );
+  if (!normalizedRoleQuerySurvived) {
+    throw new Error(
+      'commercial discovery no-target role-query normalization mismatch'
+    );
+  }
   let criticCalls = 0;
   const result = await runOpportunityTournament({
     job: {
@@ -7916,6 +8006,17 @@ function materializeContingentFinalistsFromDiscovery({
     return fail('invalid_contingent_contract',
       firstText(plan.rejectedReason,
         'The persisted contingent commercial plan was invalid.'));
+  }
+  const unmarkedProfessionalMotion = asArray(plan.plans)
+    .map(asObject)
+    .find((motion) =>
+      opportunityDiscoveryProfessionalRoleQueryApplies(motion) &&
+      firstText(motion.professionalRoleQueryContract) !==
+        PROFESSIONAL_ROLE_QUERY_CONTRACT
+    );
+  if (unmarkedProfessionalMotion) {
+    return fail('invalid_contingent_contract',
+      `Discovery plan ${firstText(unmarkedProfessionalMotion.id)} cannot authorize target materialization without ${PROFESSIONAL_ROLE_QUERY_CONTRACT}.`);
   }
   if (firstText(discovery.status) === 'provider_unavailable') {
     return fail('provider_unavailable',
