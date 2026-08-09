@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
+
 import {
   COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
   OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
@@ -9,6 +11,7 @@ import {
   commercialDiscoveryAttemptLedgerHash,
   diverseFinalists,
   normalizeCommercialDiscoveryEvidence,
+  validateOpportunityCommercialDiscoveryNoTargetEnvelope,
   runOpportunityTournament,
   runOpportunityDiscoveryPlanner
 } from '../bin/opportunity-tournament.mjs';
@@ -22,6 +25,22 @@ const usage = {
 };
 const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 28 * 1024;
 const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 20 * 1024;
+
+function productionCitation(url, title, content) {
+  const contentHash = createHash('sha256').update(content).digest('hex');
+  const idHash = createHash('sha256').update(JSON.stringify([
+    url.toLowerCase().replace(/\/+$/, ''),
+    title,
+    contentHash
+  ])).digest('hex');
+  return {
+    id: `citation:${idHash.slice(0, 24)}`,
+    url,
+    title,
+    content,
+    contentHash
+  };
+}
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
 const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 229_400;
 let largestPlannerResponseBytes = 0;
@@ -80,9 +99,7 @@ const cases = [
         market: 'Queens, New York, United States',
         targetRoleTerms: [
           'pediatrician',
-          'practice owner',
-          'medical director',
-          'practice manager'
+          'pediatric physician'
         ],
         organizationTerms: ['pediatric practice', 'birth center'],
         acquisitionMechanism: 'One reviewed practice partner-referral request',
@@ -695,7 +712,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /professional=person\/single.*local_org=person\/org->decision-maker.*never terminal org.*targetRoleTerms=1 title family.*organizationTerms=context/is.test(
+        /professional=person\/single.*local_org=person\/org->decision-maker.*never terminal org.*targetRoleTerms=2\.\.4 distinct atomic same-family domain-anchored titles.*organizationTerms=context/is.test(
           rule
         )
       ) ||
@@ -1249,13 +1266,19 @@ async function verifyTypedCommercialMotionSelection(
   pediatricReferral.priority = 1;
   pediatricReferral.query =
     'lactation consultants accepting UnitedHealthcare';
-  pediatricReferral.targetRoleTerms = ['pediatrician'];
+  pediatricReferral.targetRoleTerms = [
+    'pediatrician',
+    'pediatric physician'
+  ];
   pediatricReferral.organizationTerms = ['pediatric practice'];
   const midwifeReferral = cases[0].plans(referralEvidenceRef)[0];
   midwifeReferral.id = 'midwife_referral_person';
   midwifeReferral.priority = 2;
   midwifeReferral.query = 'IBCLC supplier directory';
-  midwifeReferral.targetRoleTerms = ['midwife'];
+  midwifeReferral.targetRoleTerms = [
+    'midwife',
+    'certified midwife'
+  ];
   midwifeReferral.organizationTerms = ['birth center'];
   const twoReferrals = await run({
     job: referralJob,
@@ -1272,10 +1295,10 @@ async function verifyTypedCommercialMotionSelection(
       ) ||
       new Set(referralQueries).size !== 2 ||
       !referralQueries.includes(
-        'pediatrician pediatric practice Queens, New York, United States'
+        'pediatrician pediatric physician pediatric practice Queens, New York, United States'
       ) ||
       !referralQueries.includes(
-        'midwife birth center Queens, New York, United States'
+        'midwife certified midwife birth center Queens, New York, United States'
       ) ||
       /lactation consultant|unitedhealthcare|supplier directory/i.test(
         referralQueries.join(' ')
@@ -2799,7 +2822,8 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       paidOffer: 'Paid consultation for email marketing',
       query: 'professional technology and marketing specialists Queens New York',
       targetRoleTerms: [
-        'email marketing director'
+        'email marketing director',
+        'marketing director'
       ],
       organizationTerms: ['marketing agency'],
       acquisitionMechanism:
@@ -2869,7 +2893,8 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       query: 'telephone triage nurse Queens New York',
       market: 'Queens, New York, United States',
       targetRoleTerms: [
-        'telephone triage nurse'
+        'telephone triage nurse',
+        'clinical triage nurse'
       ],
       organizationTerms: ['nurse-led health practice'],
       acquisitionMechanism:
@@ -2899,7 +2924,8 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       query:
         'Angular application maintainer software job requisition 1234567890',
       targetRoleTerms: [
-        'Angular @angular/core consultant'
+        'Angular software consultant',
+        'Software application consultant'
       ],
       skills: ['@angular/core'],
       organizationTerms: ['software publisher'],
@@ -3630,7 +3656,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     evidenceRefs: [evidenceRef],
     query: 'operations decision maker professional services firm',
     market: 'Queens, New York, United States',
-    targetRoleTerms: ['operations director'],
+    targetRoleTerms: ['operations director', 'director of operations'],
     organizationTerms: ['professional services firm'],
     acquisitionMechanism: 'One review-first tailored paid-service invitation',
     conversionDestination: 'The verified owner booking page',
@@ -3677,16 +3703,33 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     );
   }
 
-  const compactSlashTitle = await run(candidate({
-    id: 'compact_obgyn_title_is_not_boolean_prose',
-    targetRoleTerms: ['OB/GYN']
-  }), 'generation-compact-obgyn-title');
-  if (compactSlashTitle.status !== 'planned' ||
-      compactSlashTitle.plans.length !== 2 ||
-      compactSlashTitle.planSelection?.rejectedPlanCount !== 0) {
-    throw new Error(
-      `compact professional slash title was treated as Boolean prose: ${JSON.stringify(compactSlashTitle)}`
-    );
+  for (const [label, targetRoleTerms] of [
+    [
+      'sustainability',
+      ['ESG Consultant', 'Sustainability Consultant', 'Climate Consultant']
+    ],
+    ['accounting', ['Accountant', 'Bookkeeper']],
+    ['business', ['Business Advisor', 'Business Consultant']],
+    ['engineering', ['Software Engineer', 'Technical Developer']],
+    ['pediatric', ['Pediatrician', 'Pediatric Physician']],
+    ['obstetrics', ['OBGYN', 'Obstetrician Gynecologist']]
+  ]) {
+    const id = `coherent_${label}_title_family`;
+    const accepted = await run(candidate({
+      id,
+      targetRoleTerms
+    }), `generation-coherent-${label}-title-family`);
+    const acceptedMotion = accepted.plans.find((motion) => motion.id === id);
+    if (accepted.status !== 'planned' || accepted.plans.length !== 2 ||
+        accepted.planSelection?.rejectedPlanCount !== 0 ||
+        JSON.stringify(acceptedMotion?.targetRoleTerms) !==
+          JSON.stringify(targetRoleTerms) || targetRoleTerms.some((term) =>
+          !acceptedMotion?.query.includes(term)
+        )) {
+      throw new Error(
+        `${label} title synonyms did not reach the exact provider query: ${JSON.stringify(accepted)}`
+      );
+    }
   }
 
   // Production regression: the planner returned one referral motion with a
@@ -3701,9 +3744,10 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
   productionReferralFixture.demandArtifactKind =
     'buyer_procurement_notice';
   productionReferralFixture.counterparty =
-    'One exact climate or sustainability consultant';
+    'One exact sustainability consulting professional';
   productionReferralFixture.targetRoleTerms = [
-    'Climate or sustainability consultant'
+    'Climate consultant',
+    'sustainability consultant'
   ];
   productionReferralFixture.organizationTerms = [
     'climate resilience',
@@ -3747,7 +3791,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
   localOrganizationAtomicFixture.id =
     'local_organization_atomic_decision_maker_titles';
   localOrganizationAtomicFixture.targetRoleTerms = [
-    'Climate or sustainability consultant'
+    'Climate consultant',
+    'sustainability consultant'
   ];
   const localOrganizationAtomic = await run(
     localOrganizationAtomicFixture,
@@ -3857,9 +3902,62 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     }
   }
 
+  for (const [label, targetRoleTerms, expectedReason] of [
+    [
+      'one title alternative',
+      ['operations director'],
+      /two to four distinct atomic likely-current title alternatives/i
+    ],
+    [
+      'exact duplicate titles',
+      ['operations director', 'operations director'],
+      /case-insensitively distinct/i
+    ],
+    [
+      'case-only duplicate titles',
+      ['operations director', 'Operations Director'],
+      /case-insensitively distinct/i
+    ],
+    [
+      'five title alternatives',
+      [
+        'operations director',
+        'director of operations',
+        'operations manager',
+        'head of operations',
+        'chief operating officer'
+      ],
+      /two to four distinct atomic likely-current title alternatives/i
+    ],
+    [
+      'generic unanchored titles',
+      ['consultant', 'senior consultant'],
+      /non-generic professional domain anchor/i
+    ]
+  ]) {
+    const unsafeID = `unsafe_title_boundary_${label
+      .toLowerCase().replace(/\W+/g, '_')}`;
+    const rejected = await run(candidate({
+      id: unsafeID,
+      targetRoleTerms
+    }), `generation-${label.replace(/\W+/g, '-')}`);
+    const rejectionReason = rejected.planSelection?.rejectedPlans?.find(
+      (item) => item.id === unsafeID
+    )?.reason || '';
+    if (rejected.status !== 'planned' ||
+        rejected.plans.some((motion) => motion.id === unsafeID) ||
+        rejected.planSelection?.acceptedPlanCount !== 1 ||
+        rejected.planSelection?.rejectedPlanCount !== 1 ||
+        !expectedReason.test(rejectionReason)) {
+      throw new Error(
+        `${label} escaped strict title-alternative acceptance: ${JSON.stringify(rejected)}`
+      );
+    }
+  }
+
   const organizationBooleanName = await run(candidate({
     id: 'organization_boolean_name_is_not_split',
-    targetRoleTerms: ['sustainability consultant'],
+    targetRoleTerms: ['sustainability consultant', 'climate consultant'],
     organizationTerms: ['Climate or Sustainability Partners']
   }), 'generation-organization-boolean-name-is-not-split');
   const organizationBooleanMotion = organizationBooleanName.plans.find(
@@ -3880,23 +3978,49 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     id: 'mixed_professional_title_families',
     targetRoleTerms: [
       'pediatrician',
-      'practice manager',
-      'midwife'
+      'midwife',
+      'doula'
     ],
     organizationTerms: ['pediatric practice', 'birth center']
   }), 'generation-mixed-professional-title-family-salvage');
   if (mixedTitles.status !== 'planned' ||
-      mixedTitles.plans.length !== 2 ||
-      mixedTitles.planSelection?.acceptedPlanCount !== 2 ||
-      mixedTitles.planSelection?.rejectedPlanCount !== 0 ||
-      JSON.stringify(mixedTitles.plans[0].targetRoleTerms) !==
-        JSON.stringify(['pediatrician']) ||
-      !mixedTitles.plans[0].query.includes('pediatrician') ||
-      mixedTitles.plans[0].query.includes('practice manager') ||
-      mixedTitles.plans[0].query.includes('midwife')) {
+      mixedTitles.plans.some((motion) => motion.id ===
+        'mixed_professional_title_families') ||
+      mixedTitles.planSelection?.acceptedPlanCount !== 1 ||
+      mixedTitles.planSelection?.rejectedPlanCount !== 1 ||
+      !/one coherent likely-current professional title family/i.test(
+        mixedTitles.planSelection?.rejectedPlans?.find((item) =>
+          item.id === 'mixed_professional_title_families'
+        )?.reason || ''
+      )) {
     throw new Error(
-      `mixed professional title ORs were not narrowed to the first coherent provider family: ${JSON.stringify(mixedTitles)}`
+      `mixed professional title families did not fail closed: ${JSON.stringify(mixedTitles)}`
     );
+  }
+
+  for (const [label, targetRoleTerms] of [
+    ['pediatric-finance', ['Pediatrician', 'Finance Director']],
+    ['business-accounting', ['Small Business Advisor', 'Accountant']]
+  ]) {
+    const id = `mixed_${label.replace(/-/g, '_')}_title_families`;
+    const rejected = await run(candidate({
+      id,
+      targetRoleTerms
+    }), `generation-mixed-${label}-title-families`);
+    const reason = rejected.planSelection?.rejectedPlans?.find(
+      (item) => item.id === id
+    )?.reason || '';
+    if (rejected.status !== 'planned' ||
+        rejected.plans.some((motion) => motion.id === id) ||
+        rejected.planSelection?.acceptedPlanCount !== 1 ||
+        rejected.planSelection?.rejectedPlanCount !== 1 ||
+        !/one coherent likely-current professional title family/i.test(
+          reason
+        )) {
+      throw new Error(
+        `${label} cross-profession titles escaped validation: ${JSON.stringify(rejected)}`
+      );
+    }
   }
 
   const rejectedRoutes = [
@@ -5803,7 +5927,7 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
       mutate(plans) {
         plans[0].targetRoleTerms = [];
       },
-      reason: /bounded professional role terms/i
+      reason: /two to four distinct atomic likely-current title alternatives/i
     },
     {
       name: 'peer supplier availability is not paid demand',
@@ -6335,10 +6459,7 @@ async function verifyPrivateContactBearingURLsFailClosed() {
     patientTargetingExcluded: true,
     sideEffectsPerformed: 0,
     attempts: [attempt],
-    plan: {
-      ...safePlan,
-      plans: [selectedMotion]
-    },
+    plan: persistedSingleMotionPlan(safePlan, selectedMotion),
     evidence: [{
       motionId: selectedMotion.id,
       evidenceRef: discoveryEvidenceRef,
@@ -6725,10 +6846,10 @@ async function verifyTwoStageTargetBinding() {
     'candidate:external:444444444444444444444444';
   const targetCandidateId =
     'candidate:external:222222222222222222222222';
-  const oneMotionDiscoveryPlan = {
-    ...discoveryPlan,
-    plans: [selectedMotion]
-  };
+  const oneMotionDiscoveryPlan = persistedSingleMotionPlan(
+    discoveryPlan,
+    selectedMotion
+  );
   const downstreamPayload = {
     ...planner.payload,
     algorithmVersion: 'cheap_tournament_v6',
@@ -7518,21 +7639,137 @@ async function verifyTwoStageTargetBinding() {
   }
 
   const noTargetPayload = structuredClone(downstreamPayload);
-  const noTargetAttempts =
-    noTargetPayload.commercialDiscoveryEvidence.attempts;
-  for (const attempt of noTargetAttempts) {
-    attempt.status = 'not_found';
-    attempt.resultCount = 0;
-  }
+  const noTargetDiscovery = noTargetPayload.commercialDiscoveryEvidence;
+  noTargetDiscovery.plan = structuredClone(discoveryPlan);
+  const noTargetFirstMotion = noTargetDiscovery.plan.plans[0];
+  noTargetFirstMotion.searchMode = 'professional_counterparty';
+  noTargetFirstMotion.motionKind = 'referral_person';
+  noTargetFirstMotion.targetRoleTerms = [
+    'pediatrician',
+    'pediatric doctor'
+  ];
+  noTargetFirstMotion.targetSlot.finalTargetKind = 'person';
+  noTargetFirstMotion.targetSlot.resolutionStrategy =
+    'single_exact_target';
+  const noTargetPlanReceipt = noTargetDiscovery.plan.webSearchReceipt;
+  noTargetPlanReceipt.annotations = [
+    ...noTargetPlanReceipt.annotations,
+    productionCitation(
+      'https://queens-newborn.example/services',
+      'Queens newborn services',
+      'A current public organization page mentioning newborn services in Queens without a source-bound decision maker.'
+    ),
+    productionCitation(
+      'https://borough-family.example/resources',
+      'Borough family resources',
+      'A current public family-resource page that did not bind to the planned professional referral target.'
+    )
+  ];
+  noTargetPlanReceipt.resultCount = 3;
+  const noTargetPDLProfessionalAttempt = {
+    ...braveAttempt,
+    id: 'attempt-two-stage-pdl-professional-zero-results',
+    provider: 'people_data_labs_person_search',
+    operation: 'planned_professional_search',
+    status: 'not_found',
+    estimatedSpendMicros: 280_000,
+    actualSpendMicros: 0,
+    creditsUsed: 0,
+    resultCount: 0
+  };
+  const noTargetPDLDecisionMakerAttempt = {
+    ...pdlAttempt,
+    status: 'not_found',
+    actualSpendMicros: 0,
+    creditsUsed: 0,
+    resultCount: 0
+  };
+  const noTargetAttempts = [
+    structuredClone(foldedAttempt),
+    noTargetPDLProfessionalAttempt,
+    noTargetPDLDecisionMakerAttempt
+  ];
+  noTargetDiscovery.attempts = noTargetAttempts;
+  noTargetDiscovery.providersAttempted = [
+    'openrouter_exa_web_search',
+    'people_data_labs_person_search'
+  ];
+  noTargetDiscovery.creditsUsed = 1;
   noTargetPayload.commercialDiscoveryEvidence.queryHash =
     commercialDiscoveryAttemptLedgerHash(noTargetAttempts);
   noTargetPayload.commercialDiscoveryEvidence.status = 'not_found';
   noTargetPayload.commercialDiscoveryEvidence.resultCount = 0;
   noTargetPayload.commercialDiscoveryEvidence.rejectedReasons = {
+    citation_not_source_bound: 3,
     provider_zero_results: 2
   };
   noTargetPayload.commercialDiscoveryEvidence.evidence = [];
   noTargetPayload.commercialDiscoveryEvidence.candidates = [];
+  const rejectionCaps = {
+    citation_not_source_bound: 5,
+    citation_motion_ambiguous: 5,
+    plan_market_not_grounded: 2,
+    provider_zero_results: 2,
+    missing_professional_fields: 2,
+    role_mismatch: 2,
+    organization_mismatch: 2,
+    workplace_market_mismatch: 2,
+    missing_public_person_identity: 2,
+    missing_public_organization_identity: 2,
+    previously_contacted: 2
+  };
+  const normalizedRejections = (rejectedReasons) => {
+    const payload = structuredClone(
+      noTargetPayload.commercialDiscoveryEvidence
+    );
+    payload.rejectedReasons = rejectedReasons;
+    return normalizeCommercialDiscoveryEvidence(payload, now);
+  };
+  for (const [reason, cap] of Object.entries(rejectionCaps)) {
+    const boundary = normalizedRejections({ [reason]: cap });
+    if (boundary.valid !== true ||
+        boundary.rejectedReasons?.[reason] !== cap) {
+      throw new Error(
+        `safe rejection cap drifted for ${reason}: ${JSON.stringify(boundary)}`
+      );
+    }
+    const overflow = normalizedRejections({ [reason]: cap + 1 });
+    if (overflow.valid !== false ||
+        overflow.rejectedReasons?.invalid_rejection_diagnostic !== 1) {
+      throw new Error(
+        `rejection overflow escaped for ${reason}: ${JSON.stringify(overflow)}`
+      );
+    }
+  }
+  const aggregateBoundary = normalizedRejections({
+    citation_not_source_bound: 5,
+    citation_motion_ambiguous: 5,
+    plan_market_not_grounded: 2
+  });
+  if (aggregateBoundary.valid !== true) {
+    throw new Error(
+      `aggregate rejection boundary drifted: ${JSON.stringify(aggregateBoundary)}`
+    );
+  }
+  for (const [label, rejectedReasons] of Object.entries({
+    unknown: { provider_raw_payload: 1 },
+    fractional: { citation_not_source_bound: 1.5 },
+    zero: { citation_not_source_bound: 0 },
+    aggregate_overflow: {
+      citation_not_source_bound: 5,
+      citation_motion_ambiguous: 5,
+      plan_market_not_grounded: 2,
+      provider_zero_results: 1
+    }
+  })) {
+    const rejected = normalizedRejections(rejectedReasons);
+    if (rejected.valid !== false ||
+        rejected.rejectedReasons?.invalid_rejection_diagnostic !== 1) {
+      throw new Error(
+        `${label} rejection diagnostic escaped: ${JSON.stringify(rejected)}`
+      );
+    }
+  }
   let noTargetCalls = 0;
   const noTarget = await runOpportunityTournament({
     job: {
@@ -7558,6 +7795,9 @@ async function verifyTwoStageTargetBinding() {
         'commercial_discovery_exact_target_resolution' ||
       noTarget.trace?.commercialDiscovery?.status !== 'not_found' ||
       noTarget.trace?.commercialDiscovery?.resultCount !== 0 ||
+      noTarget.trace?.commercialDiscovery?.valid !== true ||
+      noTarget.trace?.commercialDiscovery?.rejectedReasons
+        ?.citation_not_source_bound !== 3 ||
       noTarget.trace?.commercialDiscovery?.rejectedReasons
         ?.provider_zero_results !== 2 ||
       noTarget.searchSpace?.contingentFinalists?.cause !==
@@ -7565,6 +7805,322 @@ async function verifyTwoStageTargetBinding() {
     throw new Error(
       `valid provider not-found did not retain its exact cause-matched recovery trace: ${JSON.stringify(noTarget)}`
     );
+  }
+  const noTargetCapabilityProbe =
+    await validateOpportunityCommercialDiscoveryNoTargetEnvelope(
+      noTargetPayload.commercialDiscoveryEvidence
+    );
+  if (noTargetCapabilityProbe.valid !== true ||
+      noTargetCapabilityProbe.attemptCount !== 3 ||
+      noTargetCapabilityProbe.cause !== 'exact_target_not_found' ||
+      noTargetCapabilityProbe.criticCalls !== 0 ||
+      noTargetCapabilityProbe.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `config-free no-target capability probe drifted: ${JSON.stringify(noTargetCapabilityProbe)}`
+    );
+  }
+  for (const [label, mutate] of [
+    ['planless envelope', (fixture) => {
+      delete fixture.commercialDiscoveryEvidence.plan;
+    }],
+    ['two-citation receipt', (fixture) => {
+      const receipt = fixture.commercialDiscoveryEvidence.plan
+        .webSearchReceipt;
+      receipt.annotations = receipt.annotations.slice(0, 2);
+      receipt.resultCount = 2;
+    }],
+    ['Brave canonical attempt', (fixture) => {
+      fixture.commercialDiscoveryEvidence.attempts[1].provider =
+        'brave_web_search';
+      fixture.commercialDiscoveryEvidence.attempts[1].operation =
+        'planned_brave_web_search';
+    }]
+  ]) {
+    const fixture = structuredClone(noTargetPayload);
+    mutate(fixture);
+    let rejected = false;
+    try {
+      await validateOpportunityCommercialDiscoveryNoTargetEnvelope(fixture);
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) {
+      throw new Error(
+        `${label} escaped exact production no-target capability validation`
+      );
+    }
+  }
+
+  const receipt = discoveryPlan.webSearchReceipt;
+  const foldedEvidenceRef =
+    'external_discovery:555555555555555555555555';
+  const successfulFoldedAttempt = {
+    ...foldedAttempt,
+    status: 'succeeded',
+    resultCount: 1
+  };
+  const foldedCitationEvidence = {
+    contractVersion: 'commercial_discovery_evidence_v1',
+    attempted: true,
+    status: 'found',
+    motion: selectedMotion.id,
+    buyerArchetype: selectedMotion.buyer,
+    queryHash: commercialDiscoveryAttemptLedgerHash([
+      successfulFoldedAttempt
+    ]),
+    market: selectedMotion.market,
+    providersAttempted: ['openrouter_exa_web_search'],
+    providerCalls: 1,
+    paidProviderCalls: 1,
+    creditsUsed: 1,
+    resultCount: 1,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    attempts: [successfulFoldedAttempt],
+    plan: oneMotionDiscoveryPlan,
+    evidence: [{
+      motionId: selectedMotion.id,
+      evidenceRef: foldedEvidenceRef,
+      kind: 'verified_external_professional_target',
+      label: receipt.annotations[0].title,
+      summary: `${receipt.annotations[0].title} is the exact public organization returned by the bounded OpenRouter Exa URL citation.`,
+      url: receipt.annotations[0].url,
+      provider: 'openrouter_exa_web_search',
+      provenance: 'openrouter_exa_url_citation',
+      roles: ['acquisition', 'channel_fit', 'prospective_partner'],
+      verified: true,
+      observedAt: receipt.observedAt
+    }],
+    candidates: [{
+      motionId: selectedMotion.id,
+      id: 'candidate:external:666666666666666666666666',
+      kind: 'organization',
+      displayLabel: receipt.annotations[0].title,
+      organization: 'Riverside Pediatrics',
+      role: selectedMotion.counterparty,
+      commercialRole: selectedMotion.commercialRole,
+      market: selectedMotion.market,
+      publicUrl: receipt.annotations[0].url,
+      provider: 'openrouter_exa_web_search',
+      evidenceRefs: [foldedEvidenceRef],
+      contactPaths: [],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }],
+    discoveredAt: receipt.observedAt
+  };
+  const foldedDecisionMakerChain = structuredClone(
+    downstreamPayload.commercialDiscoveryEvidence
+  );
+  foldedDecisionMakerChain.attempts = [
+    successfulFoldedAttempt,
+    pdlAttempt
+  ];
+  foldedDecisionMakerChain.providersAttempted = [
+    'openrouter_exa_web_search',
+    'people_data_labs_person_search'
+  ];
+  foldedDecisionMakerChain.providerCalls = 2;
+  foldedDecisionMakerChain.paidProviderCalls = 2;
+  foldedDecisionMakerChain.creditsUsed = 2;
+  foldedDecisionMakerChain.queryHash = commercialDiscoveryAttemptLedgerHash(
+    foldedDecisionMakerChain.attempts
+  );
+  foldedDecisionMakerChain.evidence[0] = {
+    ...foldedDecisionMakerChain.evidence[0],
+    label: receipt.annotations[0].title,
+    summary: `${receipt.annotations[0].title} is the exact public organization returned by the bounded OpenRouter Exa URL citation.`,
+    url: receipt.annotations[0].url,
+    provider: 'openrouter_exa_web_search',
+    provenance: 'openrouter_exa_url_citation',
+    observedAt: receipt.observedAt
+  };
+  foldedDecisionMakerChain.candidates[0] = {
+    ...foldedDecisionMakerChain.candidates[0],
+    displayLabel: receipt.annotations[0].title,
+    publicUrl: receipt.annotations[0].url,
+    provider: 'openrouter_exa_web_search'
+  };
+  const normalizedFoldedDecisionMaker =
+    normalizeCommercialDiscoveryEvidence(foldedDecisionMakerChain, now);
+  if (normalizedFoldedDecisionMaker.valid !== true ||
+      normalizedFoldedDecisionMaker.evidence.length !== 2 ||
+      normalizedFoldedDecisionMaker.candidates.length !== 2 ||
+      normalizedFoldedDecisionMaker.candidates[1]?.provider !==
+        'people_data_labs_person_search') {
+    throw new Error(
+      `folded Exa organization did not bind through the PDL decision-maker chain: ${JSON.stringify(normalizedFoldedDecisionMaker)}`
+    );
+  }
+  const chainAdversaries = [
+    {
+      label: 'wrong folded organization provenance',
+      mutate(value) {
+        value.evidence[0].provenance =
+          'read_only_professional_provider';
+      }
+    },
+    {
+      label: 'folded organization omits its required role',
+      mutate(value) {
+        value.evidence[0].roles = ['acquisition', 'channel_fit'];
+      }
+    },
+    {
+      label: 'folded organization URL crosses its receipt',
+      mutate(value) {
+        value.evidence[0].url = 'https://other.example/newborn-care';
+        value.candidates[0].publicUrl =
+          'https://other.example/newborn-care';
+      }
+    },
+    {
+      label: 'PDL person URL crosses its own fact',
+      mutate(value) {
+        value.candidates[1].publicUrl = receipt.annotations[0].url;
+      }
+    },
+    {
+      label: 'plan selection no longer matches persisted motions',
+      mutate(value) {
+        value.plan.planSelection.acceptedPlanCount += 1;
+      }
+    },
+    {
+      label: 'web-search receipt count no longer matches annotations',
+      mutate(value) {
+        value.plan.webSearchReceipt.resultCount += 1;
+      }
+    }
+  ];
+  for (const adversary of chainAdversaries) {
+    const value = structuredClone(foldedDecisionMakerChain);
+    adversary.mutate(value);
+    const normalized = normalizeCommercialDiscoveryEvidence(value, now);
+    if (normalized.valid !== false) {
+      throw new Error(
+        `${adversary.label} escaped the folded decision-maker chain: ${JSON.stringify(normalized)}`
+      );
+    }
+  }
+  const normalizedFoldedCitation = normalizeCommercialDiscoveryEvidence(
+    foldedCitationEvidence,
+    now
+  );
+  if (normalizedFoldedCitation.valid !== true ||
+      normalizedFoldedCitation.attempts[0]?.status !== 'succeeded' ||
+      normalizedFoldedCitation.attempts[0]?.resultCount !== 1 ||
+      normalizedFoldedCitation.evidence[0]?.provenance !==
+        'openrouter_exa_url_citation') {
+    throw new Error(
+      `source-bound folded Exa citation did not survive normalization: ${JSON.stringify(normalizedFoldedCitation)}`
+    );
+  }
+  let foldedCitationCalls = 0;
+  const foldedCitationResult = await runOpportunityTournament({
+    job: {
+      id: 'job-two-stage-folded-exa-source-binding',
+      kind: 'opportunity_tournament',
+      payload: {
+        ...downstreamPayload,
+        commercialDiscoveryEvidence: foldedCitationEvidence
+      }
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => {
+      foldedCitationCalls += 1;
+      throw new Error('intermediate folded citation dispatched a critic');
+    }
+  });
+  assertTechnicalRecovery(
+    foldedCitationResult,
+    foldedCitationCalls,
+    'source-bound folded Exa organization awaiting decision-maker binding'
+  );
+  if (foldedCitationResult.trace?.commercialDiscovery?.valid !== true ||
+      foldedCitationResult.trace?.commercialDiscovery?.status !== 'found' ||
+      foldedCitationResult.trace?.commercialDiscovery?.attempts?.[0]
+        ?.status !== 'succeeded' ||
+      foldedCitationResult.searchSpace?.contingentFinalists?.cause !==
+        'target_source_binding_failed') {
+    throw new Error(
+      `source-bound folded Exa result collapsed into an invalid envelope: ${JSON.stringify(foldedCitationResult)}`
+    );
+  }
+
+  const foldedAdversaries = [
+    {
+      label: 'succeeded with zero results',
+      mutate(value) {
+        value.attempts[0].resultCount = 0;
+        value.resultCount = 0;
+      }
+    },
+    {
+      label: 'succeeded beyond five-result receipt cap',
+      mutate(value) {
+        value.attempts[0].resultCount = 6;
+        value.resultCount = 6;
+      }
+    },
+    {
+      label: 'not-found attempt retaining accepted binding',
+      mutate(value) {
+        value.attempts[0].status = 'not_found';
+        value.attempts[0].resultCount = 0;
+      }
+    },
+    {
+      label: 'attempt request hash differs from receipt',
+      mutate(value) {
+        value.attempts[0].queryHash = 'b'.repeat(64);
+      }
+    },
+    {
+      label: 'accepted count differs from candidate count',
+      mutate(value) {
+        value.attempts[0].resultCount = 2;
+        value.resultCount = 2;
+      }
+    },
+    {
+      label: 'fact URL absent from receipt annotations',
+      mutate(value) {
+        value.evidence[0].url = 'https://other.example/public-practice';
+        value.candidates[0].publicUrl =
+          'https://other.example/public-practice';
+      }
+    },
+    {
+      label: 'fact observation differs from receipt',
+      mutate(value) {
+        value.evidence[0].observedAt = '2026-08-01T12:00:01Z';
+      }
+    },
+    {
+      label: 'citation promoted directly to person target',
+      mutate(value) {
+        value.candidates[0].kind = 'person';
+      }
+    },
+    {
+      label: 'missing persisted web-search receipt',
+      mutate(value) {
+        delete value.plan.webSearchReceipt;
+      }
+    }
+  ];
+  for (const adversary of foldedAdversaries) {
+    const value = structuredClone(foldedCitationEvidence);
+    adversary.mutate(value);
+    value.queryHash = commercialDiscoveryAttemptLedgerHash(value.attempts);
+    const normalized = normalizeCommercialDiscoveryEvidence(value, now);
+    if (normalized.valid !== false) {
+      throw new Error(
+        `${adversary.label} escaped folded Exa binding checks: ${JSON.stringify(normalized)}`
+      );
+    }
   }
 
   const incompleteFamiliesPayload = structuredClone(downstreamPayload);
@@ -7778,10 +8334,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
     patientTargetingExcluded: true,
     sideEffectsPerformed: 0,
     attempts: [attempt],
-    plan: {
-      ...discoveryPlan,
-      plans: [selectedMotion]
-    },
+    plan: persistedSingleMotionPlan(discoveryPlan, selectedMotion),
     evidence: [{
       motionId: selectedMotion.id,
       evidenceRef: buyerEvidenceRef,
@@ -8483,10 +9036,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       patientTargetingExcluded: true,
       sideEffectsPerformed: 0,
       attempts: [attempt],
-      plan: {
-        ...discoveryPlan,
-        plans: [selectedMotion]
-      },
+      plan: persistedSingleMotionPlan(discoveryPlan, selectedMotion),
       evidence: [{
         motionId: selectedMotion.id,
         evidenceRef: jobEvidenceRef,
@@ -9335,6 +9885,31 @@ function plannerJob(scenario) {
       }
     }
   };
+}
+
+function persistedSingleMotionPlan(plannerPlanValue, selectedMotionValue) {
+  const plannerPlan = structuredClone(plannerPlanValue);
+  const selectedMotion = structuredClone(selectedMotionValue);
+  if (plannerPlan.plans?.length === 1 &&
+      plannerPlan.planSelection?.acceptedPlanCount === 1) {
+    plannerPlan.plans = [selectedMotion];
+    return plannerPlan;
+  }
+  const omitted = (plannerPlan.plans || []).find((motion) =>
+    motion.id !== selectedMotion.id
+  );
+  plannerPlan.plans = [selectedMotion];
+  plannerPlan.planSelection = {
+    returnedPlanCount: 2,
+    acceptedPlanCount: 1,
+    rejectedPlanCount: 1,
+    rejectedPlans: [{
+      id: omitted?.id || 'fixture_omitted_motion',
+      reason:
+        'The production-shaped fixture retained only the selected source-bound motion.'
+    }]
+  };
+  return plannerPlan;
 }
 
 function plan(overrides) {
