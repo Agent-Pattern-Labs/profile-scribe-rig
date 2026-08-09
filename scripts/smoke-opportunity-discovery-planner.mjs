@@ -5067,14 +5067,27 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     requiredPrimaryFocus: 'ProfileScribe',
     requiredEvidenceRefs: ['profile:focus:1']
   };
-  job.payload.evidenceSnapshot.profile.currentFocus = [{
-    name: 'ProfileScribe',
-    description:
-      'Agent-managed professional profiles and source-backed updates.',
-    status: 'active',
-    priority: 'primary',
-    evidence: ['The owner confirmed ProfileScribe is the primary business.']
-  }];
+  job.payload.evidenceSnapshot.profile.currentFocus = [
+    {
+      id: 'focus-empty-persisted-record',
+      name: '',
+      description:
+        'An unnamed persisted record must not consume compact focus numbering.'
+    },
+    {
+      // Production focus records retain an opaque store ID. The planner and
+      // control plane must nevertheless share the compact profile:focus:1
+      // evidence reference, rather than allowing current_focus:<opaque-id> to
+      // win by catalog order.
+      id: 'focus-17bb309d-5ed2-42ab-b9fe-948bb698ee3b',
+      name: 'ProfileScribe',
+      description:
+        'Agent-managed professional profiles and source-backed updates.',
+      status: 'active',
+      priority: 'primary',
+      evidence: ['The owner confirmed ProfileScribe is the primary business.']
+    }
+  ];
   job.payload.evidenceSnapshot.sources[0] = {
     id: 'profilescribe-owner-site',
     label: 'ProfileScribe',
@@ -5103,10 +5116,18 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   const sellerFocusEvidence = catalog.find((item) =>
     item.id === 'profile:focus:1'
   );
+  const legacyPersistedFocusEvidence = catalog.find((item) =>
+    /^current_focus:focus-(?:empty|17bb)/.test(item.id || '')
+  );
   if (!sellerFocusEvidence ||
+      legacyPersistedFocusEvidence ||
       directoryEvidence?.revenueAssetRole !== 'informational_only') {
     throw new Error(
-      `ProfileScribe seller focus or directory role was invalid: ${JSON.stringify({ sellerFocusEvidence, directoryEvidence })}`
+      `ProfileScribe seller focus or directory role was invalid: ${JSON.stringify({
+        sellerFocusEvidence,
+        legacyPersistedFocusEvidence,
+        directoryEvidence
+      })}`
     );
   }
   const evidenceRef = directoryEvidence.id;

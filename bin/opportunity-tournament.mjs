@@ -9350,16 +9350,28 @@ export function buildEvidenceCatalog(
       confidence: 'high'
     });
   }
-  for (const [index, focus] of firstArray(profile.currentFocus).entries()) {
+  let currentFocusEvidenceIndex = 0;
+  for (const focus of firstArray(profile.currentFocus)) {
     const value = asObject(focus);
+    // The control plane projects only named focus records and assigns their
+    // evidence references from that compact order. Persisted profile objects
+    // also carry their own opaque `id`; do not let append() prefer that raw ID
+    // and create a divergent `current_focus:<id>` reference. Planner output is
+    // reused by the downstream tournament, so both stages must see the exact
+    // same `profile:focus:N` seller binding.
+    if (!firstText(value.name)) continue;
+    currentFocusEvidenceIndex += 1;
+    if (currentFocusEvidenceIndex > 12) break;
+    const evidenceRef = `profile:focus:${currentFocusEvidenceIndex}`;
     append({
       ...value,
+      evidenceRef,
       summary: compactStrings([
         value.description,
         ...asArray(value.evidence)
       ]).join('; '),
       sourceId: firstText(...asArray(value.sourceIds))
-    }, 'current_focus', `profile:focus:${index + 1}`);
+    }, 'current_focus', evidenceRef);
   }
   for (const [index, experience] of firstArray(profile.experience).slice(0, 12).entries()) {
     const value = asObject(experience);
