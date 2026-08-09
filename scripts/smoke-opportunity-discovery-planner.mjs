@@ -1194,26 +1194,27 @@ async function verifyTypedCommercialMotionSelection(
   const invalidArtifactSolicitation =
     cases[1].plans(programmerEvidenceRef)[1];
   invalidArtifactSolicitation.demandArtifactKind = 'not_applicable';
-  const bothInvalid = await run({
+  const fixedAndAuthoredArtifacts = await run({
     job: programmerJob,
     plans: [invalidArtifactJob, invalidArtifactSolicitation],
     generationId: 'generation-both-invalid-typed-motions'
   });
-  const artifactRejections = bothInvalid.planSelection?.rejectedPlans
+  const artifactRejections = fixedAndAuthoredArtifacts.planSelection
+    ?.rejectedPlans
     ?.map((item) => item.reason).join(' ') || '';
-  if (bothInvalid.status !== 'blocked' ||
-      bothInvalid.plans.length !== 0 ||
-      bothInvalid.planSelection?.acceptedPlanCount !== 0 ||
-      bothInvalid.planSelection?.rejectedPlanCount !== 2 ||
-      !/employer-authored job-posting artifact/i.test(
-        artifactRejections
-      ) ||
+  if (fixedAndAuthoredArtifacts.status !== 'planned' ||
+      fixedAndAuthoredArtifacts.plans.length !== 1 ||
+      fixedAndAuthoredArtifacts.plans[0]?.id !== invalidArtifactJob.id ||
+      fixedAndAuthoredArtifacts.plans[0]?.demandArtifactKind !==
+        'employer_job_posting' ||
+      fixedAndAuthoredArtifacts.planSelection?.acceptedPlanCount !== 1 ||
+      fixedAndAuthoredArtifacts.planSelection?.rejectedPlanCount !== 1 ||
       !/buyer-authored solicitation artifact/i.test(
         artifactRejections
       ) ||
-      bothInvalid.sideEffectsPerformed !== 0) {
+      fixedAndAuthoredArtifacts.sideEffectsPerformed !== 0) {
     throw new Error(
-      `two invalid typed motions did not block locally: ${JSON.stringify(bothInvalid)}`
+      `fixed versus authored artifact handling drifted: ${JSON.stringify(fixedAndAuthoredArtifacts)}`
     );
   }
 
@@ -3673,6 +3674,205 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
       coherentTitles.planSelection?.rejectedPlanCount !== 0) {
     throw new Error(
       `coherent professional title synonyms were rejected: ${JSON.stringify(coherentTitles)}`
+    );
+  }
+
+  const compactSlashTitle = await run(candidate({
+    id: 'compact_obgyn_title_is_not_boolean_prose',
+    targetRoleTerms: ['OB/GYN']
+  }), 'generation-compact-obgyn-title');
+  if (compactSlashTitle.status !== 'planned' ||
+      compactSlashTitle.plans.length !== 2 ||
+      compactSlashTitle.planSelection?.rejectedPlanCount !== 0) {
+    throw new Error(
+      `compact professional slash title was treated as Boolean prose: ${JSON.stringify(compactSlashTitle)}`
+    );
+  }
+
+  // Production regression: the planner returned one referral motion with a
+  // Boolean title phrase and stray buyer-procurement metadata. Both fields
+  // are deterministic adapter structure, so normalize them without spending
+  // a repair/critic call or discarding the second commercial motion.
+  const productionReferralFixture = structuredClone(
+    cases[0].plans(evidenceRef)[0]
+  );
+  productionReferralFixture.id =
+    'canonical_referral_route_and_atomic_titles';
+  productionReferralFixture.demandArtifactKind =
+    'buyer_procurement_notice';
+  productionReferralFixture.counterparty =
+    'One exact climate or sustainability consultant';
+  productionReferralFixture.targetRoleTerms = [
+    'Climate or sustainability consultant'
+  ];
+  productionReferralFixture.organizationTerms = [
+    'climate resilience',
+    'civic data',
+    'community research'
+  ];
+  productionReferralFixture.query =
+    'Climate or sustainability consultant climate resilience civic data';
+  const canonicalReferralRoute = await run(
+    productionReferralFixture,
+    'generation-canonical-referral-route-and-atomic-titles'
+  );
+  const canonicalReferralMotion = canonicalReferralRoute.plans.find(
+    (motion) => motion.id ===
+      'canonical_referral_route_and_atomic_titles'
+  );
+  if (canonicalReferralRoute.status !== 'planned' ||
+      canonicalReferralRoute.plans.length !== 2 ||
+      canonicalReferralRoute.planSelection?.acceptedPlanCount !== 2 ||
+      canonicalReferralRoute.planSelection?.rejectedPlanCount !== 0 ||
+      canonicalReferralMotion?.demandArtifactKind !== 'not_applicable' ||
+      JSON.stringify(canonicalReferralMotion?.targetRoleTerms) !==
+        JSON.stringify([
+          'Climate consultant',
+          'sustainability consultant'
+        ]) ||
+      !canonicalReferralMotion?.query.includes('Climate consultant') ||
+      !canonicalReferralMotion?.query.includes(
+        'sustainability consultant'
+      ) || /\bclimate or sustainability consultant\b/i.test(
+        canonicalReferralMotion?.query || ''
+      )) {
+    throw new Error(
+      `fixed referral route/title structure was not canonicalized: ${JSON.stringify(canonicalReferralRoute)}`
+    );
+  }
+
+  const localOrganizationAtomicFixture = structuredClone(
+    cases[0].plans(evidenceRef)[1]
+  );
+  localOrganizationAtomicFixture.id =
+    'local_organization_atomic_decision_maker_titles';
+  localOrganizationAtomicFixture.targetRoleTerms = [
+    'Climate or sustainability consultant'
+  ];
+  const localOrganizationAtomic = await run(
+    localOrganizationAtomicFixture,
+    'generation-local-organization-atomic-decision-maker-titles'
+  );
+  const localOrganizationAtomicMotion =
+    localOrganizationAtomic.plans.find((motion) => motion.id ===
+      'local_organization_atomic_decision_maker_titles');
+  if (localOrganizationAtomic.status !== 'planned' ||
+      localOrganizationAtomic.plans.length !== 2 ||
+      localOrganizationAtomic.planSelection?.acceptedPlanCount !== 2 ||
+      JSON.stringify(localOrganizationAtomicMotion?.targetRoleTerms) !==
+        JSON.stringify([
+          'Climate consultant',
+          'sustainability consultant'
+        ]) || /\bclimate or sustainability consultant\b/i.test(
+        localOrganizationAtomicMotion?.query || ''
+      )) {
+    throw new Error(
+      `local-organization decision-maker titles were not canonicalized: ${JSON.stringify(localOrganizationAtomic)}`
+    );
+  }
+
+  const unsafeLocalOrganizationTitle = structuredClone(
+    localOrganizationAtomicFixture
+  );
+  unsafeLocalOrganizationTitle.id =
+    'unsafe_local_organization_cross_title';
+  unsafeLocalOrganizationTitle.targetRoleTerms = [
+    'Climate strategist or sustainability consultant'
+  ];
+  const rejectedLocalOrganizationTitle = await run(
+    unsafeLocalOrganizationTitle,
+    'generation-unsafe-local-organization-cross-title'
+  );
+  const localOrganizationRejection = rejectedLocalOrganizationTitle
+    .planSelection?.rejectedPlans?.find((item) => item.id ===
+      unsafeLocalOrganizationTitle.id)?.reason || '';
+  if (rejectedLocalOrganizationTitle.status !== 'planned' ||
+      rejectedLocalOrganizationTitle.plans.some((motion) => motion.id ===
+        unsafeLocalOrganizationTitle.id) ||
+      rejectedLocalOrganizationTitle.planSelection?.acceptedPlanCount !== 1 ||
+      rejectedLocalOrganizationTitle.planSelection?.rejectedPlanCount !== 1 ||
+      !/atomic current-title alternatives/i.test(
+        localOrganizationRejection
+      )) {
+    throw new Error(
+      `unsafe local-organization decision-maker title escaped validation: ${JSON.stringify(rejectedLocalOrganizationTitle)}`
+    );
+  }
+
+  for (const [label, targetRoleTerms] of [
+    [
+      'cross-profession Boolean title',
+      ['pediatrician or midwife']
+    ],
+    [
+      'same-domain different strategist title',
+      ['Climate strategist or sustainability consultant']
+    ],
+    [
+      'same-domain different advisor title',
+      ['Climate advisor or sustainability consultant']
+    ],
+    [
+      'organization phrase cannot inherit a title',
+      ['Detroit Climate Lab or sustainability consultant']
+    ],
+    [
+      'service prose cannot inherit a title',
+      ['Climate consultant services or sustainability consultant']
+    ],
+    [
+      'and-or Boolean title prose',
+      ['Climate and/or sustainability consultant']
+    ],
+    [
+      'spaced slash Boolean title prose',
+      ['Climate / sustainability consultant']
+    ],
+    [
+      'organization-like Boolean prose',
+      ['Climate or Detroit Resilience Lab']
+    ],
+    [
+      'sentence-like Boolean prose',
+      ['Consultant for climate or sustainability initiatives']
+    ]
+  ]) {
+    const unsafeID = `unsafe_atomic_title_${label
+      .toLowerCase().replace(/\W+/g, '_')}`;
+    const rejected = await run(candidate({
+      id: unsafeID,
+      targetRoleTerms
+    }), `generation-${label.replace(/\W+/g, '-')}`);
+    const rejectionReason = rejected.planSelection?.rejectedPlans?.find(
+      (item) => item.id === unsafeID
+    )?.reason || '';
+    if (rejected.status !== 'planned' ||
+        rejected.plans.some((motion) => motion.id === unsafeID) ||
+        rejected.planSelection?.acceptedPlanCount !== 1 ||
+        rejected.planSelection?.rejectedPlanCount !== 1 ||
+        !/atomic current-title alternatives/i.test(rejectionReason)) {
+      throw new Error(
+        `${label} escaped atomic-title validation: ${JSON.stringify(rejected)}`
+      );
+    }
+  }
+
+  const organizationBooleanName = await run(candidate({
+    id: 'organization_boolean_name_is_not_split',
+    targetRoleTerms: ['sustainability consultant'],
+    organizationTerms: ['Climate or Sustainability Partners']
+  }), 'generation-organization-boolean-name-is-not-split');
+  const organizationBooleanMotion = organizationBooleanName.plans.find(
+    (motion) => motion.id === 'organization_boolean_name_is_not_split'
+  );
+  if (organizationBooleanName.status !== 'planned' ||
+      JSON.stringify(organizationBooleanMotion?.organizationTerms) !==
+        JSON.stringify(['Climate or Sustainability Partners']) ||
+      !organizationBooleanMotion?.query.includes(
+        'Climate or Sustainability Partners'
+      )) {
+    throw new Error(
+      `organization context was rewritten as a target title: ${JSON.stringify(organizationBooleanName)}`
     );
   }
 

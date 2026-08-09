@@ -923,7 +923,7 @@ Choose the outside actor or buyer-authored artifact that can cause payment, neve
 Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind is not_applicable, employer_job_posting, or a buyer_* artifact. Code constructs the provider query; query prose never proves demand.
 Plans prove no outside fact or authority. Top-level buyer is the payer archetype and has no tokens. {{TARGET_URL}} appears only in targetSlot and contingent c/a text. {{TARGET_NAME}} also appears once in each b.l for buyer/paid_demand and zero times in referral b.l. target:evidence appears only as targetSlot.evidenceRefToken; code binds all e refs by typed role. No target token belongs in other top-level plan prose.
 Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas. Selected rp/by/pd actions: prefer four distinct; at least two across both tactics must be text-distinct and viable. tacticKey/unselected fields do not count.
-Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
+Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. targetRoleTerms: atomic titles, never "X or Y". No warm_referral/existing_customer.
 Every a={rp,by,pd,e}; author all three complete model actions. rp=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; by=target books/buys/signs current paid offer; pd=typed paid application/proposal response. Code selects commercialRole only; never composes prose. Each action has {{TARGET_NAME}}/{{TARGET_URL}} once. Bare introduce/share/connect/message/conversation, marketplace/directory placement, and setup are invalid. rp/by use "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; pd uses the official paid-demand page. No DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
 acquisitionMechanism is exact and structural: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page". paid_demand c+a use that official page and {{TARGET_URL}}; never name a private contact route.
 Keep the complete JSON at or below 20 KiB. Return one minified object, concise strings, no formatting whitespace, and no repeated rationale/evidence prose.
@@ -1745,7 +1745,7 @@ function compactOpportunityDiscoveryHardRules() {
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/o/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. paid demand needs employer_job_posting or buyer_rfp/rfq/tender/procurement_notice/paid_request. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional paid artifact.',
-    'Adapters: professional=person/single; local_org=person/org->decision-maker(1-6); never terminal org; targetRoleTerms=1 title family; organizationTerms=context.',
+    'Adapters: professional=person/single; local_org=person/org->decision-maker(1-6); never terminal org; targetRoleTerms=1 title family, atomic items; organizationTerms=context.',
     'acquisitionMechanism exact: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page".',
     'buyer/referral c+a: use that exact form; URL=HTTPS LinkedIn /in; no message/DM/InMail/connect/email/phone/form.',
     'No sensitive/private targets; population only in referral query. No external writes.'
@@ -1907,11 +1907,23 @@ function typedDiscoveryMotionRoute(planValue) {
   }
   const route = DISCOVERY_MOTION_ROUTES.get(firstText(plan.motionKind));
   if (!route) return null;
+  // Five routes have exactly one structurally valid demand-artifact value.
+  // Derive that value from motionKind just as we already derive searchMode,
+  // commercialRole, and acquisitionMode. Leaving this one fixed field under
+  // model control can discard an otherwise complete second motion before
+  // bounded target discovery (for example, a referral motion accidentally
+  // carrying buyer-procurement metadata). Buyer solicitations are the sole
+  // route whose subtype is genuinely authored, so retain that declaration
+  // for the ordinary buyer-authored-artifact validator below.
+  const demandArtifactKind = firstText(plan.motionKind) ===
+    'buyer_solicitation'
+    ? firstText(plan.demandArtifactKind)
+    : firstText(route.demandArtifactKind);
   return {
     routeContractVersion: COMMERCIAL_MOTION_ROUTE_CONTRACT,
     motionKind: firstText(plan.motionKind),
     ...route,
-    demandArtifactKind: firstText(plan.demandArtifactKind),
+    demandArtifactKind,
     acquisitionMechanism:
       route.commercialRole === 'paid_demand'
         ? DISCOVERY_PAID_DEMAND_ACQUISITION
@@ -2156,8 +2168,18 @@ function normalizeOpportunityDiscoverySearchFields(planValue) {
   case 'local_organization':
     // These adapters resolve a professional role, optionally through an
     // organization seed. Job-title and skill fields are not sent to either
-    // adapter, so model spillover there cannot redefine the target.
-    return {...allFields, jobTitle: '', skills: []};
+    // adapter, so model spillover there cannot redefine the target. The
+    // follow-up decision-maker lookup uses the same exact-title match_phrase
+    // array as a direct professional lookup, so canonicalize its role terms
+    // through the same atomic-family boundary.
+    return {
+      ...allFields,
+      targetRoleTerms: coherentOpportunityDiscoveryTargetRoleTerms(
+        allFields.targetRoleTerms
+      ),
+      jobTitle: '',
+      skills: []
+    };
   case 'active_job_posting':
     // A live-role search consumes only the compensated title/skill query.
     return {
@@ -2183,13 +2205,88 @@ function normalizeOpportunityDiscoverySearchFields(planValue) {
 
 function coherentOpportunityDiscoveryTargetRoleTerms(values) {
   const terms = compactStrings(values);
-  const selectedFamily = terms
-    .map(opportunityDiscoveryTargetTitleFamily)
-    .find(Boolean);
-  if (!selectedFamily) return [];
-  return terms.filter((term) =>
-    opportunityDiscoveryTargetTitleFamily(term) === selectedFamily
+  const groups = terms.map((term) =>
+    atomicOpportunityDiscoveryTargetRoleTerms(term)
   );
+  const selectedGroup = groups.find((group) => group.length > 0) || [];
+  const selectedFamilies = new Set(selectedGroup
+    .map(opportunityDiscoveryTargetTitleFamily)
+    .filter(Boolean));
+  const selectedFamily = [...selectedFamilies][0];
+  if (!selectedFamily) return [];
+  // A safe standalone "X or Y <title>" term is one model-authored OR family.
+  // The provider adapter already ORs array entries, so preserve both atomic
+  // phrases from that first family. Subsequent entries still have to match a
+  // selected family, retaining the existing bounded-family narrowing.
+  return compactStrings(groups.flatMap((group, index) => {
+    if (index === groups.indexOf(selectedGroup)) return group;
+    return group.filter((term) => selectedFamilies.has(
+      opportunityDiscoveryTargetTitleFamily(term)
+    ));
+  })).slice(0, 6);
+}
+
+const OPPORTUNITY_DISCOVERY_ATOMIC_TITLE_HEADS = new Set([
+  'administrator', 'advisor', 'analyst', 'architect', 'attorney',
+  'broker', 'coach', 'consultant', 'coordinator', 'counselor',
+  'developer', 'director', 'engineer', 'executive', 'founder', 'lead',
+  'manager', 'midwife', 'nurse', 'officer', 'owner', 'partner',
+  'pediatrician', 'physician', 'principal', 'producer', 'recruiter',
+  'researcher', 'specialist', 'strategist', 'therapist'
+]);
+
+function opportunityDiscoveryAtomicTitleHead(value) {
+  const tokens = comparable(value).split(' ').filter(Boolean);
+  const last = tokens[tokens.length - 1] || '';
+  const singular = last.endsWith('s') && !last.endsWith('ss')
+    ? last.slice(0, -1)
+    : last;
+  return OPPORTUNITY_DISCOVERY_ATOMIC_TITLE_HEADS.has(singular)
+    ? singular
+    : '';
+}
+
+/**
+ * Turns only a bounded standalone professional-title alternative into the
+ * atomic phrases expected by PDL's match_phrase OR array. It preserves model
+ * words and may carry the declared terminal title head onto the left modifier:
+ * "Climate or sustainability consultant" becomes
+ * ["Climate consultant", "sustainability consultant"]. It does not split
+ * organization names, prose, cross-profession alternatives, punctuation, or
+ * strings without a recognizable current-title head.
+ */
+function atomicOpportunityDiscoveryTargetRoleTerms(value) {
+  const term = firstText(value).replace(/\s+/g, ' ');
+  const match = term.match(
+    /^([\p{L}\p{N}][\p{L}\p{N}'-]*(?: [\p{L}\p{N}][\p{L}\p{N}'-]*){0,4}) or ([\p{L}\p{N}][\p{L}\p{N}'-]*(?: [\p{L}\p{N}][\p{L}\p{N}'-]*){0,4})$/iu
+  );
+  if (!match) return term ? [term] : [];
+  let left = match[1];
+  const right = match[2];
+  const rightHead = opportunityDiscoveryAtomicTitleHead(right);
+  if (!rightHead) return [term];
+  const leftHead = opportunityDiscoveryAtomicTitleHead(left);
+  // Domain similarity is not title equivalence. A climate strategist and a
+  // sustainability consultant may share a commercial domain while remaining
+  // different professional title families for exact provider matching. Only
+  // inherit the right-hand head when the left side is a modifier; if both
+  // sides already declare heads, require the same literal head.
+  if (leftHead && leftHead !== rightHead) return [term];
+  if (!leftHead) {
+    // Inheritance is intentionally narrow: one lexical modifier such as
+    // "Climate" may share the explicit right-hand title head. Multi-token
+    // organization names or prose are ambiguous and must remain unsplit for
+    // the Boolean-title validator to reject.
+    if (left.split(' ').length !== 1) return [term];
+    left = `${left} ${rightHead}`;
+  }
+  const normalizedLeftHead = opportunityDiscoveryAtomicTitleHead(left);
+  const sameKnownFamily = opportunityDiscoveryTargetTitleFamily(left) ===
+    opportunityDiscoveryTargetTitleFamily(right);
+  if (!normalizedLeftHead || !sameKnownFamily) {
+    return [term];
+  }
+  return compactStrings([left, right]);
 }
 
 function normalizedDiscoveryPlanEvidenceRefs(planValue, knownEvidence) {
@@ -2789,6 +2886,10 @@ function opportunityDiscoveryTargetTitleFamily(value) {
     [/\bdoula\b/, 'doula'],
     [/\blactation\b|\bibclc\b/, 'lactation'],
     [
+      /\b(?:climate|environmental|esg|sustainability)\b/,
+      'sustainability'
+    ],
+    [
       /\b(?:clinic|office|practice)\b.*\b(?:administrator|manager)\b|\b(?:administrator|manager)\b.*\b(?:clinic|office|practice)\b/,
       'practice_administration'
     ],
@@ -2838,10 +2939,22 @@ function opportunityDiscoveryTargetTitleFamily(value) {
 
 function opportunityDiscoveryTargetTitleFamilyIssue(planValue) {
   const plan = asObject(planValue);
-  if (firstText(plan.searchMode) !== 'professional_counterparty') {
+  if (!['professional_counterparty', 'local_organization'].includes(
+    firstText(plan.searchMode)
+  )) {
     return '';
   }
   const terms = compactStrings(plan.targetRoleTerms);
+  // Empty role terms have a route-specific structural diagnostic (including
+  // the mandatory decision-maker-role check). This helper governs only the
+  // coherence of terms that are actually present.
+  if (terms.length === 0) return '';
+  if (terms.some((term) =>
+    /\s+(?:and\/or|or)\s+/i.test(term) ||
+    /(?:\s\/|\/\s)/.test(term)
+  )) {
+    return 'must use atomic current-title alternatives in targetRoleTerms; Boolean title prose cannot become one exact provider phrase.';
+  }
   const families = terms.map(opportunityDiscoveryTargetTitleFamily);
   if (families.some((family) => !family) ||
       new Set(families).size !== 1) {
@@ -16893,18 +17006,18 @@ function strategyGenerationRecoveryExperiment({
       title:
         'Retry once after exact-target discovery is verified against a fixture',
       action:
-        'Preserve the objective, approved evidence, and two commercial motions and make no business, outreach, publishing, or provider-write changes. Verify and, if needed, repair each typed target query and local result filter with one non-billable fixture that resolves an exact public professional identity, then retry the same bounded tournament exactly once; do not blindly repeat the paid provider searches.',
+        'Preserve the objective, approved evidence, and accepted commercial motion set and make no business, outreach, publishing, or provider-write changes. Verify and, if needed, repair each accepted typed target query and local result filter with one non-billable fixture that resolves an exact public professional identity, then retry the same bounded tournament exactly once; do not blindly repeat the paid provider searches.',
       stopCondition:
         'Stop after 1 non-billable exact-target fixture check and 1 linked retry; if no exact target binds again, preserve the rejection reason and do not spend again automatically.',
       trigger:
-        'Rerun once only after every typed commercial motion resolves an exact source-bindable public target in the non-billable fixture; new business evidence is not required.'
+        'Rerun once only after every accepted typed commercial motion resolves an exact source-bindable public target in the non-billable fixture; new business evidence is not required.'
     },
     commercial_discovery_target_source_binding: {
       kind: 'commercial_discovery_target_binding_recovery',
       title:
         'Retry once after exact target-to-source binding is verified',
       action:
-        'Preserve the objective, approved evidence, two commercial motions, and durable discovery receipts and make no business, outreach, publishing, or provider-write changes. Repair and verify the deterministic provider-record-to-public-identity and evidence-role binding with a non-billable fixture, then retry the same bounded tournament exactly once; do not promote model prose into target evidence.',
+        'Preserve the objective, approved evidence, accepted commercial motion set, and durable discovery receipts and make no business, outreach, publishing, or provider-write changes. Repair and verify the deterministic provider-record-to-public-identity and evidence-role binding with a non-billable fixture, then retry the same bounded tournament exactly once; do not promote model prose into target evidence.',
       stopCondition:
         'Stop after 1 non-billable target-binding fixture check and 1 linked retry; if source binding fails again, preserve the exact rejected role and do not spend again automatically.',
       trigger:
