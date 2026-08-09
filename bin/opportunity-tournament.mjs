@@ -19,6 +19,8 @@ export const COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT =
   'commercial_discovery_evidence_v1';
 export const OPPORTUNITY_DISCOVERY_PLAN_CONTRACT =
   'opportunity_discovery_plan_v2';
+export const OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT =
+  'opportunity_discovery_planner_diagnostic_v1';
 const LEGACY_OPPORTUNITY_DISCOVERY_PLAN_CONTRACT =
   'opportunity_discovery_plan_v1';
 export const PROPOSED_COMMERCIAL_MOTIONS_CONTRACT =
@@ -50,6 +52,8 @@ const CONTINGENT_TARGET_URL_TOKEN = '{{TARGET_URL}}';
 const CONTINGENT_TARGET_EVIDENCE_REF = 'target:evidence';
 const CONTINGENT_CONVERSION_ACTION_PROJECTION =
   'project_first_viable_tactic_action';
+const CONTINGENT_PRIMARY_ACTION_DIVERSITY_ISSUE =
+  'must retain at least two distinct active commercial primary-action variants across both families.';
 const CONTINGENT_PLANNER_ACTION_FIELD_BY_COMMERCIAL_ROLE = Object.freeze({
   referral_partner: 'rp',
   buyer: 'by',
@@ -918,7 +922,7 @@ The objective and declared primary current focus identify the seller and what mu
 Choose the outside actor or buyer-authored artifact that can cause payment, never a peer supplier. Choose only a motionKind allowed by the response schema. referral_person/referral_org_decision_maker find a complementary professional referral authority; direct_buyer_person/direct_buyer_org_decision_maker find a non-sensitive institutional buyer; compensated_job finds an employer job posting; buyer_solicitation finds a buyer-authored paid RFP/RFQ/tender/procurement notice/explicit request. Two referral motions with different counterparties are valid; diversity never requires paid_demand. For a sensitive end buyer, prefer referral unless targeting a real institutional compensated artifact. Supplier/competitor offers, directories, marketplaces, payer participation, "accepts insurance," and the seller's offer/booking page are supply, never demand. Website/booking=destination, not acquisition.
 Set routeContractVersion="commercial_motion_route_v1". motionKind fixes searchMode/commercialRole/acquisitionMode; demandArtifactKind is not_applicable, employer_job_posting, or a buyer_* artifact. Code constructs the provider query; query prose never proves demand.
 Plans prove no outside fact or authority. Top-level buyer is the payer archetype and has no tokens. {{TARGET_URL}} appears only in targetSlot and contingent c/a text. {{TARGET_NAME}} also appears once in each b.l for buyer/paid_demand and zero times in referral b.l. target:evidence appears only as targetSlot.evidenceRefToken; code binds all e refs by typed role. No target token belongs in other top-level plan prose.
-Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas.
+Return exactly two distinct plans; each has one shared pathBase plus two tactic deltas. Selected rp/by/pd actions: prefer four distinct; at least two across both tactics must be text-distinct and viable. tacticKey/unselected fields do not count.
 Routes: referral_person=professional_counterparty/referral_partner/partner_channel; referral_org_decision_maker=local_organization/referral_partner/partner_channel; direct_buyer_person=professional_counterparty/buyer/permissioned_outreach; direct_buyer_org_decision_maker=local_organization/buyer/permissioned_outreach; compensated_job=active_job_posting/paid_demand/permissioned_outreach; buyer_solicitation=public_live_demand/paid_demand/permissioned_outreach. professional_counterparty ends in one person; local_organization seeds one named decision-maker person. No warm_referral/existing_customer.
 Every a={rp,by,pd,e}; author all three complete model actions. rp=partner referral/introduction of defined buyer to current paid offer+paid booking/payment; by=target books/buys/signs current paid offer; pd=typed paid application/proposal response. Code selects commercialRole only; never composes prose. Each action has {{TARGET_NAME}}/{{TARGET_URL}} once. Bare introduce/share/connect/message/conversation, marketplace/directory placement, and setup are invalid. rp/by use "After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} ..."; pd uses the official paid-demand page. No DM/InMail/connect/email/phone/alternate. Review!=mode; code projects r.c per tactic; operations never outcomes.
 acquisitionMechanism is exact and structural: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page". paid_demand c+a use that official page and {{TARGET_URL}}; never name a private contact route.
@@ -1215,6 +1219,10 @@ Never target patients, health/family-status consumers, sensitive traits, or priv
       usage,
       llm: { discoveryPlanner: providerMetadata },
       webSearchReceipt,
+      plannerDiagnostic:
+        !rawCardinalityIssue && issue && selection.plannerDiagnostic
+          ? selection.plannerDiagnostic
+          : undefined,
       planSelection: selection.diagnostics
     };
   }
@@ -1731,7 +1739,7 @@ function compactOpportunityDiscoveryHardRules() {
     `top-level buyer is the payer/end-buyer archetype and contains no target token. Contingent b.l has {{TARGET_NAME}} once for buyer/paid_demand and zero times for referral_partner; action/channel use typed target tokens. ${CONTINGENT_TARGET_EVIDENCE_REF} appears only as targetSlot.evidenceRefToken, never in a returned e array; code binds it after typed-role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
-    'a:2/tactic; each a has rp/by/pd/e. rp=partner referral/introduction -> current paid offer -> paid booking/payment; by=ask target to book/buy/sign current paid offer; pd=paid application/proposal response. Author all three complete actions; code selects commercialRole only. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
+    'a:2/tactic; each a has rp/by/pd/e. rp=partner referral/introduction -> current paid offer -> paid booking/payment; by=ask target to book/buy/sign current paid offer; pd=paid application/proposal response. Author all three complete actions; code selects commercialRole only. Selected rp/by/pd: prefer 4 distinct; >=2 across both tactics must be distinct+viable. tacticKey/unselected fields do not count. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `r.a=plan.acquisitionMode; r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; project valid tactic a; k.c=k.o=rm; k.p=rm+"_terminal"; k.t=atm.`,
     'r.o copies the one response-schema settled terminal outcome matching rm; never use an alternative, attempt, pending, declined, failed, or unpaid state.',
     'k.d=separate destination; k.s/n/u=bounded stop; calendar_days<=30; author io/o/ats/cd/st; vm>0.',
@@ -3593,6 +3601,7 @@ function selectValidOpportunityDiscoveryPlans({
 
   const plans = [];
   const rejectedPlans = [];
+  const plannerDiagnostics = [];
   const ids = new Set();
   const priorities = new Set();
   const signatures = new Set();
@@ -3650,6 +3659,11 @@ function selectValidOpportunityDiscoveryPlans({
       issue = 'Discovery plans repeat the same economic search motion.';
     }
     if (issue) {
+      if (issue.endsWith(CONTINGENT_PRIMARY_ACTION_DIVERSITY_ISSUE)) {
+        plannerDiagnostics.push(
+          contingentPrimaryActionDiversityDiagnostic(candidate.plan)
+        );
+      }
       rejectedPlans.push({ id, reason: truncate(issue, 320) });
       continue;
     }
@@ -3673,9 +3687,16 @@ function selectValidOpportunityDiscoveryPlans({
           sellerEvidenceRefs
         }
       );
+  const plannerDiagnostic = plannerDiagnostics.length > 0
+    ? {
+        ...plannerDiagnostics[0],
+        failedMotionCount: plannerDiagnostics.length
+      }
+    : undefined;
   return {
     plans,
     issue,
+    plannerDiagnostic,
     diagnostics: {
       returnedPlanCount: candidates.length,
       acceptedPlanCount: plans.length,
@@ -3788,8 +3809,7 @@ function contingentFinalistBundleIssue(planValue) {
   );
   if (targetEvidenceRoleIssue) return targetEvidenceRoleIssue;
   const tacticKeys = new Set();
-  const actionSignatures = new Set();
-  const viableActionSignatures = new Set();
+  const viableActionSignaturesByFamily = [];
   for (const [familyIndex, family] of families.entries()) {
     if (!firstText(family.l) ||
         firstText(family.m) !== firstText(plan.acquisitionMode) ||
@@ -3895,14 +3915,12 @@ function contingentFinalistBundleIssue(planValue) {
         return `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_target_token]: must contain exactly one target-name token (name_count=${targetNameCount}, url_count=${targetURLCount}).`;
       }
       const signature = comparable(action);
-      actionSignatures.add(signature);
       const roleIssue = contingentPrimaryRevenueActionRoleIssue(
         action,
         plan
       );
       if (contingentViableActionItem(actionValue, family, plan)) {
         familyViableActionSignatures.add(signature);
-        viableActionSignatures.add(signature);
       } else if (passiveOrObservationalPrimaryAction(action)) {
         rejectedActionIssues.push(
           `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_passive]: must be active rather than observational.`
@@ -3950,6 +3968,7 @@ function contingentFinalistBundleIssue(planValue) {
         `family ${familyIndex + 1} [primary_action_no_viable_variant]: must retain at least one active commercial revenue action after deterministic variant pruning.`
       );
     }
+    viableActionSignaturesByFamily.push(familyViableActionSignatures);
     const revenue = asObject(asArray(dimensions.r)[0]);
     if (plan.searchMode === 'active_job_posting' &&
         firstText(revenue.rm) !== 'compensated_role') {
@@ -3964,11 +3983,13 @@ function contingentFinalistBundleIssue(planValue) {
       return `has an incomplete causal revenue path in family ${familyIndex + 1} [${revenuePathIssues.join(',')}].`;
     }
   }
-  if (actionSignatures.size < 4) {
-    return 'must contain distinct causal primary-action variants across both families.';
-  }
-  if (viableActionSignatures.size < 2) {
-    return 'must retain at least two distinct active commercial primary-action variants across both families.';
+  const hasDistinctCrossFamilyActionPair = [
+    ...(viableActionSignaturesByFamily[0] || [])
+  ].some((left) => [
+    ...(viableActionSignaturesByFamily[1] || [])
+  ].some((right) => left !== right));
+  if (!hasDistinctCrossFamilyActionPair) {
+    return CONTINGENT_PRIMARY_ACTION_DIVERSITY_ISSUE;
   }
   const weights = asObject(bundle.w);
   if (Object.keys(weights).length !== 11 ||
@@ -3976,6 +3997,41 @@ function contingentFinalistBundleIssue(planValue) {
     return 'has incomplete semantic judge weights.';
   }
   return '';
+}
+
+function contingentPrimaryActionDiversityDiagnostic(planValue) {
+  const plan = asObject(planValue);
+  const families = [
+    asObject(asObject(plan.contingentFinalists).familyA),
+    asObject(asObject(plan.contingentFinalists).familyB)
+  ];
+  const returnedActions = [];
+  const viableActions = [];
+  const familyDistinctActionCounts = [];
+  for (const family of families) {
+    const familyViableActions = asArray(asObject(family.d).a)
+      .filter((item) => contingentViableActionItem(item, family, plan))
+      .map((item) => comparable(firstText(asObject(item).l)))
+      .filter(Boolean);
+    returnedActions.push(
+      ...asArray(asObject(family.d).a)
+        .map((item) => comparable(firstText(asObject(item).l)))
+        .filter(Boolean)
+    );
+    viableActions.push(...familyViableActions);
+    familyDistinctActionCounts.push(
+      new Set(familyViableActions).size
+    );
+  }
+  return {
+    contractVersion: OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT,
+    code: 'primary_action_diversity',
+    motionId: truncate(firstText(plan.id), 64),
+    returnedActionCount: returnedActions.length,
+    distinctActionCount: new Set(returnedActions).size,
+    viableDistinctActionCount: new Set(viableActions).size,
+    familyDistinctActionCounts
+  };
 }
 
 function buyerAuthoredPaidDemandQuery(planValue) {
@@ -6454,6 +6510,7 @@ async function runOpportunityTournamentCore({
         ? 'structured_repair_consumed_second_call'
         : 'insufficient_grounded_finalists'
   };
+  const requireDistinctCommercialCriticPair = useContingentFinalists;
   const expanded = expandAndJudge({
     objective,
     constraints,
@@ -6464,7 +6521,9 @@ async function runOpportunityTournamentCore({
       completion?.data?.judgeWeights ?? completion?.data?.w
     ),
     budget,
-    timestamp
+    timestamp,
+    reserveDistinctCausalFamilyPair:
+      requireDistinctCommercialCriticPair
   });
   let initialHypotheses = expanded.finalists;
   let criticRejectedHypotheses = [];
@@ -6631,8 +6690,43 @@ async function runOpportunityTournamentCore({
     // the critic to reread locally expanded near-duplicates. Legacy replay
     // paths retain their broader bounded comparison behavior.
     const criticFinalists = useContingentFinalists
-      ? selectBestFamilyDiverseCriticPair(deterministicFinalists)
+      ? selectBestFamilyDiverseCriticPair(deterministicFinalists, {
+          requireDistinctCausalSignature:
+            requireDistinctCommercialCriticPair
+        })
       : selectCommercialCriticFinalists(deterministicFinalists, 6);
+    if (requireDistinctCommercialCriticPair &&
+        criticFinalists.length !== 2) {
+      commercialCritic = {
+        ...commercialCritic,
+        cause: 'insufficient_distinct_causal_finalists',
+        reason:
+          'No cross-family pair with two distinct critic-visible causal signatures survived deterministic expansion; no duplicate causal path was sent to the critic.',
+        deterministicExcludedCount,
+        deterministicFinalistFamilyCount,
+        criticInputFinalistCount: 0
+      };
+      return {
+        status: 'skipped',
+        summary:
+          'The tournament retained no cross-family pair with distinct causal signatures before critic review.',
+        ...base,
+        hypotheses: deterministicFinalists.map(publicHypothesis),
+        nextExperiment: nextExperimentFor([
+          'structured_strategy_family_repair'
+        ]),
+        searchSpace: {
+          ...searchSpaceFor(deterministicFinalists),
+          commercialCritic
+        },
+        llm: llmTrace,
+        usage,
+        gate: researchOnlyGate(
+          'technical_recovery',
+          'Call 1 did not preserve a critic-visible cross-family pair with distinct buyer-to-payment paths; this is an AI-contract failure, not a market-evidence gap.'
+        )
+      };
+    }
     const criticInputBindings = commercialCriticFinalists(
       criticFinalists
     ).map((finalist) => ({
@@ -9598,7 +9692,8 @@ export function expandAndJudge({
   weights,
   budget,
   timestamp,
-  criticAcceptedFamilyIDs = null
+  criticAcceptedFamilyIDs = null,
+  reserveDistinctCausalFamilyPair = false
 }) {
   const dimensionValues = DIMENSIONS.map(([name]) => seedSet[name]);
   const theoreticalCount = dimensionValues.reduce((total, items) => total * items.length, 1);
@@ -9739,7 +9834,9 @@ export function expandAndJudge({
     }));
   }
 
-  const finalists = diverseFinalists(eligible, budget.maxFinalists)
+  const finalists = diverseFinalists(eligible, budget.maxFinalists, {
+    reserveDistinctCausalFamilyPair
+  })
     .map((hypothesis, index) => ({
       ...hypothesis,
       rank: index + 1,
@@ -9907,7 +10004,11 @@ function normalizeCommercialContext(payloadValue, objectiveValue, constraintsVal
     .filter((account) => Boolean(account.provider));
   const profile = asObject(raw.profile);
   const focus = asArray(profile.currentFocus)
-    .slice(0, 8)
+    // The control plane assigns canonical profile:focus:N references across
+    // its first 12 named rows. Retain that same complete window so an
+    // objective-bound primary seller at positions 9-12 cannot disappear before
+    // the authoritative seller contract is validated.
+    .slice(0, 12)
     .map(asObject)
     .map((item) => compact({
       name: truncate(firstText(item.name, item.title), 120),
@@ -12545,24 +12646,110 @@ function selectCommercialCriticFinalists(finalistsValue, limitValue = 6) {
   return selected;
 }
 
-function selectBestFamilyDiverseCriticPair(finalistsValue) {
+function selectBestFamilyDiverseCriticPair(
+  finalistsValue,
+  optionsValue = {}
+) {
+  const requireDistinctCausalSignature =
+    asObject(optionsValue).requireDistinctCausalSignature === true;
   const ranked = asArray(finalistsValue)
     .map(asObject)
     .sort(compareHypotheses);
-  const best = ranked[0];
-  if (!best) return [];
-  const bestFamily = firstText(
-    asObject(best.provenance).strategyFamilyId,
-    best._strategyFamily
-  );
-  const bestOtherFamily = ranked.find((finalist) => {
-    const familyID = firstText(
-      asObject(finalist.provenance).strategyFamilyId,
-      finalist._strategyFamily
+  if (requireDistinctCausalSignature) {
+    // A query excludes only one family and one signature. Retaining the best
+    // two distinct signatures per family is therefore sufficient to find the
+    // best available partner without a quadratic scan of the 10k search
+    // space used by pre-truncation finalist reservation.
+    const distinctByFamily = new Map();
+    for (const finalist of ranked) {
+      const familyID = firstText(
+        asObject(finalist.provenance).strategyFamilyId,
+        finalist._strategyFamily
+      );
+      const causalSignature = commercialCriticCausalSignature(finalist);
+      if (!familyID || !causalSignature) continue;
+      const familyCandidates = distinctByFamily.get(familyID) || [];
+      if (familyCandidates.some((candidate) =>
+        candidate.causalSignature === causalSignature
+      )) {
+        continue;
+      }
+      if (familyCandidates.length < 2) {
+        familyCandidates.push({ finalist, causalSignature });
+        distinctByFamily.set(familyID, familyCandidates);
+      }
+    }
+    for (const best of ranked) {
+      const bestFamily = firstText(
+        asObject(best.provenance).strategyFamilyId,
+        best._strategyFamily
+      );
+      const bestCausalSignature = commercialCriticCausalSignature(best);
+      if (!bestFamily || !bestCausalSignature) continue;
+      let bestOtherFamily = null;
+      for (const [familyID, familyCandidates] of distinctByFamily) {
+        if (familyID === bestFamily) continue;
+        const candidate = familyCandidates.find((item) =>
+          item.causalSignature !== bestCausalSignature
+        )?.finalist;
+        if (candidate && (!bestOtherFamily ||
+            compareHypotheses(candidate, bestOtherFamily) < 0)) {
+          bestOtherFamily = candidate;
+        }
+      }
+      if (bestOtherFamily) return [best, bestOtherFamily];
+    }
+    return [];
+  }
+  for (const best of ranked) {
+    const bestFamily = firstText(
+      asObject(best.provenance).strategyFamilyId,
+      best._strategyFamily
     );
-    return familyID && familyID !== bestFamily;
-  });
-  return bestOtherFamily ? [best, bestOtherFamily] : [];
+    if (!bestFamily) continue;
+    const bestOtherFamily = ranked.find((finalist) => {
+      const familyID = firstText(
+        asObject(finalist.provenance).strategyFamilyId,
+        finalist._strategyFamily
+      );
+      return familyID && familyID !== bestFamily;
+    });
+    if (bestOtherFamily) return [best, bestOtherFamily];
+  }
+  return [];
+}
+
+function commercialCriticCausalSignature(hypothesisValue) {
+  const hypothesis = asObject(hypothesisValue);
+  const revenuePath = asObject(hypothesis.revenuePath);
+  const signature = {
+    buyer: comparable(firstText(hypothesis.buyerSegment)),
+    paidOffer: comparable(firstText(hypothesis.offer)),
+    acquisitionChannel: comparable(firstText(hypothesis.channel)),
+    primaryAction: comparable(firstText(hypothesis.action)),
+    revenuePath: {
+      revenueMechanism: firstText(revenuePath.revenueMechanism),
+      acquisitionMode: firstText(revenuePath.acquisitionMode),
+      conversionAction: comparable(firstText(
+        revenuePath.conversionAction
+      )),
+      conversionDestination: comparable(firstText(
+        revenuePath.conversionDestination
+      )),
+      observableRevenueOutcome: comparable(firstText(
+        revenuePath.observableRevenueOutcome
+      )),
+      attributionMethod: firstText(revenuePath.attributionMethod),
+      attributionSignal: comparable(firstText(
+        revenuePath.attributionSignal
+      )),
+      stopCondition: comparable(firstText(revenuePath.stopCondition))
+    }
+  };
+  return signature.buyer && signature.paidOffer &&
+      signature.acquisitionChannel && signature.primaryAction
+    ? stableHash(signature)
+    : '';
 }
 
 function commercialCriticFinalists(finalistsValue, optionsValue = {}) {
@@ -14339,18 +14526,43 @@ function priorOutcomeAdjustment(tuple, outcomes) {
   };
 }
 
-function diverseFinalists(hypotheses, limit) {
+export function diverseFinalists(hypotheses, limit, optionsValue = {}) {
+  const options = asObject(optionsValue);
+  const ranked = [...hypotheses].sort(compareHypotheses);
+  const reservedCausalPair =
+    options.reserveDistinctCausalFamilyPair === true
+      ? selectBestFamilyDiverseCriticPair(ranked, {
+          requireDistinctCausalSignature: true
+        })
+      : [];
   // Diversity selection is quadratic in the retained pool. The global score
-  // sort first keeps the pool bounded while preserving the true top scorer.
-  const remaining = [...hypotheses]
-    .sort(compareHypotheses)
+  // sort first keeps the similarity pool bounded. A required critic pair is
+  // selected over the full eligible set before this truncation so 20+ higher-
+  // scoring duplicates cannot crowd out the only distinct causal alternative.
+  let remaining = ranked
     .slice(0, Math.max(200, limit * 25));
   const selected = [];
+  const selectedCandidates = new Set();
   const selectedFamilies = new Set();
-  if (remaining.length > 0 && selected.length < limit) {
-    const winner = remaining.shift();
-    selected.push(winner);
-    selectedFamilies.add(firstText(winner._strategyFamily));
+  const retain = (candidate) => {
+    if (!candidate || selected.length >= limit ||
+        selectedCandidates.has(candidate)) {
+      return;
+    }
+    selected.push(candidate);
+    selectedCandidates.add(candidate);
+    selectedFamilies.add(firstText(candidate._strategyFamily));
+  };
+  for (const reserved of reservedCausalPair) retain(reserved);
+  // Keep the true score winner as well whenever the pair reservation leaves
+  // capacity. With a two-finalist budget, the valid critic pair takes
+  // precedence over an unpairable duplicate.
+  retain(ranked[0]);
+  remaining = remaining.filter((candidate) =>
+    !selectedCandidates.has(candidate)
+  );
+  if (selected.length === 0 && remaining.length > 0) {
+    retain(remaining.shift());
   }
   while (remaining.length > 0 && selected.length < limit) {
     const nextFamilyIndex = remaining.findIndex((candidate) =>
@@ -14358,8 +14570,7 @@ function diverseFinalists(hypotheses, limit) {
     );
     if (nextFamilyIndex < 0) break;
     const candidate = remaining.splice(nextFamilyIndex, 1)[0];
-    selected.push(candidate);
-    selectedFamilies.add(firstText(candidate._strategyFamily));
+    retain(candidate);
   }
   while (remaining.length > 0 && selected.length < limit) {
     let bestIndex = 0;
@@ -14377,9 +14588,11 @@ function diverseFinalists(hypotheses, limit) {
         bestIndex = index;
       }
     }
-    selected.push(remaining.splice(bestIndex, 1)[0]);
+    retain(remaining.splice(bestIndex, 1)[0]);
   }
-  return selected;
+  return reservedCausalPair.length > 0
+    ? selected.sort(compareHypotheses)
+    : selected;
 }
 
 function compareHypotheses(left, right) {

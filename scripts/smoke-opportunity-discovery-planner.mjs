@@ -3,9 +3,11 @@
 import {
   COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
   OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+  OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT,
   PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID,
   buildEvidenceCatalog,
   commercialDiscoveryAttemptLedgerHash,
+  diverseFinalists,
   normalizeCommercialDiscoveryEvidence,
   runOpportunityTournament,
   runOpportunityDiscoveryPlanner
@@ -724,6 +726,14 @@ for (const scenario of cases) {
       !/a=\{rp,by,pd,e\}.*all three complete model actions.*rp=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*by=target books\/buys\/signs current paid offer.*pd=typed paid application\/proposal response.*code selects commercialRole only.*marketplace\/directory placement/is.test(
         requestSeen.system || ''
       ) ||
+      !/selected rp\/by\/pd actions: prefer four distinct; at least two across both tactics must be text-distinct and viable.*tacticKey\/unselected fields do not count/is.test(
+        requestSeen.system || ''
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
+        /selected rp\/by\/pd: prefer 4 distinct; >=2 across both tactics must be distinct\+viable.*tacticKey\/unselected fields do not count/is.test(
+          rule
+        )
+      ) ||
       !/compensated_job finds an employer job posting.*buyer_solicitation finds a buyer-authored paid RFP\/RFQ\/tender\/procurement notice\/explicit request.*two referral motions with different counterparties are valid.*diversity never requires paid_demand.*supplier\/competitor offers.*accepts insurance.*are supply, never demand/is.test(
         requestSeen.system || ''
       ) ||
@@ -1029,6 +1039,7 @@ await verifyOneMotionFailsClosed(unsafeJob, unsafeRef);
 await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
 await verifyQualifiedPartnerReferralActionsPass(unsafeJob, unsafeRef);
 await verifyCompactConversionActionProjection(unsafeJob, unsafeRef);
+await verifyRepeatedOptionalRoleActionsArePruned(unsafeJob, unsafeRef);
 await verifyPaidDemandResponseActionVerbs(unsafeJob, unsafeRef);
 await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
 await verifyNonCanonicalServicePaymentOutcomesFail(unsafeJob, unsafeRef);
@@ -1041,6 +1052,7 @@ await verifyTypedCausalWitnessContract(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
+verifyCausalPairReservationSurvivesCrowding();
 await verifyTwoStageTargetBinding();
 await verifyProviderAttestedBuyerReviewRoute();
 await verifyPaidDemandTargetProtocolEndToEnd();
@@ -1054,7 +1066,7 @@ if (smallestCompactResponseReduction < 0.1 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024}; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyTypedCommercialMotionSelection(
@@ -4945,6 +4957,121 @@ async function plannerResultForMotion({ job, motion, generationId }) {
   });
 }
 
+async function verifyRepeatedOptionalRoleActionsArePruned(
+  job,
+  evidenceRef
+) {
+  const roleActionField = {
+    referral_partner: 'rp',
+    buyer: 'by',
+    paid_demand: 'pd'
+  };
+  const motion = cases[0].plans(evidenceRef)[0];
+  motion.contingentFinalists = compactContingentFinalists(
+    motion.contingentFinalists
+  );
+  const actionField = roleActionField[motion.commercialRole];
+  const familyAAction =
+    motion.contingentFinalists.tacticA.a[0][actionField];
+  const familyBAction =
+    motion.contingentFinalists.tacticB.a[0][actionField];
+  for (const action of motion.contingentFinalists.tacticA.a) {
+    action[actionField] = familyAAction;
+  }
+  for (const action of motion.contingentFinalists.tacticB.a) {
+    action[actionField] = familyBAction;
+  }
+  const accepted = await plannerResultForMotion({
+    job,
+    motion,
+    generationId: 'generation-repeated-optional-actions'
+  });
+  const acceptedMotion = accepted.plans.find((item) =>
+    item.id === motion.id
+  );
+  const acceptedActions = ['familyA', 'familyB'].flatMap((familyKey) =>
+    acceptedMotion?.contingentFinalists?.[familyKey]?.d?.a?.map(
+      (action) => action.l
+    ) || []
+  );
+  if (accepted.status !== 'planned' || !acceptedMotion ||
+      acceptedActions.length !== 4 ||
+      new Set(acceptedActions).size !== 2 ||
+      accepted.planSelection?.rejectedPlanCount !== 0 ||
+      accepted.plannerDiagnostic) {
+    throw new Error(
+      `repeated optional selected-role actions blocked two complete causal tactics: ${JSON.stringify(accepted)}`
+    );
+  }
+
+  const collapsedPlans = twoPlannerMotions(
+    cases[0].plans(evidenceRef)[0],
+    evidenceRef
+  );
+  for (const collapsed of collapsedPlans) {
+    collapsed.contingentFinalists = compactContingentFinalists(
+      collapsed.contingentFinalists
+    );
+    const selectedField = roleActionField[collapsed.commercialRole];
+    const repeated =
+      collapsed.contingentFinalists.tacticA.a[0][selectedField];
+    for (const tacticKey of ['tacticA', 'tacticB']) {
+      for (const action of collapsed.contingentFinalists[tacticKey].a) {
+        action[selectedField] = repeated;
+      }
+    }
+  }
+  const rejected = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: 'Both motions repeat one selected-role action.',
+        plans: collapsedPlans
+      },
+      usage,
+      generationId: 'generation-collapsed-selected-actions',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 800,
+        contentSha256: '1'.repeat(64)
+      },
+      annotations: [{
+        type: 'url_citation',
+        url_citation: {
+          url: 'https://riverside-pediatrics.example/newborn-care',
+          title: 'Riverside Pediatrics newborn care',
+          content: 'Current public newborn-care practice in Queens.'
+        }
+      }]
+    })
+  });
+  const diagnostic = rejected.plannerDiagnostic;
+  if (rejected.status !== 'blocked' || rejected.plans.length !== 0 ||
+      rejected.planSelection?.rejectedPlanCount !== 2 ||
+      diagnostic?.contractVersion !==
+        OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT ||
+      diagnostic?.code !== 'primary_action_diversity' ||
+      diagnostic?.motionId !== collapsedPlans[0].id ||
+      diagnostic?.returnedActionCount !== 4 ||
+      diagnostic?.distinctActionCount !== 1 ||
+      diagnostic?.viableDistinctActionCount !== 1 ||
+      JSON.stringify(diagnostic?.familyDistinctActionCounts) !== '[1,1]' ||
+      diagnostic?.failedMotionCount !== 2 ||
+      !/at least two distinct active commercial primary-action variants/i.test(
+        rejected.reason
+      ) ||
+      rejected.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `collapsed selected-role actions lacked a bounded typed diagnostic: ${JSON.stringify(rejected)}`
+    );
+  }
+}
+
 async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
   const firstThree = [
     ...cases[0].plans(evidenceRef),
@@ -5251,6 +5378,78 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       )) {
     throw new Error(
       `worker seller contract did not survive a divergent MCP profile projection: ${JSON.stringify({ projectedPrompt, projectedProfileResult })}`
+    );
+  }
+
+  const lateSellerFocusJob = structuredClone(projectedProfileJob);
+  lateSellerFocusJob.payload.commercialContext.profile.currentFocus = [
+    ...Array.from({ length: 8 }, (_unused, index) => ({
+      name: `Archived focus ${index + 1}`,
+      description: 'Historical focus retained for profile compatibility.',
+      status: 'inactive',
+      priority: 'secondary',
+      evidenceRef: `profile:focus:${index + 1}`
+    })),
+    {
+      name: 'ProfileScribe',
+      description:
+        'Agent-managed professional profiles and source-backed updates.',
+      status: 'active',
+      priority: 'primary',
+      evidenceRef: 'profile:focus:9'
+    }
+  ];
+  lateSellerFocusJob.payload.commercialSellerContract = {
+    requiredPrimaryFocus: 'ProfileScribe',
+    requiredEvidenceRefs: ['profile:focus:9']
+  };
+  const lateSellerFocusMotions = projectedProfileMotions.map((motionValue) => {
+    const motion = structuredClone(motionValue);
+    motion.evidenceRefs = motion.evidenceRefs.map((ref) =>
+      ref === 'profile:focus:1' ? 'profile:focus:9' : ref
+    );
+    return motion;
+  });
+  let lateSellerRequest;
+  const lateSellerResult = await runOpportunityDiscoveryPlanner({
+    job: lateSellerFocusJob,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      lateSellerRequest = request;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: 'The ninth canonical focus remains the active seller.',
+          plans: lateSellerFocusMotions
+        },
+        usage,
+        generationId: 'generation-late-worker-seller-contract',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '5'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const lateSellerPrompt = JSON.parse(lateSellerRequest?.user || '{}');
+  if (lateSellerResult.status !== 'planned' ||
+      lateSellerResult.plans.length !== 2 ||
+      lateSellerPrompt.sellerContract?.requiredPrimaryFocus !==
+        'ProfileScribe' ||
+      JSON.stringify(lateSellerPrompt.sellerContract?.requiredEvidenceRefs) !==
+        JSON.stringify(['profile:focus:9']) ||
+      !lateSellerPrompt.evidenceCatalog?.some((item) =>
+        item.id === 'profile:focus:9' &&
+        item.type === 'current_focus' &&
+        item.priority === 'primary'
+      )) {
+    throw new Error(
+      `control-plane seller focus positions 9-12 drifted from the rig window: ${JSON.stringify({ lateSellerPrompt, lateSellerResult })}`
     );
   }
 
@@ -6104,6 +6303,86 @@ async function verifyPrivateContactBearingURLsFailClosed() {
   }
 }
 
+function verifyCausalPairReservationSurvivesCrowding() {
+  const duplicatePath = {
+    revenueMechanism: 'paid_booking',
+    acquisitionMode: 'partner_channel',
+    conversionAction: 'Ask the named partner for one reviewed referral.',
+    conversionDestination: 'The verified owner booking page',
+    observableRevenueOutcome: 'Paid booking completed; payment received.',
+    attributionMethod: 'payment_receipt',
+    attributionSignal: 'Receipt stores target and tournament action ids.',
+    stopCondition:
+      'Stop after 10 attempts, 1 paid outcome, or 14 calendar days.'
+  };
+  const crowded = Array.from({ length: 24 }, (_, index) => ({
+    id: `hyp-crowded-duplicate-${String(index + 1).padStart(2, '0')}`,
+    _strategyFamily: index % 2 === 0 ? 'family-a' : 'family-b',
+    buyerSegment: 'Nearby parents seeking paid newborn care',
+    offer: 'Paid lactation home visit',
+    channel: 'One named pediatric referral partner',
+    action: 'Ask the named partner for one reviewed referral.',
+    timingTrigger: `Current duplicate timing ${index + 1}`,
+    proofPoint: `Verified seller proof ${index + 1}`,
+    followUp: `No-action research follow-up ${index + 1}`,
+    revenuePath: structuredClone(duplicatePath),
+    score: {
+      total: 0.99 - index * 0.001,
+      evidenceStrength: 0.9,
+      objectiveFit: 0.9
+    }
+  }));
+  const distinctAlternative = {
+    ...structuredClone(crowded[1]),
+    id: 'hyp-lower-scoring-distinct-family-b',
+    action:
+      'Prepare one reviewed co-referral resource for the named partner.',
+    score: {
+      total: 0.7,
+      evidenceStrength: 0.8,
+      objectiveFit: 0.8
+    }
+  };
+  crowded.push(distinctAlternative);
+  const truncatedWithoutReservation = diverseFinalists(crowded, 20);
+  const reserved = diverseFinalists(crowded, 20, {
+    reserveDistinctCausalFamilyPair: true
+  });
+  const criticVisibleSignature = (finalist) => JSON.stringify([
+    finalist.buyerSegment,
+    finalist.offer,
+    finalist.channel,
+    finalist.action,
+    finalist.revenuePath.revenueMechanism,
+    finalist.revenuePath.acquisitionMode,
+    finalist.revenuePath.conversionAction,
+    finalist.revenuePath.conversionDestination,
+    finalist.revenuePath.observableRevenueOutcome,
+    finalist.revenuePath.attributionMethod,
+    finalist.revenuePath.attributionSignal,
+    finalist.revenuePath.stopCondition
+  ].map((value) => String(value || '').trim().toLowerCase()));
+  const reservedFamilies = new Set(
+    reserved.map((finalist) => finalist._strategyFamily)
+  );
+  const reservedSignatures = new Set(
+    reserved.map(criticVisibleSignature)
+  );
+  if (truncatedWithoutReservation.some((finalist) =>
+        finalist.id === distinctAlternative.id
+      ) ||
+      reserved.length !== 20 ||
+      !reserved.some((finalist) =>
+        finalist.id === distinctAlternative.id
+      ) ||
+      reservedFamilies.size !== 2 ||
+      reservedSignatures.size < 2) {
+    throw new Error(
+      `signature-distinct pair was not reserved before finalist truncation: ${JSON.stringify({ truncatedWithoutReservation: truncatedWithoutReservation.map((item) => item.id), reserved: reserved.map((item) => item.id) })}`
+    );
+  }
+}
+
 async function verifyTwoStageTargetBinding() {
   const scenario = cases[0];
   const planner = plannerJob(scenario);
@@ -6608,6 +6887,91 @@ async function verifyTwoStageTargetBinding() {
     );
   }
 
+  const repeatedOptionalPayload = structuredClone(downstreamPayload);
+  const repeatedOptionalMotion =
+    repeatedOptionalPayload.commercialDiscoveryEvidence.plan.plans[0];
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = repeatedOptionalMotion.contingentFinalists[familyKey];
+    const retainedAction = family.d.a[0].l;
+    family.d.a = family.d.a.map((action) => ({
+      ...action,
+      l: retainedAction
+    }));
+    family.d.r[0].c = retainedAction;
+  }
+  const repeatedOptionalRequests = [];
+  let repeatedOptionalFinalists = [];
+  const repeatedOptional = await runOpportunityTournament({
+    job: {
+      id: 'job-two-stage-repeated-optional-actions',
+      kind: 'opportunity_tournament',
+      payload: repeatedOptionalPayload
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      repeatedOptionalRequests.push(request);
+      const task = JSON.parse(request.user || '{}');
+      repeatedOptionalFinalists = task.finalists || [];
+      assertCompactCriticPair({
+        request,
+        task,
+        finalists: repeatedOptionalFinalists,
+        expectedTargets: ['Dr. Ava Rivera']
+      });
+      return acceptedCriticCompletion(
+        repeatedOptionalFinalists,
+        'generation-repeated-optional-actions-critic'
+      );
+    }
+  });
+  if (repeatedOptionalRequests.length !== 1 ||
+      repeatedOptional.status !== 'completed' ||
+      repeatedOptional.searchSpace?.dimensionCounts?.actions !== 2 ||
+      repeatedOptionalFinalists.length !== 2 ||
+      new Set(repeatedOptionalFinalists.map((finalist) =>
+        finalist.primaryAction
+      )).size !== 2 ||
+      repeatedOptional.searchSpace?.commercialCritic
+        ?.criticInputFinalistCount !== 2) {
+    throw new Error(
+      `repeated optional actions did not prune to a distinct critic-visible fallback pair: ${JSON.stringify({ requests: repeatedOptionalRequests.length, finalists: repeatedOptionalFinalists, result: repeatedOptional })}`
+    );
+  }
+
+  const collapsedFallbackPayload = structuredClone(repeatedOptionalPayload);
+  const collapsedFallbackMotion =
+    collapsedFallbackPayload.commercialDiscoveryEvidence.plan.plans[0];
+  const collapsedAction =
+    collapsedFallbackMotion.contingentFinalists.familyA.d.a[0].l;
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = collapsedFallbackMotion.contingentFinalists[familyKey];
+    family.d.a = family.d.a.map((action) => ({
+      ...action,
+      l: collapsedAction
+    }));
+    family.d.r[0].c = collapsedAction;
+  }
+  let collapsedFallbackCriticCalls = 0;
+  const collapsedFallback = await runOpportunityTournament({
+    job: {
+      id: 'job-two-stage-collapsed-fallback-actions',
+      kind: 'opportunity_tournament',
+      payload: collapsedFallbackPayload
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => {
+      collapsedFallbackCriticCalls += 1;
+      throw new Error('collapsed causal fallback reached the critic');
+    }
+  });
+  assertTechnicalRecovery(
+    collapsedFallback,
+    collapsedFallbackCriticCalls,
+    'collapsed sole-motion causal fallback'
+  );
+
   const conflictingModePayload = structuredClone(downstreamPayload);
   const conflictingMotion =
     conflictingModePayload.commercialDiscoveryEvidence.plan.plans[0];
@@ -6672,6 +7036,12 @@ async function verifyTwoStageTargetBinding() {
   firstMotion.priority = 1;
   const secondMotion = structuredClone(selectedMotion);
   secondMotion.priority = 2;
+  if (firstMotion.contingentFinalists.familyA.d.a[0].l !==
+      secondMotion.contingentFinalists.familyA.d.a[0].l) {
+    throw new Error(
+      'two-motion fixture must start with the same generic placeholder action so exact target binding proves the richer causal-signature distinction'
+    );
+  }
   multiMotionPayload.commercialDiscoveryEvidence.plan =
     {
       ...structuredClone(discoveryPlan),
@@ -8588,6 +8958,23 @@ function assertCompactCriticPair({
       binding.role === 'exact_outside_target'
     )?.claim || ''
   );
+  const causalSignatures = new Set(finalists.map((finalist) => {
+    const path = finalist.revenuePath || {};
+    return JSON.stringify([
+      finalist.buyer,
+      finalist.paidOffer,
+      finalist.acquisitionChannel,
+      finalist.primaryAction,
+      path.revenueMechanism,
+      path.acquisitionMode,
+      path.conversionAction,
+      path.conversionDestination,
+      path.observableRevenueOutcome,
+      path.attributionMethod,
+      path.attributionSignal,
+      path.stopCondition
+    ].map((value) => String(value || '').trim().toLowerCase()));
+  }));
   const everyRoleIsBound = finalists.every((finalist) => {
     const bindings = finalist.evidenceBindings || [];
     const roles = bindings.map((binding) => binding.role).sort();
@@ -8617,6 +9004,7 @@ function assertCompactCriticPair({
   const requestBytes = Buffer.byteLength(JSON.stringify(request), 'utf8');
   if (finalists.length !== 2 ||
       families.size !== 2 ||
+      causalSignatures.size !== 2 ||
       task.contextMode !== 'bound_family_diverse_pair_v1' ||
       task.executionPolicy?.executionAuthorization !== 'none' ||
       task.executionPolicy?.requiresReview !== true ||
