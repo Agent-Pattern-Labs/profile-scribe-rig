@@ -513,9 +513,18 @@ function verifySuccessfulTournament(receipt, job, calls) {
     metadata.winner?.action,
     'typed action did not bind to the winner'
   );
-  assert(
-    /^After explicit approval,/i.test(metadata.winner?.action || ''),
-    'winner action was not approval-bound'
+  // Approval is durable control-plane authority, not model-authored prose.
+  // Legacy v5 recommendations retain the exact LLM-authored action while the
+  // typed result and gate independently prohibit execution until review.
+  assertEqual(
+    metadata.result?.permissionRequired,
+    'explicit_user_approval',
+    'winner lost its structural approval requirement'
+  );
+  assertEqual(
+    metadata.gate?.requiresReview,
+    true,
+    'winner gate bypassed structural review authority'
   );
   verifyNoExecution(metadata);
   assertEqual(metadata.usage?.calls, 2, 'success path did not use two calls');

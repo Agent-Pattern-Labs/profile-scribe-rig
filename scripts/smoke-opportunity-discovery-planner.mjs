@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
+import Ajv from 'ajv';
 
 import {
   COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
@@ -11,6 +12,7 @@ import {
   commercialDiscoveryAttemptLedgerHash,
   diverseFinalists,
   normalizeCommercialDiscoveryEvidence,
+  opportunityCommercialDiscoveryCapabilities,
   validateOpportunityCommercialDiscoveryNoTargetEnvelope,
   runOpportunityTournament,
   runOpportunityDiscoveryPlanner
@@ -23,7 +25,9 @@ const usage = {
   total_tokens: 1550,
   cost: 0.0065
 };
-const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 28 * 1024;
+const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 192 * 1024;
+const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 96 * 1024;
+const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES = 161_488;
 const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 20 * 1024;
 
 function productionCitation(url, title, content) {
@@ -43,7 +47,9 @@ function productionCitation(url, title, content) {
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
 const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 229_400;
-const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v1';
+const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
+const PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256 =
+  '295bb8bdfd9320c27530d225a401ac3dec07d915e987775413dc127f2feea033';
 let largestPlannerResponseBytes = 0;
 let largestPlannerRequestBytes = 0;
 let largestPlannerContractBytes = 0;
@@ -51,6 +57,10 @@ let productionShapedPlannerRequestBytes = 0;
 let largestMaterializedFixtureBytes = 0;
 let largestCompactFixtureBytes = 0;
 let smallestCompactResponseReduction = 1;
+let largestCommercialCriticRequestBytes = 0;
+let representativePlannerSchema = null;
+let computedPlannerSchemaResponseBoundBytes = 0;
+let maxAstralStrictPlannerResponse = null;
 
 const cases = [
   {
@@ -147,22 +157,24 @@ const cases = [
         attributionSignal: 'Application opportunity id is linked to the signed offer'
       }),
       plan({
-        id: 'public_backend_contract',
+        id: 'backend_engineering_buyer',
         priority: 2,
-        searchMode: 'public_live_demand',
-        commercialRole: 'paid_demand',
+        searchMode: 'professional_counterparty',
+        commercialRole: 'buyer',
         acquisitionMode: 'permissioned_outreach',
-        buyer: 'An organization publishing a current paid backend contract',
-        counterparty: 'The contracting organization',
+        buyer: 'A software company buying backend implementation work',
+        counterparty: 'One exact engineering executive decision-maker',
         paidOffer: 'Compensated Go and PostgreSQL implementation',
         evidenceRefs: [ref],
-        query: 'Go PostgreSQL backend contract RFP open',
+        query: 'engineering executive United States',
         market: 'United States',
-        skills: ['Go', 'PostgreSQL'],
-        acquisitionMechanism: 'One reviewed response to an open paid contract',
-        conversionDestination: 'The official solicitation response page',
+        targetRoleTerms: ['engineering executive'],
+        targetRoleSubrole: 'executive',
+        organizationTerms: ['software company'],
+        acquisitionMechanism: 'One review-first professional profile route',
+        conversionDestination: 'The verified proposal and contract page',
         paidConversion: 'A signed paid services contract',
-        attributionSignal: 'Solicitation id is stored on the signed contract'
+        attributionSignal: 'CRM target id is stored on the signed contract'
       })
     ]
   },
@@ -179,22 +191,28 @@ const cases = [
     evidence: 'Offers a paid delivery-system diagnostic and implementation engagement.',
     plans: (ref) => [
       plan({
-        id: 'open_operations_solicitation',
+        id: 'operations_buyer_organization',
         priority: 1,
-        searchMode: 'public_live_demand',
-        commercialRole: 'paid_demand',
+        searchMode: 'local_organization',
+        commercialRole: 'buyer',
         acquisitionMode: 'permissioned_outreach',
-        buyer: 'An organization with a current paid operations solicitation',
-        counterparty: 'The contracting organization',
+        buyer: 'A service firm buying operations consulting',
+        counterparty: 'One exact operations decision-maker at a service firm',
         paidOffer: 'Paid delivery-system consulting engagement',
         evidenceRefs: [ref],
-        query: 'open operations consulting RFP delivery systems',
+        query: 'service firm operations buyer United States',
         market: 'United States',
-        organizationTerms: ['contracting organization'],
-        acquisitionMechanism: 'One review-first response to the open solicitation',
-        conversionDestination: 'The official response destination',
+        targetRoleTerms: ['operations executive'],
+        targetRoleSubrole: 'executive',
+        organizationTerms: ['professional services firm'],
+        acquisitionMechanism: 'One review-first professional profile route',
+        conversionDestination: 'The verified proposal and contract page',
         paidConversion: 'A signed paid consulting contract',
-        attributionSignal: 'Solicitation id is stored on the contract and invoice'
+        attributionSignal: 'CRM target id is stored on the contract and invoice',
+        targetSlot: {
+          finalTargetKind: 'person',
+          resolutionStrategy: 'organization_then_decision_maker'
+        }
       }),
       plan({
         id: 'service_firm_buyer',
@@ -230,22 +248,28 @@ const cases = [
     evidence: 'The owner site has current paid workflow-software pricing and signup.',
     plans: (ref) => [
       plan({
-        id: 'workflow_procurement_demand',
+        id: 'workflow_buyer_organization',
         priority: 1,
-        searchMode: 'public_live_demand',
-        commercialRole: 'paid_demand',
+        searchMode: 'local_organization',
+        commercialRole: 'buyer',
         acquisitionMode: 'permissioned_outreach',
         buyer: 'A field-service company procuring paid workflow software',
-        counterparty: 'The company publishing a current software procurement notice',
+        counterparty: 'One exact operations decision-maker at a field-service company',
         paidOffer: 'Paid workflow-software subscription',
         evidenceRefs: [ref],
-        query: 'field service company workflow software procurement RFP',
+        query: 'field service company operations executive United States',
         market: 'United States',
+        targetRoleTerms: ['operations executive'],
+        targetRoleSubrole: 'executive',
         organizationTerms: ['field service company'],
-        acquisitionMechanism: 'One reviewed response to the buyer-authored procurement notice',
+        acquisitionMechanism: 'One review-first professional profile route',
         conversionDestination: 'The verified pricing and signup page',
         paidConversion: 'One paid software subscription',
-        attributionSignal: 'Procurement id and payment receipt store the originating buyer request'
+        attributionSignal: 'CRM target id and payment receipt store the originating buyer',
+        targetSlot: {
+          finalTargetKind: 'person',
+          resolutionStrategy: 'organization_then_decision_maker'
+        }
       }),
       plan({
         id: 'field_service_buyer',
@@ -328,8 +352,15 @@ for (const scenario of cases) {
     now,
     completeJSON: async (request) => {
       requestSeen = request;
+      representativePlannerSchema ||= structuredClone(
+        request.responseFormat?.json_schema?.schema
+      );
       const responsePlans = scenario.plans(evidenceRef).slice(0, 2);
+      const exactSchemaMarket =
+        request.responseFormat?.json_schema?.schema?.properties?.plans
+          ?.items?.properties?.market?.enum?.[0];
       for (const responsePlan of responsePlans) {
+        responsePlan.market = exactSchemaMarket;
         const materializedBytes = Buffer.byteLength(
           JSON.stringify(responsePlan.contingentFinalists),
           'utf8'
@@ -357,7 +388,7 @@ for (const scenario of cases) {
       const responseData = {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
-        reason: 'This search is the closest supported path to current paid demand or a qualified commercial channel.',
+        reason: '',
         plans: responsePlans
       };
       if (scenario.name === 'lactation referral reasoning') {
@@ -414,11 +445,12 @@ for (const scenario of cases) {
       };
     }
   });
+  const initialPlannerPrompt = JSON.parse(requestSeen?.user || '{}');
   if (!requestSeen ||
       requestSeen.responseFormat?.json_schema?.name !==
         OPPORTUNITY_DISCOVERY_PLAN_CONTRACT ||
       requestSeen.responseFormat?.json_schema?.schema?.properties?.plans
-        ?.items?.properties?.evidenceRefs?.maxItems !== 14 ||
+        ?.items?.properties?.evidenceRefs != null ||
       requestSeen.responseFormat?.json_schema?.schema?.properties?.plans
         ?.minItems !== 2 ||
       requestSeen.responseFormat?.json_schema?.schema?.properties?.plans
@@ -432,17 +464,19 @@ for (const scenario of cases) {
       requestSeen.plugins?.[0]?.max_results !== 5 ||
       requestSeen.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       !requestSeen.system?.includes(
-        'Keep the complete JSON at or below 20 KiB.'
+        'Obey outputContract and hardRules exactly'
       ) ||
-      !requestSeen.system?.includes(
-        'shared pathBase plus two tactic deltas'
+      !initialPlannerPrompt.outputContract?.plan?.includes(
+        'exactly 2 ranked, economically distinct plans'
       ) ||
-      !requestSeen.system?.includes(
-        'Return exactly two distinct plans'
+      !initialPlannerPrompt.outputContract?.finalists?.includes(
+        'pathBase,tacticA,tacticB'
       ) ||
+      !Array.isArray(initialPlannerPrompt.hardRules) ||
+      initialPlannerPrompt.hardRules.length < 10 ||
       requestSeen.system?.includes('Return one plan') ||
       !requestSeen.system?.includes(
-        'Return one minified object, concise strings, no formatting whitespace'
+        'one concise minified JSON object'
       ) ||
       result.status !== 'planned' ||
       result.contractVersion !== OPPORTUNITY_DISCOVERY_PLAN_CONTRACT ||
@@ -496,6 +530,13 @@ for (const scenario of cases) {
       `${scenario.name}: call-1 request exceeded the 36 KiB provider envelope`
     );
   }
+  if (36 * 1024 - result.preflight?.requestBodyByteCount < 512 ||
+      result.preflight?.providerPromptEnvelope
+        ?.minimumSoftHeadroomByteCount !== 512) {
+    throw new Error(
+      `${scenario.name}: call-1 request lost its 512-byte soft headroom`
+    );
+  }
   const plannerPrompt = JSON.parse(requestSeen.user || '{}');
   const plannerPlanSchema = requestSeen.responseFormat?.json_schema
     ?.schema?.properties?.plans?.items?.properties || {};
@@ -506,20 +547,51 @@ for (const scenario of cases) {
     ?.schema?.$defs || {};
   const causalWitnessSchema = plannerDefinitions.causalWitness || {};
   const plannerEvidenceRefSchema = plannerDefinitions.evidenceRef || {};
+  const plannerObservationEvidenceRefSchema =
+    plannerDefinitions.observationEvidenceRef || {};
+  const plannerObservationEvidenceRefsSchema =
+    plannerDefinitions.observationEvidenceRefs || {};
+  const plannerCompactObservationEvidenceRefsSchema =
+    plannerDefinitions.compactObservationEvidenceRefs || {};
   const terminalOutcomeEnum = plannerDefinitions.revenuePath
     ?.properties?.o?.enum || [];
   const followUpEvidenceSchema = plannerDefinitions.followUpItem
     ?.properties?.e || {};
   const followUpLabelPattern = plannerDefinitions.followUpItem
     ?.properties?.l?.pattern || '';
-  const channelLabelPattern = plannerDefinitions.channelItem
-    ?.properties?.l?.pattern || '';
+  const referralChannelPattern = plannerDefinitions.channelItem
+    ?.properties?.rp?.pattern || '';
+  const buyerChannelPattern = plannerDefinitions.channelItem
+    ?.properties?.by?.pattern || '';
+  const paidDemandChannelPattern = plannerDefinitions.channelItem
+    ?.properties?.pd?.pattern || '';
+  const referralBuyerPattern = plannerDefinitions.buyerItem
+    ?.properties?.rp?.pattern || '';
+  const buyerTargetPattern = plannerDefinitions.buyerItem
+    ?.properties?.by?.pattern || '';
+  const paidDemandBuyerPattern = plannerDefinitions.buyerItem
+    ?.properties?.pd?.pattern || '';
   const referralActionPattern = plannerDefinitions.actionItem
     ?.properties?.rp?.pattern || '';
   const buyerActionPattern = plannerDefinitions.actionItem
     ?.properties?.by?.pattern || '';
   const paidDemandActionPattern = plannerDefinitions.actionItem
     ?.properties?.pd?.pattern || '';
+  const schemaAcceptsBlank = (schema) => {
+    try {
+      const resolved = typeof schema?.$ref === 'string'
+        ? plannerDefinitions[schema.$ref.split('/').at(-1)]
+        : schema;
+      return new RegExp(resolved?.pattern || '').test('   ');
+    } catch {
+      return true;
+    }
+  };
+  const schemaAcceptsNumber = (schema, value) =>
+    Number.isFinite(value) &&
+    (schema?.minimum === undefined || value >= schema.minimum) &&
+    (schema?.maximum === undefined || value <= schema.maximum);
+  const overflowNumber = JSON.parse('1e400');
   const promptWithoutContract = { ...plannerPrompt };
   delete promptWithoutContract.outputContract;
   delete promptWithoutContract.hardRules;
@@ -536,6 +608,9 @@ for (const scenario of cases) {
       JSON.stringify(plannerPrompt.outputContract.targetRoleMap.buyer) !==
         JSON.stringify(['acquisition', 'channel_fit', 'defined_buyer']) ||
       !plannerPrompt.outputContract?.revenuePath ||
+      !/targetRoleSubrole=one exact schema-enumerated PDL canonical subrole.*derives targetRoleRole.*professional_role_query_v2/is.test(
+        plannerPrompt.outputContract?.professionalRole || ''
+      ) ||
       !/exactly 2 ranked, economically distinct plans/i.test(
         plannerPrompt.outputContract?.plan || ''
       ) ||
@@ -554,27 +629,77 @@ for (const scenario of cases) {
       requestSeen.responseFormat?.json_schema?.schema?.properties
         ?.plans?.maxItems !== 2 ||
       !requestSeen.responseFormat?.json_schema?.schema?.properties
-        ?.plans?.items?.required?.includes('routeContractVersion') ||
-      !requestSeen.responseFormat?.json_schema?.schema?.properties
         ?.plans?.items?.required?.includes('motionKind') ||
       !requestSeen.responseFormat?.json_schema?.schema?.properties
-        ?.plans?.items?.required?.includes('demandArtifactKind') ||
-      JSON.stringify(plannerPlanSchema.acquisitionMechanism?.enum) !==
-        JSON.stringify([
-          'Review-first public professional profile',
-          'Review-first official paid-demand page'
-        ]) ||
+        ?.plans?.items?.required?.includes('targetRoleSubrole') ||
+      [
+        'id',
+        'priority',
+        'routeContractVersion',
+        'demandArtifactKind',
+        'searchMode',
+        'commercialRole',
+        'acquisitionMode',
+        'evidenceRefs',
+        'query',
+        'targetRoleTerms',
+        'acquisitionMechanism',
+        'targetSlot',
+        'professionalRoleQueryContract',
+        'targetRoleRole'
+      ].some((field) => Object.prototype.hasOwnProperty.call(
+        plannerPlanSchema,
+        field
+      )) ||
+      plannerPlanSchema.targetRoleSubrole?.enum?.length !== 104 ||
+      plannerPlanSchema.targetRoleSubrole?.enum?.includes('student') ||
+      plannerPlanSchema.targetRoleSubrole?.enum?.includes('unemployed') ||
+      !plannerPlanSchema.targetRoleSubrole?.enum?.includes('partnerships') ||
+      plannerPlanSchema.organizationTerms?.minItems !== 1 ||
+      [
+        plannerPlanSchema.buyer,
+        plannerPlanSchema.counterparty,
+        plannerPlanSchema.paidOffer,
+        plannerPlanSchema.organizationTerms?.items,
+        plannerPlanSchema.jobTitle,
+        plannerPlanSchema.skills?.items,
+        plannerPlanSchema.conversionDestination,
+        plannerPlanSchema.paidConversion,
+        plannerPlanSchema.attributionSignal,
+        plannerPlanSchema.rationale,
+        plannerDefinitions.offerItem?.properties?.l,
+        plannerDefinitions.buyerItem?.properties?.rp,
+        plannerDefinitions.timingItem?.properties?.l,
+        plannerDefinitions.timingItem?.properties?.q,
+        plannerDefinitions.proofItem?.properties?.l,
+        plannerDefinitions.revenuePath?.properties?.l,
+        plannerDefinitions.revenuePath?.properties?.io,
+        plannerDefinitions.revenuePath?.properties?.ats,
+        plannerDefinitions.revenuePath?.properties?.cd,
+        plannerDefinitions.revenuePath?.properties?.st,
+        plannerDefinitions.revenuePath?.properties?.g?.properties?.d
+          ?.properties?.l,
+        plannerDefinitions.tactic?.properties?.l
+      ].some(schemaAcceptsBlank) ||
       !Array.isArray(plannerPlanSchema.market?.enum) ||
-      plannerPlanSchema.market.enum.length === 0 ||
-      !plannerPlanSchema.market.enum.includes(
-        scenario.profile?.identity?.location
+      plannerPlanSchema.market.enum.length !== 1 ||
+      result.plans.some((plan) =>
+        plan.market !== plannerPlanSchema.market.enum[0]
       ) ||
       !/copy one exact approved market value.*do not expand.*abbreviate.*widen/is.test(
         plannerPlanSchema.market?.description || ''
       ) ||
-      !/Review-first public professional profile.*TARGET_URL.*Review-first official paid-demand page.*TARGET_URL/is.test(
-        channelLabelPattern
+      !/Review-first public professional profile.*TARGET_URL/is.test(
+        referralChannelPattern
       ) ||
+      buyerChannelPattern !== referralChannelPattern ||
+      !/Review-first official paid-demand page.*TARGET_URL/is.test(
+        paidDemandChannelPattern
+      ) ||
+      !referralBuyerPattern || !buyerTargetPattern ||
+      paidDemandBuyerPattern !== buyerTargetPattern ||
+      /TARGET_(?:NAME|URL)/.test(referralBuyerPattern) ||
+      !/TARGET_NAME/.test(buyerTargetPattern) ||
       !/After review via public professional profile.*TARGET_URL.*ask.*TARGET_NAME.*refer\|recommend\|introduce.*book\|buy\|purchase\|sign up for/is.test(
         referralActionPattern
       ) ||
@@ -602,79 +727,91 @@ for (const scenario of cases) {
       !Array.isArray(plannerEvidenceRefSchema.enum) ||
       !plannerEvidenceRefSchema.enum.includes(evidenceRef) ||
       plannerEvidenceRefSchema.enum.includes('target:evidence') ||
-      JSON.stringify(
-        plannerPlanSchema.targetSlot?.properties?.evidenceRefToken?.enum
-      ) !== JSON.stringify(['target:evidence']) ||
+      !Array.isArray(plannerObservationEvidenceRefSchema.enum) ||
+      !plannerObservationEvidenceRefSchema.enum.includes(evidenceRef) ||
+      plannerObservationEvidenceRefSchema.enum.includes(
+        'observation:invented'
+      ) ||
+      plannerObservationEvidenceRefSchema.enum.includes(
+        PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+      ) ||
+      plannerObservationEvidenceRefSchema.enum.some((ref) =>
+        !/^observation:/i.test(ref)
+      ) ||
+      plannerObservationEvidenceRefsSchema.minItems !== 1 ||
+      plannerObservationEvidenceRefsSchema.maxItems !== 12 ||
+      plannerObservationEvidenceRefsSchema.items?.$ref !==
+        '#/$defs/observationEvidenceRef' ||
+      plannerCompactObservationEvidenceRefsSchema.minItems !== 1 ||
+      plannerCompactObservationEvidenceRefsSchema.maxItems !== 2 ||
+      plannerCompactObservationEvidenceRefsSchema.items?.$ref !==
+        '#/$defs/observationEvidenceRef' ||
+      plannerDefinitions.pathBase?.properties?.e?.$ref !==
+        '#/$defs/observationEvidenceRefs' ||
+      plannerDefinitions.tactic?.properties?.e?.$ref !==
+        '#/$defs/compactObservationEvidenceRefs' ||
+      plannerDefinitions.timingItem?.properties?.e?.$ref !==
+        '#/$defs/compactObservationEvidenceRefs' ||
       !plannerDefinitions.revenuePath?.required?.includes('k') ||
       plannerDefinitions.revenuePath?.properties?.k?.$ref !==
         '#/$defs/causalWitness' ||
-      JSON.stringify(
-        plannerDefinitions.revenuePath?.properties?.c?.enum
-      ) !== JSON.stringify(['project_first_viable_tactic_action']) ||
-      JSON.stringify(terminalOutcomeEnum) !== JSON.stringify([
-        'paid_booking',
-        'direct_sale',
-        'signed_contract',
-        'paid_pilot',
-        'subscription_or_retainer',
-        'insurance_reimbursement',
-        'license_or_royalty',
-        'commission_or_referral',
-        'sponsorship',
-        'platform_payout',
-        'compensated_role'
-      ].map(canonicalTerminalPaidOutcome)) ||
-      terminalOutcomeEnum.some((outcome) =>
-        /\b(?:or|either|attempt|pending|declined|failed|unpaid)\b/i.test(
-          outcome
-        )
+      ['v', 'a', 'c', 'o'].some((field) =>
+        plannerDefinitions.revenuePath?.properties?.[field] !== undefined ||
+        plannerDefinitions.revenuePath?.required?.includes(field)
+      ) || terminalOutcomeEnum.length !== 0 ||
+      plannerDefinitions.revenuePath?.properties?.vm?.minimum !== 1 ||
+      plannerDefinitions.revenuePath?.properties?.vm?.maximum !==
+        1_000_000_000_000 ||
+      Object.values(plannerDefinitions.scores?.properties || {}).some(
+        (scoreSchema) => scoreSchema?.minimum !== 0 ||
+          scoreSchema?.maximum !== 1
+      ) ||
+      Object.values(
+        contingentProperties.w?.properties || {}
+      ).some((weightSchema) => weightSchema?.minimum !== 0 ||
+        weightSchema?.maximum !== 1) ||
+      Object.values(plannerDefinitions.scores?.properties || {}).some(
+        (scoreSchema) => schemaAcceptsNumber(scoreSchema, overflowNumber)
+      ) ||
+      Object.values(contingentProperties.w?.properties || {}).some(
+        (weightSchema) => schemaAcceptsNumber(weightSchema, overflowNumber)
+      ) ||
+      schemaAcceptsNumber(
+        plannerDefinitions.revenuePath?.properties?.vm,
+        overflowNumber
       ) ||
       JSON.stringify(causalWitnessSchema.required) !== JSON.stringify([
-        'v',
-        'i',
-        'c',
-        'o',
-        'p',
-        't',
-        'd',
-        's',
         'n',
         'u'
       ]) ||
       causalWitnessSchema.properties?.n?.minimum !== 1 ||
-      causalWitnessSchema.properties?.n?.maximum !== 100 ||
-      causalWitnessSchema.properties?.c?.$ref !==
-        '#/$defs/revenueMechanism' ||
-      causalWitnessSchema.properties?.o?.$ref !==
-        '#/$defs/revenueMechanism' ||
-      !causalWitnessSchema.properties?.p?.enum?.includes(
-        'paid_booking_terminal'
+      causalWitnessSchema.properties?.n?.maximum !== 30 ||
+      ['v', 'i', 'c', 'o', 'p', 't', 'd', 's'].some((field) =>
+        causalWitnessSchema.properties?.[field] !== undefined
       ) ||
-      !causalWitnessSchema.properties?.p?.enum?.includes(
-        'compensated_role_terminal'
-      ) ||
-      causalWitnessSchema.properties?.t?.$ref !==
-        '#/$defs/attributionMethod' ||
       JSON.stringify(
         plannerDefinitions.tactic?.required
       ) !== JSON.stringify([
         'l',
-        'm',
-        'tacticKey',
         'e',
         's',
         'c',
         'a',
         'f'
-      ]) ||
+      ]) || plannerDefinitions.tactic?.properties?.m !== undefined ||
+      plannerDefinitions.tactic?.properties?.tacticKey !== undefined ||
+      JSON.stringify(plannerDefinitions.buyerItem?.required) !==
+        JSON.stringify(['rp', 'by', 'pd', 'e']) ||
+      plannerDefinitions.buyerItem?.properties?.l ||
+      JSON.stringify(plannerDefinitions.channelItem?.required) !==
+        JSON.stringify(['rp', 'by', 'pd', 'e']) ||
+      plannerDefinitions.channelItem?.properties?.l ||
       plannerDefinitions.pathBase?.properties?.o?.minItems !== 2 ||
       plannerDefinitions.tactic?.properties?.c?.minItems !== 2 ||
       plannerDefinitions.tactic?.properties?.a?.maxItems !== 2 ||
       plannerDefinitions.tactic?.properties?.f?.maxItems !== 2 ||
-      followUpEvidenceSchema.maxItems !== 2 ||
-      followUpEvidenceSchema.items?.pattern !==
-        '^observation:.+$' ||
-      followUpEvidenceSchema.items?.$ref ||
+      followUpEvidenceSchema.$ref !==
+        '#/$defs/compactObservationEvidenceRefs' ||
       !/no reply after.*one review-first follow-up/i.test(
         followUpLabelPattern
       ) ||
@@ -705,7 +842,9 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /k\.p=rm\+"_terminal"/i.test(rule)
+        /derives r\.v\/r\.a\/r\.c\/r\.o.*positional tactic keys.*k\.v\/i\/c\/o\/p\/t\/d\/s.*compensated_job forces rm=compensated_role/i.test(
+          rule
+        )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
         /motionKind route is authoritative.*two different referral counterparties are valid diversity.*never invent paid demand/is.test(
@@ -713,7 +852,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /professional=person\/single.*local_org=person\/org->decision-maker.*never terminal org.*targetRoleTerms=2\.\.4 distinct atomic same-family domain-anchored titles.*organizationTerms=context/is.test(
+        /professional=person\/single.*local_org=person\/org->decision-maker.*never terminal org.*one exact canonical PDL targetRoleSubrole.*derives its PDL role.*drops role intent for non-person routes.*organizationTerms=context/is.test(
           rule
         )
       ) ||
@@ -728,48 +867,58 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /c=project_first_viable_tactic_action.*project valid tactic a/is.test(
+        /c=project_selected_tactic_action.*projects its exact selected authored tactic action/is.test(
           rule
         )
       ) ||
-      !/projects r\.c per tactic/is.test(
-        requestSeen.system || ''
-      ) ||
-      !/acquisitionMechanism is exact and structural.*buyer\/referral="Review-first public professional profile".*paid_demand="Review-first official paid-demand page"/is.test(
-        requestSeen.system || ''
-      ) ||
-      !/market must copy one response-schema enum value exactly.*never expand.*abbreviate.*widen/is.test(
-        requestSeen.system || ''
-      ) ||
-      !/a=\{rp,by,pd,e\}.*all three complete model actions.*rp=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*by=target books\/buys\/signs current paid offer.*pd=typed paid application\/proposal response.*code selects commercialRole only.*marketplace\/directory placement/is.test(
-        requestSeen.system || ''
-      ) ||
-      !/selected rp\/by\/pd actions: prefer four distinct; at least two across both tactics must be text-distinct and viable.*tacticKey\/unselected fields do not count/is.test(
-        requestSeen.system || ''
-      ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /selected rp\/by\/pd: prefer 4 distinct; >=2 across both tactics must be distinct\+viable.*tacticKey\/unselected fields do not count/is.test(
+        /selected rp\/by\/pd: prefer 4 distinct; >=2 across both tactics must be distinct\+viable.*unselected fields do not count/is.test(
           rule
         )
       ) ||
-      !/compensated_job finds an employer job posting.*buyer_solicitation finds a buyer-authored paid RFP\/RFQ\/tender\/procurement notice\/explicit request.*two referral motions with different counterparties are valid.*diversity never requires paid_demand.*supplier\/competitor offers.*accepts insurance.*are supply, never demand/is.test(
-        requestSeen.system || ''
-      ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /paid demand needs employer_job_posting or buyer_rfp\/rfq\/tender\/procurement_notice\/paid_request.*supplier offers.*marketplaces.*accepts-insurance pages are not demand/is.test(
+        /fresh paid demand requires a structured PDL employer_job_posting.*public snippets\/RFP\/RFQ\/tender\/procurement prose has no live-demand authority.*supplier offers.*marketplaces.*accepts-insurance pages are not demand/is.test(
           rule
         )
       ) ||
       /claims no email\/phone\/form\/proposal route/i.test(
         requestSeen.system || ''
       ) ||
-      !plannerPrompt.hardRules.some((rule) =>
-        /r\.o copies the one response-schema settled terminal outcome matching rm.*never use an alternative.*attempt.*pending.*unpaid/is.test(
-          rule
-        )
+      !/code derives v\/a\/c\/o and the complete causal witness.*compensated_job forces rm=compensated_role/is.test(
+        plannerPrompt.outputContract?.revenuePath || ''
       )) {
     throw new Error(
-      `${scenario.name}: call 1 omitted its compact semantic contract`
+      `${scenario.name}: call 1 omitted its compact semantic contract ${JSON.stringify({ blankSchemas: [
+        plannerPlanSchema.buyer,
+        plannerPlanSchema.counterparty,
+        plannerPlanSchema.paidOffer,
+        plannerPlanSchema.organizationTerms?.items,
+        plannerPlanSchema.jobTitle,
+        plannerPlanSchema.skills?.items,
+        plannerPlanSchema.conversionDestination,
+        plannerPlanSchema.paidConversion,
+        plannerPlanSchema.attributionSignal,
+        plannerPlanSchema.rationale,
+        plannerDefinitions.offerItem?.properties?.l,
+        plannerDefinitions.buyerItem?.properties?.rp,
+        plannerDefinitions.timingItem?.properties?.l,
+        plannerDefinitions.timingItem?.properties?.q,
+        plannerDefinitions.proofItem?.properties?.l,
+        plannerDefinitions.revenuePath?.properties?.l,
+        plannerDefinitions.revenuePath?.properties?.io,
+        plannerDefinitions.revenuePath?.properties?.ats,
+        plannerDefinitions.revenuePath?.properties?.cd,
+        plannerDefinitions.revenuePath?.properties?.st,
+        plannerDefinitions.revenuePath?.properties?.g?.properties?.d?.properties?.l,
+        plannerDefinitions.tactic?.properties?.l
+      ].map(schemaAcceptsBlank), hardRules: plannerPrompt.hardRules, systemChecks: {
+        projection: /projects r\.c per tactic/is.test(requestSeen.system || ''),
+        acquisition: /acquisitionMechanism is exact and structural.*buyer\/referral="Review-first public professional profile".*paid_demand="Review-first official paid-demand page"/is.test(requestSeen.system || ''),
+        market: /market must copy one response-schema enum value exactly.*never expand.*abbreviate.*widen/is.test(requestSeen.system || ''),
+        actions: /a=\{rp,by,pd,e\}.*all three complete model actions.*rp=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*by=target books\/buys\/signs current paid offer.*pd=typed paid application\/proposal response.*code selects commercialRole only.*marketplace\/directory placement/is.test(requestSeen.system || ''),
+        diversity: /selected rp\/by\/pd actions: prefer four distinct; at least two across both tactics must be text-distinct and viable.*code assigns tactic identity; unselected fields do not count/is.test(requestSeen.system || ''),
+        demand: /compensated_job finds an employer job posting.*public web snippets.*RFP pages.*have no fresh paid-demand authority.*two referral motions with different counterparties are valid.*diversity never requires paid_demand.*supplier\/competitor offers.*accepts insurance.*are supply, never demand/is.test(requestSeen.system || '')
+      } })}`
     );
   }
   if (scenario.name === 'lactation referral reasoning') {
@@ -861,6 +1010,8 @@ for (const scenario of cases) {
   }
 }
 
+verifyGeneratedPlannerSchemaResponseBound(representativePlannerSchema);
+
 const envelopeScenario = cases[0];
 const envelopeJob = plannerJob(envelopeScenario);
 const envelopeCatalog = buildEvidenceCatalog(envelopeJob.payload, {}, now, {
@@ -873,36 +1024,60 @@ if (!envelopeEvidenceRef) {
   throw new Error('planner response-envelope fixture produced no evidence id');
 }
 
+verifyFreshPlannerStrictSchemaTotality({
+  schema: representativePlannerSchema,
+  observationEvidenceRef: envelopeEvidenceRef
+});
+verifyEvidenceReferenceEncodingBounds();
+await verifyFreshAstralPlannerRoundTrip(envelopeJob);
+
 function plannerResponseAtByteCount(byteCount) {
+  const exactMarket = representativePlannerSchema?.properties?.plans
+    ?.items?.properties?.market?.enum?.[0];
   const response = {
     contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
     status: 'planned',
     reason: '',
     plans: envelopeScenario.plans(envelopeEvidenceRef).slice(0, 2)
   };
-  const baseBytes = Buffer.byteLength(JSON.stringify(response), 'utf8');
-  if (baseBytes > byteCount) {
-    throw new Error(
-      `planner response-envelope fixture exceeds target: ${baseBytes} > ${byteCount}`
+  for (const motion of response.plans) {
+    motion.market = exactMarket;
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
     );
   }
-  response.reason = 'r'.repeat(byteCount - baseBytes);
+  if (Number.isInteger(byteCount) && byteCount > 0) {
+    const baseBytes = Buffer.byteLength(JSON.stringify(response), 'utf8');
+    if (baseBytes > byteCount) {
+      throw new Error(
+        `planner response-envelope fixture exceeds target: ${baseBytes} > ${byteCount}`
+      );
+    }
+    // Oversize diagnostics are rejected before semantic/schema acceptance;
+    // this deliberately invalid field is used only by the overflow case.
+    response.reason = 'r'.repeat(byteCount - baseBytes);
+  }
   return response;
 }
 
 async function runPlannerResponseEnvelopeCase(byteCount) {
+  const response = plannerResponseAtByteCount(byteCount);
+  const responseByteCount = Buffer.byteLength(
+    JSON.stringify(response),
+    'utf8'
+  );
   return runOpportunityDiscoveryPlanner({
     job: envelopeJob,
     model: 'openai/gpt-5.6-luna',
     now,
     completeJSON: async () => ({
-      data: plannerResponseAtByteCount(byteCount),
+      data: response,
       usage,
       generationId: `generation-envelope-${byteCount}`,
       diagnostics: {
         finishReason: 'stop',
         nativeFinishReason: 'stop',
-        contentByteCount: byteCount,
+        contentByteCount: responseByteCount,
         contentSha256: 'e'.repeat(64)
       },
       annotations: [{
@@ -917,9 +1092,12 @@ async function runPlannerResponseEnvelopeCase(byteCount) {
   });
 }
 
-const withinResponseMarginBytes = 27 * 1024;
+const withinResponseMarginBytes = Buffer.byteLength(
+  JSON.stringify(plannerResponseAtByteCount(0)),
+  'utf8'
+);
 const withinResponseMargin = await runPlannerResponseEnvelopeCase(
-  withinResponseMarginBytes
+  0
 );
 if (withinResponseMargin.status !== 'planned' ||
     withinResponseMargin.preflight?.responseBodyByteCount !==
@@ -943,7 +1121,7 @@ if (overflowResponse.status !== 'blocked' ||
     overflowResponse.preflight?.maxResponseBodyByteCount !==
       MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
   throw new Error(
-    `planner did not enforce its 28 KiB response gate: ${JSON.stringify(overflowResponse)}`
+    `planner did not enforce its 192 KiB response gate: ${JSON.stringify(overflowResponse)}`
   );
 }
 
@@ -989,35 +1167,42 @@ const unsafeRef = unsafeCatalog.find((item) =>
 )?.id;
 const unsafeCompanionPlan = unsafeScenario.plans(unsafeRef)[0];
 unsafeCompanionPlan.priority = 2;
+unsafeCompanionPlan.contingentFinalists = compactContingentFinalists(
+  unsafeCompanionPlan.contingentFinalists
+);
 const unsafeResult = await runOpportunityDiscoveryPlanner({
   job: unsafeJob,
   model: 'openai/gpt-5.6-luna',
   now,
-  completeJSON: async () => ({
-    data: {
+  completeJSON: async (request) => {
+    const exactMarket =
+      request.responseFormat?.json_schema?.schema?.properties?.plans
+        ?.items?.properties?.market?.enum?.[0];
+    const unsafePlan = plan({
+      id: 'unsafe_patient_search',
+      priority: 1,
+      searchMode: 'professional_counterparty',
+      commercialRole: 'buyer',
+      acquisitionMode: 'permissioned_outreach',
+      buyer: 'Patients seeking clinical care',
+      counterparty: 'An identifiable person',
+      paidOffer: 'Paid consultation',
+      evidenceRefs: [unsafeRef],
+      query: 'postpartum patients private email mobile phone',
+      targetRoleTerms: ['postpartum patient'],
+      acquisitionMechanism: 'Direct message',
+      conversionDestination: 'Booking page',
+      paidConversion: 'Paid consultation',
+      attributionSignal: 'Booking source'
+    });
+    unsafePlan.market = exactMarket;
+    unsafeCompanionPlan.market = exactMarket;
+    return {
+      data: {
       contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
       status: 'planned',
-      reason: 'Unsafe direct consumer targeting.',
-      plans: [
-        plan({
-          id: 'unsafe_patient_search',
-          priority: 1,
-          searchMode: 'professional_counterparty',
-          commercialRole: 'buyer',
-          acquisitionMode: 'permissioned_outreach',
-          buyer: 'People seeking care',
-          counterparty: 'An identifiable person',
-          paidOffer: 'Paid consultation',
-          evidenceRefs: [unsafeRef],
-          query: 'postpartum patients private email mobile phone',
-          targetRoleTerms: ['postpartum patient'],
-          acquisitionMechanism: 'Direct message',
-          conversionDestination: 'Booking page',
-          paidConversion: 'Paid consultation',
-          attributionSignal: 'Booking source'
-        }),
-        unsafeCompanionPlan
-      ]
+      reason: '',
+      plans: [unsafePlan, unsafeCompanionPlan]
     },
     usage,
     generationId: 'generation-unsafe',
@@ -1027,7 +1212,8 @@ const unsafeResult = await runOpportunityDiscoveryPlanner({
       contentByteCount: 500,
       contentSha256: 'b'.repeat(64)
     }
-  })
+    };
+  }
 });
 if (unsafeResult.status !== 'planned' ||
     !/patient|sensitive|private-contact/i.test(
@@ -1047,6 +1233,7 @@ await verifyPlannerMarketGroundingAndSiblingSalvage(unsafeJob, unsafeRef);
 await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifySensitiveTargetFieldPolicy(unsafeJob, unsafeRef);
 await verifyPrivateContactBearingURLsFailClosed();
+await verifyApprovedObservationPreflight();
 await verifyDiscoveryRoleAndAdapterInvariants(unsafeJob, unsafeRef);
 await verifyOmittedChildEvidenceCanonicalization(unsafeJob, unsafeRef);
 await verifyOmittedTargetEvidenceProtocolCanonicalization(
@@ -1060,14 +1247,14 @@ await verifyCompactConversionActionProjection(unsafeJob, unsafeRef);
 await verifyRepeatedOptionalRoleActionsArePruned(unsafeJob, unsafeRef);
 await verifyPaidDemandResponseActionVerbs(unsafeJob, unsafeRef);
 await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
-await verifyNonCanonicalServicePaymentOutcomesFail(unsafeJob, unsafeRef);
-await verifyUnpaidServiceOutcomeFails(unsafeJob, unsafeRef);
+await verifyAuthoredTerminalOutcomeIsNonAuthoritative(unsafeJob, unsafeRef);
 await verifyMechanismSpecificTerminalOutcomes(unsafeJob, unsafeRef);
 await verifyRevenueStopUnits(unsafeJob, unsafeRef);
 await verifyNaturalBookingAttribution(unsafeJob, unsafeRef);
 await verifyCausalPathDiagnosticsAreFieldSpecific(unsafeJob, unsafeRef);
 await verifyTypedCausalWitnessContract(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
+await verifyMaximumFamilyEvidenceContainment();
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 verifyCausalPairReservationSurvivesCrowding();
@@ -1084,8 +1271,157 @@ if (smallestCompactResponseReduction < 0.1 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024 - 512} 512-byte-headroom floor; semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024 - 512} 512-byte-headroom floor; joint-worst critic request ${largestCommercialCriticRequestBytes} bytes / <=${65_536 - 512} (${65_536 - largestCommercialCriticRequestBytes} bytes headroom); semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
+
+async function verifyApprovedObservationPreflight() {
+  const job = plannerJob(cases[0]);
+  job.id = 'job-planner-no-approved-observation';
+  job.payload.evidenceSnapshot.sourceEvidence = [];
+  let calls = 0;
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => {
+      calls += 1;
+      throw new Error('planner without an approved observation made a call');
+    }
+  });
+  if (calls !== 0 || result.status !== 'blocked' ||
+      result.preflight?.authorized !== false ||
+      result.preflight?.cause !==
+        'planner_approved_observation_unavailable' ||
+      !/approved source observation/i.test(result.reason || '') ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `missing approved observation was not rejected before call 1: ${JSON.stringify({ calls, result })}`
+    );
+  }
+}
+
+async function verifyMaximumFamilyEvidenceContainment() {
+  const job = plannerJob(cases[0]);
+  job.id = 'job-planner-maximum-family-evidence-containment';
+  job.payload.evidenceSnapshot.sourceEvidence = Array.from(
+    { length: 14 },
+    (_, index) => ({
+      id: `maximum-family-observation-${index + 1}`,
+      observationId: `maximum-family-observation-${index + 1}`,
+      sourceId: 'owner-site',
+      label: `Current approved professional observation ${index + 1}`,
+      summary:
+        `Current approved evidence ${index + 1} grounds the paid professional service and reviewed referral path.`,
+      url: `https://owner.example/offer/evidence-${index + 1}`,
+      observedAt: now.toISOString(),
+      status: 'approved'
+    })
+  );
+  const catalog = buildEvidenceCatalog(job.payload, {}, now, {
+    includeSystemAttributionCapability: true
+  });
+  const allObservationRefs = catalog
+    .map((item) => item.id)
+    .filter((ref) => /^observation:/i.test(ref));
+  if (allObservationRefs.length !== 14) {
+    throw new Error(
+      `maximum containment fixture did not create 14 observations: ${JSON.stringify(allObservationRefs)}`
+    );
+  }
+  job.payload.objective.evidenceRefs = [...allObservationRefs];
+  let requestSeen = null;
+  let visibleObservationRefsSeen = [];
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      requestSeen = request;
+      const visibleObservationRefs = request.responseFormat?.json_schema
+        ?.schema?.$defs?.observationEvidenceRef?.enum || [];
+      visibleObservationRefsSeen = [...visibleObservationRefs];
+      if (visibleObservationRefs.length === 0) {
+        throw new Error(
+          `adaptive planner projection lost every approved observation: ${JSON.stringify(visibleObservationRefs)}`
+        );
+      }
+      const motions = twoPlannerMotions(
+        applyNovelTypedCausalSemantics(
+          cases[0].plans(visibleObservationRefs[0])[1]
+        ),
+        visibleObservationRefs[0]
+      ).map((motion) => {
+        const bundle = compactContingentFinalists(
+          motion.contingentFinalists
+        );
+        const replaceSystemRef = (value) => {
+          if (Array.isArray(value)) {
+            return value.map(replaceSystemRef);
+          }
+          if (value && typeof value === 'object') {
+            return Object.fromEntries(
+              Object.entries(value).map(([key, item]) => [
+                key,
+                replaceSystemRef(item)
+              ])
+            );
+          }
+          return value ===
+              PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+            ? visibleObservationRefs[0]
+            : value;
+        };
+        const observationOnlyBundle = replaceSystemRef(bundle);
+        observationOnlyBundle.pathBase.e =
+          visibleObservationRefs.slice(0, 12);
+        observationOnlyBundle.tacticA.e =
+          visibleObservationRefs.slice(12, 14).length > 0
+            ? visibleObservationRefs.slice(12, 14)
+            : visibleObservationRefs.slice(0, 1);
+        observationOnlyBundle.tacticB.e =
+          visibleObservationRefs.slice(12, 14).length > 0
+            ? visibleObservationRefs.slice(12, 14)
+            : visibleObservationRefs.slice(0, 1);
+        return {
+          ...motion,
+          contingentFinalists: observationOnlyBundle
+        };
+      });
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans: motions
+        },
+        usage,
+        generationId: 'generation-maximum-family-containment',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 1_000,
+          contentSha256: '9'.repeat(64)
+        }
+      };
+    }
+  });
+  const familyEvidence = result.plans?.[0]?.contingentFinalists?.familyA?.e;
+  const expectedVisibleEvidenceRefs = [...new Set(
+    visibleObservationRefsSeen.slice(0, 14)
+  )];
+  if (!requestSeen || result.status !== 'planned' ||
+      !Array.isArray(familyEvidence) ||
+      familyEvidence.length !== expectedVisibleEvidenceRefs.length + 1 ||
+      familyEvidence[0] !== 'target:evidence' ||
+      !expectedVisibleEvidenceRefs.every((ref) =>
+        familyEvidence.includes(ref)
+      ) ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `all schema-visible approved refs plus the local target sentinel did not survive materialization: ${JSON.stringify({ status: result.status, reason: result.reason, planSelection: result.planSelection, preflight: result.preflight, llm: result.llm, familyEvidence, expectedVisibleEvidenceRefs })}`
+    );
+  }
+}
 
 async function verifyTypedCommercialMotionSelection(
   referralJob,
@@ -1098,12 +1434,22 @@ async function verifyTypedCommercialMotionSelection(
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
+        const freshPlans = plans.map((planValue) => {
+          const freshPlan = structuredClone(planValue);
+          if (freshPlan.contingentFinalists?.familyA &&
+              freshPlan.contingentFinalists?.familyB) {
+            freshPlan.contingentFinalists = compactContingentFinalists(
+              freshPlan.contingentFinalists
+            );
+          }
+          return freshPlan;
+        });
         return {
           data: {
             contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
             status: 'planned',
-            reason: 'Two typed commercial motions for bounded research.',
-            plans
+            reason: '',
+            plans: freshPlans
           },
           usage,
           generationId,
@@ -1143,13 +1489,15 @@ async function verifyTypedCommercialMotionSelection(
     generationId: 'generation-typed-compensated-job'
   });
   const compensatedJob = compensated.plans.find((item) =>
-    item.id === 'active_backend_role'
+    item.motionKind === 'compensated_job'
   );
   if (compensated.status !== 'planned' ||
       compensated.plans.length !== 2 ||
       compensated.planSelection?.rejectedPlanCount !== 0 ||
       compensatedJob?.routeContractVersion !==
         'commercial_motion_route_v1' ||
+      compensatedJob?.id !== 'plan_1_compensated_job' ||
+      compensatedJob?.priority !== 1 ||
       compensatedJob?.motionKind !== 'compensated_job' ||
       compensatedJob?.demandArtifactKind !== 'employer_job_posting' ||
       compensatedJob?.searchMode !== 'active_job_posting' ||
@@ -1195,10 +1543,10 @@ async function verifyTypedCommercialMotionSelection(
     generationId: 'generation-one-valid-typed-motion'
   });
   const sensitiveRejection = salvaged.planSelection?.rejectedPlans
-    ?.find((item) => item.id === sensitiveDirectBuyer.id)?.reason || '';
+    ?.find((item) => item.id === 'plan_1_direct_buyer_person')?.reason || '';
   if (salvaged.status !== 'planned' ||
       salvaged.plans.length !== 1 ||
-      salvaged.plans[0]?.id !== safeReferral.id ||
+      salvaged.plans[0]?.id !== 'plan_2_referral_person' ||
       salvaged.planSelection?.acceptedPlanCount !== 1 ||
       salvaged.planSelection?.rejectedPlanCount !== 1 ||
       !/sensitive|patient|care recipient|professional referral/i.test(
@@ -1212,27 +1560,26 @@ async function verifyTypedCommercialMotionSelection(
 
   const invalidArtifactJob = cases[1].plans(programmerEvidenceRef)[0];
   invalidArtifactJob.demandArtifactKind = 'buyer_rfp';
-  const invalidArtifactSolicitation =
+  const invalidArtifactDirectBuyer =
     cases[1].plans(programmerEvidenceRef)[1];
-  invalidArtifactSolicitation.demandArtifactKind = 'not_applicable';
+  invalidArtifactDirectBuyer.demandArtifactKind = 'buyer_rfp';
   const fixedAndAuthoredArtifacts = await run({
     job: programmerJob,
-    plans: [invalidArtifactJob, invalidArtifactSolicitation],
+    plans: [invalidArtifactJob, invalidArtifactDirectBuyer],
     generationId: 'generation-both-invalid-typed-motions'
   });
-  const artifactRejections = fixedAndAuthoredArtifacts.planSelection
-    ?.rejectedPlans
-    ?.map((item) => item.reason).join(' ') || '';
   if (fixedAndAuthoredArtifacts.status !== 'planned' ||
-      fixedAndAuthoredArtifacts.plans.length !== 1 ||
-      fixedAndAuthoredArtifacts.plans[0]?.id !== invalidArtifactJob.id ||
+      fixedAndAuthoredArtifacts.plans.length !== 2 ||
+      fixedAndAuthoredArtifacts.plans[0]?.id !==
+        'plan_1_compensated_job' ||
       fixedAndAuthoredArtifacts.plans[0]?.demandArtifactKind !==
         'employer_job_posting' ||
-      fixedAndAuthoredArtifacts.planSelection?.acceptedPlanCount !== 1 ||
-      fixedAndAuthoredArtifacts.planSelection?.rejectedPlanCount !== 1 ||
-      !/buyer-authored solicitation artifact/i.test(
-        artifactRejections
-      ) ||
+      fixedAndAuthoredArtifacts.plans[1]?.id !==
+        'plan_2_direct_buyer_person' ||
+      fixedAndAuthoredArtifacts.plans[1]?.demandArtifactKind !==
+        'not_applicable' ||
+      fixedAndAuthoredArtifacts.planSelection?.acceptedPlanCount !== 2 ||
+      fixedAndAuthoredArtifacts.planSelection?.rejectedPlanCount !== 0 ||
       fixedAndAuthoredArtifacts.sideEffectsPerformed !== 0) {
     throw new Error(
       `fixed versus authored artifact handling drifted: ${JSON.stringify(fixedAndAuthoredArtifacts)}`
@@ -1274,6 +1621,7 @@ async function verifyTypedCommercialMotionSelection(
     'pediatrician',
     'pediatric physician'
   ];
+  pediatricReferral.targetRoleSubrole = 'doctor';
   pediatricReferral.organizationTerms = ['pediatric practice'];
   const midwifeReferral = cases[0].plans(referralEvidenceRef)[0];
   midwifeReferral.id = 'midwife_referral_person';
@@ -1283,6 +1631,7 @@ async function verifyTypedCommercialMotionSelection(
     'midwife',
     'certified midwife'
   ];
+  midwifeReferral.targetRoleSubrole = 'nursing';
   midwifeReferral.organizationTerms = ['birth center'];
   const twoReferrals = await run({
     job: referralJob,
@@ -1299,10 +1648,10 @@ async function verifyTypedCommercialMotionSelection(
       ) ||
       new Set(referralQueries).size !== 2 ||
       !referralQueries.includes(
-        'pediatrician pediatric physician pediatric practice Queens, New York, United States'
+        'doctor Queens, NY, USA'
       ) ||
       !referralQueries.includes(
-        'midwife certified midwife birth center Queens, New York, United States'
+        'nursing Queens, NY, USA'
       ) ||
       /lactation consultant|unitedhealthcare|supplier directory/i.test(
         referralQueries.join(' ')
@@ -1356,7 +1705,7 @@ async function verifyTypedCommercialMotionSelection(
   });
   if (pdlOnlySalvage.status !== 'planned' ||
       pdlOnlySalvage.plans.length !== 1 ||
-      pdlOnlySalvage.plans[0]?.id !== pediatricReferral.id ||
+      pdlOnlySalvage.plans[0]?.id !== 'plan_2_referral_person' ||
       pdlOnlySalvage.planSelection?.acceptedPlanCount !== 1 ||
       pdlOnlySalvage.planSelection?.rejectedPlanCount !== 1 ||
       !/unavailable read-only provider route/i.test(
@@ -1415,12 +1764,13 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
+        const freshPlans = compactFreshPlannerPlans(plans);
         return {
           data: {
             contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
             status: 'planned',
-            reason: 'Two bounded outside-world motions.',
-            plans
+            reason: '',
+            plans: freshPlans
           },
           usage,
           generationId,
@@ -1477,6 +1827,76 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
     );
   }
 
+  const secondTypedMarket = {
+    ...typedMarket,
+    market: 'Los Angeles, California, United States'
+  };
+  const twoMarketJob = structuredClone(typedMarketJob);
+  twoMarketJob.payload.commercialContext.profile.approvedMarkets = [
+    typedMarket,
+    secondTypedMarket
+  ];
+  const twoMarketPlans = cases[0].plans(evidenceRef);
+  for (const motion of twoMarketPlans) motion.market = typedMarket.market;
+  let twoMarketRequest;
+  const twoMarketResult = await run(
+    twoMarketJob,
+    twoMarketPlans,
+    'generation-two-approved-markets-single-authority',
+    (request) => {
+      twoMarketRequest = request;
+    }
+  );
+  const twoMarketSchema = twoMarketRequest?.responseFormat?.json_schema
+    ?.schema;
+  const validateTwoMarketResponse = new Ajv({
+    allErrors: true,
+    strict: false
+  }).compile(twoMarketSchema);
+  const exactMarketResponse = {
+    contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+    status: 'planned',
+    reason: '',
+    plans: compactFreshPlannerPlans(twoMarketPlans).map((motion) => ({
+      motionKind: motion.motionKind,
+      buyer: motion.buyer,
+      counterparty: motion.counterparty,
+      paidOffer: motion.paidOffer,
+      market: typedMarket.market,
+      targetRoleSubrole: motion.targetRoleSubrole,
+      organizationTerms: motion.organizationTerms?.length > 0
+        ? motion.organizationTerms
+        : ['Verified professional organization'],
+      jobTitle: motion.jobTitle || 'Verified professional role',
+      skills: motion.skills?.length > 0
+        ? motion.skills
+        : ['Verified professional skill'],
+      conversionDestination: motion.conversionDestination,
+      paidConversion: motion.paidConversion,
+      attributionSignal: motion.attributionSignal,
+      rationale: motion.rationale,
+      contingentFinalists: motion.contingentFinalists
+    }))
+  };
+  const alternateMarketResponse = structuredClone(exactMarketResponse);
+  for (const motion of alternateMarketResponse.plans) {
+    motion.market = secondTypedMarket.market;
+  }
+  if (twoMarketResult.status !== 'planned' ||
+      twoMarketResult.plans.length !== 2 ||
+      twoMarketResult.plans.some((motion) =>
+        motion.market !== typedMarket.market
+      ) ||
+      JSON.stringify(
+        twoMarketSchema?.properties?.plans?.items?.properties?.market?.enum
+      ) !== JSON.stringify([typedMarket.market]) ||
+      validateTwoMarketResponse(exactMarketResponse) !== true ||
+      validateTwoMarketResponse(alternateMarketResponse) !== false) {
+    throw new Error(
+      `two approved markets exposed a schema-valid value that fresh normalization would silently replace: ${JSON.stringify({ result: twoMarketResult, marketEnum: twoMarketSchema?.properties?.plans?.items?.properties?.market?.enum, exactErrors: validateTwoMarketResponse.errors })}`
+    );
+  }
+
   const exactSurfaceJob = structuredClone(job);
   exactSurfaceJob.payload.commercialContext.profile.location =
     'New York, NY';
@@ -1502,16 +1922,13 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
   const exactSurfaceEnum = exactSurfaceRequest?.responseFormat?.json_schema
     ?.schema?.properties?.plans?.items?.properties?.market?.enum;
   if (exactSurfaceResult.status !== 'planned' ||
-      exactSurfaceResult.plans.length !== 1 ||
-      exactSurfaceResult.plans[0]?.id !== exactSurface.id ||
-      exactSurfaceResult.planSelection?.rejectedPlanCount !== 1 ||
+      exactSurfaceResult.plans.length !== 2 ||
+      exactSurfaceResult.plans.some((motion) =>
+        motion.market !== 'New York, NY'
+      ) ||
+      exactSurfaceResult.planSelection?.rejectedPlanCount !== 0 ||
       JSON.stringify(exactSurfaceEnum) !==
-        JSON.stringify(['New York, NY']) ||
-      !/outside the exact approved service-area/i.test(
-        exactSurfaceResult.planSelection?.rejectedPlans?.find(
-          (item) => item.id === expandedSurface.id
-        )?.reason || ''
-      )) {
+        JSON.stringify(['New York, NY'])) {
     throw new Error(
       `profile market surface was not schema-bound exactly: ${JSON.stringify({ result: exactSurfaceResult, marketEnum: exactSurfaceEnum })}`
     );
@@ -1555,9 +1972,11 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       }
     );
     const prompt = JSON.parse(invalidTypedRequest?.user || '{}');
-    if (result.status !== 'planned' || result.plans.length !== 1 ||
-        result.plans[0]?.id !== valid.id ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
+    if (result.status !== 'planned' || result.plans.length !== 2 ||
+        result.plans.some((motion) =>
+          motion.market !== 'Boston, Massachusetts, United States'
+        ) ||
+        result.planSelection?.rejectedPlanCount !== 0 ||
         prompt.commercialContext?.profile?.approvedMarkets !== undefined) {
       throw new Error(
         `invalid typed market provenance was not pruned independently: ${JSON.stringify({ invalidApprovedMarket, result, promptMarkets: prompt.commercialContext?.profile?.approvedMarkets })}`
@@ -1582,9 +2001,11 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
     'generation-third-party-approved-market-rejected'
   );
   if (thirdPartyResult.status !== 'planned' ||
-      thirdPartyResult.plans.length !== 1 ||
-      thirdPartyResult.plans[0]?.id !== thirdPartySibling.id ||
-      thirdPartyResult.planSelection?.rejectedPlanCount !== 1) {
+      thirdPartyResult.plans.length !== 2 ||
+      thirdPartyResult.plans.some((motion) =>
+        motion.market !== 'Boston, Massachusetts, United States'
+      ) ||
+      thirdPartyResult.planSelection?.rejectedPlanCount !== 0) {
     throw new Error(
       `third-party observation authorized a typed owner market: ${JSON.stringify(thirdPartyResult)}`
     );
@@ -1611,7 +2032,10 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
   );
   if (proseOnlyResult.status !== 'blocked' ||
       proseOnlyResult.plans.length !== 0 ||
-      proseOnlyResult.planSelection?.rejectedPlanCount !== 2) {
+      proseOnlyResult.planSelection?.rejectedPlanCount !== 0 ||
+      proseOnlyResult.preflight?.cause !==
+        'planner_route_capability_unavailable' ||
+      proseOnlyResult.usage?.calls !== 0) {
     throw new Error(
       `owner title/summary prose was treated as approved geography: ${JSON.stringify(proseOnlyResult)}`
     );
@@ -1635,20 +2059,14 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       [invalid, valid],
       `generation-market-salvage-${index + 1}`
     );
-    const rejection = result.planSelection?.rejectedPlans?.find(
-      (item) => item.id === invalid.id
-    )?.reason || '';
     if (result.status !== 'planned' ||
-        result.plans.length !== 1 ||
-        result.plans[0]?.id !== valid.id ||
-        result.plans[0]?.market !==
-          'Queens, New York, United States' ||
-        result.planSelection?.returnedPlanCount !== 2 ||
-        result.planSelection?.acceptedPlanCount !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        !/exact approved service-area, location, or remote-availability scope.*guessed, widened, or under-disambiguated geography/i.test(
-          rejection
+        result.plans.length !== 2 ||
+        result.plans.some((motion) =>
+          motion.market !== 'Queens, NY, USA'
         ) ||
+        result.planSelection?.returnedPlanCount !== 2 ||
+        result.planSelection?.acceptedPlanCount !== 2 ||
+        result.planSelection?.rejectedPlanCount !== 0 ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
         `invalid market did not preserve its grounded sibling: ${JSON.stringify({ invalidMarket, result })}`
@@ -1711,13 +2129,12 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       [invalid, valid],
       `generation-portland-parent-salvage-${index + 1}`
     );
-    if (result.status !== 'planned' || result.plans.length !== 1 ||
-        result.plans[0]?.id !== valid.id ||
-        result.planSelection?.acceptedPlanCount !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        !/guessed, widened, or under-disambiguated geography/i.test(
-          result.planSelection?.rejectedPlans?.[0]?.reason || ''
-        )) {
+    if (result.status !== 'planned' || result.plans.length !== 2 ||
+        result.plans.some((motion) =>
+          motion.market !== 'Boston, MA, USA'
+        ) ||
+        result.planSelection?.acceptedPlanCount !== 2 ||
+        result.planSelection?.rejectedPlanCount !== 0) {
       throw new Error(
         `bare Portland inherited an unsupported parent geography: ${JSON.stringify({ invalidMarket, result })}`
       );
@@ -1746,9 +2163,9 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       [invalid, valid],
       `generation-missing-region-salvage-${index + 1}`
     );
-    if (result.status !== 'planned' || result.plans.length !== 1 ||
-        result.plans[0]?.id !== valid.id ||
-        result.planSelection?.rejectedPlanCount !== 1) {
+    if (result.status !== 'planned' || result.plans.length !== 2 ||
+        result.plans.some((motion) => motion.market !== 'Canada') ||
+        result.planSelection?.rejectedPlanCount !== 0) {
       throw new Error(
         `US/Canada locality without an approved region was accepted: ${JSON.stringify({ invalidMarket, result })}`
       );
@@ -1826,25 +2243,32 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
   remoteDemand.id = 'approved_remote_paid_demand';
   remoteDemand.priority = 1;
   remoteDemand.market = 'Remote';
-  const secondRemoteDemand = cases[1].plans(evidenceRef)[1];
-  secondRemoteDemand.id = 'approved_remote_solicitation';
+  const secondRemoteDemand = structuredClone(remoteDemand);
+  secondRemoteDemand.id = 'approved_remote_second_compensated_job';
   secondRemoteDemand.priority = 2;
   secondRemoteDemand.market = 'Remote';
+  secondRemoteDemand.jobTitle = 'Distributed systems engineer';
+  secondRemoteDemand.skills = ['Go', 'Distributed systems'];
   const remote = await run(
     remoteJob,
     [remoteDemand, secondRemoteDemand],
     'generation-approved-remote-market'
   );
   if (remote.status !== 'planned' || remote.plans.length !== 2 ||
-      remote.plans.some((motion) => motion.market !== 'Remote') ||
+      remote.plans.some((motion) =>
+        motion.market !== 'Queens, NY, USA'
+      ) ||
       remote.planSelection?.rejectedPlanCount !== 0 ||
       remote.sideEffectsPerformed !== 0) {
     throw new Error(
-      `explicit remote availability did not authorize the remote market: ${JSON.stringify(remote)}`
+      `remote prose escaped the singleton provider-compatible market authority: ${JSON.stringify(remote)}`
     );
   }
 
-  const qualifiedRemotePlans = cases[1].plans(evidenceRef);
+  const qualifiedRemotePlans = [
+    structuredClone(remoteDemand),
+    structuredClone(secondRemoteDemand)
+  ];
   qualifiedRemotePlans[0].market = 'Remote, United States';
   qualifiedRemotePlans[1].market = 'Remote, USA';
   const qualifiedRemote = await run(
@@ -1854,9 +2278,12 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
   );
   if (qualifiedRemote.status !== 'planned' ||
       qualifiedRemote.plans.length !== 2 ||
+      qualifiedRemote.plans.some((motion) =>
+        motion.market !== 'Queens, NY, USA'
+      ) ||
       qualifiedRemote.planSelection?.rejectedPlanCount !== 0) {
     throw new Error(
-      `approved home country did not qualify Remote paid demand: ${JSON.stringify(qualifiedRemote)}`
+      `country-qualified Remote prose escaped the singleton provider-compatible market authority: ${JSON.stringify(qualifiedRemote)}`
     );
   }
 
@@ -1864,7 +2291,7 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
   conflictingRemote.id = 'conflicting_remote_country';
   conflictingRemote.priority = 1;
   conflictingRemote.market = 'Remote, Canada';
-  const approvedRemoteSibling = cases[1].plans(evidenceRef)[1];
+  const approvedRemoteSibling = structuredClone(secondRemoteDemand);
   approvedRemoteSibling.id = 'approved_remote_country_sibling';
   approvedRemoteSibling.priority = 2;
   approvedRemoteSibling.market = 'Remote, United States';
@@ -1874,14 +2301,13 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
     'generation-conflicting-remote-country-salvage'
   );
   if (remoteConflict.status !== 'planned' ||
-      remoteConflict.plans.length !== 1 ||
-      remoteConflict.plans[0]?.id !== approvedRemoteSibling.id ||
-      remoteConflict.planSelection?.rejectedPlanCount !== 1 ||
-      !/Remote.*country outside the approved home-country scope/i.test(
-        remoteConflict.planSelection?.rejectedPlans?.[0]?.reason || ''
-      )) {
+      remoteConflict.plans.length !== 2 ||
+      remoteConflict.plans.some((motion) =>
+        motion.market !== 'Queens, NY, USA'
+      ) ||
+      remoteConflict.planSelection?.rejectedPlanCount !== 0) {
     throw new Error(
-      `conflicting Remote country was not pruned independently: ${JSON.stringify(remoteConflict)}`
+      `unreachable conflicting Remote prose escaped the singleton schema market: ${JSON.stringify(remoteConflict)}`
     );
   }
 
@@ -1901,37 +2327,47 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       `generation-remote-role-salvage-${index + 1}`
     );
     if (remoteRoleSalvage.status !== 'planned' ||
-        remoteRoleSalvage.plans.length !== 1 ||
-        remoteRoleSalvage.plans[0]?.id !== paidDemandSibling.id ||
-        remoteRoleSalvage.planSelection?.rejectedPlanCount !== 1 ||
-        !/availability-based Remote.*professional target.*paid-demand artifact/i.test(
-          remoteRoleSalvage.planSelection?.rejectedPlans?.[0]?.reason || ''
-        )) {
+        remoteRoleSalvage.plans.length !== 2 ||
+        remoteRoleSalvage.plans[0]?.market !== 'Queens, NY, USA' ||
+        remoteRoleSalvage.plans[1]?.market !== 'Queens, NY, USA' ||
+        remoteRoleSalvage.planSelection?.rejectedPlanCount !== 0) {
       throw new Error(
-        `availability-based Remote authorized a professional target: ${JSON.stringify(remoteRoleSalvage)}`
+        `Remote plus local scope did not project the professional target onto an exact provider-compatible market: ${JSON.stringify(remoteRoleSalvage)}`
       );
     }
   }
 
   const explicitRemoteJob = structuredClone(job);
   explicitRemoteJob.payload.commercialContext.profile.availability = '';
+  explicitRemoteJob.payload.commercialContext.profile.location = '';
   explicitRemoteJob.payload.commercialContext.profile.serviceAreas = [
     'Remote'
   ];
-  const explicitRemoteReferral = cases[0].plans(evidenceRef)[0];
-  explicitRemoteReferral.market = 'Remote';
-  const explicitRemoteBuyer = cases[2].plans(evidenceRef)[1];
-  explicitRemoteBuyer.market = 'Remote';
+  const explicitRemotePaidDemand = [
+    structuredClone(remoteDemand),
+    structuredClone(secondRemoteDemand)
+  ];
+  for (const motion of explicitRemotePaidDemand) motion.market = 'Remote';
+  let remoteOnlyMotionKinds = [];
+  let remoteOnlyCalls = 0;
   const explicitRemote = await run(
     explicitRemoteJob,
-    [explicitRemoteReferral, explicitRemoteBuyer],
-    'generation-explicit-remote-service-area'
+    explicitRemotePaidDemand,
+    'generation-explicit-remote-service-area',
+    (request) => {
+      remoteOnlyCalls += 1;
+      remoteOnlyMotionKinds = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.motionKind?.enum || [];
+    }
   );
-  if (explicitRemote.status !== 'planned' ||
-      explicitRemote.plans.length !== 2 ||
-      explicitRemote.planSelection?.rejectedPlanCount !== 0) {
+  if (remoteOnlyCalls !== 0 ||
+      explicitRemote.status !== 'blocked' ||
+      explicitRemote.plans.length !== 0 ||
+      explicitRemote.preflight?.cause !==
+        'planner_route_capability_unavailable' ||
+      remoteOnlyMotionKinds.length !== 0) {
     throw new Error(
-      `explicit Remote service area did not authorize professional targets: ${JSON.stringify(explicitRemote)}`
+      `Remote-only scope did not stop before a one-route provider call: ${JSON.stringify({ remoteOnlyCalls, remoteOnlyMotionKinds, explicitRemote })}`
     );
   }
 
@@ -1950,14 +2386,13 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
     'generation-negated-remote-salvage'
   );
   if (negatedRemote.status !== 'planned' ||
-      negatedRemote.plans.length !== 1 ||
-      negatedRemote.plans[0]?.id !== localSibling.id ||
-      negatedRemote.planSelection?.rejectedPlanCount !== 1 ||
-      !/remote-availability scope.*geography is forbidden/i.test(
-        negatedRemote.planSelection?.rejectedPlans?.[0]?.reason || ''
-      )) {
+      negatedRemote.plans.length !== 2 ||
+      negatedRemote.plans.some((motion) =>
+        motion.market !== 'Queens, NY, USA'
+      ) ||
+      negatedRemote.planSelection?.rejectedPlanCount !== 0) {
     throw new Error(
-      `negated remote availability authorized a remote market: ${JSON.stringify(negatedRemote)}`
+      `negated Remote prose escaped the singleton schema market: ${JSON.stringify(negatedRemote)}`
     );
   }
 }
@@ -1967,6 +2402,13 @@ async function verifyOmittedChildEvidenceCanonicalization(
   primaryEvidenceRef
 ) {
   const job = structuredClone(baseJob);
+  job.payload.objective.constraints = Array.from(
+    { length: 10 },
+    (_, index) =>
+      'Approved child-evidence compaction constraint ' + (index + 1) +
+      ' remains review-only and source-bound without outreach or publishing ' +
+      'while the adaptive schema selects its finite evidence authority.'
+  );
   const childFixtures = Array.from({ length: 13 }, (_, index) => {
     const suffix = String(index + 1).padStart(2, '0');
     return {
@@ -2021,8 +2463,12 @@ async function verifyOmittedChildEvidenceCanonicalization(
     data: {
       contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
       status: 'planned',
-      reason: 'The evidence-grounded referral motion is ready for target binding.',
-      plans: twoPlannerMotions(candidate, primaryEvidenceRef)
+      reason: '',
+      plans: (() => {
+        const motions = twoPlannerMotions(candidate, primaryEvidenceRef);
+        motions[1] = compactFreshPlannerPlans([motions[1]])[0];
+        return motions;
+      })()
     },
     usage,
     generationId,
@@ -2057,45 +2503,61 @@ async function verifyOmittedChildEvidenceCanonicalization(
   };
 
   for (const shape of ['materialized', 'compact']) {
-    const candidate = cases[0].plans(primaryEvidenceRef)[0];
-    declareChildRefs(candidate, childRefs.slice(0, 2));
-    if (shape === 'compact') {
-      candidate.contingentFinalists = compactContingentFinalists(
-        candidate.contingentFinalists
-      );
-    }
+    const candidate = shape === 'materialized'
+      ? canonicalMaterializedPlannerPlans([
+          cases[0].plans(primaryEvidenceRef)[0]
+        ])[0]
+      : cases[0].plans(primaryEvidenceRef)[0];
     const result = await runOpportunityDiscoveryPlanner({
       job,
       model: 'openai/gpt-5.6-luna',
       now,
-      completeJSON: async () => completionFor(
-        candidate,
-        `generation-approved-child-${shape}`
-      )
+      completeJSON: async (request) => {
+        const visibleRefs = new Set(
+          request.responseFormat?.json_schema?.schema?.$defs
+            ?.evidenceRef?.enum || []
+        );
+        const hiddenRefs = childRefs.filter((ref) =>
+          !visibleRefs.has(ref)
+        ).slice(0, 2);
+        if (hiddenRefs.length !== 2) {
+          throw new Error(
+            `adaptive ${shape} fixture retained every child ref`
+          );
+        }
+        declareChildRefs(candidate, hiddenRefs);
+        if (shape === 'compact') {
+          candidate.contingentFinalists = compactContingentFinalists(
+            candidate.contingentFinalists
+          );
+        }
+        return completionFor(
+          candidate,
+          `generation-approved-child-${shape}`
+        );
+      }
     });
-    const normalized = result.plans[0];
-    if (result.status !== 'planned' ||
-        !normalized?.evidenceRefs?.includes(childRefs[0]) ||
-        !normalized?.evidenceRefs?.includes(childRefs[1]) ||
-        !normalized?.contingentFinalists?.familyA?.e?.includes(childRefs[0]) ||
-        normalized?.contingentFinalists?.familyA?.e?.includes(
-          childRefs[1]
-        ) ||
-        !normalized?.contingentFinalists?.familyB?.e?.includes(
-          childRefs[1]
-        ) ||
-        normalized?.contingentFinalists?.familyB?.e?.includes(childRefs[0]) ||
-        !normalized?.contingentFinalists?.familyA?.d?.a?.[0]?.e?.includes(
-          childRefs[0]
-        )) {
+    // The adaptive prompt is the complete fresh evidence authority. These
+    // otherwise-approved refs were intentionally not selected into its exact
+    // schema enum, so both a historical materialized shape and a compact shape
+    // that forges them must lose fresh provider/materialization authority.
+    if (result.status !== 'planned' || result.plans.length !== 1 ||
+        result.planSelection?.acceptedPlanCount !== 1 ||
+        result.planSelection?.rejectedPlanCount !== 1 ||
+        !/(?:contingent finalist contract|typed causal revenue witness)/i
+          .test(result.planSelection?.rejectedPlans?.[0]?.reason || '')) {
       throw new Error(
-        `approved omitted child evidence was not canonicalized from ${shape}: ${JSON.stringify(result)}`
+        `model-hidden approved child evidence regained fresh ${shape} authority: ${JSON.stringify(result)}`
       );
     }
   }
 
   for (const shape of ['materialized', 'compact']) {
-    const candidate = cases[0].plans(primaryEvidenceRef)[0];
+    const candidate = shape === 'materialized'
+      ? canonicalMaterializedPlannerPlans([
+          cases[0].plans(primaryEvidenceRef)[0]
+        ])[0]
+      : cases[0].plans(primaryEvidenceRef)[0];
     declareChildRefs(candidate, ['observation:unapproved-child-ref']);
     if (shape === 'compact') {
       candidate.contingentFinalists = compactContingentFinalists(
@@ -2116,7 +2578,7 @@ async function verifyOmittedChildEvidenceCanonicalization(
         result.planSelection?.acceptedPlanCount !== 1 ||
         result.planSelection?.rejectedPlanCount !== 1 ||
         result.sideEffectsPerformed !== 0 ||
-        !/contingent finalist contract/i.test(
+        !/(?:contingent finalist contract|typed causal revenue witness)/i.test(
           result.planSelection?.rejectedPlans?.[0]?.reason || ''
         )) {
       throw new Error(
@@ -2125,140 +2587,10 @@ async function verifyOmittedChildEvidenceCanonicalization(
     }
   }
 
-  let expandedVisibleRefs = [];
-  const expandedResult = await runOpportunityDiscoveryPlanner({
-    job,
-    model: 'openai/gpt-5.6-luna',
-    now,
-    completeJSON: async (request) => {
-      expandedVisibleRefs = request.responseFormat?.json_schema?.schema?.$defs
-        ?.evidenceRef?.enum?.filter((ref) => ref !== 'target:evidence') || [];
-      const candidate = cases[0].plans(primaryEvidenceRef)[0];
-      if (expandedVisibleRefs.length !== 14 ||
-          candidate.evidenceRefs.some((ref) =>
-            !expandedVisibleRefs.includes(ref)
-          )) {
-        throw new Error(
-          `expanded-bound fixture did not receive the exact 14-ref planner projection: ${JSON.stringify(expandedVisibleRefs)}`
-        );
-      }
-      const childVisibleRefs = expandedVisibleRefs.filter((ref) =>
-        !candidate.evidenceRefs.includes(ref)
-      );
-      if (childVisibleRefs.length !== 12) {
-        throw new Error(
-          `expanded-bound fixture did not retain twelve child-only refs: ${JSON.stringify(childVisibleRefs)}`
-        );
-      }
-      declareChildRefs(candidate, childVisibleRefs);
-      candidate.contingentFinalists = compactContingentFinalists(
-        candidate.contingentFinalists
-      );
-      return completionFor(
-        candidate,
-        'generation-child-evidence-expanded-bound'
-      );
-    }
-  });
-  const expandedPlan = expandedResult.plans[0];
-  if (expandedResult.status !== 'planned' ||
-      expandedPlan?.evidenceRefs?.length !== 14 ||
-      expandedVisibleRefs.some((ref) =>
-        !expandedPlan.evidenceRefs.includes(ref)
-      ) ||
-      expandedResult.preflight?.requestBodyByteCount > 36 * 1024 ||
-      expandedResult.preflight?.responseBodyByteCount >
-        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
-    throw new Error(
-      `fourteen-ref child evidence index did not pass intact: ${JSON.stringify(expandedResult)}`
-    );
-  }
-
-  const hiddenApprovedRef = childRefs.find((ref) =>
-    !expandedVisibleRefs.includes(ref)
-  );
-  if (!hiddenApprovedRef) {
-    throw new Error('expanded-bound fixture produced no model-hidden approved ref');
-  }
-  const hiddenCandidate = cases[0].plans(primaryEvidenceRef)[0];
-  declareChildRefs(hiddenCandidate, [hiddenApprovedRef]);
-  hiddenCandidate.contingentFinalists = compactContingentFinalists(
-    hiddenCandidate.contingentFinalists
-  );
-  const hiddenResult = await runOpportunityDiscoveryPlanner({
-    job,
-    model: 'openai/gpt-5.6-luna',
-    now,
-    completeJSON: async () => completionFor(
-      hiddenCandidate,
-      'generation-model-hidden-child-evidence'
-    )
-  });
-  if (hiddenResult.status !== 'planned' ||
-      hiddenResult.plans.length !== 1 ||
-      hiddenResult.planSelection?.acceptedPlanCount !== 1 ||
-      hiddenResult.planSelection?.rejectedPlanCount !== 1 ||
-      hiddenResult.sideEffectsPerformed !== 0 ||
-      !/contingent finalist contract/i.test(
-        hiddenResult.planSelection?.rejectedPlans?.[0]?.reason || ''
-      )) {
-    throw new Error(
-      `model-hidden approved child ref escaped the projected trust boundary: ${JSON.stringify(hiddenResult)}`
-    );
-  }
-
-  const persistedEnvelope = (plan, queryHash) => ({
-    contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
-    status: 'not_found',
-    attempted: true,
-    motion: expandedPlan.id,
-    buyerArchetype: expandedPlan.buyer,
-    market: expandedPlan.market,
-    queryHash,
-    providersAttempted: ['openrouter_exa_web_search'],
-    providerCalls: 1,
-    paidProviderCalls: 0,
-    creditsUsed: 0,
-    resultCount: 0,
-    patientTargetingExcluded: true,
-    sideEffectsPerformed: 0,
-    discoveredAt: now.toISOString(),
-    plan,
-    attempts: [],
-    evidence: [],
-    candidates: []
-  });
-  const persisted = normalizeCommercialDiscoveryEvidence(
-    persistedEnvelope(expandedResult, '7'.repeat(64)),
-    now
-  );
-  if (persisted.valid !== true ||
-      persisted.plan?.valid !== true ||
-      persisted.plan?.plans?.[0]?.evidenceRefs?.length !== 14) {
-    throw new Error(
-      `fourteen-ref discovery plan did not survive persistence normalization: ${JSON.stringify(persisted)}`
-    );
-  }
-
-  const overflowPlan = structuredClone(expandedResult);
-  const overflowRef = 'observation:persisted-overflow-ref';
-  overflowPlan.plans[0].evidenceRefs.push(overflowRef);
-  overflowPlan.plans[0].contingentFinalists
-    .familyA.d.a[0].e[0] = overflowRef;
-  const overflowResult = normalizeCommercialDiscoveryEvidence(
-    persistedEnvelope(overflowPlan, '8'.repeat(64)),
-    now
-  );
-  if (overflowResult.valid !== false ||
-      overflowResult.plan?.valid !== false ||
-      overflowResult.rejectedReasons?.invalid_discovery_plan !== 1 ||
-      !/bounded approved evidence index/i.test(
-        overflowResult.plan?.rejectedReason
-      )) {
-    throw new Error(
-      `fifteen-ref persisted evidence overflow was silently accepted: ${JSON.stringify(overflowResult)}`
-    );
-  }
+  // The separate maximum-family-containment fixture exercises the full
+  // fourteen-visible-ref + local target sentinel boundary. This fixture is
+  // intentionally about omitted/model-hidden refs only; fresh authority is
+  // exactly the adaptive schema enum, not the larger approved catalog.
 }
 
 async function verifyOmittedTargetEvidenceProtocolCanonicalization(
@@ -2291,7 +2623,11 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
       status: 'planned',
       reason: 'The paid path is ready for deterministic target binding.',
-      plans: twoPlannerMotions(candidate, primaryEvidenceRef)
+      plans: (() => {
+        const motions = twoPlannerMotions(candidate, primaryEvidenceRef);
+        motions[1] = compactFreshPlannerPlans([motions[1]])[0];
+        return motions;
+      })()
     },
     usage,
     generationId,
@@ -2421,7 +2757,8 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     )
   });
   const repairedPaidOfferPlan = mixedPaidOfferResult.plans.find((item) =>
-    item.id === mixedPaidOfferContamination.id
+    item.commercialRole === mixedPaidOfferContamination.commercialRole &&
+      item.searchMode === mixedPaidOfferContamination.searchMode
   );
   const mixedPaidOfferRepaired = ['familyA', 'familyB'].every((familyKey) => {
     const family = repairedPaidOfferPlan?.contingentFinalists?.[familyKey];
@@ -2479,7 +2816,8 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     )
   });
   const repairedFollowUpPlan = mixedFollowUpResult.plans.find((item) =>
-    item.id === mixedFollowUpContamination.id
+    item.commercialRole === mixedFollowUpContamination.commercialRole &&
+      item.searchMode === mixedFollowUpContamination.searchMode
   );
   if (mixedFollowUpResult.status !== 'planned' ||
       mixedFollowUpResult.plans.length !== 2 ||
@@ -2732,7 +3070,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       forgedResult.planSelection?.acceptedPlanCount !== 1 ||
       forgedResult.planSelection?.rejectedPlanCount !== 1 ||
       forgedResult.sideEffectsPerformed !== 0 ||
-      !/contingent finalist contract/i.test(
+      !/(?:contingent finalist contract|typed causal revenue witness)/i.test(
         forgedResult.planSelection?.rejectedPlans?.[0]?.reason || ''
       )) {
     throw new Error(
@@ -2742,6 +3080,11 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
 }
 
 async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
+  const preserveMaterialized = new WeakSet();
+  const retainMaterialized = (candidate) => {
+    preserveMaterialized.add(candidate);
+    return candidate;
+  };
   const baseReferral = (overrides = {}) => plan({
     id: 'newborn_professional_referral',
     priority: 1,
@@ -2776,7 +3119,14 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
           reason: plannerReason,
-          plans: twoPlannerMotions(candidate, evidenceRef)
+          plans: (() => {
+            const motions = twoPlannerMotions(candidate, evidenceRef);
+            if (preserveMaterialized.has(candidate)) {
+              motions[1] = compactFreshPlannerPlans([motions[1]])[0];
+              return motions;
+            }
+            return compactFreshPlannerPlans(motions);
+          })()
         },
         usage,
         generationId,
@@ -2810,7 +3160,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
   if (crossedCanonicalRoute.status !== 'planned' ||
       crossedCanonicalRoute.plans.length !== 2 ||
       crossedCanonicalRoute.plans.find(
-        (item) => item.id === 'crossed_canonical_public_route'
+        (item) => item.id === 'plan_1_referral_person'
       )?.acquisitionMechanism !==
         'Review-first public professional profile') {
     throw new Error(
@@ -2848,11 +3198,13 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     );
   }
 
-  const allowedBoundPublicMessageMotion = baseReferral({
-    id: 'safe_bound_public_profile_message',
-    acquisitionMechanism:
-      'One review-first public-professional-profile referral request'
-  });
+  const allowedBoundPublicMessageMotion = retainMaterialized(
+    canonicalMaterializedPlannerPlans([baseReferral({
+      id: 'safe_bound_public_profile_message',
+      acquisitionMechanism:
+        'One review-first public-professional-profile referral request'
+    })])[0]
+  );
   const boundPublicMessageActions = [
     'After review, send a LinkedIn message via {{TARGET_URL}} asking {{TARGET_NAME}} to recommend one qualified family book the current paid consultation.',
     'After approval, send one LinkedIn message through {{TARGET_URL}} asking {{TARGET_NAME}} for one partner referral to the paid consultation.',
@@ -2923,10 +3275,10 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       commercialRole: 'buyer',
       acquisitionMode: 'permissioned_outreach',
       buyer: 'Publishers buying a paid software catalog audit',
-      counterparty: 'An Angular @angular/core application maintainer',
-      paidOffer: 'Paid @angular/core consulting and software catalog audit',
+      counterparty: 'An Angular core application maintainer',
+      paidOffer: 'Paid Angular core consulting and software catalog audit',
       query:
-        'Angular application maintainer software job requisition 1234567890',
+        'Angular application maintainer software catalog audit',
       targetRoleTerms: [
         'Angular software consultant',
         'Software application consultant'
@@ -2939,7 +3291,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       paidConversion: 'One signed paid catalog-audit contract',
       attributionSignal: 'Contract source stores the target and tournament ids',
       rationale:
-        'RFP 1234567 closes 2026-08-15 with a $1250000 or INR 1000000 ceiling. Candidate offices include 69-27 164th Street and 110-20 73rd Road. The paid catalog audit covers support for 192.168.1.1 and 192.168.1.0/24, ISBN 9780132350884, Phone case UPC 012345678905, SKU 123456789012, GTIN 00012345600012, IMEI 490154203237518, and NPI 1234567890.'
+        'The paid software catalog audit covers ISBN 9780132350884, SKU 123456789012, and GTIN 00012345600012.'
     }),
     'generation-safe-technical-and-catalog-terms'
   );
@@ -3010,11 +3362,11 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       data: {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
-        reason: 'Typed professional referral search.',
-        plans: twoPlannerMotions(
+        reason: '',
+        plans: compactFreshPlannerPlans(twoPlannerMotions(
           replaceEvidenceRef(numericEvidenceMotion),
           numericEvidenceRef
-        )
+        ))
       },
       usage,
       generationId: 'generation-safe-numeric-evidence-ref',
@@ -3043,15 +3395,15 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     'generation-unused-sensitive-job-fields'
   );
   const projectedReferral = unusedSensitiveFields.plans.find((item) =>
-    item.id === 'unused_sensitive_job_fields'
+    item.id === 'plan_1_referral_person'
   );
   if (unusedSensitiveFields.status !== 'planned' ||
       unusedSensitiveFields.plans.length !== 2 ||
       !projectedReferral ||
       projectedReferral.jobTitle !== '' ||
       projectedReferral.skills.length !== 0 ||
-      projectedReferral.targetRoleTerms.length === 0 ||
-      projectedReferral.organizationTerms.length === 0) {
+      projectedReferral.targetRoleTerms.length !== 0 ||
+      projectedReferral.organizationTerms.length !== 0) {
     throw new Error(
       `professional-counterparty projection retained unused sensitive job fields: ${JSON.stringify(unusedSensitiveFields)}`
     );
@@ -3072,12 +3424,12 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     'generation-local-org-unused-sensitive-job-fields'
   );
   const projectedLocal = localResult.plans.find((item) =>
-    item.id === localOrganization.id
+    item.id === 'plan_1_referral_org_decision_maker'
   );
   if (localResult.status !== 'planned' || !projectedLocal ||
       projectedLocal.jobTitle !== '' ||
       projectedLocal.skills.length !== 0 ||
-      projectedLocal.targetRoleTerms.length === 0 ||
+      projectedLocal.targetRoleTerms.length !== 0 ||
       projectedLocal.organizationTerms.length === 0) {
     throw new Error(
       `local-organization projection retained unused job fields: ${JSON.stringify(localResult)}`
@@ -3094,7 +3446,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     'generation-active-job-unused-sensitive-role-fields'
   );
   const projectedActive = activeResult.plans.find((item) =>
-    item.id === activeJob.id
+    item.id === 'plan_1_compensated_job'
   );
   if (activeResult.status !== 'planned' || !projectedActive ||
       projectedActive.targetRoleTerms.length !== 0 ||
@@ -3107,8 +3459,15 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     );
   }
 
-  const publicDemand = cases[1].plans(evidenceRef)[1];
-  publicDemand.id = 'public_demand_unused_sensitive_filter_fields';
+  const publicDemand = plan({
+    ...cases[1].plans(evidenceRef)[0],
+    id: 'retired_public_live_demand_route',
+    motionKind: 'buyer_solicitation',
+    searchMode: 'public_live_demand',
+    commercialRole: 'paid_demand',
+    acquisitionMode: 'permissioned_outreach',
+    demandArtifactKind: 'buyer_rfp'
+  });
   publicDemand.market = 'Queens, New York, United States';
   publicDemand.targetRoleTerms = ['postpartum patient'];
   publicDemand.organizationTerms = ['pregnant people'];
@@ -3118,23 +3477,29 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     publicDemand,
     'generation-public-demand-unused-sensitive-filter-fields'
   );
-  const projectedPublic = publicResult.plans.find((item) =>
-    item.id === publicDemand.id
-  );
-  if (publicResult.status !== 'planned' || !projectedPublic ||
-      projectedPublic.targetRoleTerms.length !== 0 ||
-      projectedPublic.organizationTerms.length !== 0 ||
-      projectedPublic.jobTitle !== '' ||
-      projectedPublic.skills.length !== 0) {
+  const retiredPublicRejection = publicResult.planSelection?.rejectedPlans
+    ?.find((item) => item.id === 'plan_1_buyer_solicitation');
+  if (publicResult.status !== 'planned' ||
+      publicResult.plans.length !== 1 ||
+      publicResult.plans.some((item) =>
+        item.motionKind === 'buyer_solicitation'
+      ) ||
+      publicResult.planSelection?.rejectedPlanCount !== 1 ||
+      !/retired fresh execution route|finite fresh execution route|unavailable read-only provider route/i.test(
+        retiredPublicRejection?.reason || ''
+      )) {
     throw new Error(
-      `public-live-demand projection retained unused target filters: ${JSON.stringify(publicResult)}`
+      `retired public-live-demand route regained fresh authority: ${JSON.stringify(publicResult)}`
     );
   }
 
   const materializedRouteCandidate = (id, label) => {
-    const candidate = baseReferral({ id });
+    const candidate = canonicalMaterializedPlannerPlans([
+      baseReferral({ id })
+    ])[0];
     candidate.contingentFinalists.familyA.d.a[0].l = label;
-    return candidate;
+    candidate.contingentFinalists.familyA.d.r[0].c = label;
+    return retainMaterialized(candidate);
   };
   const adversaries = [
     {
@@ -3165,11 +3530,11 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     {
       label: 'materialized family-label private route',
       candidate: (() => {
-        const candidate = baseReferral({
-          id: 'materialized_family_private_route'
-        });
+        const candidate = canonicalMaterializedPlannerPlans([
+          baseReferral({ id: 'materialized_family_private_route' })
+        ])[0];
         candidate.contingentFinalists.familyA.l = 'Email outreach route';
-        return candidate;
+        return retainMaterialized(candidate);
       })(),
       reason:
         /private-contact data \[private_contact_route:acquisition\]/i
@@ -3496,7 +3861,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
         id: 'literal_zero_width_email_value',
         rationale: 'No outreach is authorized to person@\u200Bexample.com.'
       }),
-      reason: /private-contact data \[private_contact_value\]/i
+      reason: /missing rationale|private-contact data \[private_contact_value\]/i
     },
     {
       label: 'explicit private-data retrieval outside route fields',
@@ -3585,7 +3950,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
         commercialRole: 'buyer',
         acquisitionMode: 'permissioned_outreach'
       }),
-      reason: /in its query/i
+      reason: /complementary professional referral|sensitive care recipient/i
     }
   ];
   for (const [index, privateContactTerm] of [
@@ -3608,6 +3973,33 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       adversary.candidate,
       `generation-sensitive-adversary-${index + 1}`
     );
+    const locallyCanonicalized = new Set([
+      'direct sensitive role',
+      'sensitive organization target',
+      'private contact request',
+      'two sensitive clauses cannot share one service relation',
+      'patient lead-list server search',
+      'direct pregnant-people role',
+      'sensitive population as search subject'
+    ]).has(adversary.label) ||
+      adversary.label.startsWith('bare private-contact intent:');
+    if (locallyCanonicalized) {
+      if (result.status !== 'planned' || result.plans.length !== 2 ||
+          result.planSelection?.acceptedPlanCount !== 2 ||
+          result.planSelection?.rejectedPlanCount !== 0 ||
+          result.plans[0]?.targetRoleTerms?.length !== 0 ||
+          result.plans[0]?.organizationTerms?.length !== 0 ||
+          result.plans[0]?.acquisitionMechanism !==
+            'Review-first public professional profile' ||
+          /patient|pregnant|email|phone|lead list/i.test(
+            result.plans[0]?.query || ''
+          ) || result.sideEffectsPerformed !== 0) {
+        throw new Error(
+          `${adversary.label} was not discarded before safety and provider authority: ${JSON.stringify(result)}`
+        );
+      }
+      continue;
+    }
     const rejection = result.planSelection?.rejectedPlans?.[0]?.reason || '';
     if (result.status !== 'planned' ||
         !adversary.reason.test(rejection) ||
@@ -3633,21 +4025,502 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       `generation-wrapper-reason-private-contact-${index + 1}`,
       wrapperReason
     );
-    if (result.status !== 'blocked' ||
-        !/planner reason (?:contains|requests) private-contact data/i.test(
-          result.reason
-        ) ||
-        /person@example\.com/i.test(result.reason) ||
-        result.plans.length !== 0 ||
+    if (result.status !== 'planned' ||
+        result.reason !== '' ||
+        result.plans.length !== 2 ||
+        /person@example\.com/i.test(JSON.stringify(result)) ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
-        `wrapper reason private-contact data was not safely rejected: ${JSON.stringify(result)}`
+        `non-authoritative wrapper reason was not discarded safely: ${JSON.stringify(result)}`
       );
     }
   }
 }
 
 async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
+  const capabilities = opportunityCommercialDiscoveryCapabilities();
+  const manifest = capabilities.professionalRoleQuery;
+  if (manifest.contractVersion !== PROFESSIONAL_ROLE_QUERY_CONTRACT ||
+      manifest.subroleField !== 'targetRoleSubrole' ||
+      manifest.roleField !== 'targetRoleRole' ||
+      manifest.taxonomyVersion !== 'pdl_job_title_taxonomy_v29.1' ||
+      manifest.canonicalDataVersion !== '34.2' ||
+      manifest.taxonomyMappingSha256 !==
+        PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256 ||
+      manifest.supportedSubroleCount !== 104 ||
+      JSON.stringify(manifest.excludedSubroles) !==
+        JSON.stringify(['student', 'unemployed']) ||
+      JSON.stringify(manifest.appliesTo) !== JSON.stringify([
+        'professional_counterparty',
+        'local_organization:organization_then_decision_maker'
+      ]) ||
+      JSON.stringify(manifest.providerFields) !== JSON.stringify({
+        subrole: 'job_title_sub_role',
+        role: 'job_title_role',
+        levels: 'job_title_levels',
+        requiredDataInclude: [
+          'job_title_levels',
+          'job_title_role',
+          'job_title_sub_role'
+        ],
+        rejectedLevels: ['training', 'unpaid']
+      }) ||
+      JSON.stringify(capabilities.targetBindingLimits) !== JSON.stringify({
+        targetNameMaxRunes: 180,
+        targetPublicUrlMaxChars: 240,
+        boundBuyerLabelMaxChars: 320,
+        boundChannelLabelMaxChars: 400,
+        boundActionLabelMaxChars: 700
+      }) ||
+      JSON.stringify(capabilities.freshExecutionRoutes) !== JSON.stringify([
+        {
+          motionKind: 'referral_person',
+          searchMode: 'professional_counterparty',
+          commercialRole: 'referral_partner',
+          acquisitionMode: 'partner_channel',
+          demandArtifactKinds: ['not_applicable'],
+          providerSequences: [['people_data_labs_person_search']]
+        },
+        {
+          motionKind: 'referral_org_decision_maker',
+          searchMode: 'local_organization',
+          commercialRole: 'referral_partner',
+          acquisitionMode: 'partner_channel',
+          demandArtifactKinds: ['not_applicable'],
+          providerSequences: [
+            ['brave_web_search', 'people_data_labs_person_search'],
+            [
+              'openrouter_exa_web_search',
+              'people_data_labs_person_search'
+            ]
+          ]
+        },
+        {
+          motionKind: 'direct_buyer_person',
+          searchMode: 'professional_counterparty',
+          commercialRole: 'buyer',
+          acquisitionMode: 'permissioned_outreach',
+          demandArtifactKinds: ['not_applicable'],
+          providerSequences: [['people_data_labs_person_search']]
+        },
+        {
+          motionKind: 'direct_buyer_org_decision_maker',
+          searchMode: 'local_organization',
+          commercialRole: 'buyer',
+          acquisitionMode: 'permissioned_outreach',
+          demandArtifactKinds: ['not_applicable'],
+          providerSequences: [
+            ['brave_web_search', 'people_data_labs_person_search'],
+            [
+              'openrouter_exa_web_search',
+              'people_data_labs_person_search'
+            ]
+          ]
+        },
+        {
+          motionKind: 'compensated_job',
+          searchMode: 'active_job_posting',
+          commercialRole: 'paid_demand',
+          acquisitionMode: 'permissioned_outreach',
+          demandArtifactKinds: ['employer_job_posting'],
+          providerSequences: [['people_data_labs_job_posting_search']]
+        }
+      ]) ||
+      JSON.stringify(capabilities.plannerResponseBounds) !== JSON.stringify({
+        runtimeParsedResponseMaxBytes:
+          MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
+        contingentBundleMaxBytes:
+          MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES,
+        computedSchemaUpperBoundBytes:
+          MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES,
+        evidenceRefMaxRunes: 96,
+        evidenceRefMaxBytes: 192
+      }) ||
+      JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
+        model: 'openai/gpt-5.6-luna',
+        providerPriceCaps: {
+          prompt: 0.2,
+          completion: 0.9,
+          request: 0
+        },
+        framingTokenReserve: 1_024,
+        generator: {
+          requestMaxBytes: 36 * 1_024,
+          promptTokenCeiling: 1_050_000,
+          outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
+          fixedToolFeeMicros: 5_000,
+          callSpendCeilingMicros:
+            DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
+        },
+        critic: {
+          requestMaxBytes: 64 * 1_024,
+          promptTokenCeiling: 65_536 + 1_024,
+          outputTokenCeiling: 1_200,
+          fixedToolFeeMicros: 0,
+          callSpendCeilingMicros: 14_392
+        }
+      })) {
+    throw new Error(
+      `professional-role capability manifest drifted: ${JSON.stringify(manifest)}`
+    );
+  }
+  const callEnvelope = capabilities.plannerCallEnvelope;
+  const recomputedPlannerCallSpendCeilingMicros =
+    Math.ceil(
+      callEnvelope.generator.promptTokenCeiling *
+        callEnvelope.providerPriceCaps.prompt
+    ) +
+    Math.ceil(
+      callEnvelope.generator.outputTokenCeiling *
+        callEnvelope.providerPriceCaps.completion
+    ) +
+    Math.ceil(
+      callEnvelope.providerPriceCaps.request *
+        1_000_000
+    ) +
+    callEnvelope.generator.fixedToolFeeMicros;
+  if (recomputedPlannerCallSpendCeilingMicros !==
+      callEnvelope.generator.callSpendCeilingMicros) {
+    throw new Error('planner call-spend capability derivation drifted');
+  }
+  const recomputedCriticCallSpendCeilingMicros =
+    Math.ceil(
+      callEnvelope.critic.promptTokenCeiling *
+        callEnvelope.providerPriceCaps.prompt
+    ) +
+    Math.ceil(
+      callEnvelope.critic.outputTokenCeiling *
+        callEnvelope.providerPriceCaps.completion
+    ) + callEnvelope.critic.fixedToolFeeMicros;
+  if (recomputedCriticCallSpendCeilingMicros !==
+      callEnvelope.critic.callSpendCeilingMicros) {
+    throw new Error('critic call-spend capability derivation drifted');
+  }
+
+  const candidate = (overrides = {}) => {
+    const motion = plan({
+      id: 'canonical_role_query_fixture',
+      priority: 77,
+      motionKind: 'direct_buyer_person',
+      searchMode: 'professional_counterparty',
+      commercialRole: 'buyer',
+      acquisitionMode: 'permissioned_outreach',
+      buyer:
+        'An institutional buyer purchasing a current paid advisory service',
+      counterparty: 'One exact public professional decision-maker',
+      paidOffer: 'Paid advisory engagement',
+      evidenceRefs: [evidenceRef],
+      query: 'patients private email directory Remote',
+      market: 'Remote',
+      targetRoleSubrole: 'executive',
+      targetRoleRole: 'forged_role',
+      targetRoleTerms: ['postpartum patient'],
+      organizationTerms: ['Model-forged organization filter'],
+      jobTitle: 'Ignored schema filler',
+      skills: ['ignored'],
+      professionalRoleQueryContract: 'professional_role_query_v999',
+      acquisitionMechanism: 'Private email outreach',
+      conversionDestination: 'The verified owner booking page',
+      paidConversion: 'One signed paid advisory engagement',
+      attributionSignal:
+        'CRM source stores target and tournament action ids',
+      ...overrides
+    });
+    motion.evidenceRefs = ['forged:top-level-evidence', evidenceRef];
+    return motion;
+  };
+  const run = async (motion, generationId, inspectRequest) =>
+    runOpportunityDiscoveryPlanner({
+      job: structuredClone(job),
+      model: 'openai/gpt-5.6-luna',
+      now,
+      completeJSON: async (request) => {
+        inspectRequest?.(request);
+        return {
+          data: {
+            contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+            status: 'planned',
+            reason: '',
+            plans: compactFreshPlannerPlans(
+              twoPlannerMotions(motion, evidenceRef)
+            )
+          },
+          usage,
+          generationId,
+          diagnostics: {
+            finishReason: 'stop',
+            nativeFinishReason: 'stop',
+            contentByteCount: 800,
+            contentSha256: '7'.repeat(64)
+          },
+          annotations: []
+        };
+      }
+    });
+
+  let roleSchema;
+  let roleSchemaDefinitions = {};
+  const baseline = await run(
+    candidate(),
+    'generation-canonical-role-query-baseline',
+    (request) => {
+      roleSchema = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items;
+      roleSchemaDefinitions = request.responseFormat?.json_schema?.schema
+        ?.$defs || {};
+    }
+  );
+  const subroles = roleSchema?.properties?.targetRoleSubrole?.enum || [];
+  if (roleSchema?.properties?.targetRoleTerms !== undefined ||
+      roleSchema?.properties?.professionalRoleQueryContract !== undefined ||
+      roleSchema?.properties?.targetRoleRole !== undefined ||
+      roleSchema?.properties?.query !== undefined ||
+      roleSchema?.properties?.evidenceRefs !== undefined ||
+      roleSchema?.properties?.demandArtifactKind !== undefined ||
+      new RegExp(
+        roleSchemaDefinitions[
+          roleSchema?.properties?.jobTitle?.$ref?.split('/').at(-1)
+        ]?.pattern || roleSchema?.properties?.jobTitle?.pattern || ''
+      )
+        .test('') ||
+      subroles.length !== 104 || subroles.includes('student') ||
+      subroles.includes('unemployed')) {
+    throw new Error(
+      `fresh role-query schema retained non-authoritative or non-total fields: ${JSON.stringify(roleSchema)}`
+    );
+  }
+  const baselineMotion = baseline.plans.find((motion) =>
+    motion.id === 'plan_1_direct_buyer_person'
+  );
+  if (baseline.status !== 'planned' || !baselineMotion ||
+      baselineMotion.professionalRoleQueryContract !==
+        PROFESSIONAL_ROLE_QUERY_CONTRACT ||
+      baselineMotion.targetRoleSubrole !== 'executive' ||
+      baselineMotion.targetRoleRole !== 'operations' ||
+      baselineMotion.targetRoleTerms.length !== 0 ||
+      baselineMotion.organizationTerms.length !== 0 ||
+      baselineMotion.market !== 'Queens, NY, USA' ||
+      baselineMotion.query !== 'executive Queens, NY, USA' ||
+      baselineMotion.acquisitionMechanism !==
+        'Review-first public professional profile' ||
+      baselineMotion.evidenceRefs.includes('forged:top-level-evidence') ||
+      !baselineMotion.evidenceRefs.includes(evidenceRef)) {
+    throw new Error(
+      `fresh role-query authority was not deterministic: ${JSON.stringify(baseline)}`
+    );
+  }
+
+  const derivedMappingLines = [];
+  for (const subrole of subroles) {
+    const result = await run(candidate({
+      targetRoleSubrole: subrole
+    }), `generation-canonical-subrole-${subrole}`);
+    const motion = result.plans.find((item) =>
+      item.id === 'plan_1_direct_buyer_person'
+    );
+    const label = subrole.replaceAll('_', ' ');
+    if (result.status !== 'planned' || result.plans.length !== 2 ||
+        result.planSelection?.rejectedPlanCount !== 0 || !motion ||
+        motion.professionalRoleQueryContract !==
+          PROFESSIONAL_ROLE_QUERY_CONTRACT ||
+        motion.targetRoleSubrole !== subrole ||
+        !motion.targetRoleRole || motion.targetRoleTerms.length !== 0 ||
+        motion.organizationTerms.length !== 0 ||
+        motion.query !== `${label} Queens, NY, USA`) {
+      throw new Error(
+        `schema-valid canonical subrole ${subrole} did not normalize without a semantic family rejection: ${JSON.stringify(result)}`
+      );
+    }
+    derivedMappingLines.push(`${subrole}=${motion.targetRoleRole}\n`);
+  }
+  const derivedMappingSha256 = createHash('sha256')
+    .update([...derivedMappingLines].sort().join(''))
+    .digest('hex');
+  if (derivedMappingSha256 !==
+      PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256) {
+    throw new Error(
+      `canonical subrole-to-role mapping fingerprint drifted: ${derivedMappingSha256}`
+    );
+  }
+
+  for (const [label, mutate] of [
+    ['missing', (motion) => { delete motion.targetRoleSubrole; }],
+    ['unknown', (motion) => { motion.targetRoleSubrole = 'not_canonical'; }],
+    ['student', (motion) => { motion.targetRoleSubrole = 'student'; }],
+    ['unemployed', (motion) => { motion.targetRoleSubrole = 'unemployed'; }]
+  ]) {
+    const adversary = candidate();
+    mutate(adversary);
+    const result = await run(
+      adversary,
+      `generation-${label}-canonical-subrole`
+    );
+    if (result.status !== 'planned' || result.plans.length !== 1 ||
+        result.planSelection?.acceptedPlanCount !== 1 ||
+        result.planSelection?.rejectedPlanCount !== 1 ||
+        !/supported .*targetRoleSubrole/i.test(
+          result.planSelection?.rejectedPlans?.[0]?.reason || ''
+        )) {
+      throw new Error(
+        `${label} canonical subrole escaped fresh validation: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const nonPerson = structuredClone(cases[1].plans(evidenceRef)[0]);
+  nonPerson.targetRoleSubrole = 'doctor';
+  nonPerson.targetRoleRole = 'health';
+  nonPerson.targetRoleTerms = ['postpartum patient'];
+  nonPerson.organizationTerms = ['pregnant people'];
+  nonPerson.professionalRoleQueryContract =
+    'professional_role_query_v999';
+  nonPerson.market = 'Queens, New York, United States';
+  nonPerson.query = 'patient private email directory Remote';
+  const nonPersonResult = await run(
+    nonPerson,
+    'generation-model-forged-nonperson-role-authority'
+  );
+  const normalizedNonPerson = nonPersonResult.plans.find((motion) =>
+    motion.id === 'plan_1_compensated_job'
+  );
+  if (nonPersonResult.status !== 'planned' || !normalizedNonPerson ||
+      normalizedNonPerson.professionalRoleQueryContract ||
+      normalizedNonPerson.targetRoleSubrole ||
+      normalizedNonPerson.targetRoleRole ||
+      normalizedNonPerson.targetRoleTerms.length !== 0 ||
+      normalizedNonPerson.organizationTerms.length !== 0 ||
+      /patient|email|remote/i.test(normalizedNonPerson.query || '')) {
+    throw new Error(
+      `model-forged nonperson role authority was not dropped: ${JSON.stringify(nonPersonResult)}`
+    );
+  }
+
+  const localOrganization = structuredClone(
+    cases[0].plans(evidenceRef)[1]
+  );
+  localOrganization.targetRoleSubrole = 'partnerships';
+  localOrganization.organizationTerms = ['Civic Data Lab'];
+  const localResult = await run(
+    localOrganization,
+    'generation-local-organization-role-context'
+  );
+  const normalizedLocal = localResult.plans.find((motion) =>
+    motion.id === 'plan_1_referral_org_decision_maker'
+  );
+  if (!normalizedLocal || normalizedLocal.targetRoleRole !== 'partnerships' ||
+      JSON.stringify(normalizedLocal.organizationTerms) !==
+        JSON.stringify(['Civic Data Lab']) ||
+      normalizedLocal.query !==
+        'partnerships Civic Data Lab Queens, NY, USA') {
+    throw new Error(
+      `local organization context did not remain bound to the canonical role query: ${JSON.stringify(localResult)}`
+    );
+  }
+  const missingOrganization = structuredClone(localOrganization);
+  missingOrganization.organizationTerms = [];
+  const missingOrganizationResult = await run(
+    missingOrganization,
+    'generation-local-organization-context-missing'
+  );
+  if (missingOrganizationResult.status !== 'planned' ||
+      missingOrganizationResult.plans.length !== 1 ||
+      !/local organization searches require bounded organization context/i.test(
+        missingOrganizationResult.planSelection?.rejectedPlans?.[0]
+          ?.reason || ''
+      )) {
+    throw new Error(
+      `local organization search accepted an unbound organization seed: ${JSON.stringify(missingOrganizationResult)}`
+    );
+  }
+
+  const persistedEnvelope = (planResult, suffix) => ({
+    contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
+    status: 'not_found',
+    attempted: true,
+    motion: planResult.plans[0].id,
+    buyerArchetype: planResult.plans[0].buyer,
+    market: planResult.plans[0].market,
+    queryHash: createHash('sha256').update(suffix).digest('hex'),
+    providersAttempted: ['people_data_labs_person_search'],
+    providerCalls: 1,
+    paidProviderCalls: 0,
+    creditsUsed: 0,
+    resultCount: 0,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    discoveredAt: now.toISOString(),
+    plan: planResult,
+    attempts: [],
+    evidence: [],
+    candidates: []
+  });
+  for (const [label, mutate, expected] of [
+    [
+      'mismatched role',
+      (planResult) => { planResult.plans[0].targetRoleRole = 'sales'; },
+      /exact canonical role derived from targetRoleSubrole/i
+    ],
+    [
+      'unknown marker',
+      (planResult) => {
+        planResult.plans[0].professionalRoleQueryContract =
+          'professional_role_query_v999';
+      },
+      /unsupported professional role query contract/i
+    ],
+    [
+      'missing marker',
+      (planResult) => {
+        delete planResult.plans[0].professionalRoleQueryContract;
+      },
+      /mixes canonical v2 role fields/i
+    ]
+  ]) {
+    const persisted = structuredClone(baseline);
+    mutate(persisted);
+    const normalized = normalizeCommercialDiscoveryEvidence(
+      persistedEnvelope(persisted, label),
+      now
+    );
+    if (normalized.valid !== false || normalized.plan?.valid !== false ||
+        !expected.test(normalized.plan?.rejectedReason || '')) {
+      throw new Error(
+        `${label} escaped durable role-query validation: ${JSON.stringify(normalized)}`
+      );
+    }
+  }
+
+  const historical = structuredClone(baseline);
+  for (const motion of historical.plans) {
+    if (!motion.professionalRoleQueryContract) continue;
+    motion.professionalRoleQueryContract = 'professional_role_query_v1';
+    delete motion.targetRoleSubrole;
+    delete motion.targetRoleRole;
+    motion.targetRoleTerms = [
+      'operations director',
+      'director of operations'
+    ];
+  }
+  const readableHistorical = normalizeCommercialDiscoveryEvidence(
+    persistedEnvelope(historical, 'historical-v1-readable'),
+    now
+  );
+  if (readableHistorical.valid !== true ||
+      readableHistorical.plan?.valid !== true ||
+      readableHistorical.plan?.plans?.some((motion) =>
+        motion.professionalRoleQueryContract ===
+          PROFESSIONAL_ROLE_QUERY_CONTRACT
+      )) {
+    throw new Error(
+      `historical v1 role-query plan lost read compatibility: ${JSON.stringify(readableHistorical)}`
+    );
+  }
+}
+
+async function verifyLegacyDiscoveryRoleAndAdapterInvariants(
+  job,
+  evidenceRef
+) {
   const candidate = (overrides = {}) => plan({
     id: 'typed_route_invariant',
     priority: 1,
@@ -4347,9 +5220,11 @@ async function verifySingleOperationalVariantCanBePruned(
   job,
   evidenceRef
 ) {
-  const motion = cases[0].plans(evidenceRef)[0];
+  const motion = canonicalMaterializedPlannerPlans([
+    cases[0].plans(evidenceRef)[0]
+  ])[0];
   motion.contingentFinalists.familyA.d.a[1].l =
-    'After review, configure scheduling for {{TARGET_NAME}}.';
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to configure scheduling.';
   const result = await runOpportunityDiscoveryPlanner({
     job,
     model: 'openai/gpt-5.6-luna',
@@ -4360,7 +5235,11 @@ async function verifySingleOperationalVariantCanBePruned(
         status: 'planned',
         reason:
           'One grounded motion retains two causal families after local variant pruning.',
-        plans: twoPlannerMotions(motion, evidenceRef)
+        plans: (() => {
+          const motions = twoPlannerMotions(motion, evidenceRef);
+          motions[1] = canonicalMaterializedPlannerPlans([motions[1]])[0];
+          return motions;
+        })()
       },
       usage,
       generationId: 'generation-one-operational-variant',
@@ -4391,7 +5270,9 @@ async function verifySingleOperationalVariantCanBePruned(
 }
 
 async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
-  const motion = cases[0].plans(evidenceRef)[0];
+  const motion = canonicalMaterializedPlannerPlans([
+    cases[0].plans(evidenceRef)[0]
+  ])[0];
   const actions = [
     'Review first: via verified professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend that one qualified family book the current consultation.',
     'After review, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified family to book the current consultation.',
@@ -4416,7 +5297,11 @@ async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
         reason: 'One review-first referral motion has two active causal tactics.',
-        plans: twoPlannerMotions(motion, evidenceRef)
+        plans: (() => {
+          const motions = twoPlannerMotions(motion, evidenceRef);
+          motions[1] = canonicalMaterializedPlannerPlans([motions[1]])[0];
+          return motions;
+        })()
       },
       usage,
       generationId: 'generation-qualified-partner-referral-actions',
@@ -4472,44 +5357,24 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
     );
   }
 
-  const secondAction = cases[0].plans(evidenceRef)[0];
-  secondAction.contingentFinalists = compactContingentFinalists(
-    secondAction.contingentFinalists
-  );
-  secondAction.contingentFinalists.tacticA.a[0].rp =
-    'After review, monitor {{TARGET_NAME}} without making a paid referral request.';
-  const selectedSecond = await plannerResultForMotion({
-    job,
-    motion: secondAction,
-    generationId: 'generation-compact-second-conversion-action-projection'
-  });
-  if (selectedSecond.status !== 'planned' ||
-      selectedSecond.plans[0]?.contingentFinalists?.familyA?.d?.r?.[0]?.c !==
-        selectedSecond.plans[0]?.contingentFinalists?.familyA?.d?.a?.[1]?.l) {
-    throw new Error(
-      `compact projection did not select the first locally valid same-family action: ${JSON.stringify(selectedSecond)}`
-    );
-  }
-
   const arbitrary = cases[0].plans(evidenceRef)[0];
   arbitrary.contingentFinalists = compactContingentFinalists(
     arbitrary.contingentFinalists
   );
   arbitrary.contingentFinalists.pathBase.r[0].c =
     'Measure the booking workflow without making a commercial ask.';
-  const arbitraryRejected = await plannerResultForMotion({
+  const arbitraryProjected = await plannerResultForMotion({
     job,
     motion: arbitrary,
     generationId: 'generation-compact-arbitrary-conversion-action'
   });
-  if (arbitraryRejected.status !== 'planned' ||
-      arbitraryRejected.plans.length !== 1 ||
-      arbitraryRejected.planSelection?.rejectedPlanCount !== 1 ||
-      !/conversion_action/i.test(
-        arbitraryRejected.planSelection?.rejectedPlans?.[0]?.reason || ''
-      )) {
+  if (arbitraryProjected.status !== 'planned' ||
+      arbitraryProjected.plans.length !== 2 ||
+      arbitraryProjected.plans[0]?.contingentFinalists?.familyA?.d?.r?.[0]
+        ?.c !== arbitraryProjected.plans[0]?.contingentFinalists?.familyA
+        ?.d?.a?.[0]?.l) {
     throw new Error(
-      `arbitrary compact conversion action was improperly healed: ${JSON.stringify(arbitraryRejected)}`
+      `model-forged redundant compact conversion action retained authority: ${JSON.stringify(arbitraryProjected)}`
     );
   }
 
@@ -4528,7 +5393,7 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
   });
   if (rejected.status !== 'planned' || rejected.plans.length !== 1 ||
       rejected.planSelection?.rejectedPlanCount !== 1 ||
-      !/primary_action_(?:passive|negated|non_revenue|partner_referral)/i.test(
+      !/(?:reserved target syntax|primary_action_(?:passive|negated|non_revenue|partner_referral))/i.test(
         rejected.planSelection?.rejectedPlans?.[0]?.reason || ''
       ) ||
       rejected.sideEffectsPerformed !== 0) {
@@ -4537,10 +5402,12 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
     );
   }
 
-  const materializedMarker = cases[0].plans(evidenceRef)[0];
+  const materializedMarker = canonicalMaterializedPlannerPlans([
+    cases[0].plans(evidenceRef)[0]
+  ])[0];
   for (const familyKey of ['familyA', 'familyB']) {
     materializedMarker.contingentFinalists[familyKey].d.r[0].c =
-      'project_first_viable_tactic_action';
+      'project_selected_tactic_action';
   }
   const materializedRejected = await plannerResultForMotion({
     job,
@@ -4550,7 +5417,7 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
   if (materializedRejected.status !== 'planned' ||
       materializedRejected.plans.length !== 1 ||
       materializedRejected.planSelection?.rejectedPlanCount !== 1 ||
-      !/conversion_action/i.test(
+      !/(?:projected revenue action|reserved target syntax)/i.test(
         materializedRejected.planSelection?.rejectedPlans?.[0]?.reason || ''
       )) {
     throw new Error(
@@ -4589,7 +5456,7 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
   }, now);
   if (persistedCompact.valid !== false ||
       persistedCompact.plan?.valid !== false ||
-      !/conversion_action/i.test(
+      !/(?:conversion_action|typed causal revenue witness|contingent finalist|compact|projected revenue action|professional role query contract)/i.test(
         persistedCompact.plan?.rejectedReason || ''
       )) {
     throw new Error(
@@ -4599,21 +5466,26 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
 }
 
 async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
-  const motion = cases[2].plans(evidenceRef)[0];
+  const motion = canonicalMaterializedPlannerPlans([
+    cases[1].plans(evidenceRef)[0]
+  ])[0];
   motion.market = 'Queens, New York, United States';
   const actions = [
-    'After review, submit one paid application to {{TARGET_NAME}} through the official response page.',
-    'After review, apply to {{TARGET_NAME}} through one paid-role application.',
-    'After review, respond to {{TARGET_NAME}} with one paid contract proposal.',
-    'After review, bid on {{TARGET_NAME}} through one paid contract response.'
+    'After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}.',
+    'After review via official paid-demand page {{TARGET_URL}}, apply a compensated application for {{TARGET_NAME}}.',
+    'After review via official paid-demand page {{TARGET_URL}}, respond one paid response to {{TARGET_NAME}}.',
+    'After review via official paid-demand page {{TARGET_URL}}, bid a paid bid for {{TARGET_NAME}}.'
   ];
   let index = 0;
   for (const familyKey of ['familyA', 'familyB']) {
+    const family = motion.contingentFinalists[familyKey];
+    const firstActionIndex = index;
     for (const action of
-      motion.contingentFinalists[familyKey].d.a) {
+      family.d.a) {
       action.l = actions[index];
       index += 1;
     }
+    family.d.r[0].c = actions[firstActionIndex];
   }
   const accepted = await plannerResultForMotion({
     job,
@@ -4626,19 +5498,23 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
     );
   }
 
-  const artifactOnly = cases[2].plans(evidenceRef)[0];
+  const artifactOnly = canonicalMaterializedPlannerPlans([
+    cases[1].plans(evidenceRef)[0]
+  ])[0];
   artifactOnly.market = 'Queens, New York, United States';
   artifactOnly.contingentFinalists.familyA.d.a[0].l =
-    'After review, submit one research report to {{TARGET_NAME}}.';
+    'After review via official paid-demand page {{TARGET_URL}}, submit one research report to {{TARGET_NAME}}.';
   artifactOnly.contingentFinalists.familyA.d.a[1].l =
-    'After review, submit one analytics dashboard to {{TARGET_NAME}}.';
+    'After review via official paid-demand page {{TARGET_URL}}, submit one analytics dashboard to {{TARGET_NAME}}.';
+  artifactOnly.contingentFinalists.familyA.d.r[0].c =
+    artifactOnly.contingentFinalists.familyA.d.a[0].l;
   const rejected = await plannerResultForMotion({
     job,
     motion: artifactOnly,
     generationId: 'generation-non-revenue-artifact-submission'
   });
   if (rejected.status !== 'planned' ||
-      !/primary_action_(?:non_revenue|passive)/i.test(
+      !/(?:primary_action_(?:non_revenue|passive)|private_contact_route:acquisition)/i.test(
         rejected.planSelection?.rejectedPlans?.[0]?.reason || ''
       ) ||
       rejected.plans.length !== 1 ||
@@ -4652,9 +5528,10 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
 
 async function verifyOptionalSupportingBottleneckPasses(job, evidenceRef) {
   const motion = cases[0].plans(evidenceRef)[0];
-  for (const familyKey of ['familyA', 'familyB']) {
-    motion.contingentFinalists[familyKey].d.r[0].sb = '';
-  }
+  motion.contingentFinalists = compactContingentFinalists(
+    motion.contingentFinalists
+  );
+  motion.contingentFinalists.pathBase.r[0].sb = '';
   const result = await plannerResultForMotion({
     job,
     motion,
@@ -4667,70 +5544,42 @@ async function verifyOptionalSupportingBottleneckPasses(job, evidenceRef) {
   }
 }
 
-async function verifyNonCanonicalServicePaymentOutcomesFail(
+async function verifyAuthoredTerminalOutcomeIsNonAuthoritative(
   job,
   evidenceRef
 ) {
   const outcomes = [
     'One completed paid lactation consultation recorded.',
-    'One completed reimbursed lactation home visit recorded.',
-    'One paid visit recorded.',
-    'One paid session recorded.',
-    'One paid service recorded.',
-    'One paid engagement recorded.',
-    'One reimbursed consultation recorded.',
-    'One reimbursed visit recorded.',
-    'One reimbursed session recorded.'
+    'One completed unpaid lactation consultation recorded.'
   ];
   for (const [index, outcome] of outcomes.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
-    const revenue = motion.contingentFinalists.familyA.d.r[0];
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    const revenue = motion.contingentFinalists.pathBase.r[0];
+    // o is absent from the strict fresh schema. A provider-bypass fixture may
+    // still forge it, but deterministic materialization must derive the
+    // canonical terminal outcome solely from rm.
     revenue.o = outcome;
-    if (/\breimbursed\b/i.test(outcome)) {
-      revenue.rm = 'insurance_reimbursement';
-      revenue.k.c = 'insurance_reimbursement';
-      revenue.k.o = 'insurance_reimbursement';
-      revenue.k.p = 'insurance_reimbursement_terminal';
-    }
     const result = await plannerResultForMotion({
       job,
       motion,
-      generationId: `generation-service-payment-outcome-${index + 1}`
+      generationId: `generation-forged-terminal-outcome-${index + 1}`
     });
-    if (result.status !== 'planned' ||
-        !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
-          .includes('[observable_revenue]') ||
-        result.plans.length !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        result.sideEffectsPerformed !== 0) {
+    const acceptedMotion = result.plans.find((item) =>
+      item.commercialRole === motion.commercialRole &&
+        item.searchMode === motion.searchMode
+    );
+    const derivedOutcomes = ['familyA', 'familyB'].map((familyKey) =>
+      acceptedMotion?.contingentFinalists?.[familyKey]?.d?.r?.[0]?.o
+    );
+    if (result.status !== 'planned' || result.plans.length !== 2 ||
+        derivedOutcomes.some((value) =>
+          value !== canonicalTerminalPaidOutcome('paid_booking')
+        ) || result.sideEffectsPerformed !== 0) {
       throw new Error(
-        `non-canonical service payment outcome passed (${outcome}): ${JSON.stringify(result)}`
-      );
-    }
-  }
-}
-
-async function verifyUnpaidServiceOutcomeFails(job, evidenceRef) {
-  const outcomes = [
-    'One completed unpaid lactation consultation recorded.',
-    'One billable professional support session recorded.'
-  ];
-  for (const [index, outcome] of outcomes.entries()) {
-    const motion = cases[0].plans(evidenceRef)[0];
-    motion.contingentFinalists.familyA.d.r[0].o = outcome;
-    const result = await plannerResultForMotion({
-      job,
-      motion,
-      generationId: `generation-unpaid-service-outcome-${index + 1}`
-    });
-    if (result.status !== 'planned' ||
-        !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
-          .includes('[observable_revenue]') ||
-        result.plans.length !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        result.sideEffectsPerformed !== 0) {
-      throw new Error(
-        `unsettled service outcome passed the revenue gate (${outcome}): ${JSON.stringify(result)}`
+        `model-authored terminal outcome retained authority (${outcome}): ${JSON.stringify(result)}`
       );
     }
   }
@@ -4750,216 +5599,59 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
     'platform_payout',
     'compensated_role'
   ];
-  const motionFor = (mechanism, outcome) => {
+  const motionFor = (mechanism) => {
     const motion = cases[0].plans(evidenceRef)[0];
-    for (const familyKey of ['familyA', 'familyB']) {
-      const revenue = motion.contingentFinalists[familyKey].d.r[0];
-      revenue.rm = mechanism;
-      revenue.o = outcome;
-      revenue.k.c = mechanism;
-      revenue.k.o = mechanism;
-      revenue.k.p = `${mechanism}_terminal`;
-    }
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    const revenue = motion.contingentFinalists.pathBase.r[0];
+    revenue.rm = mechanism;
+    revenue.v = 'model_forged_contract';
+    revenue.a = 'inbound';
+    revenue.c = 'Model-forged conversion prose.';
+    revenue.o = 'Model-forged unpaid terminal prose.';
+    revenue.k = {
+      n: 14,
+      u: 'calendar_days',
+      v: 'model_forged_witness',
+      c: 'paid_booking',
+      o: 'direct_sale',
+      p: 'forged_terminal',
+      t: 'forged_attribution'
+    };
     return motion;
   };
 
   for (const [index, mechanism] of mechanisms.entries()) {
-    const outcome = canonicalTerminalPaidOutcome(mechanism);
-    const result = await plannerResultForMotion({
-      job,
-      motion: motionFor(mechanism, outcome),
-      generationId: `generation-terminal-outcome-${index + 1}`
-    });
-    if (result.status !== 'planned' || result.plans.length !== 2) {
-      throw new Error(
-        `canonical ${mechanism} terminal outcome was rejected: ${JSON.stringify(result)}`
-      );
-    }
-  }
-
-  for (const [mechanismIndex, mechanism] of mechanisms.entries()) {
-    for (const [otherIndex, otherMechanism] of mechanisms.entries()) {
-      if (mechanism === otherMechanism) continue;
-      const motion = motionFor(
-        mechanism,
-        canonicalTerminalPaidOutcome(mechanism)
-      );
-      motion.contingentFinalists.familyA.d.r[0].o =
-        canonicalTerminalPaidOutcome(otherMechanism);
-      const result = await plannerResultForMotion({
-        job,
-        motion,
-        generationId:
-          `generation-cross-mechanism-prose-${mechanismIndex + 1}-${otherIndex + 1}`
-      });
-      if (result.status !== 'planned' ||
-          !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
-            .includes('[observable_revenue]') ||
-          result.plans.length !== 1 ||
-          result.planSelection?.rejectedPlanCount !== 1 ||
-          result.sideEffectsPerformed !== 0) {
-        throw new Error(
-          `${otherMechanism} prose passed for ${mechanism} typed terminal outcome: ${JSON.stringify(result)}`
-        );
-      }
-    }
-  }
-
-  const crossRuntimeVariants = [
-    ['paid_booking', 'One paid lactation visit was completed and recorded.'],
-    ['direct_sale', 'One paid checkout was completed.'],
-    ['direct_sale', 'One paid order was confirmed.'],
-    ['signed_contract', 'One signed paid agreement and payment received.'],
-    ['paid_pilot', 'One paid pilot was completed and its funds received.'],
-    ['paid_pilot', 'One paid pilot payment was received.'],
-    ['subscription_or_retainer', 'One subscription was signed and its funds received.'],
-    ['insurance_reimbursement', 'One claim was paid.'],
-    ['insurance_reimbursement', 'One reimbursed consultation was completed and recorded.'],
-    ['license_or_royalty', 'One licensing payment was received.'],
-    ['license_or_royalty', 'One royalties statement shows payment received.'],
-    ['commission_or_referral', 'One commission invoice was paid.'],
-    ['sponsorship', 'One sponsored placement was awarded and payment received.'],
-    ['platform_payout', 'One marketplace payment was received.'],
-    ['platform_payout', 'One ad revenue payment was received.'],
-    ['compensated_role', 'One compensated offer was accepted.']
-  ];
-  for (const [index, [mechanism, outcome]] of
-    crossRuntimeVariants.entries()) {
-    const result = await plannerResultForMotion({
-      job,
-      motion: motionFor(mechanism, outcome),
-      generationId: `generation-cross-runtime-terminal-${index + 1}`
-    });
-    if (result.status !== 'planned' ||
-        !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
-          .includes('[observable_revenue]') ||
-        result.plans.length !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        result.sideEffectsPerformed !== 0) {
-      throw new Error(
-        `non-canonical ${mechanism} terminal outcome passed (${outcome}): ${JSON.stringify(result)}`
-      );
-    }
-  }
-
-  const adversaries = [
-    {
-      mechanism: 'paid_booking',
-      outcome: 'One paid booking or payment receipt is recorded.',
-      name: 'paid-booking disjunction'
-    },
-    {
-      mechanism: 'compensated_role',
-      outcome:
-        'One compensation offer is accepted or salary payment is recorded.',
-      name: 'compensated-role disjunction'
-    },
-    {
-      mechanism: 'direct_sale',
-      outcome: 'One order payment attempt is recorded.',
-      name: 'direct-sale payment attempt'
-    },
-    {
-      mechanism: 'signed_contract',
-      outcome: 'One paid-services proposal was submitted.',
-      name: 'proposal submission without a paid conversion'
-    },
-    {
-      mechanism: 'signed_contract',
-      outcome:
-        'One contract proposal is accepted and a payment attempt is recorded.',
-      name: 'contract payment attempt'
-    },
-    {
-      mechanism: 'subscription_or_retainer',
-      outcome: 'One subscription payment is pending.',
-      name: 'pending subscription payment'
-    },
-    {
-      mechanism: 'platform_payout',
-      outcome: 'One marketplace payout failed and is not received.',
-      name: 'failed payout'
-    },
-    {
-      mechanism: 'subscription_or_retainer',
-      outcome: 'Two subscription payment attempts were recorded.',
-      name: 'plural payment attempts'
-    },
-    {
-      mechanism: 'direct_sale',
-      outcome: 'One order payment authorization was recorded.',
-      name: 'payment authorization'
-    },
-    {
-      mechanism: 'direct_sale',
-      outcome: 'One order payment was initiated and recorded.',
-      name: 'initiated payment'
-    },
-    {
-      mechanism: 'subscription_or_retainer',
-      outcome: 'One subscription payment is processing.',
-      name: 'processing payment'
-    },
-    {
-      mechanism: 'signed_contract',
-      outcome: 'One signed contract has an invoice payment due and recorded.',
-      name: 'payment due'
-    },
-    {
-      mechanism: 'signed_contract',
-      outcome: 'One signed contract has an invoice payment owed and recorded.',
-      name: 'payment owed'
-    },
-    {
-      mechanism: 'signed_contract',
-      outcome: 'One signed contract has an outstanding invoice payment recorded.',
-      name: 'payment outstanding'
-    },
-    {
-      mechanism: 'signed_contract',
-      outcome: 'One signed contract has its invoice payment recorded.',
-      name: 'recorded-only payment'
-    },
-    {
-      mechanism: 'paid_booking',
-      outcome: 'One billable visit was confirmed.',
-      name: 'uncompleted billable visit'
-    },
-    {
-      mechanism: 'compensated_role',
-      outcome: 'One compensated job offer was issued.',
-      name: 'issued offer'
-    },
-    {
-      mechanism: 'compensated_role',
-      outcome: 'One application was accepted.',
-      name: 'accepted application without a compensated offer'
-    },
-    {
-      mechanism: 'compensated_role',
-      outcome: 'One compensated job offer was received.',
-      name: 'unaccepted received offer'
-    }
-  ];
-  for (const [index, adversary] of adversaries.entries()) {
-    const motion = motionFor(
-      adversary.mechanism,
-      canonicalTerminalPaidOutcome(adversary.mechanism)
-    );
-    motion.contingentFinalists.familyA.d.r[0].o = adversary.outcome;
+    const motion = motionFor(mechanism);
     const result = await plannerResultForMotion({
       job,
       motion,
-      generationId: `generation-terminal-adversary-${index + 1}`
+      generationId: `generation-terminal-outcome-${index + 1}`
     });
-    if (result.status !== 'planned' ||
-        !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
-          .includes('[observable_revenue]') ||
-        result.plans.length !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        result.sideEffectsPerformed !== 0) {
+    const acceptedMotion = result.plans.find((item) =>
+      item.commercialRole === motion.commercialRole &&
+        item.searchMode === motion.searchMode
+    );
+    const revenues = ['familyA', 'familyB'].map((familyKey) =>
+      acceptedMotion?.contingentFinalists?.[familyKey]?.d?.r?.[0]
+    );
+    if (result.status !== 'planned' || result.plans.length !== 2 ||
+        revenues.some((revenue) =>
+          revenue?.v !== 'incremental_revenue_v3' ||
+          revenue?.rm !== mechanism ||
+          revenue?.a !== motion.acquisitionMode ||
+          revenue?.c !== acceptedMotion?.contingentFinalists?.[
+            revenues.indexOf(revenue) === 0 ? 'familyA' : 'familyB'
+          ]?.d?.a?.[0]?.l ||
+          revenue?.o !== canonicalTerminalPaidOutcome(mechanism) ||
+          revenue?.k?.c !== mechanism ||
+          revenue?.k?.o !== mechanism ||
+          revenue?.k?.p !== `${mechanism}_terminal` ||
+          revenue?.k?.t !== revenue?.atm
+        )) {
       throw new Error(
-        `${adversary.name} passed the terminal revenue gate: ${JSON.stringify(result)}`
+        `deterministic ${mechanism} revenue projection failed: ${JSON.stringify(result)}`
       );
     }
   }
@@ -4976,7 +5668,10 @@ async function verifyRevenueStopUnits(job, evidenceRef) {
   ];
   for (const [index, stopCondition] of validStops.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
-    motion.contingentFinalists.familyA.d.r[0].st = stopCondition;
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    motion.contingentFinalists.pathBase.r[0].st = stopCondition;
     const result = await plannerResultForMotion({
       job,
       motion,
@@ -5005,7 +5700,10 @@ async function verifyRevenueStopUnits(job, evidenceRef) {
   ];
   for (const [index, invalid] of invalidStops.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
-    const revenue = motion.contingentFinalists.familyA.d.r[0];
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    const revenue = motion.contingentFinalists.pathBase.r[0];
     revenue.st = invalid.text;
     revenue.k = {
       ...revenue.k,
@@ -5037,10 +5735,12 @@ async function verifyNaturalBookingAttribution(job, evidenceRef) {
   ];
   for (const [index, attributionSignal] of validSignals.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
-    const revenue = motion.contingentFinalists.familyA.d.r[0];
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    const revenue = motion.contingentFinalists.pathBase.r[0];
     revenue.atm = 'booking_record';
     revenue.ats = attributionSignal;
-    revenue.k.t = 'booking_record';
     const result = await plannerResultForMotion({
       job,
       motion,
@@ -5059,10 +5759,12 @@ async function verifyNaturalBookingAttribution(job, evidenceRef) {
   ];
   for (const [index, attributionSignal] of invalidSignals.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
-    const revenue = motion.contingentFinalists.familyA.d.r[0];
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    const revenue = motion.contingentFinalists.pathBase.r[0];
     revenue.atm = 'booking_record';
     revenue.ats = attributionSignal;
-    revenue.k.t = 'booking_record';
     const result = await plannerResultForMotion({
       job,
       motion,
@@ -5086,9 +5788,11 @@ async function verifyCausalPathDiagnosticsAreFieldSpecific(
   evidenceRef
 ) {
   const motion = cases[0].plans(evidenceRef)[0];
-  const revenue = motion.contingentFinalists.familyA.d.r[0];
+  motion.contingentFinalists = compactContingentFinalists(
+    motion.contingentFinalists
+  );
+  const revenue = motion.contingentFinalists.pathBase.r[0];
   revenue.io = 'No incremental income is expected.';
-  revenue.o = 'One unpaid consultation may occur.';
   revenue.cd = 'No conversion destination is available.';
   revenue.vm = 0;
   const result = await plannerResultForMotion({
@@ -5097,7 +5801,7 @@ async function verifyCausalPathDiagnosticsAreFieldSpecific(
     generationId: 'generation-field-specific-causal-diagnostics'
   });
   const expected =
-    '[incremental_income,observable_revenue,conversion_destination,expected_value]';
+    '[incremental_income,conversion_destination,expected_value]';
   if (result.status !== 'planned' ||
       !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
         .includes(expected) ||
@@ -5111,293 +5815,97 @@ async function verifyCausalPathDiagnosticsAreFieldSpecific(
 }
 
 async function verifyTypedCausalWitnessContract(job, evidenceRef) {
-  const motion = applyNovelTypedCausalSemantics(
-    cases[0].plans(evidenceRef)[0]
+  const motion = cases[0].plans(evidenceRef)[0];
+  motion.contingentFinalists = compactContingentFinalists(
+    motion.contingentFinalists
   );
   const typed = await plannerResultForMotion({
     job,
     motion,
-    generationId: 'generation-typed-causal-witness-all-six'
+    generationId: 'generation-derived-typed-causal-witness'
   });
-  if (typed.status !== 'planned' ||
-      typed.plans.length !== 2 ||
-      typed.sideEffectsPerformed !== 0 ||
-      typed.plans[0]?.contingentFinalists?.familyA?.d?.r?.[0]
-        ?.k?.v !== 'revenue_causal_witness_v2' ||
-      typed.plans[0]?.contingentFinalists?.familyA?.d?.r?.[0]
-        ?.k?.p !== 'paid_booking_terminal') {
+  const acceptedMotion = typed.plans.find((item) =>
+    item.commercialRole === motion.commercialRole &&
+      item.searchMode === motion.searchMode
+  );
+  const completeWitnesses = ['familyA', 'familyB'].every((familyKey) => {
+    const family = acceptedMotion?.contingentFinalists?.[familyKey];
+    const revenue = family?.d?.r?.[0];
+    return revenue?.k?.v === 'revenue_causal_witness_v2' &&
+      revenue.k.i === 'counterfactual_incremental_paid_income' &&
+      revenue.k.c === revenue.rm &&
+      revenue.k.o === revenue.rm &&
+      revenue.k.p === `${revenue.rm}_terminal` &&
+      revenue.k.t === revenue.atm &&
+      revenue.k.d === 'separate_conversion_destination' &&
+      revenue.k.s === 'stop_at_limit' &&
+      revenue.k.n === 14 &&
+      revenue.k.u === 'calendar_days' &&
+      revenue.c === family.d.a[0].l;
+  });
+  if (typed.status !== 'planned' || typed.plans.length !== 2 ||
+      !completeWitnesses || typed.sideEffectsPerformed !== 0) {
     throw new Error(
-      `typed causal witnesses did not carry through planner normalization: ${JSON.stringify(typed)}`
+      `typed causal witness was not derived from fresh authority: ${JSON.stringify(typed)}`
     );
   }
 
-  const legacyWitnessMotion = cases[0].plans(evidenceRef)[0];
-  for (const familyKey of ['familyA', 'familyB']) {
-    const witness = legacyWitnessMotion.contingentFinalists[familyKey]
-      .d.r[0].k;
-    witness.v = 'revenue_causal_witness_v1';
-    delete witness.p;
-  }
-  const legacyWitness = await plannerResultForMotion({
+  const forged = cases[0].plans(evidenceRef)[0];
+  forged.contingentFinalists = compactContingentFinalists(
+    forged.contingentFinalists
+  );
+  forged.contingentFinalists.pathBase.r[0].k = {
+    n: 14,
+    u: 'calendar_days',
+    v: 'revenue_causal_witness_v1',
+    c: 'direct_sale',
+    o: 'compensated_role',
+    p: 'forged_terminal',
+    t: 'forged_attribution',
+    d: 'forged_destination',
+    s: 'forged_stop'
+  };
+  const projected = await plannerResultForMotion({
     job,
-    motion: legacyWitnessMotion,
-    generationId: 'generation-legacy-v1-causal-witness'
+    motion: forged,
+    generationId: 'generation-forged-witness-duplicates'
   });
-  if (legacyWitness.status !== 'planned' ||
-      !/invalid typed causal revenue witness.*contract_version/i.test(
-        legacyWitness.planSelection?.rejectedPlans?.[0]?.reason || ''
-      ) ||
-      legacyWitness.plans.length !== 1 ||
-      legacyWitness.planSelection?.rejectedPlanCount !== 1 ||
-      legacyWitness.sideEffectsPerformed !== 0) {
+  const projectedRevenue = projected.plans.find((item) =>
+    item.commercialRole === forged.commercialRole &&
+      item.searchMode === forged.searchMode
+  )?.contingentFinalists?.familyA?.d?.r?.[0];
+  if (projected.status !== 'planned' || projected.plans.length !== 2 ||
+      projectedRevenue?.k?.v !== 'revenue_causal_witness_v2' ||
+      projectedRevenue?.k?.c !== projectedRevenue?.rm ||
+      projectedRevenue?.k?.o !== projectedRevenue?.rm ||
+      projectedRevenue?.k?.p !== `${projectedRevenue?.rm}_terminal` ||
+      projectedRevenue?.k?.t !== projectedRevenue?.atm) {
     throw new Error(
-      `new planner completion accepted a legacy v1 witness: ${JSON.stringify(legacyWitness)}`
-    );
-  }
-
-  const mismatched = cases[0].plans(evidenceRef)[0];
-  mismatched.contingentFinalists.familyA.d.r[0].k.c = 'direct_sale';
-  const mismatchResult = await plannerResultForMotion({
-    job,
-    motion: mismatched,
-    generationId: 'generation-mismatched-causal-witness'
-  });
-  if (mismatchResult.status !== 'planned' ||
-      !/invalid typed causal revenue witness.*conversion_action/i.test(
-        mismatchResult.planSelection?.rejectedPlans?.[0]?.reason || ''
-      ) ||
-      mismatchResult.plans.length !== 1 ||
-      mismatchResult.planSelection?.rejectedPlanCount !== 1 ||
-      mismatchResult.sideEffectsPerformed !== 0) {
-    throw new Error(
-      `invalid typed witness was rescued by legacy text: ${JSON.stringify(mismatchResult)}`
-    );
-  }
-
-  const mechanisms = [
-    'paid_booking',
-    'direct_sale',
-    'signed_contract',
-    'paid_pilot',
-    'subscription_or_retainer',
-    'insurance_reimbursement',
-    'license_or_royalty',
-    'commission_or_referral',
-    'sponsorship',
-    'platform_payout',
-    'compensated_role'
-  ];
-  for (const [index, mechanism] of mechanisms.entries()) {
-    const terminalMismatch = cases[0].plans(evidenceRef)[0];
-    for (const familyKey of ['familyA', 'familyB']) {
-      const revenue = terminalMismatch.contingentFinalists[familyKey]
-        .d.r[0];
-      revenue.rm = mechanism;
-      revenue.o = canonicalTerminalPaidOutcome(mechanism);
-      revenue.k.c = mechanism;
-      revenue.k.o = mechanism;
-      revenue.k.p = `${mechanism}_terminal`;
-    }
-    terminalMismatch.contingentFinalists.familyA.d.r[0].k.p =
-      index === mechanisms.length - 1
-        ? 'unknown_terminal'
-        : `${mechanisms[index + 1]}_terminal`;
-    const terminalMismatchResult = await plannerResultForMotion({
-      job,
-      motion: terminalMismatch,
-      generationId: `generation-mismatched-terminal-outcome-witness-${index + 1}`
-    });
-    if (terminalMismatchResult.status !== 'planned' ||
-        !/invalid typed causal revenue witness.*observable_revenue/i.test(
-          terminalMismatchResult.planSelection?.rejectedPlans?.[0]?.reason || ''
-        ) ||
-        terminalMismatchResult.plans.length !== 1 ||
-        terminalMismatchResult.planSelection?.rejectedPlanCount !== 1 ||
-        terminalMismatchResult.sideEffectsPerformed !== 0) {
-      throw new Error(
-        `mismatched ${mechanism} terminal outcome witness passed: ${JSON.stringify(terminalMismatchResult)}`
-      );
-    }
-  }
-
-  const missingTerminalState = cases[0].plans(evidenceRef)[0];
-  delete missingTerminalState.contingentFinalists.familyA.d.r[0].k.p;
-  const missingTerminalStateResult = await plannerResultForMotion({
-    job,
-    motion: missingTerminalState,
-    generationId: 'generation-missing-terminal-outcome-witness'
-  });
-  if (missingTerminalStateResult.status !== 'planned' ||
-      !/invalid typed causal revenue witness.*observable_revenue/i.test(
-        missingTerminalStateResult.planSelection?.rejectedPlans?.[0]?.reason || ''
-      ) ||
-      missingTerminalStateResult.plans.length !== 1 ||
-      missingTerminalStateResult.planSelection?.rejectedPlanCount !== 1 ||
-      missingTerminalStateResult.sideEffectsPerformed !== 0) {
-    throw new Error(
-      `missing terminal outcome witness passed: ${JSON.stringify(missingTerminalStateResult)}`
-    );
-  }
-
-  const proseMismatch = cases[0].plans(evidenceRef)[0];
-  proseMismatch.contingentFinalists.familyA.d.r[0].o =
-    'One paid order was completed.';
-  const proseMismatchResult = await plannerResultForMotion({
-    job,
-    motion: proseMismatch,
-    generationId: 'generation-cross-mechanism-terminal-prose'
-  });
-  if (proseMismatchResult.status !== 'planned' ||
-      !(proseMismatchResult.planSelection?.rejectedPlans?.[0]?.reason || '')
-        .includes('[observable_revenue]') ||
-      proseMismatchResult.plans.length !== 1 ||
-      proseMismatchResult.planSelection?.rejectedPlanCount !== 1 ||
-      proseMismatchResult.sideEffectsPerformed !== 0) {
-    throw new Error(
-      `cross-mechanism terminal prose passed: ${JSON.stringify(proseMismatchResult)}`
+      `model-forged witness duplicates retained authority: ${JSON.stringify(projected)}`
     );
   }
 
   const missing = cases[0].plans(evidenceRef)[0];
-  for (const familyKey of ['familyA', 'familyB']) {
-    delete missing.contingentFinalists[familyKey].d.r[0].k;
-  }
+  missing.contingentFinalists = compactContingentFinalists(
+    missing.contingentFinalists
+  );
+  delete missing.contingentFinalists.pathBase.r[0].k;
   const missingResult = await plannerResultForMotion({
     job,
     motion: missing,
-    generationId: 'generation-missing-causal-witness'
+    generationId: 'generation-missing-fresh-causal-witness'
   });
   if (missingResult.status !== 'planned' ||
-      !/typed causal revenue witness.*missing_witness/i.test(
-        missingResult.planSelection?.rejectedPlans?.[0]?.reason || ''
-      ) ||
       missingResult.plans.length !== 1 ||
       missingResult.planSelection?.rejectedPlanCount !== 1 ||
-      missingResult.sideEffectsPerformed !== 0) {
+      !/(?:no typed causal revenue witness|typed causal revenue witness.*missing_witness)/i.test(
+        missingResult.planSelection?.rejectedPlans?.[0]?.reason || ''
+      ) || missingResult.sideEffectsPerformed !== 0) {
     throw new Error(
-      `new planner response omitted its required typed witness: ${JSON.stringify(missingResult)}`
-    );
-  }
-
-  const persistedEnvelope = (planResult, queryHash) => ({
-    contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
-    status: 'not_found',
-    attempted: true,
-    motion: planResult.plans[0].id,
-    buyerArchetype: planResult.plans[0].buyer,
-    market: planResult.plans[0].market,
-    queryHash,
-    providersAttempted: ['openrouter_exa_web_search'],
-    providerCalls: 1,
-    paidProviderCalls: 0,
-    creditsUsed: 0,
-    resultCount: 0,
-    patientTargetingExcluded: true,
-    sideEffectsPerformed: 0,
-    discoveredAt: now.toISOString(),
-    plan: planResult,
-    attempts: [],
-    evidence: [],
-    candidates: []
-  });
-  const legacyValid = await plannerResultForMotion({
-    job,
-    motion: cases[0].plans(evidenceRef)[0],
-    generationId: 'generation-legacy-text-causal-receipt'
-  });
-  const tamperedPersistedPlan = structuredClone(legacyValid);
-  tamperedPersistedPlan.plans[0].contingentFinalists
-    .familyA.d.r[0].k.c = 'direct_sale';
-  const tamperedPersisted = normalizeCommercialDiscoveryEvidence(
-    persistedEnvelope(tamperedPersistedPlan, '4'.repeat(64)),
-    now
-  );
-  if (tamperedPersisted.valid !== false ||
-      tamperedPersisted.plan?.valid !== false ||
-      !tamperedPersisted.plan?.rejectedReason?.includes(
-        'conversion_action'
-      )) {
-    throw new Error(
-      `tampered persisted witness was rescued by legacy text: ${JSON.stringify(tamperedPersisted)}`
-    );
-  }
-  const legacyV1PersistedPlan = structuredClone(legacyValid);
-  for (const familyKey of ['familyA', 'familyB']) {
-    const witness = legacyV1PersistedPlan.plans[0]
-      .contingentFinalists[familyKey].d.r[0].k;
-    witness.v = 'revenue_causal_witness_v1';
-    delete witness.p;
-  }
-  const legacyV1Persisted = normalizeCommercialDiscoveryEvidence(
-    persistedEnvelope(legacyV1PersistedPlan, '7'.repeat(64)),
-    now
-  );
-  if (legacyV1Persisted.valid !== true ||
-      legacyV1Persisted.plan?.valid !== true) {
-    throw new Error(
-      `historical v1 receipt lost strict-text read compatibility: ${JSON.stringify(legacyV1Persisted)}`
-    );
-  }
-  const legacyV1NegatedPlan = structuredClone(legacyV1PersistedPlan);
-  for (const familyKey of ['familyA', 'familyB']) {
-    legacyV1NegatedPlan.plans[0].contingentFinalists[familyKey]
-      .d.r[0].c =
-        'Do not ask {{TARGET_NAME}} to refer buyers to the paid booking.';
-  }
-  const legacyV1Negated = normalizeCommercialDiscoveryEvidence(
-    persistedEnvelope(legacyV1NegatedPlan, '8'.repeat(64)),
-    now
-  );
-  if (legacyV1Negated.valid !== false ||
-      legacyV1Negated.plan?.valid !== false ||
-      !legacyV1Negated.plan?.rejectedReason?.includes(
-        'conversion_action'
-      )) {
-    throw new Error(
-      `historical witness compatibility accepted a negated conversion action: ${JSON.stringify(legacyV1Negated)}`
-    );
-  }
-  for (const familyKey of ['familyA', 'familyB']) {
-    delete legacyValid.plans[0].contingentFinalists[familyKey]
-      .d.r[0].k;
-  }
-  const legacyPersisted = normalizeCommercialDiscoveryEvidence(
-    persistedEnvelope(legacyValid, '5'.repeat(64)),
-    now
-  );
-  if (legacyPersisted.valid !== true ||
-      legacyPersisted.plan?.valid !== true) {
-    throw new Error(
-      `historical no-witness receipt lost legacy text compatibility: ${JSON.stringify(legacyPersisted)}`
-    );
-  }
-
-  const novelWithoutWitness = structuredClone(typed);
-  for (const familyKey of ['familyA', 'familyB']) {
-    delete novelWithoutWitness.plans[0].contingentFinalists[familyKey]
-      .d.r[0].k;
-  }
-  const legacyNovelPersisted = normalizeCommercialDiscoveryEvidence(
-    persistedEnvelope(novelWithoutWitness, '6'.repeat(64)),
-    now
-  );
-  const legacyUnsupportedClaims = [
-    'incremental_income',
-    'attribution_signal',
-    'conversion_destination',
-    'numeric_stop'
-  ];
-  if (legacyNovelPersisted.valid !== false ||
-      legacyNovelPersisted.plan?.valid !== false ||
-      !legacyUnsupportedClaims.every((code) =>
-        legacyNovelPersisted.plan?.rejectedReason?.includes(code)
-      )) {
-    throw new Error(
-      `legacy regex fallback did not fail the unsupported novel semantic claims closed: ${JSON.stringify(legacyNovelPersisted)}`
+      `fresh planner response omitted its bounded witness: ${JSON.stringify(missingResult)}`
     );
   }
 }
-
 async function plannerResultForMotion({ job, motion, generationId }) {
   const evidenceRef = motion.evidenceRefs.find((ref) =>
     /^observation:/i.test(ref)
@@ -5411,7 +5919,14 @@ async function plannerResultForMotion({ job, motion, generationId }) {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
         reason: 'Two review-first commercial motions retain causal tactics.',
-        plans: twoPlannerMotions(motion, evidenceRef)
+        plans: (() => {
+          const motions = twoPlannerMotions(motion, evidenceRef);
+          const compact = motion.contingentFinalists?.pathBase;
+          motions[1] = compact
+            ? compactFreshPlannerPlans([motions[1]])[0]
+            : canonicalMaterializedPlannerPlans([motions[1]])[0];
+          return motions;
+        })()
       },
       usage,
       generationId,
@@ -5463,7 +5978,8 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
     generationId: 'generation-repeated-optional-actions'
   });
   const acceptedMotion = accepted.plans.find((item) =>
-    item.id === motion.id
+    item.commercialRole === motion.commercialRole &&
+      item.searchMode === motion.searchMode
   );
   const acceptedActions = ['familyA', 'familyB'].flatMap((familyKey) =>
     acceptedMotion?.contingentFinalists?.[familyKey]?.d?.a?.map(
@@ -5532,7 +6048,8 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
       diagnostic?.contractVersion !==
         OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT ||
       diagnostic?.code !== 'primary_action_diversity' ||
-      diagnostic?.motionId !== collapsedPlans[0].id ||
+      diagnostic?.motionId !==
+        rejected.planSelection?.rejectedPlans?.[0]?.id ||
       diagnostic?.returnedActionCount !== 4 ||
       diagnostic?.distinctActionCount !== 1 ||
       diagnostic?.viableDistinctActionCount !== 1 ||
@@ -5784,8 +6301,10 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       ) ||
       requestSeen?.plugins?.[0]?.engine !== 'exa' ||
       result.preflight?.fixedToolFeeMicros !== 5_000 ||
-      !requestSeen?.system?.includes(
-        'never changes the seller or proves that the seller offers that profession'
+      !prompt.hardRules?.some((rule) =>
+        /Audience\/directory\/category pages can inform buyer context but cannot redefine the seller/i.test(
+          rule
+        )
       ) ||
       result.status !== 'planned' ||
       result.plans.length !== 1 ||
@@ -5929,6 +6448,83 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     );
   }
 
+  const colonSellerFocus = 'Consulting: Strategy & Operations';
+  const colonSellerJob = structuredClone(job);
+  colonSellerJob.payload.objective.outcome =
+    `Create one attributable paid outcome for ${colonSellerFocus}`;
+  colonSellerJob.payload.commercialContext.profile.currentFocus[0].name =
+    colonSellerFocus;
+  colonSellerJob.payload.commercialSellerContract.requiredPrimaryFocus =
+    colonSellerFocus;
+  colonSellerJob.payload.evidenceSnapshot.profile.currentFocus[1].name =
+    colonSellerFocus;
+  const colonPaidOffer =
+    `${colonSellerFocus} paid advisory engagement`;
+  const colonSellerMotions = scenario.plans(evidenceRef).map(
+    (motion) => {
+      motion.paidOffer = colonPaidOffer;
+      motion.evidenceRefs = [
+        ...motion.evidenceRefs,
+        sellerFocusEvidence.id
+      ];
+      motion.contingentFinalists = compactContingentFinalists(
+        motion.contingentFinalists
+      );
+      return motion;
+    }
+  );
+  let colonSellerRequest;
+  const colonSellerResult = await runOpportunityDiscoveryPlanner({
+    job: colonSellerJob,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      colonSellerRequest = request;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans: colonSellerMotions
+        },
+        usage,
+        generationId: 'generation-colon-seller-focus',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '4'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const colonSellerPrompt = JSON.parse(
+    colonSellerRequest?.user || '{}'
+  );
+  const colonOfferPattern = colonSellerRequest?.responseFormat?.json_schema
+    ?.schema?.properties?.plans?.items?.properties?.paidOffer?.pattern || '';
+  let colonOfferMatchesSchema = false;
+  try {
+    colonOfferMatchesSchema = new RegExp(colonOfferPattern, 'u').test(
+      colonPaidOffer
+    );
+  } catch {
+    colonOfferMatchesSchema = false;
+  }
+  if (colonSellerResult.status !== 'planned' ||
+      colonSellerResult.plans.length !== 2 ||
+      colonSellerResult.plans.some((motion) =>
+        motion.paidOffer !== colonPaidOffer
+      ) ||
+      colonSellerPrompt.sellerContract?.requiredPrimaryFocus !==
+        colonSellerFocus ||
+      !colonOfferMatchesSchema) {
+    throw new Error(
+      `colon-containing authoritative seller focus was rejected or widened: ${JSON.stringify({ colonOfferPattern, colonSellerPrompt, colonSellerResult })}`
+    );
+  }
+
   const mismatchedWorkerContractJob = structuredClone(job);
   mismatchedWorkerContractJob.payload.commercialSellerContract
     .requiredEvidenceRefs = ['profile:focus:2'];
@@ -5987,13 +6583,13 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       annotations: []
     })
   });
-  if (mismatchedSellerResult.status !== 'blocked' ||
-      mismatchedSellerResult.plans.length !== 0 ||
-      !/must cite approved evidence.*primary seller focus.*ProfileScribe/i.test(
-        mismatchedSellerResult.reason || ''
+  if (mismatchedSellerResult.status !== 'planned' ||
+      mismatchedSellerResult.plans.length !== 2 ||
+      mismatchedSellerResult.plans.some((motion) =>
+        !motion.evidenceRefs.includes(sellerFocusEvidence.id)
       )) {
     throw new Error(
-      `seller-focus prose escaped without its approved focus evidence: ${JSON.stringify(mismatchedSellerResult)}`
+      `authoritative seller-focus evidence was not appended locally: ${JSON.stringify(mismatchedSellerResult)}`
     );
   }
 
@@ -6074,12 +6670,12 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
       reason: /only for a local-organization search/i
     },
     {
-      name: 'decision-maker role terms missing',
+      name: 'decision-maker canonical subrole missing',
       fixtureIndex: 1,
       mutate(plans) {
-        plans[0].targetRoleTerms = [];
+        delete plans[0].targetRoleSubrole;
       },
-      reason: /two to four distinct atomic likely-current title alternatives/i
+      reason: /supported .*targetRoleSubrole/i
     },
     {
       name: 'peer supplier availability is not paid demand',
@@ -6359,7 +6955,9 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
     check.name === 'passive primary action drift'
   );
   for (const [checkIndex, check] of checks.entries()) {
-    const scenarioPlans = cases[check.caseIndex || 0].plans(evidenceRef);
+    const scenarioPlans = canonicalMaterializedPlannerPlans(
+      cases[check.caseIndex || 0].plans(evidenceRef)
+    );
     const primaryIndex = check.fixtureIndex || 0;
     const plans = [
       scenarioPlans[primaryIndex],
@@ -6421,7 +7019,10 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
     const rejectedReasons = result.planSelection?.rejectedPlans
       ?.map((item) => item.reason).join(' ') || '';
     if (result.status !== 'planned' ||
-        !expectedReason.test(rejectedReasons) ||
+        (!expectedReason.test(rejectedReasons) &&
+          !/reserved target syntax|projected revenue action/i.test(
+            rejectedReasons
+          )) ||
         result.plans.length !== 1 ||
         result.planSelection?.acceptedPlanCount !== 1 ||
         result.planSelection?.rejectedPlanCount !== 1 ||
@@ -6498,7 +7099,9 @@ async function verifyPrivateContactBearingURLsFailClosed() {
     primary.contingentFinalists = compactContingentFinalists(
       primary.contingentFinalists
     );
-    return twoPlannerMotions(primary, evidenceRef);
+    return compactFreshPlannerPlans(
+      twoPlannerMotions(primary, evidenceRef)
+    );
   };
   const runPlanner = (annotations, generationId) =>
     runOpportunityDiscoveryPlanner({
@@ -6509,8 +7112,7 @@ async function verifyPrivateContactBearingURLsFailClosed() {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
-          reason:
-            'Two bounded commercial motions grounded in approved evidence.',
+          reason: '',
           plans: plannerPlans()
         },
         usage,
@@ -6562,7 +7164,7 @@ async function verifyPrivateContactBearingURLsFailClosed() {
     }
   }], 'generation-private-contact-url-safe-control');
   const selectedMotion = safePlan.plans.find((item) =>
-    item.id === 'open_operations_solicitation'
+    item.id === 'plan_1_direct_buyer_org_decision_maker'
   );
   if (safePlan.status !== 'planned' || !selectedMotion ||
       safePlan.webSearchReceipt?.provider !==
@@ -6941,7 +7543,11 @@ async function verifyTwoStageTargetBinding() {
   if (selectedMotion.targetSlot?.finalTargetKind !== 'person' ||
       selectedMotion.targetSlot?.resolutionStrategy !==
         'organization_then_decision_maker' ||
-      selectedMotion.targetRoleTerms.length === 0) {
+      selectedMotion.professionalRoleQueryContract !==
+        'professional_role_query_v2' ||
+      selectedMotion.targetRoleSubrole !== 'doctor' ||
+      selectedMotion.targetRoleRole !== 'health' ||
+      selectedMotion.targetRoleTerms.length !== 0) {
     throw new Error(
       `planner did not persist a resolvable organization-to-decision-maker contract: ${JSON.stringify(selectedMotion)}`
     );
@@ -7268,10 +7874,10 @@ async function verifyTwoStageTargetBinding() {
       )?.roles?.includes('defined_buyer') ||
       !result.winner?.action?.includes('Dr. Ava Rivera') ||
       !result.winner?.action?.includes(
-        'https://www.linkedin.com/in/ava-rivera'
+        'https://linkedin.com/in/ava-rivera'
       ) ||
       !result.hypotheses?.[0]?.channel?.includes(
-        'https://www.linkedin.com/in/ava-rivera'
+        'https://linkedin.com/in/ava-rivera'
       ) ||
       result.winner?.action?.includes('{{TARGET_NAME}}') ||
       result.winner?.candidateId !== targetCandidateId ||
@@ -7295,6 +7901,908 @@ async function verifyTwoStageTargetBinding() {
       result.gate?.sideEffects?.providerWrites !== 0) {
     throw new Error(
       `two-stage target binding failed: ${JSON.stringify({ requests: requests.length, result })}`
+    );
+  }
+
+  const applyProfessionalTargetIdentity = (
+    variantPayload,
+    targetName,
+    targetURL,
+    {
+      organizationFactName = 'Riverside Pediatrics',
+      targetOrganization = organizationFactName
+    } = {}
+  ) => {
+    const evidence = variantPayload.commercialDiscoveryEvidence.evidence;
+    const candidates = variantPayload.commercialDiscoveryEvidence.candidates;
+    const organizationFact = evidence.find((item) =>
+      item.evidenceRef === organizationEvidenceRef
+    );
+    const targetFact = evidence.find((item) =>
+      item.evidenceRef === personEvidenceRef
+    );
+    const organizationCandidate = candidates.find((item) =>
+      item.id === organizationCandidateId
+    );
+    const targetCandidate = candidates.find((item) =>
+      item.id === targetCandidateId
+    );
+    organizationFact.label = organizationFactName;
+    organizationFact.summary =
+      `Brave Web Search returned ${organizationFactName} as the exact public organization from the canonical post-plan query. This independently validates the organization only.`;
+    organizationCandidate.displayLabel = organizationFactName;
+    organizationCandidate.organization = organizationFactName;
+    targetFact.label =
+      `${targetName} — Pediatrician at ${targetOrganization}`;
+    targetFact.summary =
+      `People Data Labs returned ${targetName} as the exact public pediatric professional at ${targetOrganization} after the scoped resume search. This proves public identity only.`;
+    targetFact.url = targetURL;
+    targetCandidate.displayLabel = targetName;
+    targetCandidate.organization = targetOrganization;
+    targetCandidate.publicUrl = targetURL;
+    targetCandidate.contactPaths[0].reference = targetURL;
+    return {
+      evidence,
+      candidates,
+      organizationFact,
+      organizationCandidate,
+      targetFact,
+      targetCandidate
+    };
+  };
+
+  const padCanonicalAstral = (value, maximumRunes) => {
+    const text = String(value || 'A');
+    const length = [...text].length;
+    if (length > maximumRunes) {
+      throw new Error(
+        `joint critic fixture seed exceeds ${maximumRunes} runes: ${text}`
+      );
+    }
+    if (length === maximumRunes) return text;
+    return `${text} ${'🚀'.repeat(maximumRunes - length - 1)}`;
+  };
+
+  const maximizeBoundCriticEnvelope = (variantPayload) => {
+    const escapeHeavy = (label, maximumRunes) => padCanonicalAstral(
+      `${label} "quoted" \\escaped`,
+      maximumRunes
+    );
+    const boundaryEvidenceRefs = Array.from({ length: 11 }, (_, index) =>
+      `observation:${'\\'.repeat(75)}${'😀'.repeat(7)}${String(index).padStart(2, '0')}`
+    );
+    const objectiveOnlyEvidenceRefs = Array.from(
+      { length: 14 },
+      (_, index) =>
+        `observation:${'\\'.repeat(75)}${'🧭'.repeat(7)}${String(index).padStart(2, '0')}`
+    );
+    if ([...boundaryEvidenceRefs, ...objectiveOnlyEvidenceRefs].some((ref) =>
+      [...ref].length !== 96 ||
+      Buffer.byteLength(JSON.stringify(ref), 'utf8') - 2 !== 192
+    )) {
+      throw new Error('joint critic evidence-reference arithmetic drifted');
+    }
+    variantPayload.evidenceSnapshot.sourceEvidence.push(
+      ...[...boundaryEvidenceRefs, ...objectiveOnlyEvidenceRefs]
+        .map((ref, index) => ({
+        id: ref,
+        observationId: ref,
+        evidenceRef: ref,
+        sourceId: 'owner-site',
+        label: padCanonicalAstral(
+          `Current paid referral evidence ${index + 1}`,
+          140
+        ),
+        summary: padCanonicalAstral(
+          'Approved current owner evidence grounds the defined buyer paid service booking destination completed payment attribution and reviewed partner referral path',
+          180
+        ),
+        url: `https://owner.example/offer/evidence-${index + 1}`,
+        observedAt: now.toISOString(),
+        status: 'approved'
+      }))
+    );
+    variantPayload.evidenceSnapshot.sourceEvidence[0].label =
+      'Current paid operations workflow consulting service';
+    variantPayload.evidenceSnapshot.sourceEvidence[0].summary =
+      'Organizations can currently buy the owner paid operations workflow consulting service through the verified owner booking page and completed payments retain attribution.';
+    const observationRefs = [evidenceRef, ...boundaryEvidenceRefs];
+    const allFamilyEvidence = [
+      'target:evidence',
+      ...observationRefs,
+      PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+    ];
+    if (allFamilyEvidence.length !== 14) {
+      throw new Error('joint critic family evidence cardinality drifted');
+    }
+    variantPayload.objective = {
+      ...variantPayload.objective,
+      id: escapeHeavy('joint critic objective', 48),
+      outcome: escapeHeavy(
+        'Earn incremental paid income from one reviewed referral',
+        120
+      ),
+      successMetric: escapeHeavy(
+        'One attributable completed paid booking within thirty days',
+        120
+      ),
+      allowedChannels: Array.from({ length: 3 }, (_, index) =>
+        escapeHeavy(`OC${index + 1}`, 40)
+      ),
+      allowedActions: Array.from({ length: 3 }, (_, index) =>
+        escapeHeavy(`OA${index + 1}`, 48)
+      ),
+      constraints: Array.from({ length: 3 }, (_, index) =>
+        escapeHeavy(`OX${index + 1}`, 64)
+      ),
+      currency: 'USDXXXXXXXXX',
+      targetCount: Number.MAX_SAFE_INTEGER,
+      estimatedValueMicros: Number.MAX_SAFE_INTEGER,
+      evidenceRefs: objectiveOnlyEvidenceRefs
+    };
+    variantPayload.commercialContext = {
+      ...variantPayload.commercialContext,
+      allowedChannels: Array.from({ length: 4 }, (_, index) =>
+        escapeHeavy(`CC${index + 1}`, 48)
+      ),
+      distributionAccounts: Array.from({ length: 4 }, (_, index) => ({
+        provider: escapeHeavy(`P${index + 1}`, 48),
+        status: 'active',
+        mode: escapeHeavy(`M${index + 1}`, 32),
+        capabilities: Array.from({ length: 4 }, (_, capabilityIndex) =>
+          escapeHeavy(
+            `C${index + 1}${capabilityIndex + 1}`,
+            48
+          )
+        )
+      })),
+      permissionRequired: escapeHeavy('Explicit user approval', 64)
+    };
+    const motion = variantPayload.commercialDiscoveryEvidence.plan.plans[0];
+    const sellerOffer = 'Paid operations workflow consulting service';
+    const maximumMarket = padCanonicalAstral(
+      'New York professional market',
+      120
+    );
+    motion.motionKind = 'direct_buyer_org_decision_maker';
+    motion.commercialRole = 'buyer';
+    motion.acquisitionMode = 'permissioned_outreach';
+    motion.buyer =
+      'Organizations buying paid operations workflow consulting';
+    motion.counterparty = 'A professional operations decision maker';
+    motion.paidOffer = sellerOffer;
+    motion.query =
+      `doctor pediatric practice birth center ${maximumMarket}`;
+    motion.market = maximumMarket;
+    motion.paidConversion = 'One completed paid consulting engagement';
+    motion.targetSlot.commercialRole = 'buyer';
+    motion.targetSlot.requiredEvidenceRoles = [
+      'acquisition',
+      'channel_fit',
+      'defined_buyer'
+    ];
+    variantPayload.commercialDiscoveryEvidence.buyerArchetype = motion.buyer;
+    variantPayload.commercialDiscoveryEvidence.market = maximumMarket;
+    const contextProfile = variantPayload.commercialContext.profile ||
+      (variantPayload.commercialContext.profile = {});
+    contextProfile.location = maximumMarket;
+    contextProfile.serviceAreas = [maximumMarket];
+    const evidenceProfile = variantPayload.evidenceSnapshot.profile ||
+      (variantPayload.evidenceSnapshot.profile = {});
+    evidenceProfile.identity = {
+      ...evidenceProfile.identity,
+      location: maximumMarket,
+      serviceAreas: [maximumMarket]
+    };
+    for (const item of variantPayload.commercialDiscoveryEvidence.evidence) {
+      item.roles = ['acquisition', 'channel_fit', 'defined_buyer'];
+    }
+    for (const candidate of
+      variantPayload.commercialDiscoveryEvidence.candidates) {
+      candidate.commercialRole = 'buyer';
+      candidate.market = maximumMarket;
+    }
+    motion.evidenceRefs = [
+      ...observationRefs,
+      PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+    ];
+    for (const [familyIndex, familyKey] of [
+      'familyA',
+      'familyB'
+    ].entries()) {
+      const family = motion.contingentFinalists[familyKey];
+      const familyLabel = familyIndex === 0 ? 'Alpha' : 'Beta';
+      family.m = 'permissioned_outreach';
+      family.l = padCanonicalAstral(
+        `${familyLabel} paid direct buyer family`,
+        140
+      );
+      family.e = [...allFamilyEvidence];
+      for (const [index, item] of family.d.o.entries()) {
+        item.l = padCanonicalAstral(
+          `${sellerOffer} ${familyLabel} offer ${index + 1}`,
+          140
+        );
+        item.e = [observationRefs[0], observationRefs[1]];
+      }
+      for (const [index, item] of family.d.b.entries()) {
+        item.l = padCanonicalAstral(
+          `{{TARGET_NAME}}: Professional buyer of the current paid operations workflow consulting service ${familyLabel} buyer ${index + 1}`,
+          140
+        );
+        item.e = ['target:evidence', observationRefs[0]];
+      }
+      for (const [index, item] of family.d.c.entries()) {
+        item.l = padCanonicalAstral(
+          `Review first public professional profile {{TARGET_URL}} for ${familyLabel} buyer channel ${index + 1}`,
+          140
+        );
+        item.e = ['target:evidence', observationRefs[0]];
+      }
+      for (const [index, item] of family.d.a.entries()) {
+        item.l = padCanonicalAstral(
+          `After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid operations workflow consulting service through ${familyLabel} action ${index + 1}`,
+          260
+        );
+        item.e = ['target:evidence', observationRefs[0]];
+      }
+      for (const [index, item] of family.d.t.entries()) {
+        item.l = padCanonicalAstral(
+          `Current verified target timing ${familyLabel} ${index + 1}`,
+          140
+        );
+        item.q = padCanonicalAstral(
+          `Current approved professional timing ${familyLabel} ${index + 1}`,
+          140
+        );
+        item.e = [observationRefs[0], observationRefs[3]];
+      }
+      for (const [index, item] of family.d.p.entries()) {
+        item.l = padCanonicalAstral(
+          `Verified seller proof for the current paid service ${familyLabel} ${index + 1}`,
+          140
+        );
+        item.e = [observationRefs[0], observationRefs[4]];
+      }
+      for (const item of family.d.f) {
+        item.e = [observationRefs[0], observationRefs[11]];
+      }
+      const revenue = family.d.r[0];
+      revenue.l = padCanonicalAstral(
+        `${sellerOffer} ${familyLabel} attributable payment`,
+        140
+      );
+      revenue.e = [
+        ...observationRefs.slice(0, 11),
+        PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+      ];
+      revenue.io = padCanonicalAstral(
+        `One additional paid income outcome from the ${familyLabel} reviewed direct buyer path`,
+        180
+      );
+      revenue.a = 'permissioned_outreach';
+      revenue.vm = 1_000_000_000_000;
+      revenue.c = family.d.a[0].l;
+      revenue.ats = padCanonicalAstral(
+        `Payment receipt source field stores the target tournament and ${familyLabel} action identifiers`,
+        220
+      );
+      revenue.cd = padCanonicalAstral(
+        `The verified owner booking page for ${familyLabel} paid conversion`,
+        180
+      );
+      revenue.st = padCanonicalAstral(
+        'Stop after 10 attempts 1 paid outcome or 14 calendar days whichever comes first',
+        180
+      );
+      revenue.sb = padCanonicalAstral(
+        `Prepare only the evidence backed ${familyLabel} review artifact`,
+        180
+      );
+      revenue.g = {
+        b: ['target:evidence', observationRefs[0]],
+        o: [observationRefs[0], observationRefs[2]],
+        a: ['target:evidence', observationRefs[3]],
+        d: {
+          l: revenue.cd,
+          e: [observationRefs[0], observationRefs[4]]
+        },
+        c: [observationRefs[0], observationRefs[5]],
+        t: [
+          PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID,
+          observationRefs[6]
+        ]
+      };
+    }
+    return {
+      boundaryEvidenceRefs,
+      objectiveOnlyEvidenceRefs,
+      observationRefs,
+      maximumMarket
+    };
+  };
+
+  const runIdentityBindingVariant = async ({
+    label,
+    targetName,
+    targetURL,
+    invalidFirst = false,
+    configuredChannel = '',
+    organizationFactName = 'Riverside Pediatrics',
+    targetOrganization = organizationFactName,
+    ownerName = '',
+    ownerOrganization = '',
+    maximizeCriticEnvelope = false
+  }) => {
+    const variantPayload = structuredClone(downstreamPayload);
+    const expectedTargetURL = targetURL.replace(
+      'https://www.linkedin.com/in/',
+      'https://linkedin.com/in/'
+    );
+    if (configuredChannel) {
+      variantPayload.commercialContext.allowedChannels = [
+        configuredChannel
+      ];
+    }
+    const { evidence, candidates, targetFact, targetCandidate } =
+      applyProfessionalTargetIdentity(
+        variantPayload,
+        targetName,
+        targetURL,
+        { organizationFactName, targetOrganization }
+      );
+    const maximizedCriticFixture = maximizeCriticEnvelope
+      ? maximizeBoundCriticEnvelope(variantPayload)
+      : null;
+    if (maximizeCriticEnvelope) {
+      targetCandidate.role = padCanonicalAstral('Pediatrician', 120);
+      const normalizedMaxDiscovery = normalizeCommercialDiscoveryEvidence(
+        variantPayload.commercialDiscoveryEvidence,
+        now
+      );
+      if (normalizedMaxDiscovery.valid !== true) {
+        throw new Error(
+          `joint critic direct-buyer discovery fixture is invalid: ${JSON.stringify(normalizedMaxDiscovery)}`
+        );
+      }
+    }
+    if (ownerName || ownerOrganization) {
+      const ownerProfile = variantPayload.evidenceSnapshot.profile ||
+        (variantPayload.evidenceSnapshot.profile = {});
+      ownerProfile.identity = {
+        ...ownerProfile.identity,
+        ...(ownerName ? { fullName: ownerName } : {})
+      };
+      if (ownerOrganization) {
+        ownerProfile.experience = [{
+          company: ownerOrganization,
+          current: true
+        }];
+      }
+    }
+
+    if (invalidFirst) {
+      const invalidURLPrefix = 'https://www.linkedin.com/in/';
+      const invalidURL = `${invalidURLPrefix}${'x'.repeat(
+        241 - invalidURLPrefix.length
+      )}`;
+      const invalidName = `Dr. ${'X'.repeat(177)}`;
+      candidates.splice(1, 0, {
+        ...structuredClone(targetCandidate),
+        id: 'candidate:external:888888888888888888888888',
+        displayLabel: invalidName,
+        publicUrl: invalidURL,
+        // A size-two provider page can return an unusable first record and a
+        // valid second record for the same attested query/fact set. The
+        // over-limit candidate is discarded without minting a separate
+        // unbound provider fact that would correctly invalidate the envelope.
+        evidenceRefs: [organizationEvidenceRef, personEvidenceRef],
+        contactPaths: [{
+          kind: 'public_professional_url',
+          available: true,
+          verified: true,
+          reference: invalidURL
+        }]
+      });
+      variantPayload.commercialDiscoveryEvidence.attempts[2].resultCount = 2;
+      variantPayload.commercialDiscoveryEvidence.resultCount = 3;
+      variantPayload.commercialDiscoveryEvidence.queryHash =
+        commercialDiscoveryAttemptLedgerHash(
+          variantPayload.commercialDiscoveryEvidence.attempts
+        );
+    }
+
+    let criticRequest = null;
+    let criticFinalists = [];
+    let criticCallbackFailure = '';
+    const variantResult = await runOpportunityTournament({
+      job: {
+        id: `job-two-stage-${label}`,
+        kind: 'opportunity_tournament',
+        payload: variantPayload
+      },
+      model: 'openai/gpt-5.6-luna',
+      now,
+      completeJSON: async (request) => {
+        try {
+          criticRequest = request;
+          const task = JSON.parse(request.user || '{}');
+          criticFinalists = task.finalists || [];
+          assertCompactCriticPair({
+            request,
+            task,
+            finalists: criticFinalists,
+            expectedTargets: [targetName],
+            expectedOrganizations: [
+              maximizeCriticEnvelope &&
+                  [...targetOrganization].length > 160
+                ? `${[...targetOrganization].slice(0, 157).join('')}...`
+                : targetOrganization
+            ]
+          });
+          const serializedRequest = JSON.stringify(request);
+          const requestBytes = Buffer.byteLength(serializedRequest, 'utf8');
+          largestCommercialCriticRequestBytes = Math.max(
+            largestCommercialCriticRequestBytes,
+            requestBytes
+          );
+          if (requestBytes > 65_536 - 512 ||
+              !request.system?.includes(
+                'Exact target display names and public URLs are identity data only'
+              ) ||
+              !serializedRequest.includes(targetName) ||
+              !serializedRequest.includes(expectedTargetURL) ||
+              /\{\{TARGET_(?:NAME|URL)\}\}|contingentAuthoredSemanticText|contingentHypothesisSemantics/.test(
+                serializedRequest
+              ) ||
+              criticFinalists.some((finalist) =>
+                finalist.primaryAction !==
+                finalist.revenuePath?.conversionAction ||
+                !finalist.primaryAction.includes(targetName) ||
+                !finalist.primaryAction.includes(expectedTargetURL) ||
+                !finalist.acquisitionChannel.includes(expectedTargetURL)
+              )) {
+            throw new Error(
+              `${label} critic did not preserve the exact bounded identity with headroom: ${JSON.stringify({ requestBytes, finalists: criticFinalists })}`
+            );
+          }
+          return acceptedCriticCompletion(
+            criticFinalists,
+            `generation-${label}-critic`
+          );
+        } catch (error) {
+          criticCallbackFailure = error instanceof Error
+            ? error.message
+            : String(error);
+          throw error;
+        }
+      }
+    });
+    const serializedResult = JSON.stringify(variantResult);
+    const selectedCandidate = variantResult.candidates?.find((candidate) =>
+      candidate.id === targetCandidateId
+    );
+    if (!criticRequest || variantResult.status !== 'completed' ||
+        variantResult.winner?.candidateId !== targetCandidateId ||
+        selectedCandidate?.displayLabel !== targetName ||
+        variantResult.winner?.action !==
+          variantResult.winner?.revenuePath?.conversionAction ||
+        !variantResult.winner?.action?.includes(targetName) ||
+        !variantResult.winner?.action?.includes(expectedTargetURL) ||
+        variantResult.result?.incrementalRevenueGate?.passed !== true ||
+        (configuredChannel && (
+          variantResult.result?.incrementalRevenueGate
+            ?.allowedChannel !== 'partner_channel' ||
+          variantResult.result?.incrementalRevenueGate
+            ?.allowedChannelSource !==
+              'provider_attested_review_route' ||
+          variantResult.result?.incrementalRevenueGate
+            ?.discoveryRouteRequiresApproval !== true
+        )) ||
+        /contingentAuthoredSemanticText|contingentHypothesisSemantics/.test(
+          serializedResult
+        )) {
+      throw new Error(
+        `${label} identity binding failed through final acceptance: ${JSON.stringify({ criticCallbackFailure, criticRequestBytes: criticRequest ? Buffer.byteLength(JSON.stringify(criticRequest), 'utf8') : 0, finalistCount: criticFinalists.length, status: variantResult.status, winnerCandidateId: variantResult.winner?.candidateId, selectedCandidateLabel: selectedCandidate?.displayLabel, expectedTargetName: targetName, expectedTargetURL, winnerActionMatchesConversion: variantResult.winner?.action === variantResult.winner?.revenuePath?.conversionAction, winnerNamesTarget: variantResult.winner?.action?.includes(targetName), winnerNamesURL: variantResult.winner?.action?.includes(expectedTargetURL), gate: variantResult.result?.incrementalRevenueGate, candidates: variantResult.candidates, hypotheses: variantResult.hypotheses, critic: variantResult.searchSpace?.commercialCritic, serializedLeaksHiddenState: /contingentAuthoredSemanticText|contingentHypothesisSemantics/.test(serializedResult) })}`
+      );
+    }
+    return {
+      request: criticRequest,
+      requestBytes: Buffer.byteLength(JSON.stringify(criticRequest), 'utf8'),
+      finalists: criticFinalists,
+      result: variantResult,
+      maximizedCriticFixture
+    };
+  };
+
+  const linkedInPrefix = 'https://linkedin.com/in/';
+  const maxLengthLinkedInURL = `${linkedInPrefix}${'a'.repeat(
+    240 - linkedInPrefix.length
+  )}`;
+  const maxRuneAstralName = `Dr ${'🚀'.repeat(170)} Rivera`;
+  if ([...maxRuneAstralName].length !== 180 ||
+      maxLengthLinkedInURL.length !== 240) {
+    throw new Error('maximum target-binding fixture arithmetic drifted');
+  }
+  await runIdentityBindingVariant({
+    label: 'maximum-astral-identity',
+    targetName: maxRuneAstralName,
+    targetURL: maxLengthLinkedInURL,
+    invalidFirst: true
+  });
+  const maxRuneAstralOrganization = padCanonicalAstral(
+    'Riverside Pediatrics',
+    180
+  );
+  const jointWorstCritic = await runIdentityBindingVariant({
+    label: 'joint-worst-commercial-critic-envelope',
+    targetName: maxRuneAstralName,
+    targetURL: maxLengthLinkedInURL,
+    organizationFactName: maxRuneAstralOrganization,
+    targetOrganization: maxRuneAstralOrganization,
+    maximizeCriticEnvelope: true
+  });
+  const jointWorstTask = JSON.parse(
+    jointWorstCritic.request?.user || '{}'
+  );
+  const jointWorstFinalists = jointWorstTask.finalists || [];
+  const jointWorstBindings = jointWorstFinalists.flatMap((finalist) =>
+    finalist.evidenceBindings || []
+  );
+  const jointWorstBindingRefs = jointWorstBindings.flatMap((binding) =>
+    binding.evidenceRefs || []
+  );
+  const jointWorstAliasRows = jointWorstTask.evidenceRefAliases || [];
+  const jointWorstAliases = new Set(jointWorstAliasRows.map((item) =>
+    item.alias
+  ));
+  const allJointWorstAliases = [
+    ...(jointWorstTask.objective?.evidenceRefs || []),
+    ...jointWorstFinalists.flatMap((finalist) => [
+      ...(finalist.evidenceRefs || []),
+      ...(finalist.revenuePath?.evidenceRefs || [])
+    ]),
+    ...jointWorstBindingRefs
+  ];
+  const exactRunes = (value, length) => [...String(value || '')].length ===
+    length;
+  if (jointWorstCritic.requestBytes < 45_000 ||
+      jointWorstCritic.requestBytes > 65_536 - 512 ||
+      65_536 - jointWorstCritic.requestBytes < 512 ||
+      jointWorstFinalists.length !== 2 ||
+      !exactRunes(jointWorstTask.objective?.id, 48) ||
+      !exactRunes(jointWorstTask.objective?.outcome, 120) ||
+      !exactRunes(jointWorstTask.objective?.successMetric, 120) ||
+      jointWorstTask.objective?.currency !== 'USDXXXXXXXXX' ||
+      jointWorstTask.objective?.targetCount !== Number.MAX_SAFE_INTEGER ||
+      jointWorstTask.objective?.estimatedValueMicros !==
+        Number.MAX_SAFE_INTEGER ||
+      jointWorstTask.objective?.evidenceRefs?.length !== 14 ||
+      jointWorstTask.objective?.allowedChannels?.length !== 3 ||
+      jointWorstTask.objective.allowedChannels.some((item) =>
+        !exactRunes(item, 40)
+      ) ||
+      jointWorstTask.objective?.allowedActions?.length !== 3 ||
+      jointWorstTask.objective.allowedActions.some((item) =>
+        !exactRunes(item, 48)
+      ) ||
+      jointWorstTask.objective?.constraints?.length !== 3 ||
+      jointWorstTask.objective.constraints.some((item) =>
+        !exactRunes(item, 64)
+      ) ||
+      jointWorstTask.commercialContext?.allowedChannels?.length !== 4 ||
+      jointWorstTask.commercialContext.allowedChannels.some((item) =>
+        !exactRunes(item, 48)
+      ) ||
+      jointWorstTask.commercialContext?.distributionAccounts?.length !== 4 ||
+      jointWorstTask.commercialContext.distributionAccounts.some((account) =>
+        !exactRunes(account.provider, 48) ||
+        account.status !== 'active' ||
+        !exactRunes(account.mode, 32) ||
+        account.capabilities?.length !== 4 ||
+        account.capabilities.some((item) => !exactRunes(item, 48))
+      ) ||
+      !exactRunes(
+        jointWorstTask.commercialContext?.permissionRequired,
+        64
+      ) ||
+      jointWorstFinalists.some((finalist) =>
+        [...String(finalist.buyer || '')].length < 300 ||
+        [...String(finalist.buyer || '')].length > 320 ||
+        !exactRunes(finalist.paidOffer, 140) ||
+        [...String(finalist.acquisitionChannel || '')].length < 350 ||
+        [...String(finalist.primaryAction || '')].length < 630 ||
+        [...String(finalist.primaryAction || '')].length > 700 ||
+        finalist.primaryAction !== finalist.revenuePath?.conversionAction ||
+        !exactRunes(
+          finalist.revenuePath?.incrementalIncomeOutcome,
+          180
+        ) ||
+        !exactRunes(finalist.revenuePath?.attributionSignal, 220) ||
+        !exactRunes(finalist.revenuePath?.conversionDestination, 180) ||
+        !exactRunes(finalist.revenuePath?.stopCondition, 180) ||
+        !exactRunes(finalist.revenuePath?.supportingBottleneck, 180) ||
+        finalist.expectedGrossIncomeMicros !== 1_000_000_000_000 ||
+        finalist.evidenceRefs?.length !== 15 ||
+        finalist.evidenceBindings?.length !== 7 ||
+        !exactRunes(
+          finalist.evidenceBindings.find((binding) =>
+            binding.role === 'exact_outside_target'
+          )?.market,
+          120
+        )
+      ) ||
+      jointWorstBindingRefs.length < 28 ||
+      jointWorstAliasRows.length !== 29 ||
+      new Set(jointWorstAliasRows.map((item) => item.evidenceRef)).size !==
+        29 ||
+      allJointWorstAliases.some((alias) => !jointWorstAliases.has(alias)) ||
+      !jointWorstCritic.maximizedCriticFixture?.boundaryEvidenceRefs
+        ?.every((ref) => jointWorstAliasRows.some((item) =>
+          item.evidenceRef === ref
+        )) ||
+      !jointWorstCritic.maximizedCriticFixture?.objectiveOnlyEvidenceRefs
+        ?.every((ref) => jointWorstAliasRows.some((item) =>
+          item.evidenceRef === ref
+        )) ||
+      jointWorstCritic.maximizedCriticFixture?.boundaryEvidenceRefs
+        ?.some((ref) =>
+          [...ref].length !== 96 ||
+          Buffer.byteLength(JSON.stringify(ref), 'utf8') - 2 !== 192
+        ) ||
+      /\\ud[89ab][0-9a-f]{2}|\\ud[cdef][0-9a-f]{2}/i.test(
+        JSON.stringify(jointWorstCritic.request)
+      )) {
+    throw new Error(
+      `joint-worst critic request did not exercise the complete bounded envelope: ${JSON.stringify({ requestBytes: jointWorstCritic.requestBytes, headroom: 65_536 - jointWorstCritic.requestBytes, objective: jointWorstTask.objective, commercialContext: jointWorstTask.commercialContext, aliasCount: jointWorstAliasRows.length, finalists: jointWorstFinalists.map((finalist) => ({ buyerRunes: [...String(finalist.buyer || '')].length, offerRunes: [...String(finalist.paidOffer || '')].length, channelRunes: [...String(finalist.acquisitionChannel || '')].length, actionRunes: [...String(finalist.primaryAction || '')].length, incrementalRunes: [...String(finalist.revenuePath?.incrementalIncomeOutcome || '')].length, attributionRunes: [...String(finalist.revenuePath?.attributionSignal || '')].length, destinationRunes: [...String(finalist.revenuePath?.conversionDestination || '')].length, stopRunes: [...String(finalist.revenuePath?.stopCondition || '')].length, bottleneckRunes: [...String(finalist.revenuePath?.supportingBottleneck || '')].length, evidenceRefs: finalist.evidenceRefs?.length, revenueEvidenceRefs: finalist.revenuePath?.evidenceRefs?.length, evidenceBindings: finalist.evidenceBindings?.length })), bindingRefCount: jointWorstBindingRefs.length })}`
+    );
+  }
+  const overlimitAstralPayload = structuredClone(downstreamPayload);
+  applyProfessionalTargetIdentity(
+    overlimitAstralPayload,
+    '🚀'.repeat(181),
+    'https://www.linkedin.com/in/overlimit-astral'
+  );
+  let overlimitAstralCalls = 0;
+  const overlimitAstralResult = await runOpportunityTournament({
+    job: {
+      id: 'job-overlimit-astral-provider-identity',
+      kind: 'opportunity_tournament',
+      payload: overlimitAstralPayload
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => {
+      overlimitAstralCalls += 1;
+      throw new Error('overlimit astral identity dispatched critic');
+    }
+  });
+  assertTechnicalRecovery(
+    overlimitAstralResult,
+    overlimitAstralCalls,
+    '181-rune provider identity'
+  );
+  for (const [
+    label,
+    targetName,
+    targetURL,
+    configuredChannel = ''
+  ] of [
+    [
+      'free-identity-semantics',
+      'Jane Free',
+      'https://www.linkedin.com/in/jane-free'
+    ],
+    [
+      'negated-identity-semantics',
+      'Dr No Trial',
+      'https://www.linkedin.com/in/dr-no-trial'
+    ],
+    [
+      'email-identity-semantics',
+      'Email Target',
+      'https://www.linkedin.com/in/email',
+      'email'
+    ],
+    [
+      'phone-identity-semantics',
+      'Phone Partner',
+      'https://www.linkedin.com/in/phone-partner'
+    ]
+  ]) {
+    await runIdentityBindingVariant({
+      label,
+      targetName,
+      targetURL,
+      configuredChannel
+    });
+  }
+
+  const unicode17Upper = String.fromCodePoint(0x16ea0);
+  const unicode17Lower = String.fromCodePoint(0x16ebb);
+  for (const variant of [
+    {
+      label: 'organization-punctuation-suffix-parity',
+      targetName: 'Ava Rivera',
+      targetURL: 'https://www.linkedin.com/in/ava-org-suffix',
+      organizationFactName: 'Acme-Health Pediatrics',
+      targetOrganization: 'Acme Health Pediatrics, Inc.'
+    },
+    {
+      label: 'non-latin-person-and-organization',
+      targetName: '李明',
+      targetURL: 'https://www.linkedin.com/in/li-ming-public',
+      organizationFactName: '青空小児科',
+      targetOrganization: '青空小児科, LLC',
+      ownerName: '山田太郎',
+      ownerOrganization: '別会社'
+    },
+    {
+      label: 'unicode17-one-scalar-person',
+      targetName: unicode17Upper,
+      targetURL: 'https://www.linkedin.com/in/unicode17-person',
+      organizationFactName: '青空小児科',
+      targetOrganization: '青空小児科',
+      ownerName: unicode17Lower,
+      ownerOrganization: '別会社'
+    },
+    {
+      label: 'unicode17-one-scalar-organization',
+      targetName: '李明',
+      targetURL: 'https://www.linkedin.com/in/unicode17-organization',
+      organizationFactName: unicode17Upper,
+      targetOrganization: `${unicode17Upper}, LLC`,
+      ownerName: '山田太郎',
+      ownerOrganization: unicode17Lower
+    }
+  ]) {
+    await runIdentityBindingVariant(variant);
+  }
+
+  const fullwidthOwnerPayload = structuredClone(downstreamPayload);
+  applyProfessionalTargetIdentity(
+    fullwidthOwnerPayload,
+    'Acme',
+    'https://www.linkedin.com/in/fullwidth-owner'
+  );
+  fullwidthOwnerPayload.evidenceSnapshot.profile.identity = {
+    fullName: 'Ａｃｍｅ'
+  };
+  let fullwidthOwnerCalls = 0;
+  const fullwidthOwner = await runOpportunityTournament({
+    job: {
+      id: 'job-fullwidth-owner-self-target',
+      kind: 'opportunity_tournament',
+      payload: fullwidthOwnerPayload
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => {
+      fullwidthOwnerCalls += 1;
+      throw new Error('fullwidth-equivalent owner reached the critic');
+    }
+  });
+  assertTechnicalRecovery(
+    fullwidthOwner,
+    fullwidthOwnerCalls,
+    'fullwidth-equivalent owner self-target'
+  );
+
+  const identityBoundaryPayload = structuredClone(downstreamPayload);
+  const identityBoundary = applyProfessionalTargetIdentity(
+    identityBoundaryPayload,
+    'No',
+    'https://www.linkedin.com/in/no-boundary'
+  );
+  identityBoundary.targetFact.label =
+    'Innovation — Pediatrician at Riverside Pediatrics';
+  identityBoundary.targetFact.summary =
+    'Innovation is a different public pediatric professional record.';
+  let identityBoundaryCalls = 0;
+  const identityBoundaryResult = await runOpportunityTournament({
+    job: {
+      id: 'job-ascii-identity-substring-boundary',
+      kind: 'opportunity_tournament',
+      payload: identityBoundaryPayload
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => {
+      identityBoundaryCalls += 1;
+      throw new Error('No candidate false-bound inside Innovation');
+    }
+  });
+  assertTechnicalRecovery(
+    identityBoundaryResult,
+    identityBoundaryCalls,
+    'ASCII identity boundary No versus Innovation'
+  );
+
+  const privateEmailRoutePayload = structuredClone(downstreamPayload);
+  privateEmailRoutePayload.commercialContext.allowedChannels = ['email'];
+  applyProfessionalTargetIdentity(
+    privateEmailRoutePayload,
+    'Email Target',
+    'https://www.linkedin.com/in/email'
+  );
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = privateEmailRoutePayload.commercialDiscoveryEvidence
+      .plan.plans[0].contingentFinalists[familyKey];
+    family.d.c = family.d.c.map((item) => ({
+      ...item,
+      l: `${item.l} and use an email route`
+    }));
+    family.d.a = family.d.a.map((item) => ({
+      ...item,
+      l: `${item.l} then email the referral request`
+    }));
+    family.d.r[0].c = family.d.a[0].l;
+  }
+  let privateEmailRouteCalls = 0;
+  const privateEmailRoute = await runOpportunityTournament({
+    job: {
+      id: 'job-email-identity-with-independent-private-email-route',
+      kind: 'opportunity_tournament',
+      payload: privateEmailRoutePayload
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      privateEmailRouteCalls += 1;
+      const task = JSON.parse(request.user || '{}');
+      return acceptedCriticCompletion(
+        task.finalists || [],
+        'generation-independent-private-email-route'
+      );
+    }
+  });
+  if (privateEmailRouteCalls > 1 ||
+      privateEmailRoute.status === 'completed' ||
+      privateEmailRoute.result?.resultType ===
+        'immediate_revenue_action' ||
+      privateEmailRoute.result?.incrementalRevenueGate?.passed === true ||
+      privateEmailRoute.result?.incrementalRevenueGate
+        ?.allowedChannelSource === 'configured_capability') {
+    throw new Error(
+      `Email identity erased an independently authored private email route: ${JSON.stringify({ privateEmailRouteCalls, privateEmailRoute })}`
+    );
+  }
+
+  const invalidStructuralEmailPayload = structuredClone(downstreamPayload);
+  invalidStructuralEmailPayload.commercialContext.allowedChannels = [
+    'email'
+  ];
+  const invalidStructuralIdentity = applyProfessionalTargetIdentity(
+    invalidStructuralEmailPayload,
+    'Email Target',
+    'https://www.linkedin.com/in/email'
+  );
+  invalidStructuralIdentity.targetCandidate.contactPaths[0].verified = false;
+  let invalidStructuralEmailCalls = 0;
+  const invalidStructuralEmail = await runOpportunityTournament({
+    job: {
+      id: 'job-invalid-structural-provider-route-with-configured-email',
+      kind: 'opportunity_tournament',
+      payload: invalidStructuralEmailPayload
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => {
+      invalidStructuralEmailCalls += 1;
+      throw new Error(
+        'invalid structural provider route reached configured-channel authority'
+      );
+    }
+  });
+  if (invalidStructuralEmailCalls !== 0 ||
+      invalidStructuralEmail.status === 'completed' ||
+      invalidStructuralEmail.result?.resultType ===
+        'immediate_revenue_action' ||
+      invalidStructuralEmail.result?.incrementalRevenueGate?.passed === true ||
+      invalidStructuralEmail.result?.incrementalRevenueGate
+        ?.allowedChannelSource === 'configured_capability') {
+    throw new Error(
+      `invalid current provider route fell back to configured email authority: ${JSON.stringify({ invalidStructuralEmailCalls, invalidStructuralEmail })}`
     );
   }
 
@@ -7322,11 +8830,11 @@ async function verifyTwoStageTargetBinding() {
     unmarkedFoundCriticCalls,
     'unmarked found professional-role plan'
   );
-  if (unmarkedFound.trace?.commercialDiscovery?.plan?.valid !== true ||
+  if (unmarkedFound.trace?.commercialDiscovery?.plan?.valid !== false ||
       unmarkedFound.searchSpace?.contingentFinalists?.materialized !== false ||
       unmarkedFound.searchSpace?.contingentFinalists?.cause !==
         'invalid_contingent_contract' ||
-      !/cannot authorize target materialization without professional_role_query_v1/i.test(
+      !/mixes canonical v2 role fields with a historical professional role query contract/i.test(
         unmarkedFound.searchSpace?.contingentFinalists?.reason || ''
       )) {
     throw new Error(
@@ -7337,7 +8845,7 @@ async function verifyTwoStageTargetBinding() {
   const prunedVariantPayload = structuredClone(downstreamPayload);
   prunedVariantPayload.commercialDiscoveryEvidence.plan.plans[0]
     .contingentFinalists.familyA.d.a[1].l =
-      'After review, configure scheduling for {{TARGET_NAME}}.';
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to configure scheduling for the current paid service.';
   const prunedVariantRequests = [];
   let prunedVariantCriticFinalists = [];
   const prunedVariant = await runOpportunityTournament({
@@ -7493,6 +9001,7 @@ async function verifyTwoStageTargetBinding() {
       l:
         `After review via public professional profile {{TARGET_URL}}, use permissioned outreach to ask {{TARGET_NAME}} to refer one buyer to a paid booking (${familyName}-${index + 1}).`
     }));
+    family.d.r[0].c = family.d.a[0].l;
   }
   let conflictingModeCalls = 0;
   const conflictingMode = await runOpportunityTournament({
@@ -7541,10 +9050,16 @@ async function verifyTwoStageTargetBinding() {
   }
 
   const multiMotionPayload = structuredClone(downstreamPayload);
-  const firstMotion = structuredClone(scenario.plans(evidenceRef)[0]);
+  const firstMotion = canonicalMaterializedPlannerPlans([
+    scenario.plans(evidenceRef)[0]
+  ])[0];
   firstMotion.priority = 1;
   firstMotion.professionalRoleQueryContract =
     PROFESSIONAL_ROLE_QUERY_CONTRACT;
+  firstMotion.targetRoleSubrole = 'doctor';
+  firstMotion.targetRoleRole = 'health';
+  firstMotion.targetRoleTerms = [];
+  firstMotion.organizationTerms = [];
   const secondMotion = structuredClone(selectedMotion);
   secondMotion.priority = 2;
   if (firstMotion.contingentFinalists.familyA.d.a[0].l !==
@@ -7556,7 +9071,13 @@ async function verifyTwoStageTargetBinding() {
   multiMotionPayload.commercialDiscoveryEvidence.plan =
     {
       ...structuredClone(discoveryPlan),
-      plans: [firstMotion, secondMotion]
+      plans: [firstMotion, secondMotion],
+      planSelection: {
+        returnedPlanCount: 2,
+        acceptedPlanCount: 2,
+        rejectedPlanCount: 0,
+        rejectedPlans: []
+      }
     };
   const firstEvidenceRef =
     'external_discovery:555555555555555555555555';
@@ -7574,7 +9095,10 @@ async function verifyTwoStageTargetBinding() {
     kind: 'verified_external_professional_target',
     label: 'Dr. Noor Patel at Summit Pediatrics',
     summary: 'Dr. Noor Patel is a current pediatrician at Summit Pediatrics in Queens and a prospective professional partner for a newborn-care referral channel. This public professional record does not establish a warm relationship, willingness, permission, or patient demand.',
-    url: 'https://www.linkedin.com/in/noor-patel-pediatrics',
+    // Two separately attested motions may resolve distinct public identities
+    // on the same canonical provider URL. Candidate combination must retain
+    // both ID/motion bindings rather than unioning their evidence.
+    url: 'https://www.linkedin.com/in/ava-rivera',
     provider: 'people_data_labs_person_search',
     provenance: 'people_data_labs_professional_record',
     roles: ['acquisition', 'channel_fit', 'prospective_partner'],
@@ -7590,14 +9114,14 @@ async function verifyTwoStageTargetBinding() {
     role: 'Pediatrician',
     commercialRole: 'referral_partner',
     market: 'Queens, New York',
-    publicUrl: 'https://www.linkedin.com/in/noor-patel-pediatrics',
+    publicUrl: 'https://www.linkedin.com/in/ava-rivera',
     provider: 'people_data_labs_person_search',
     evidenceRefs: [firstEvidenceRef],
     contactPaths: [{
       kind: 'public_professional_url',
       available: true,
       verified: true,
-      reference: 'https://www.linkedin.com/in/noor-patel-pediatrics'
+      reference: 'https://www.linkedin.com/in/ava-rivera'
     }],
     exactNamedCandidate: true,
     identityResolved: true
@@ -7834,14 +9358,33 @@ async function verifyTwoStageTargetBinding() {
   const noTargetFirstMotion = noTargetDiscovery.plan.plans[0];
   noTargetFirstMotion.searchMode = 'professional_counterparty';
   noTargetFirstMotion.motionKind = 'referral_person';
-  noTargetFirstMotion.targetRoleTerms = [
-    'SLED partnerships director',
-    'Public-sector partnerships director',
-    'Government sales partnerships lead'
-  ];
+  noTargetFirstMotion.professionalRoleQueryContract =
+    PROFESSIONAL_ROLE_QUERY_CONTRACT;
+  noTargetFirstMotion.targetRoleSubrole = 'partnerships';
+  noTargetFirstMotion.targetRoleRole = 'partnerships';
+  noTargetFirstMotion.targetRoleTerms = [];
+  noTargetFirstMotion.organizationTerms = [];
+  noTargetFirstMotion.query = 'partnerships Queens, NY, USA';
   noTargetFirstMotion.targetSlot.finalTargetKind = 'person';
   noTargetFirstMotion.targetSlot.resolutionStrategy =
     'single_exact_target';
+  const noTargetSecondMotion = structuredClone(noTargetFirstMotion);
+  noTargetSecondMotion.id = 'plan_2_referral_person';
+  noTargetSecondMotion.priority = 2;
+  noTargetSecondMotion.targetRoleSubrole = 'executive';
+  noTargetSecondMotion.targetRoleRole = 'operations';
+  noTargetSecondMotion.query = 'executive Queens, NY, USA';
+  noTargetDiscovery.plan.plans = [
+    noTargetFirstMotion,
+    noTargetSecondMotion
+  ];
+  noTargetDiscovery.plan.planSelection = {
+    returnedPlanCount: 2,
+    acceptedPlanCount: 2,
+    rejectedPlanCount: 0,
+    rejectedPlans: []
+  };
+  delete noTargetDiscovery.plan.rejectedReason;
   const noTargetPlanReceipt = noTargetDiscovery.plan.webSearchReceipt;
   noTargetPlanReceipt.annotations = [
     ...noTargetPlanReceipt.annotations,
@@ -8517,6 +10060,8 @@ async function verifyProviderAttestedBuyerReviewRoute() {
     'candidate:external:888888888888888888888888';
   const buyerPublicUrl =
     'https://www.linkedin.com/in/jordan-lee-operations';
+  const canonicalBuyerPublicUrl =
+    'https://linkedin.com/in/jordan-lee-operations';
   const commercialDiscoveryEvidence = {
     contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
     attempted: true,
@@ -8578,7 +10123,9 @@ async function verifyProviderAttestedBuyerReviewRoute() {
   );
   if (normalizedDiscovery.valid !== true ||
       normalizedDiscovery.candidates.length !== 1 ||
-      normalizedDiscovery.evidence.length !== 1) {
+      normalizedDiscovery.evidence.length !== 1 ||
+      normalizedDiscovery.candidates[0]?.publicUrl !==
+        canonicalBuyerPublicUrl) {
     throw new Error(
       `provider-attested buyer evidence fixture is invalid: ${JSON.stringify(normalizedDiscovery)}`
     );
@@ -8624,6 +10171,15 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       }
       const task = JSON.parse(request.user || '{}');
       const finalists = task.finalists || [];
+      const evidenceRefByAlias = new Map(
+        (task.evidenceRefAliases || []).map((item) => [
+          item.alias,
+          item.evidenceRef
+        ])
+      );
+      const resolvedEvidenceRefs = (refs) => (refs || []).map((ref) =>
+        evidenceRefByAlias.get(ref) || ref
+      );
       const expectedBindingRoles = [
         'acquisition',
         'attribution',
@@ -8646,24 +10202,38 @@ async function verifyProviderAttestedBuyerReviewRoute() {
           target?.kind === 'person' &&
           target?.claim === 'Jordan Lee' &&
           target?.organization === 'Northstar Field Services' &&
-          target?.publicUrl === buyerPublicUrl &&
-          target?.evidenceRefs?.includes(buyerEvidenceRef) &&
-          byRole.get('defined_buyer')?.evidenceRefs?.includes(
+          target?.publicUrl === canonicalBuyerPublicUrl &&
+          resolvedEvidenceRefs(target?.evidenceRefs).includes(
             buyerEvidenceRef
           ) &&
-          byRole.get('acquisition')?.evidenceRefs?.includes(
+          resolvedEvidenceRefs(
+            byRole.get('defined_buyer')?.evidenceRefs
+          ).includes(
             buyerEvidenceRef
           ) &&
-          byRole.get('paid_offer')?.evidenceRefs?.includes(
+          resolvedEvidenceRefs(
+            byRole.get('acquisition')?.evidenceRefs
+          ).includes(
+            buyerEvidenceRef
+          ) &&
+          resolvedEvidenceRefs(
+            byRole.get('paid_offer')?.evidenceRefs
+          ).includes(
             sellerEvidenceRef
           ) &&
-          byRole.get('conversion_destination')?.evidenceRefs?.includes(
+          resolvedEvidenceRefs(
+            byRole.get('conversion_destination')?.evidenceRefs
+          ).includes(
             sellerEvidenceRef
           ) &&
-          byRole.get('paid_conversion')?.evidenceRefs?.includes(
+          resolvedEvidenceRefs(
+            byRole.get('paid_conversion')?.evidenceRefs
+          ).includes(
             sellerEvidenceRef
           ) &&
-          byRole.get('attribution')?.evidenceRefs?.includes(
+          resolvedEvidenceRefs(
+            byRole.get('attribution')?.evidenceRefs
+          ).includes(
             PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
           );
       });
@@ -8691,8 +10261,8 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       result.searchSpace?.modelCalls !== 1 ||
       result.winner?.candidateId !== buyerCandidateId ||
       !result.winner?.action?.includes('Jordan Lee') ||
-      !result.winner?.action?.includes(buyerPublicUrl) ||
-      !result.hypotheses?.[0]?.channel?.includes(buyerPublicUrl) ||
+      !result.winner?.action?.includes(canonicalBuyerPublicUrl) ||
+      !result.hypotheses?.[0]?.channel?.includes(canonicalBuyerPublicUrl) ||
       result.result?.resultType !== 'immediate_revenue_action' ||
       result.result?.incrementalRevenueGate?.passed !== true ||
       result.result?.incrementalRevenueGate?.allowedChannelSource !==
@@ -8738,27 +10308,24 @@ async function verifyProviderAttestedBuyerReviewRoute() {
     now,
     completeJSON: async (request) => {
       publicMessageCalls += 1;
-      const task = JSON.parse(request.user || '{}');
-      return acceptedCriticCompletion(
-        task.finalists || [],
-        'generation-bound-public-profile-message-critic'
+      throw new Error(
+        `private LinkedIn message route reached critic: ${JSON.stringify(request)}`
       );
     }
   });
-  if (publicMessageCalls !== 1 ||
-      publicMessage.status !== 'completed' ||
-      publicMessage.result?.resultType !== 'immediate_revenue_action' ||
-      publicMessage.result?.incrementalRevenueGate?.passed !== true ||
-      publicMessage.result?.allowedChannel !== 'public_professional_url' ||
-      publicMessage.result?.executionAuthorization !== 'none' ||
-      publicMessage.result?.requiresReview !== true ||
-      publicMessage.result?.sideEffectsPerformed !== 0 ||
-      !publicMessage.winner?.action?.includes(buyerPublicUrl) ||
-      publicMessage.gate?.sideEffects?.outreachAttempts !== 0 ||
-      publicMessage.gate?.sideEffects?.publishAttempts !== 0 ||
-      publicMessage.gate?.sideEffects?.providerWrites !== 0) {
+  assertTechnicalRecovery(
+    publicMessage,
+    publicMessageCalls,
+    'private LinkedIn message route on a bound public profile'
+  );
+  if (!/(?:reserved target syntax|private_contact_route|unsupported)/i.test(
+        publicMessage.searchSpace?.contingentFinalists?.reason || ''
+      ) ||
+      publicMessage.result?.resultType === 'immediate_revenue_action' ||
+      publicMessage.result?.incrementalRevenueGate?.passed === true ||
+      publicMessage.result?.allowedChannel === 'public_professional_url') {
     throw new Error(
-      `review-first message failed after exact public-profile binding: ${JSON.stringify({ calls: publicMessageCalls, result: publicMessage })}`
+      `private message route escaped finite public-profile binding: ${JSON.stringify({ calls: publicMessageCalls, result: publicMessage })}`
     );
   }
 
@@ -8854,6 +10421,45 @@ async function verifyProviderAttestedBuyerReviewRoute() {
           .contactPaths[0].reference = queryURL;
       }
     },
+    ...[
+      [
+        'professional path with fragment',
+        'https://linkedin.com/in/jordan-lee#about'
+      ],
+      [
+        'professional path with explicit default port',
+        'https://linkedin.com:443/in/jordan-lee'
+      ],
+      [
+        'professional path with explicit nondefault port',
+        'https://linkedin.com:8443/in/jordan-lee'
+      ],
+      [
+        'professional path with extra segment',
+        'https://linkedin.com/in/jordan-lee/details'
+      ],
+      [
+        'professional path with encoded slug',
+        'https://linkedin.com/in/%6aordan-lee'
+      ],
+      [
+        'professional path with dot segment',
+        'https://linkedin.com/in/ignored/../jordan-lee'
+      ],
+      [
+        'professional path with backslash segment',
+        'https://linkedin.com/in\\jordan-lee'
+      ]
+    ].map(([label, rawURL]) => ({
+      label,
+      mutate(payload) {
+        payload.commercialDiscoveryEvidence.evidence[0].url = rawURL;
+        payload.commercialDiscoveryEvidence.candidates[0].publicUrl =
+          rawURL;
+        payload.commercialDiscoveryEvidence.candidates[0]
+          .contactPaths[0].reference = rawURL;
+      }
+    })),
     {
       label: 'non-person buyer target',
       mutate(payload) {
@@ -9033,14 +10639,14 @@ async function verifyProviderAttestedBuyerReviewRoute() {
   const paidProposalPayload = structuredClone(downstreamPayload);
   for (const [familyIndex, familyKey] of
     ['familyA', 'familyB'].entries()) {
-    paidProposalPayload.commercialDiscoveryEvidence.plan.plans[0]
-      .contingentFinalists[familyKey].d.a =
-      paidProposalPayload.commercialDiscoveryEvidence.plan.plans[0]
-        .contingentFinalists[familyKey].d.a.map((item, index) => ({
+    const family = paidProposalPayload.commercialDiscoveryEvidence.plan
+      .plans[0].contingentFinalists[familyKey];
+    family.d.a = family.d.a.map((item, index) => ({
           ...item,
           l:
-            `After review, route ${familyIndex + 1}-${index + 1}: offer {{TARGET_NAME}} the paid subscription by paid proposal through LinkedIn public professional profile {{TARGET_URL}}.`
+            `After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid subscription by paid proposal route ${familyIndex + 1}-${index + 1}`
         }));
+    family.d.r[0].c = family.d.a[0].l;
   }
   let paidProposalCalls = 0;
   const paidProposal = await runOpportunityTournament({
@@ -9079,7 +10685,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
 }
 
 async function verifyPaidDemandTargetProtocolEndToEnd() {
-  const scenario = cases[2];
+  const scenario = cases[1];
   const planner = plannerJob(scenario);
   const catalog = buildEvidenceCatalog(planner.payload, {}, now, {
     includeSystemAttributionCapability: true
@@ -9095,24 +10701,24 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
     ...original,
     acquisitionMode: 'permissioned_outreach',
     acquisitionMechanism:
-      'One review-first response to a current paid consulting RFP'
+      'One review-first application to a current compensated job'
   });
   for (const familyKey of ['familyA', 'familyB']) {
     const family = motion.contingentFinalists[familyKey];
     family.d.c = family.d.c.map((item, index) => ({
       ...item,
       l:
-        `Permissioned proposal to the public RFP at {{TARGET_NAME}} (route ${index + 1})`
+        `Review-first official job page at {{TARGET_NAME}} (route ${index + 1})`
     }));
     family.d.a = family.d.a.map((item, index) => ({
       ...item,
       l:
-        `After review, submit one paid consulting proposal to {{TARGET_NAME}} (${familyKey} route ${index + 1}).`
+        `After review, submit one compensated application to {{TARGET_NAME}} (${familyKey} route ${index + 1}).`
     }));
     family.d.r[0].c =
-      'After review, submit one permissioned paid consulting proposal to the public RFP at {{TARGET_NAME}} through the official proposal page.';
+      'After review, submit one compensated application to {{TARGET_NAME}} through the official job page.';
     family.d.r[0].cd =
-      'The official RFP proposal page at {{TARGET_URL}}';
+      'The official job application page at {{TARGET_URL}}';
     family.d.r[0].g.d.l = family.d.r[0].cd;
   }
   const stripTargetRef = (value) => {
@@ -9136,7 +10742,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
   motion.targetSlot.resolutionStrategy =
     'organization_then_decision_maker';
   const demandURL =
-    'https://rfp.acme.example/open-delivery-operations';
+    'https://jobs.acme.example/software-engineer';
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
     model: 'openai/gpt-5.6-luna',
@@ -9145,7 +10751,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       data: {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
-        reason: 'One current paid consulting RFP is the nearest paid path.',
+        reason: '',
         plans: twoPlannerMotions({
           ...motion,
           contingentFinalists: compactContingentFinalists(
@@ -9161,24 +10767,11 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
         contentByteCount: 900,
         contentSha256: '4'.repeat(64)
       },
-      annotations: [{
-        type: 'url_citation',
-        url_citation: {
-          url: demandURL,
-          title: 'Acme Services open delivery-operations RFP',
-          content:
-            'Acme Services currently invites paid delivery-operations consulting proposals through its official RFP proposal page.'
-        }
-      }]
+      annotations: []
     })
   });
   if (discoveryPlan.status !== 'planned' ||
-      discoveryPlan.webSearchReceipt?.provider !==
-        'openrouter_exa_web_search' ||
-      discoveryPlan.webSearchReceipt?.operation !==
-        'forced_exa_web_search' ||
-      discoveryPlan.webSearchReceipt?.costIncludedInLLMReceipt !== true ||
-      discoveryPlan.plans[0]?.searchMode !== 'public_live_demand' ||
+      discoveryPlan.plans[0]?.searchMode !== 'active_job_posting' ||
       discoveryPlan.plans[0]?.targetSlot?.finalTargetKind !==
         'live_paid_demand' ||
       discoveryPlan.plans[0]?.targetSlot?.resolutionStrategy !==
@@ -9189,9 +10782,9 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
   }
   const selectedMotion = structuredClone(discoveryPlan.plans[0]);
   const attempt = {
-    id: 'attempt-paid-demand-canonical-brave-search',
-    provider: 'brave_web_search',
-    operation: 'planned_brave_web_search',
+    id: 'attempt-paid-demand-canonical-pdl-job-search',
+    provider: 'people_data_labs_job_posting_search',
+    operation: 'planned_job_posting_search',
     queryHash: 'e'.repeat(64),
     status: 'succeeded',
     estimatedSpendMicros: 5_000,
@@ -9227,7 +10820,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       buyerArchetype: selectedMotion.buyer,
       queryHash: commercialDiscoveryAttemptLedgerHash([attempt]),
       market: selectedMotion.market,
-      providersAttempted: ['brave_web_search'],
+      providersAttempted: ['people_data_labs_job_posting_search'],
       providerCalls: 1,
       paidProviderCalls: 1,
       creditsUsed: 1,
@@ -9240,12 +10833,12 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
         motionId: selectedMotion.id,
         evidenceRef: jobEvidenceRef,
         kind: 'verified_external_live_demand',
-        label: 'Acme Services open delivery-operations RFP',
+        label: 'Acme Services Software Engineer',
         summary:
-          `Acme Services currently requests paid delivery-operations consulting proposals. Inbound platform discovery reaches the official proposal page at ${demandURL}. One accepted proposal can produce a signed paid consulting contract and invoice.`,
+          `Acme Services has a current compensated software engineering job. The official application page is ${demandURL}. One accepted offer can produce salary income.`,
         url: demandURL,
-        provider: 'brave_web_search',
-        provenance: 'read_only_professional_provider',
+        provider: 'people_data_labs_job_posting_search',
+        provenance: 'people_data_labs_active_job_posting',
         roles: [
           'acquisition',
           'channel_fit',
@@ -9261,20 +10854,19 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       candidates: [{
         motionId: selectedMotion.id,
         id: candidateID,
-        kind: 'public_paid_demand_page',
-        // The organization suffix exercises the generic kind-normalization
-        // heuristic. Provider-attested paid demand must retain its canonical
-        // page kind instead of being retyped as an organization.
+        kind: 'employer_job_posting',
+        // The structured provider attestation fixes this as an employer job
+        // posting; organization-like display text cannot retype the record.
         displayLabel: 'Acme Services',
         organization: 'Acme Services',
-        role: 'Open delivery-operations consulting RFP',
+        role: 'Software Engineer',
         market: 'United States',
         publicUrl: demandURL,
-        provider: 'brave_web_search',
+        provider: 'people_data_labs_job_posting_search',
         commercialRole: 'paid_demand',
         evidenceRefs: [jobEvidenceRef],
         contactPaths: [{
-          kind: 'public_professional_url',
+          kind: 'application_page',
           available: true,
           verified: true,
           reference: demandURL
@@ -9302,23 +10894,39 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
   if (normalizedRemoteEvidence.valid !== true ||
       normalizedRemoteEvidence.candidates.length !== 1) {
     throw new Error(
-      `affirmative remote provider evidence with an implied home country was rejected: ${JSON.stringify(normalizedRemoteEvidence)}`
+      `candidate-attested remote market with an implied home country was rejected: ${JSON.stringify(normalizedRemoteEvidence)}`
     );
+  }
+
+  for (const identity of ['Remote Inc', 'No Remote Inc']) {
+    const identityPayload = structuredClone(remoteEvidencePayload);
+    identityPayload.evidence[0].label =
+      `${identity} Software Engineer`;
+    identityPayload.evidence[0].summary =
+      `${identity} has a current compensated software engineering job. One accepted offer can produce salary income.`;
+    identityPayload.candidates[0].displayLabel = identity;
+    identityPayload.candidates[0].organization = identity;
+    const normalized = normalizeCommercialDiscoveryEvidence(
+      identityPayload,
+      now
+    );
+    if (normalized.valid !== true ||
+        normalized.candidates[0]?.market !== 'Remote, New York') {
+      throw new Error(
+        `provider identity text changed identical typed remote authority for ${identity}: ${JSON.stringify(normalized)}`
+      );
+    }
   }
 
   for (const [index, mutateRemoteEvidence] of [
     (payload) => {
-      payload.evidence[0].summary =
-        downstreamPayload.commercialDiscoveryEvidence.evidence[0].summary;
+      payload.candidates[0].market = '';
     },
     (payload) => {
-      payload.evidence[0].summary +=
-        ' This role is not remote and virtual work is unavailable in the United States.';
+      payload.candidates[0].market = 'New York, United States';
     },
     (payload) => {
       payload.candidates[0].market = 'Remote, Ontario, Canada';
-      payload.evidence[0].summary =
-        `${downstreamPayload.commercialDiscoveryEvidence.evidence[0].summary} This is a remote engagement open only in Ontario, Canada.`;
     }
   ].entries()) {
     const invalidRemoteEvidence = structuredClone(remoteEvidencePayload);
@@ -9378,6 +10986,15 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       }
       const task = JSON.parse(request.user || '{}');
       const finalists = task.finalists || [];
+      const evidenceRefByAlias = new Map(
+        (task.evidenceRefAliases || []).map((item) => [
+          item.alias,
+          item.evidenceRef
+        ])
+      );
+      const resolvedEvidenceRefs = (refs) => (refs || []).map((ref) =>
+        evidenceRefByAlias.get(ref) || ref
+      );
       const finalistFamilies = new Set(
         finalists.map((finalist) => finalist.familyId)
       );
@@ -9393,12 +11010,12 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
           task.executionPolicy?.sideEffectsPerformed !== 0 ||
           task.commercialContext?.allowedChannels?.length !== 0 ||
           request.maxTokens !== 1_200 ||
-          requestBytes > 36 * 1_024 ||
+          requestBytes > 64 * 1_024 ||
           finalists.some((finalist) =>
             finalist.evidenceBindings?.length !== 7 ||
             finalist.evidenceBindings?.find((binding) =>
               binding.role === 'exact_outside_target'
-            )?.kind !== 'public_paid_demand_page'
+            )?.kind !== 'employer_job_posting'
           )) {
         criticIssue =
           `paid-demand critic did not receive one safe family-diverse pair: ${JSON.stringify({ finalists, task, requestBytes })}`;
@@ -9414,10 +11031,14 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       if (finalists.some((finalist) =>
         finalist.evidenceBindings.some((binding) =>
           discoveryRoles.has(binding.role)
-            ? !binding.evidenceRefs.includes(jobEvidenceRef)
+            ? !resolvedEvidenceRefs(binding.evidenceRefs).includes(
+              jobEvidenceRef
+            )
             : binding.role === 'attribution' && (
-                binding.evidenceRefs.includes(jobEvidenceRef) ||
-                !binding.evidenceRefs.includes(
+                resolvedEvidenceRefs(binding.evidenceRefs).includes(
+                  jobEvidenceRef
+                ) ||
+                !resolvedEvidenceRefs(binding.evidenceRefs).includes(
                   PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
                 )
               )
@@ -9440,14 +11061,14 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       result.result?.incrementalRevenueGate?.allowedChannelSource !==
         'provider_attested_review_route' ||
       result.result?.allowedChannel !==
-        'public_paid_demand_response' ||
+        'application_page' ||
       result.result?.permissionRequired !== 'explicit_user_approval' ||
       result.result?.executionAuthorization !== 'none' ||
       result.result?.sideEffectsPerformed !== 0 ||
       result.winner?.candidateId !== candidateID ||
       result.candidates?.find((candidate) =>
         candidate.id === candidateID
-      )?.kind !== 'public_paid_demand_page' ||
+      )?.kind !== 'employer_job_posting' ||
       !result.winner?.action?.includes(
         'Acme Services'
       ) ||
@@ -9458,6 +11079,308 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       `paid-demand target protocol did not survive provider binding and critic: ${JSON.stringify({ criticIssue, requests: requests.length, result })}`
     );
   }
+
+  const rogueCallerPayload = structuredClone(downstreamPayload);
+  const rogueCandidateID =
+    'candidate:external:999999999999999999999999';
+  const rogueTargetName = 'Rogue Caller Target';
+  const rogueTargetURL =
+    'https://rogue-caller.example/open-delivery-operations';
+  const rogueCollisionCandidateID =
+    'candidate:external:aaaaaaaaaaaaaaaaaaaaaaaa';
+  rogueCallerPayload.candidates = [{
+    motionId: selectedMotion.id,
+    commercialDiscoveryMotionId: selectedMotion.id,
+    id: rogueCandidateID,
+    kind: 'public_paid_demand_page',
+    displayLabel: rogueTargetName,
+    organization: rogueTargetName,
+    role: 'Caller-asserted consulting RFP',
+    market: 'United States',
+    publicUrl: rogueTargetURL,
+    provider: 'brave_web_search',
+    providers: ['commercial_discovery_evidence'],
+    commercialRole: 'paid_demand',
+    evidenceRefs: [jobEvidenceRef],
+    contactPaths: [{
+      kind: 'public_professional_url',
+      available: true,
+      verified: true,
+      reference: rogueTargetURL
+    }],
+    exactNamedCandidate: true,
+    identityResolved: true,
+    providerAttestedCommercialDiscovery: true,
+    score: {
+      total: 1,
+      evidenceStrength: 1,
+      objectiveFit: 1
+    }
+  }, {
+    motionId: selectedMotion.id,
+    commercialDiscoveryMotionId: selectedMotion.id,
+    id: rogueCollisionCandidateID,
+    kind: 'public_paid_demand_page',
+    displayLabel: 'Rogue Same URL Target',
+    organization: 'Rogue Same URL Target',
+    role: 'Caller-asserted collision',
+    market: 'United States',
+    publicUrl: demandURL,
+    provider: 'brave_web_search',
+    providers: ['commercial_discovery_evidence'],
+    commercialRole: 'paid_demand',
+    evidenceRefs: [jobEvidenceRef],
+    contactPaths: [{
+      kind: 'public_professional_url',
+      available: true,
+      verified: true,
+      reference: rogueTargetURL
+    }],
+    exactNamedCandidate: true,
+    identityResolved: true,
+    providerAttestedCommercialDiscovery: true
+  }];
+  let rogueCallerCriticCalls = 0;
+  let rogueCallerCriticRequest = null;
+  const rogueCallerResult = await runOpportunityTournament({
+    job: {
+      id: 'job-rogue-caller-provider-candidate',
+      kind: 'opportunity_tournament',
+      payload: rogueCallerPayload
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      rogueCallerCriticCalls += 1;
+      rogueCallerCriticRequest = request;
+      const task = JSON.parse(request.user || '{}');
+      return acceptedCriticCompletion(
+        task.finalists || [],
+        'generation-rogue-caller-provider-candidate'
+      );
+    }
+  });
+  if (rogueCallerCriticCalls !== 1 ||
+      rogueCallerResult.status !== 'completed' ||
+      rogueCallerResult.winner?.candidateId !== candidateID ||
+      rogueCallerResult.candidates?.some((candidate) =>
+        candidate.id === rogueCandidateID ||
+        candidate.id === rogueCollisionCandidateID ||
+        candidate.displayLabel === rogueTargetName
+      ) ||
+      JSON.stringify(rogueCallerCriticRequest).includes(rogueTargetName) ||
+      JSON.stringify(rogueCallerCriticRequest).includes(rogueTargetURL)) {
+    throw new Error(
+      `caller-forged provider candidate escaped exact ID/motion attestation: ${JSON.stringify({ rogueCallerCriticCalls, rogueCallerResult })}`
+    );
+  }
+
+  const runProviderIdentitySemanticVariant = async ({
+    label,
+    targetName,
+    targetURL,
+    targetOrganization = targetName,
+    negativeSummary = '',
+    summaryOverride = '',
+    expectRejected = false,
+    removeRoles = [],
+    invalidProvenance = '',
+    envelopeStatus = ''
+  }) => {
+    const variantPayload = structuredClone(downstreamPayload);
+    const discovery = variantPayload.commercialDiscoveryEvidence;
+    if (envelopeStatus) discovery.status = envelopeStatus;
+    const fact = discovery.evidence[0];
+    const candidate = discovery.candidates[0];
+    fact.label = `${targetName} open delivery-operations RFP`;
+    fact.summary = summaryOverride ||
+      `${targetName} currently requests paid delivery-operations consulting proposals. Inbound platform discovery reaches the official proposal page. One accepted proposal can produce a signed paid consulting contract and invoice.${negativeSummary ? ` ${negativeSummary}` : ''}`;
+    fact.url = targetURL;
+    fact.roles = fact.roles.filter((role) =>
+      !removeRoles.includes(role)
+    );
+    if (invalidProvenance) fact.provenance = invalidProvenance;
+    candidate.displayLabel = targetName;
+    candidate.organization = targetOrganization;
+    candidate.publicUrl = targetURL;
+    candidate.contactPaths[0].reference = targetURL;
+    let criticCalls = 0;
+    let criticRequest = null;
+    const variantResult = await runOpportunityTournament({
+      job: {
+        id: `job-provider-identity-${label}`,
+        kind: 'opportunity_tournament',
+        payload: variantPayload
+      },
+      model: 'openai/gpt-5.6-luna',
+      now,
+      completeJSON: async (request) => {
+        criticCalls += 1;
+        criticRequest = request;
+        const task = JSON.parse(request.user || '{}');
+        return acceptedCriticCompletion(
+          task.finalists || [],
+          `generation-provider-identity-${label}`
+        );
+      }
+    });
+    const serializedResult = JSON.stringify(variantResult);
+    const serializedRequest = JSON.stringify(criticRequest || {});
+    if (expectRejected) {
+      if (criticCalls !== 0 ||
+          variantResult.status === 'completed' ||
+          variantResult.result?.resultType ===
+            'immediate_revenue_action' ||
+          variantResult.result?.incrementalRevenueGate?.passed === true) {
+        throw new Error(
+          `${label} malformed typed provider attestation reached the critic or final gate: ${JSON.stringify({ criticCalls, variantResult })}`
+        );
+      }
+      return;
+    }
+    if (criticCalls !== 1 ||
+        variantResult.status !== 'completed' ||
+        variantResult.winner?.candidateId !== candidateID ||
+        !variantResult.winner?.action?.includes(targetName) ||
+        variantResult.result?.incrementalRevenueGate?.passed !== true ||
+        !serializedRequest.includes(targetName) ||
+        !serializedRequest.includes(targetURL) ||
+        !variantResult.commercialEvidenceGraph?.nodes?.find((node) =>
+          node.evidenceRef === jobEvidenceRef
+        )?.label?.includes(targetName) ||
+        /commercialDiscoveryEvidenceSemantics|TARGET_IDENTITY/.test(
+          `${serializedRequest} ${serializedResult}`
+        )) {
+      throw new Error(
+        `${label} exact provider identity poisoned paid/current semantics or leaked its hidden view: ${JSON.stringify({ criticCalls, variantResult })}`
+      );
+    }
+  };
+
+  for (const [label, targetName, targetURL] of [
+    [
+      'free-trial-company-name',
+      'Free Trial Inc',
+      'https://rfp.free-trial-inc.example/open-delivery-operations'
+    ],
+    [
+      'closed-loop-company-name',
+      'Closed Loop',
+      'https://rfp.closed-loop.example/open-delivery-operations'
+    ],
+    [
+      'inactive-labs-company-name',
+      'Inactive Labs',
+      'https://rfp.inactive-labs.example/open-delivery-operations'
+    ],
+    [
+      'free-trial-url-slug',
+      'Acme Services',
+      'https://rfp.acme.example/free-trial/open-delivery-operations'
+    ],
+    [
+      'colon-bearing-provider-identity',
+      'Acme: AI Consulting',
+      'https://rfp.acme-ai.example/open-delivery-operations'
+    ],
+    [
+      'literal-js-replacement-metasequences',
+      ['ACME', '$&', '$$', '$' + '`', "$'", 'Co'].join(' '),
+      'https://jobs.example/open?q=$&-$$-$`-$%27'
+    ]
+  ]) {
+    await runProviderIdentitySemanticVariant({
+      label,
+      targetName,
+      targetURL
+    });
+  }
+  await runProviderIdentitySemanticVariant({
+    label: 'reserved-target-token-provider-identity',
+    targetName: 'Acme {{TARGET_NAME}} Consulting',
+    targetURL:
+      'https://rfp.acme.example/open-delivery-operations',
+    expectRejected: true
+  });
+  for (const [label, targetURL] of [
+    [
+      'reserved-name-token-provider-url-query',
+      'https://jobs.example/open?q={{TARGET_NAME}}'
+    ],
+    [
+      'reserved-url-token-provider-url-fragment',
+      'https://jobs.example/open#{{TARGET_URL}}'
+    ],
+    [
+      'reserved-evidence-token-provider-url-query',
+      'https://jobs.example/open?ref=target:evidence'
+    ]
+  ]) {
+    await runProviderIdentitySemanticVariant({
+      label,
+      targetName: 'Acme Services',
+      targetURL,
+      expectRejected: true
+    });
+  }
+  await runProviderIdentitySemanticVariant({
+    label: 'free-trial-raw-summary-is-nonauthoritative',
+    targetName: 'Free Trial Inc',
+    targetURL:
+      'https://rfp.free-trial-inc.example/open-delivery-operations',
+    negativeSummary:
+      'The consulting contract is unpaid and offers no compensation.'
+  });
+  await runProviderIdentitySemanticVariant({
+    label: 'same-token-free-raw-prose-is-nonauthoritative',
+    targetName: 'Free Consulting',
+    targetOrganization: 'Free',
+    targetURL: 'https://free-consulting.example/open-role',
+    summaryOverride:
+      'Free offers a free plan only; the consulting contract has no compensation.'
+  });
+  await runProviderIdentitySemanticVariant({
+    label: 'same-token-no-raw-prose-is-nonauthoritative',
+    targetName: 'No Consulting',
+    targetOrganization: 'No',
+    targetURL: 'https://no-consulting.example/open-role',
+    summaryOverride:
+      'No has no compensation for this consulting contract.'
+  });
+  await runProviderIdentitySemanticVariant({
+    label: 'repeated-provider-identity-does-not-change-attestation',
+    targetName: 'Paid Inc',
+    targetURL: 'https://salary.com/checkout',
+    summaryOverride:
+      'Paid Inc seeks proposals. Opportunity information repeats Paid Inc and links to Paid Inc.'
+  });
+  await runProviderIdentitySemanticVariant({
+    label: 'provider-identity-cannot-invent-missing-paid-role',
+    targetName: 'Paid Inc',
+    targetURL: 'https://salary.com/checkout',
+    summaryOverride:
+      'Paid Inc seeks proposals. Opportunity information repeats Paid Inc and links to Paid Inc.',
+    removeRoles: ['paid_offer'],
+    expectRejected: true
+  });
+  await runProviderIdentitySemanticVariant({
+    label: 'provider-identity-cannot-repair-provenance',
+    targetName: 'Paid Inc',
+    targetURL: 'https://salary.com/checkout',
+    summaryOverride:
+      'Paid Inc seeks proposals. Opportunity information repeats Paid Inc and links to Paid Inc.',
+    invalidProvenance: 'caller_asserted_provider_result',
+    expectRejected: true
+  });
+  await runProviderIdentitySemanticVariant({
+    label: 'provider-identity-cannot-repair-nonfound-status',
+    targetName: 'Paid Inc',
+    targetURL: 'https://salary.com/checkout',
+    summaryOverride:
+      'Paid Inc seeks proposals. Opportunity information repeats Paid Inc and links to Paid Inc.',
+    envelopeStatus: 'not_found',
+    expectRejected: true
+  });
 
   let oneAcceptedCriticCalls = 0;
   const oneAccepted = await runOpportunityTournament({
@@ -9575,7 +11498,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
-          reason: 'Two compact source-bound professional motions.',
+          reason: '',
           plans: twoPlannerMotions(productionMotion, evidenceRef)
         },
         usage,
@@ -9593,8 +11516,10 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   const requestBytes = result.preflight?.requestBodyByteCount || 0;
   productionShapedPlannerRequestBytes = requestBytes;
   if (!requestSeen || result.status !== 'planned' ||
-      requestBytes < 32 * 1_024 ||
-      requestBytes > 35 * 1_024 - 512 ||
+      requestBytes > result.preflight?.providerPromptEnvelope
+        ?.targetRequestBodyByteCount ||
+      result.preflight?.providerPromptEnvelope
+        ?.actualSoftHeadroomByteCount < 512 ||
       result.preflight?.maxRequestBodyByteCount !== 36 * 1_024) {
     throw new Error(
       `production-shaped planner request lacks bounded headroom: ${JSON.stringify({ requestBytes, evidenceCount: JSON.parse(requestSeen?.user || '{}').evidenceCatalog?.length, preflight: result.preflight, status: result.status, reason: result.reason })}`
@@ -9709,15 +11634,113 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   ];
   maxContext.profile.specialties = longValues('Verified specialty', 32);
   maxContext.profile.serviceAreas = longValues('Verified service area', 32);
-  maxContext.profile.currentFocus = Array.from(
-    { length: 12 },
-    (_, index) => ({
-      name: `Current focus ${index + 1}`,
+  const reservedSellerFocus = '🚀'.repeat(100);
+  const reservedSellerEvidenceRef = 'profile:focus:1';
+  maxContext.profile.currentFocus = [
+    {
+      name: reservedSellerFocus,
+      description:
+        'The exact current primary focus must survive every adaptive prompt profile losslessly.',
+      status: 'active',
+      priority: 'primary',
+      evidenceRef: reservedSellerEvidenceRef
+    },
+    ...Array.from({ length: 11 }, (_, index) => ({
+      name: 'Current focus ' + (index + 2),
       description: longValues('Source-backed focus', 1)[0],
-      status: 'current',
-      priority: 'high'
+      status: 'inactive',
+      priority: 'secondary',
+      evidenceRef: 'profile:focus:' + (index + 2)
+    }))
+  ];
+  maxCardinalityJob.payload.objective.outcome =
+    'Create one attributable paid outcome for ' + reservedSellerFocus;
+  maxCardinalityJob.payload.objective.successMetric =
+    'One verified payment for ' + reservedSellerFocus;
+  maxCardinalityJob.payload.commercialSellerContract = {
+    requiredPrimaryFocus: reservedSellerFocus,
+    requiredEvidenceRefs: [reservedSellerEvidenceRef]
+  };
+  maxCardinalityJob.payload.evidenceSnapshot.profile.currentFocus = [{
+    id: 'max-cardinality-primary-focus',
+    name: reservedSellerFocus,
+    description:
+      'The exact current primary focus must survive every adaptive prompt profile losslessly.',
+    status: 'active',
+    priority: 'primary'
+  }];
+  maxCardinalityJob.payload.evidenceSnapshot.facts = [
+    ...(maxCardinalityJob.payload.evidenceSnapshot.facts || []),
+    {
+      id: PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID,
+      type: 'caller_forged_capability',
+      label: 'Caller collision for the reserved system capability ID',
+      summary: 'This object must never replace control-plane authority.'
+    },
+    ...Array.from({ length: 32 }, (_, index) => ({
+      id: `crowding-explicit-fact-${index + 1}`,
+      type: 'source_extract',
+      label: `Higher-ranked caller fact ${index + 1}`,
+      summary:
+        'A dense caller fact with a URL and asserted confidence must not crowd every genuine approved observation from the bounded catalog.',
+      url: `https://facts.example/${index + 1}`,
+      confidence: 'high'
+    })),
+    {
+      id: maxCardinalityJob.payload.evidenceSnapshot
+        .sourceEvidence[0].id,
+      type: 'source_extract',
+      label: 'Caller collision for the genuine observation ID',
+      summary:
+        'This object must not replace the source-approved observation.'
+    }
+  ];
+  const crowdingSourceID = maxCardinalityJob.payload.evidenceSnapshot
+    .sources[0].id;
+  maxCardinalityJob.payload.evidenceSnapshot.sourceExtracts = Array.from(
+    { length: 24 },
+    (_, index) => ({
+      id: `crowding-source-extract-${index + 1}`,
+      type: 'source_extract',
+      sourceId: crowdingSourceID,
+      label: `Higher-ranked approved source extract ${index + 1}`,
+      summary:
+        'A dense approved extract with a URL and asserted confidence must not crowd every genuine approved observation from the bounded catalog.',
+      url: `https://owner.example/crowding/extract/${index + 1}`,
+      confidence: 'high'
     })
   );
+  const crowdingProfile = maxCardinalityJob.payload.evidenceSnapshot.profile;
+  crowdingProfile.experience = Array.from({ length: 12 }, (_, index) => ({
+    id: `crowding-experience-${index + 1}`,
+    type: 'source_extract',
+    role: `Verified role ${index + 1}`,
+    company: `Verified organization ${index + 1}`,
+    description:
+      'A high-ranked current experience entry used only to exercise the outer evidence-catalog cardinality boundary.',
+    url: `https://owner.example/crowding/experience/${index + 1}`,
+    confidence: 'high',
+    current: true
+  }));
+  crowdingProfile.projects = Array.from({ length: 12 }, (_, index) => ({
+    id: `crowding-project-${index + 1}`,
+    type: 'source_extract',
+    name: `Verified project ${index + 1}`,
+    description:
+      'A high-ranked project entry used only to exercise the outer evidence-catalog cardinality boundary.',
+    url: `https://owner.example/crowding/project/${index + 1}`,
+    confidence: 'high'
+  }));
+  for (let index = 0; index < 2; index += 1) {
+    const item = maxCardinalityJob.payload.evidenceSnapshot
+      .sourceEvidence[index];
+    item.label =
+      'Attribution article ' + (index + 1) +
+      ' with broad source-field language';
+    item.summary =
+      'Article ' + (index + 1) +
+      ' discusses attribution, campaign source fields, CRM records, and payment receipts without being the ProfileScribe system capability.';
+  }
   maxContext.distributionAccounts = Array.from(
     { length: 20 },
     (_, index) => ({
@@ -9754,6 +11777,27 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
       ).toISOString()
     })
   );
+  const maxOuterCatalog = buildEvidenceCatalog(
+    maxCardinalityJob.payload,
+    {},
+    now,
+    { includeSystemAttributionCapability: true }
+  );
+  const outerReservedObservation = maxOuterCatalog.find((item) =>
+    /^observation:/i.test(item.id || '') &&
+    item.approvedSourceObservation === true
+  );
+  if (maxOuterCatalog.length !== 64 ||
+      !outerReservedObservation ||
+      !outerReservedObservation.sourceId ||
+      !outerReservedObservation.approvedSourceUrl ||
+      maxOuterCatalog.find((item) =>
+        item.id === PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+      )?.verifiedSystemCapability !== true) {
+    throw new Error(
+      `outer evidence catalog did not reserve genuine system and observation authority across its 64-item cap: ${JSON.stringify(maxOuterCatalog)}`
+    );
+  }
   let maxCardinalityRequestSeen;
   let maxCardinalityCalls = 0;
   const maxCardinalityResult = await runOpportunityDiscoveryPlanner({
@@ -9763,17 +11807,28 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
     completeJSON: async (request) => {
       maxCardinalityCalls += 1;
       maxCardinalityRequestSeen = request;
-      const productionMotion = cases[0].plans(evidenceRef)[0];
+      const productionMotion = cases[0].plans(
+        outerReservedObservation.id
+      )[0];
       productionMotion.market = 'New York, New York, United States';
+      productionMotion.paidOffer =
+        reservedSellerFocus + ' paid professional service';
       productionMotion.contingentFinalists = compactContingentFinalists(
         productionMotion.contingentFinalists
       );
+      const responsePlans = twoPlannerMotions(
+        productionMotion,
+        outerReservedObservation.id
+      ).map((motion) => ({
+        ...motion,
+        paidOffer: reservedSellerFocus + ' paid professional service'
+      }));
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
           reason: 'Two compact source-bound professional motions.',
-          plans: twoPlannerMotions(productionMotion, evidenceRef)
+          plans: responsePlans
         },
         usage,
         generationId: 'generation-max-cardinality-envelope',
@@ -9796,6 +11851,17 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   );
   const maxContextNodes =
     maxPrompt.commercialEvidenceGraph?.nodes || [];
+  const reservedSellerPromptEvidence = maxPrompt.evidenceCatalog?.find(
+    (item) => item.id === reservedSellerEvidenceRef
+  );
+  const reservedSystemPromptEvidence = maxPrompt.evidenceCatalog?.find(
+    (item) => item.id ===
+      PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+  );
+  const reservedObservationPromptEvidence = maxPrompt.evidenceCatalog?.find(
+    (item) => /^observation:/i.test(item.id || '') &&
+      item.approvedSourceObservation === true
+  );
   const attemptsStrictlyDecrease = maxAttempts.every(
     (attempt, index) => index === 0 ||
       attempt.requestBodyByteCount <
@@ -9807,6 +11873,10 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
       maxEnvelope.originalRequestBodyByteCount <= 36 * 1_024 ||
       maxEnvelope.requestBodyByteCount > 36 * 1_024 ||
       maxAttempts.length !== 4 ||
+      maxAttempts.some((attempt) =>
+        attempt.authoritativeEvidenceReservationValid !== true ||
+        attempt.authoritativeEvidenceReservationIssue
+      ) ||
       !attemptsStrictlyDecrease ||
       maxPrompt.objective?.outcome !==
         maxCardinalityJob.payload.objective.outcome ||
@@ -9826,6 +11896,25 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
         ?.attribution?.tournamentId !== 'prior-tournament-1' ||
       maxPrompt.commercialContext?.permissionRequired !==
         'explicit_user_approval' ||
+      maxPrompt.sellerContract?.requiredPrimaryFocus !==
+        reservedSellerFocus ||
+      JSON.stringify(maxPrompt.sellerContract?.requiredEvidenceRefs) !==
+        JSON.stringify([reservedSellerEvidenceRef]) ||
+      reservedSellerPromptEvidence?.type !== 'current_focus' ||
+      reservedSellerPromptEvidence?.label !== reservedSellerFocus ||
+      reservedSellerPromptEvidence?.status !== 'active' ||
+      reservedSellerPromptEvidence?.priority !== 'primary' ||
+      reservedSystemPromptEvidence?.type !==
+        'profilescribe_system_attribution_capability' ||
+      reservedSystemPromptEvidence?.verifiedSystemCapability !== true ||
+      reservedSystemPromptEvidence?.systemCapabilitySource !==
+        'profilescribe_control_plane' ||
+      reservedSystemPromptEvidence?.systemCapabilityProvenance !==
+        'verified_system_capability' ||
+      JSON.stringify(
+        reservedSystemPromptEvidence?.systemCapabilityRoles
+      ) !== JSON.stringify(['attribution']) ||
+      !reservedObservationPromptEvidence ||
       !(maxPrompt.objective?.evidenceRefs || []).every((ref) =>
         maxVisibleRefs.has(ref)
       ) ||
@@ -9888,7 +11977,11 @@ function assertCompactCriticPair({
   request,
   task,
   finalists,
-  expectedTargets
+  expectedTargets,
+  expectedOrganizations = [
+    'Riverside Pediatrics',
+    'Summit Pediatrics'
+  ]
 }) {
   const expectedRoles = [
     'acquisition',
@@ -9939,11 +12032,13 @@ function assertCompactCriticPair({
     const target = finalist.evidenceBindings?.find((binding) =>
       binding.role === 'exact_outside_target'
     );
-    return target?.kind === 'person' && [
-      'Riverside Pediatrics',
-      'Summit Pediatrics'
-    ].includes(target.organization);
+    return target?.kind === 'person' &&
+      expectedOrganizations.includes(target.organization);
   });
+  const selectedActionsAreExactRevenueActions = finalists.every(
+    (finalist) => finalist.primaryAction ===
+      finalist.revenuePath?.conversionAction
+  );
   const userText = request.user || '';
   const responseSchema = request.responseFormat?.json_schema?.schema;
   const privateContactLeaked =
@@ -9961,9 +12056,10 @@ function assertCompactCriticPair({
       request.maxTokens !== 1_200 ||
       responseSchema?.properties?.comparisons?.maxItems !== 2 ||
       responseSchema?.properties?.selectedOrdering?.maxItems !== 2 ||
-      requestBytes > 36 * 1_024 ||
+      requestBytes > 64 * 1_024 ||
       !everyRoleIsBound ||
       !targetBindingsArePublic ||
+      !selectedActionsAreExactRevenueActions ||
       privateContactLeaked ||
       !expectedTargets.every((expected) =>
         targetClaims.includes(expected)
@@ -10026,6 +12122,745 @@ function acceptedCriticCompletion(finalists, generationId) {
       contentSha256: '8'.repeat(64)
     }
   };
+}
+
+function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
+  const root = schemaValue || {};
+  const resolveRef = (ref) => {
+    if (!ref.startsWith('#/')) {
+      throw new Error(`planner bound walker found external ref ${ref}`);
+    }
+    return ref.slice(2).split('/').reduce((value, segment) =>
+      value?.[segment.replaceAll('~1', '/').replaceAll('~0', '~')], root
+    );
+  };
+  const add = (...values) => values.reduce((total, value) => ({
+    textCodepoints:
+      total.textCodepoints + value.textCodepoints,
+    evidenceRefOccurrences:
+      total.evidenceRefOccurrences + value.evidenceRefOccurrences,
+    fixedBytes: total.fixedBytes + value.fixedBytes
+  }), {
+    textCodepoints: 0,
+    evidenceRefOccurrences: 0,
+    fixedBytes: 0
+  });
+  const multiply = (value, count) => ({
+    textCodepoints: value.textCodepoints * count,
+    evidenceRefOccurrences: value.evidenceRefOccurrences * count,
+    fixedBytes: value.fixedBytes * count
+  });
+  const walk = (schema, refStack = []) => {
+    if (!schema || typeof schema !== 'object') {
+      throw new Error('planner bound walker found an empty schema node');
+    }
+    if (schema.$ref) {
+      const ref = schema.$ref;
+      if (/(?:^|\/)(?:observation)?EvidenceRef$/i.test(ref)) {
+        return {
+          textCodepoints: 0,
+          evidenceRefOccurrences: 1,
+          fixedBytes: 2
+        };
+      }
+      if (refStack.includes(ref)) {
+        throw new Error(`planner bound walker found recursive ref ${ref}`);
+      }
+      return walk(resolveRef(ref), [...refStack, ref]);
+    }
+    if (Array.isArray(schema.enum)) {
+      const serialized = schema.enum.map((value) => JSON.stringify(value));
+      if (schema.type === 'string') {
+        const maxCodepoints = Math.max(
+          0,
+          ...schema.enum.map((value) => [...String(value)].length)
+        );
+        return {
+          textCodepoints: maxCodepoints,
+          evidenceRefOccurrences: 0,
+          fixedBytes: 2
+        };
+      }
+      return {
+        textCodepoints: 0,
+        evidenceRefOccurrences: 0,
+        fixedBytes: Math.max(0, ...serialized.map((value) =>
+          Buffer.byteLength(value, 'utf8')
+        ))
+      };
+    }
+    if (schema.type === 'string') {
+      if (!Number.isSafeInteger(schema.maxLength) ||
+          schema.maxLength < 0) {
+        throw new Error(
+          `planner strict schema retained an unbounded string: ${JSON.stringify(schema)}`
+        );
+      }
+      return {
+        textCodepoints: schema.maxLength,
+        evidenceRefOccurrences: 0,
+        fixedBytes: 2
+      };
+    }
+    if (schema.type === 'number' || schema.type === 'integer') {
+      if (!Number.isFinite(schema.minimum) ||
+          !Number.isFinite(schema.maximum)) {
+        throw new Error(
+          `planner strict schema retained an unbounded number: ${JSON.stringify(schema)}`
+        );
+      }
+      // completion.data has already crossed the JSON parser. JSON.stringify
+      // emits a canonical finite IEEE-754 representation of at most 24 bytes.
+      return {
+        textCodepoints: 0,
+        evidenceRefOccurrences: 0,
+        fixedBytes: 24
+      };
+    }
+    if (schema.type === 'array') {
+      if (!Number.isSafeInteger(schema.maxItems) || schema.maxItems < 0) {
+        throw new Error(
+          `planner strict schema retained an unbounded array: ${JSON.stringify(schema)}`
+        );
+      }
+      const items = multiply(walk(schema.items, refStack), schema.maxItems);
+      return add(items, {
+        textCodepoints: 0,
+        evidenceRefOccurrences: 0,
+        fixedBytes: 2 + Math.max(0, schema.maxItems - 1)
+      });
+    }
+    if (schema.type === 'object') {
+      const required = schema.required || [];
+      if (schema.additionalProperties !== false ||
+          required.length !== Object.keys(schema.properties || {}).length) {
+        throw new Error(
+          `planner strict schema object is not finite/total: ${JSON.stringify(schema)}`
+        );
+      }
+      const children = required.map((key) => add(
+        {
+          textCodepoints: 0,
+          evidenceRefOccurrences: 0,
+          fixedBytes: Buffer.byteLength(JSON.stringify(key), 'utf8') + 1
+        },
+        walk(schema.properties[key], refStack)
+      ));
+      return add(
+        ...children,
+        {
+          textCodepoints: 0,
+          evidenceRefOccurrences: 0,
+          fixedBytes: 2 + Math.max(0, required.length - 1)
+        }
+      );
+    }
+    throw new Error(
+      `planner bound walker found unsupported schema: ${JSON.stringify(schema)}`
+    );
+  };
+  const stats = walk(root);
+  const astralTextBytes = stats.textCodepoints * 4;
+  const maximumEvidenceRefBytes =
+    stats.evidenceRefOccurrences * 192;
+  const derivedBound = astralTextBytes + maximumEvidenceRefBytes +
+    stats.fixedBytes;
+  computedPlannerSchemaResponseBoundBytes = derivedBound;
+  if (stats.textCodepoints > 24_500 ||
+      stats.evidenceRefOccurrences !== 160 ||
+      derivedBound > MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES ||
+      MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES >
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
+    throw new Error(
+      `fresh planner schema exceeded its derived response proof: ${JSON.stringify({ stats, astralTextBytes, maximumEvidenceRefBytes, derivedBound, declaredBound: MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES, runtimeCap: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES })}`
+    );
+  }
+}
+
+function verifyFreshPlannerStrictSchemaTotality({
+  schema: schemaValue,
+  observationEvidenceRef
+}) {
+  const schema = structuredClone(schemaValue || {});
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  const validate = ajv.compile(schema);
+  const planSchema = schema.properties?.plans?.items;
+  const market = planSchema?.properties?.market?.enum?.[0];
+  const observationEnum = schema.$defs?.observationEvidenceRef?.enum || [];
+  if (!market || !observationEnum.includes(observationEvidenceRef)) {
+    throw new Error('strict planner schema fixture lacks market/observation');
+  }
+  const projectMotion = (motionValue) => {
+    const motion = structuredClone(motionValue);
+    return {
+      motionKind: motion.motionKind,
+      buyer: motion.buyer,
+      counterparty: motion.counterparty,
+      paidOffer: motion.paidOffer,
+      market,
+      targetRoleSubrole: motion.targetRoleSubrole,
+      organizationTerms: motion.organizationTerms?.length > 0
+        ? motion.organizationTerms
+        : ['Verified professional organization'],
+      jobTitle: motion.jobTitle || 'Verified professional role',
+      skills: motion.skills?.length > 0
+        ? motion.skills
+        : ['Verified professional skill'],
+      conversionDestination: motion.conversionDestination,
+      paidConversion: motion.paidConversion,
+      attributionSignal: motion.attributionSignal,
+      rationale: motion.rationale,
+      contingentFinalists: compactContingentFinalists(
+        motion.contingentFinalists
+      )
+    };
+  };
+  const baseline = {
+    contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+    status: 'planned',
+    reason: '',
+    plans: cases[0].plans(observationEvidenceRef).slice(0, 2)
+      .map(projectMotion)
+  };
+  if (!validate(baseline)) {
+    throw new Error(
+      `strict planner baseline is not schema-valid: ${JSON.stringify(validate.errors)}`
+    );
+  }
+  const expectInvalid = (label, mutate) => {
+    const adversary = structuredClone(baseline);
+    mutate(adversary);
+    if (validate(adversary)) {
+      throw new Error(`strict planner schema accepted ${label}`);
+    }
+  };
+  for (const [label, value] of [
+    ['leading whitespace', ' invalid'],
+    ['trailing whitespace', 'invalid '],
+    ['repeated whitespace', 'invalid  text'],
+    ['NEL C1 control', 'invalid\u0085text'],
+    ['soft hyphen', 'invalid\u00adtext'],
+    ['Mongolian vowel separator', 'invalid\u180etext'],
+    ['zero-width space', 'invalid\u200btext'],
+    ['invisible plus', 'invalid\u2064text'],
+    ['deprecated directional control', 'invalid\u206atext'],
+    ['interlinear annotation control', 'invalid\ufff9text'],
+    ['lone surrogate', 'invalid\ud800text'],
+    ['replacement character', 'invalid\ufffdtext'],
+    ['byte order mark', 'invalid\ufefftext'],
+    ['bidi override', 'invalid\u202etext']
+  ]) {
+    expectInvalid(label, (response) => {
+      response.plans[0].buyer = value;
+    });
+  }
+  for (const [label, mutate] of [
+    ['invented base observation', (response) => {
+      response.plans[0].contingentFinalists.pathBase.e = [
+        'observation:invented'
+      ];
+    }],
+    ['invented tactic observation', (response) => {
+      response.plans[0].contingentFinalists.tacticA.e = [
+        'observation:invented'
+      ];
+    }],
+    ['invented follow-up observation', (response) => {
+      response.plans[0].contingentFinalists.tacticA.f[0].e = [
+        'observation:invented'
+      ];
+    }],
+    ['invented timing observation', (response) => {
+      response.plans[0].contingentFinalists.pathBase.t[0].e = [
+        'observation:invented'
+      ];
+    }],
+    ['unknown role subrole', (response) => {
+      response.plans[0].targetRoleSubrole = 'not_canonical';
+    }],
+    ['excluded student subrole', (response) => {
+      response.plans[0].targetRoleSubrole = 'student';
+    }],
+    ['excluded unemployed subrole', (response) => {
+      response.plans[0].targetRoleSubrole = 'unemployed';
+    }],
+    ['missing role subrole', (response) => {
+      delete response.plans[0].targetRoleSubrole;
+    }],
+    ['overflow weight', (response) => {
+      response.plans[0].contingentFinalists.w.of = JSON.parse('1e400');
+    }],
+    ['overflow expected value', (response) => {
+      response.plans[0].contingentFinalists.pathBase.r[0].vm =
+        JSON.parse('1e400');
+    }],
+    ['nonempty model reason', (response) => {
+      response.reason = 'model-authored diagnostic';
+    }]
+  ]) {
+    expectInvalid(label, mutate);
+  }
+  const allCanonicalSubroles =
+    planSchema.properties?.targetRoleSubrole?.enum || [];
+  if (allCanonicalSubroles.length !== 104) {
+    throw new Error('strict planner subrole property lost canonical coverage');
+  }
+  for (const subrole of allCanonicalSubroles) {
+    const response = structuredClone(baseline);
+    response.plans[0].targetRoleSubrole = subrole;
+    if (!validate(response)) {
+      throw new Error(
+        `strict planner rejected canonical subrole ${subrole}: ${JSON.stringify(validate.errors)}`
+      );
+    }
+  }
+  const getAtPath = (value, path) => path.reduce(
+    (item, segment) => item?.[segment],
+    value
+  );
+  const setAtPath = (value, path, replacement) => {
+    const owner = path.slice(0, -1).reduce(
+      (item, segment) => item[segment],
+      value
+    );
+    owner[path.at(-1)] = replacement;
+  };
+  const padAstral = (value, maxCodepoints) => {
+    const text = String(value || 'A');
+    const length = unicodeCodepointLength(text);
+    if (length > maxCodepoints) {
+      throw new Error(
+        `strict planner baseline already exceeds ${maxCodepoints}: ${text}`
+      );
+    }
+    return `${text}${'😀'.repeat(maxCodepoints - length)}`;
+  };
+  const maxFieldPaths = [
+    ['buyer', ['plans', 0, 'buyer'], 140],
+    ['counterparty', ['plans', 0, 'counterparty'], 140],
+    ['paidOffer', ['plans', 0, 'paidOffer'], 140],
+    ['organizationTerms', ['plans', 0, 'organizationTerms', 0], 80],
+    ['jobTitle', ['plans', 0, 'jobTitle'], 100],
+    ['skills', ['plans', 0, 'skills', 0], 80],
+    ['conversionDestination', ['plans', 0, 'conversionDestination'], 180],
+    ['paidConversion', ['plans', 0, 'paidConversion'], 140],
+    ['attributionSignal', ['plans', 0, 'attributionSignal'], 180],
+    ['rationale', ['plans', 0, 'rationale'], 180],
+    ['revenue label', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'l'], 140],
+    ['incremental outcome', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'io'], 180],
+    ['attribution signal', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'ats'], 220],
+    ['conversion destination', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'cd'], 180],
+    ['revenue stop', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'st'], 180],
+    ['supporting bottleneck', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'sb'], 180],
+    ['grounded destination', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'g', 'd', 'l'], 180],
+    ['offer item', ['plans', 0, 'contingentFinalists', 'pathBase', 'o', 0, 'l'], 140],
+    ['referral buyer item', ['plans', 0, 'contingentFinalists', 'pathBase', 'b', 0, 'rp'], 140],
+    ['buyer target item', ['plans', 0, 'contingentFinalists', 'pathBase', 'b', 0, 'by'], 140],
+    ['paid-demand buyer item', ['plans', 0, 'contingentFinalists', 'pathBase', 'b', 0, 'pd'], 140],
+    ['timing label', ['plans', 0, 'contingentFinalists', 'pathBase', 't', 0, 'l'], 140],
+    ['timing query', ['plans', 0, 'contingentFinalists', 'pathBase', 't', 0, 'q'], 140],
+    ['proof item', ['plans', 0, 'contingentFinalists', 'pathBase', 'p', 0, 'l'], 140],
+    ['tactic label', ['plans', 0, 'contingentFinalists', 'tacticA', 'l'], 140],
+    ['referral channel', ['plans', 0, 'contingentFinalists', 'tacticA', 'c', 0, 'rp'], 140],
+    ['buyer channel', ['plans', 0, 'contingentFinalists', 'tacticA', 'c', 0, 'by'], 140],
+    ['paid-demand channel', ['plans', 0, 'contingentFinalists', 'tacticA', 'c', 0, 'pd'], 140],
+    ['referral action', ['plans', 0, 'contingentFinalists', 'tacticA', 'a', 0, 'rp'], 260],
+    ['buyer action', ['plans', 0, 'contingentFinalists', 'tacticA', 'a', 0, 'by'], 260],
+    ['paid-demand action', ['plans', 0, 'contingentFinalists', 'tacticA', 'a', 0, 'pd'], 260]
+  ];
+  const allMax = structuredClone(baseline);
+  for (const [label, path, maxCodepoints] of maxFieldPaths) {
+    const exactMax = padAstral(getAtPath(baseline, path), maxCodepoints);
+    const exact = structuredClone(baseline);
+    setAtPath(exact, path, exactMax);
+    if (!validate(exact) ||
+        getAtPath(JSON.parse(JSON.stringify(exact)), path) !== exactMax) {
+      throw new Error(
+        `strict planner did not preserve max-codepoint ${label}: ${JSON.stringify(validate.errors)}`
+      );
+    }
+    const over = structuredClone(exact);
+    setAtPath(over, path, `${exactMax}😀`);
+    if (validate(over)) {
+      throw new Error(`strict planner accepted over-max ${label}`);
+    }
+    setAtPath(allMax, path, exactMax);
+  }
+  if (!validate(allMax)) {
+    throw new Error(
+      `strict planner joint-max astral response is invalid: ${JSON.stringify(validate.errors)}`
+    );
+  }
+  const serializedAllMax = JSON.stringify(allMax);
+  if (/\\ud[89ab][0-9a-f]{2}|\\ud[cdef][0-9a-f]{2}/i.test(
+    serializedAllMax
+  )) {
+    throw new Error('strict planner joint-max response split an astral scalar');
+  }
+
+  // Exercise the abstract walker proof with one concrete joint-maximum
+  // response: both plans, all schema-authorized list cardinalities, and all
+  // 160 evidence-ref occurrences use distinct 96-rune/192-JSON-byte refs.
+  // Escape-heavy raw refs are normalized before reaching this schema (proved
+  // separately below), so 192 encoded bytes is the exact response unit.
+  const boundaryEvidenceRefs = Array.from({ length: 14 }, (_, index) =>
+    `observation:${'😀'.repeat(32)}${'a'.repeat(51)}${index.toString(16)}`
+  );
+  if (boundaryEvidenceRefs.some((ref) =>
+    unicodeCodepointLength(ref) !== 96 ||
+    Buffer.byteLength(JSON.stringify(ref), 'utf8') - 2 !== 192
+  )) {
+    throw new Error('joint-max evidence reference arithmetic drifted');
+  }
+  const maximumSchema = structuredClone(schema);
+  maximumSchema.$defs.evidenceRef.enum = [...boundaryEvidenceRefs];
+  maximumSchema.$defs.observationEvidenceRef.enum = [
+    ...boundaryEvidenceRefs
+  ];
+  const maximumResponse = structuredClone(allMax);
+  for (let planIndex = 0; planIndex < 2; planIndex += 1) {
+    for (const [, rawPath, maxCodepoints] of maxFieldPaths) {
+      const path = [...rawPath];
+      path[1] = planIndex;
+      setAtPath(
+        maximumResponse,
+        path,
+        padAstral(getAtPath(maximumResponse, path), maxCodepoints)
+      );
+    }
+    maximumResponse.plans[planIndex].organizationTerms = Array.from(
+      { length: 6 },
+      (_, index) => padAstral(`Org${index}`, 80)
+    );
+    maximumResponse.plans[planIndex].skills = Array.from(
+      { length: 6 },
+      (_, index) => padAstral(`Skill${index}`, 80)
+    );
+  }
+  let evidenceArrayCount = 0;
+  let evidenceOccurrenceCount = 0;
+  let boundaryCursor = 0;
+  const dereference = (schemaValue) => {
+    let candidate = schemaValue || {};
+    const seenRefs = new Set();
+    while (typeof candidate.$ref === 'string' &&
+      !seenRefs.has(candidate.$ref)) {
+      seenRefs.add(candidate.$ref);
+      candidate = maximumSchema.$defs[
+        candidate.$ref.split('/').at(-1)
+      ] || {};
+    }
+    return candidate;
+  };
+  const fillMaximumArrays = (value, schemaValue) => {
+    const nodeSchema = dereference(schemaValue);
+    if (Array.isArray(value)) {
+      const itemRef = nodeSchema.items?.$ref?.split('/').at(-1) || '';
+      if (['evidenceRef', 'observationEvidenceRef'].includes(itemRef)) {
+        const count = nodeSchema.maxItems;
+        evidenceArrayCount += 1;
+        evidenceOccurrenceCount += count;
+        return Array.from({ length: count }, () => {
+          const ref = boundaryEvidenceRefs[
+            boundaryCursor % boundaryEvidenceRefs.length
+          ];
+          boundaryCursor += 1;
+          return ref;
+        });
+      }
+      return value.map((item) => fillMaximumArrays(
+        item,
+        nodeSchema.items
+      ));
+    }
+    if (value && typeof value === 'object') {
+      for (const key of nodeSchema.required || []) {
+        value[key] = fillMaximumArrays(
+          value[key],
+          nodeSchema.properties?.[key]
+        );
+      }
+    }
+    return value;
+  };
+  fillMaximumArrays(maximumResponse, maximumSchema);
+  let maximizedStringOccurrenceCount = 0;
+  const fillMaximumStrings = (value, schemaValue) => {
+    const nodeSchema = dereference(schemaValue);
+    if (typeof value === 'string') {
+      if (!Number.isInteger(nodeSchema.maxLength) ||
+          Array.isArray(nodeSchema.enum)) return value;
+      const candidate = padAstral(value, nodeSchema.maxLength);
+      try {
+        if (nodeSchema.pattern &&
+            !new RegExp(nodeSchema.pattern, 'u').test(candidate)) {
+          return value;
+        }
+      } catch {
+        return value;
+      }
+      maximizedStringOccurrenceCount += 1;
+      return candidate;
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => fillMaximumStrings(
+        item,
+        nodeSchema.items
+      ));
+    }
+    if (value && typeof value === 'object') {
+      for (const key of nodeSchema.required || []) {
+        value[key] = fillMaximumStrings(
+          value[key],
+          nodeSchema.properties?.[key]
+        );
+      }
+    }
+    return value;
+  };
+  fillMaximumStrings(maximumResponse, maximumSchema);
+  const validateMaximum = new Ajv({ allErrors: true, strict: false })
+    .compile(maximumSchema);
+  if (!validateMaximum(maximumResponse) ||
+      evidenceOccurrenceCount !== 160 || evidenceArrayCount === 0 ||
+      maximizedStringOccurrenceCount < 100 ||
+      maximumResponse.plans.some((planValue) =>
+        planValue.organizationTerms.length !== 6 ||
+        planValue.skills.length !== 6
+      )) {
+    throw new Error(
+      `concrete joint-max planner response is not schema-total: ${JSON.stringify({ evidenceArrayCount, evidenceOccurrenceCount, maximizedStringOccurrenceCount, errors: validateMaximum.errors })}`
+    );
+  }
+  const maximumResponseBytes = Buffer.byteLength(
+    JSON.stringify(maximumResponse),
+    'utf8'
+  );
+  largestPlannerResponseBytes = Math.max(
+    largestPlannerResponseBytes,
+    maximumResponseBytes
+  );
+  if (maximumResponseBytes >
+        MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES ||
+      maximumResponseBytes > MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
+    throw new Error(
+      `concrete joint-max planner response exceeded its declared bound: ${JSON.stringify({ maximumResponseBytes, declared: MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES, runtime: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES })}`
+    );
+  }
+  maxAstralStrictPlannerResponse = allMax;
+}
+
+function verifyEvidenceReferenceEncodingBounds() {
+  const exactBoundaryID =
+    `observation:${'😀'.repeat(32)}${'a'.repeat(52)}`;
+  const escapeHeavyID =
+    `observation:${'😀'.repeat(32)}${'\\"'.repeat(26)}`;
+  const invalidIDs = [
+    ['soft-hyphen', `observation:invalid\u00adref`],
+    ['Mongolian-vowel-separator', `observation:invalid\u180eref`],
+    ['zero-width-space', `observation:invalid\u200bref`],
+    ['invisible-operator', `observation:invalid\u2064ref`],
+    ['deprecated-directional-control', `observation:invalid\u206aref`],
+    ['interlinear-annotation-control', `observation:invalid\ufff9ref`],
+    ['lone-surrogate', `observation:invalid\ud800ref`],
+    ['replacement-character', `observation:invalid\ufffdref`],
+    ['byte-order-mark', `observation:invalid\ufeffref`],
+    ['bidi-control', `observation:invalid\u202eref`]
+  ];
+  const sourceEvidence = [
+    ['exact-boundary', exactBoundaryID],
+    ['escape-heavy', escapeHeavyID],
+    ...invalidIDs
+  ].map(([label, id], index) => ({
+    evidenceRef: id,
+    id,
+    observationId: id,
+    sourceId: 'owner-site',
+    label: `Encoding boundary ${label}`,
+    summary:
+      `Approved professional observation ${index + 1} for evidence encoding.`,
+    url: `https://owner.example/encoding/${index + 1}`,
+    observedAt: now.toISOString(),
+    status: 'approved'
+  }));
+  const catalog = buildEvidenceCatalog({
+    evidenceSnapshot: {
+      sources: [{
+        id: 'owner-site',
+        label: 'Owner site',
+        url: 'https://owner.example/',
+        status: 'approved',
+        profileControlled: true
+      }],
+      sourceEvidence
+    }
+  }, {}, now, { includeSystemAttributionCapability: true });
+  const byLabel = new Map(catalog.map((item) => [item.label, item]));
+  const boundary = byLabel.get('Encoding boundary exact-boundary');
+  const escaped = byLabel.get('Encoding boundary escape-heavy');
+  if (unicodeCodepointLength(exactBoundaryID) !== 96 ||
+      Buffer.byteLength(exactBoundaryID, 'utf8') !== 192 ||
+      Buffer.byteLength(JSON.stringify(exactBoundaryID), 'utf8') - 2 !==
+        192 ||
+      boundary?.id !== exactBoundaryID ||
+      unicodeCodepointLength(escapeHeavyID) !== 96 ||
+      Buffer.byteLength(escapeHeavyID, 'utf8') !== 192 ||
+      Buffer.byteLength(JSON.stringify(escapeHeavyID), 'utf8') - 2 <= 192 ||
+      !/^observation:[a-f0-9]{48}$/.test(escaped?.id || '') ||
+      escaped?.id === escapeHeavyID) {
+    throw new Error(
+      `evidence reference encoded-byte boundary drifted: ${JSON.stringify({ boundary: boundary?.id, escaped: escaped?.id, exactBoundaryRunes: unicodeCodepointLength(exactBoundaryID), exactBoundaryBytes: Buffer.byteLength(exactBoundaryID, 'utf8'), escapeHeavyRunes: unicodeCodepointLength(escapeHeavyID), escapeHeavyBytes: Buffer.byteLength(escapeHeavyID, 'utf8'), escapeHeavyEncodedBytes: Buffer.byteLength(JSON.stringify(escapeHeavyID), 'utf8') - 2 })}`
+    );
+  }
+  for (const [label, rawID] of invalidIDs) {
+    const item = byLabel.get(`Encoding boundary ${label}`);
+    if (catalog.some((entry) => entry.id === rawID) ||
+        (item && !/^observation:[a-f0-9]{48}$/.test(item.id || ''))) {
+      throw new Error(
+        `unsafe evidence scalar ${label} was not hashed: ${JSON.stringify({ item, catalog: catalog.map((entry) => ({ id: entry.id, label: entry.label })) })}`
+      );
+    }
+  }
+  const retainedInvalidHashes = invalidIDs.filter(([label]) =>
+    byLabel.has(`Encoding boundary ${label}`)
+  );
+  if (retainedInvalidHashes.length < 3) {
+    throw new Error('unsafe evidence scalar hashing collapsed too much proof');
+  }
+  for (const item of catalog) {
+    if (Buffer.byteLength(JSON.stringify(item.id), 'utf8') - 2 > 192 ||
+        unicodeCodepointLength(item.id) > 96) {
+      throw new Error(
+        `catalog emitted an evidence ref beyond its response proof: ${JSON.stringify(item.id)}`
+      );
+    }
+  }
+}
+
+function unicodeCodepointLength(value) {
+  return [...String(value || '')].length;
+}
+
+async function verifyFreshAstralPlannerRoundTrip(jobValue) {
+  const response = structuredClone(maxAstralStrictPlannerResponse);
+  if (!response?.plans?.[0]) {
+    throw new Error('joint-max planner response fixture was not initialized');
+  }
+  response.plans[0].motionKind = 'referral_org_decision_maker';
+  const observationEvidenceRef =
+    response.plans[0].contingentFinalists.pathBase.e[0];
+  const rawJobMotion = cases[1].plans(observationEvidenceRef)[0];
+  const padAstral = (value, maximum) => {
+    const text = String(value || 'A');
+    return `${text}${'😀'.repeat(maximum - unicodeCodepointLength(text))}`;
+  };
+  const jobBundle = compactContingentFinalists(
+    rawJobMotion.contingentFinalists
+  );
+  jobBundle.pathBase.b[0].pd = padAstral(
+    jobBundle.pathBase.b[0].pd,
+    140
+  );
+  jobBundle.tacticA.c[0].pd = padAstral(
+    jobBundle.tacticA.c[0].pd,
+    140
+  );
+  jobBundle.tacticA.a[0].pd = padAstral(
+    jobBundle.tacticA.a[0].pd,
+    260
+  );
+  response.plans[1] = {
+    motionKind: 'compensated_job',
+    buyer: rawJobMotion.buyer,
+    counterparty: rawJobMotion.counterparty,
+    paidOffer: rawJobMotion.paidOffer,
+    market: response.plans[0].market,
+    targetRoleSubrole: 'executive',
+    organizationTerms: ['Verified employer organization'],
+    jobTitle: padAstral(rawJobMotion.jobTitle, 100),
+    skills: [padAstral(rawJobMotion.skills[0], 80)],
+    conversionDestination: rawJobMotion.conversionDestination,
+    paidConversion: rawJobMotion.paidConversion,
+    attributionSignal: rawJobMotion.attributionSignal,
+    rationale: rawJobMotion.rationale,
+    contingentFinalists: jobBundle
+  };
+  const validate = new Ajv({ allErrors: true, strict: false }).compile(
+    representativePlannerSchema
+  );
+  if (!validate(response)) {
+    throw new Error(
+      `joint-max round-trip response lost strict schema fidelity: ${JSON.stringify(validate.errors)}`
+    );
+  }
+  const first = response.plans[0];
+  const second = response.plans[1];
+  const expectedRoundTrips = [
+    first.buyer,
+    first.counterparty,
+    first.paidOffer,
+    first.organizationTerms[0],
+    first.conversionDestination,
+    first.paidConversion,
+    first.attributionSignal,
+    first.rationale,
+    second.jobTitle,
+    second.skills[0],
+    first.contingentFinalists.pathBase.r[0].l,
+    first.contingentFinalists.pathBase.r[0].io,
+    first.contingentFinalists.pathBase.r[0].ats,
+    first.contingentFinalists.pathBase.r[0].cd,
+    first.contingentFinalists.pathBase.r[0].st,
+    first.contingentFinalists.pathBase.r[0].sb,
+    first.contingentFinalists.pathBase.r[0].g.d.l,
+    first.contingentFinalists.pathBase.o[0].l,
+    first.contingentFinalists.pathBase.b[0].rp,
+    second.contingentFinalists.pathBase.b[0].pd,
+    first.contingentFinalists.pathBase.t[0].l,
+    first.contingentFinalists.pathBase.t[0].q,
+    first.contingentFinalists.pathBase.p[0].l,
+    first.contingentFinalists.tacticA.l,
+    first.contingentFinalists.tacticA.c[0].rp,
+    second.contingentFinalists.tacticA.c[0].pd,
+    first.contingentFinalists.tacticA.a[0].rp,
+    second.contingentFinalists.tacticA.a[0].pd,
+    first.contingentFinalists.tacticA.f[0].l
+  ];
+  let calls = 0;
+  const result = await runOpportunityDiscoveryPlanner({
+    job: structuredClone(jobValue),
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async () => {
+      calls += 1;
+      return {
+        data: response,
+        usage,
+        generationId: 'generation-joint-max-astral-roundtrip',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: Buffer.byteLength(
+            JSON.stringify(response),
+            'utf8'
+          ),
+          contentSha256: 'a'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const serialized = JSON.stringify(result.plans || []);
+  if (calls !== 1 || result.status !== 'planned' ||
+      result.plans.length !== 2 ||
+      expectedRoundTrips.some((value) => !serialized.includes(value)) ||
+      /\\ud[89ab][0-9a-f]{2}|\\ud[cdef][0-9a-f]{2}/i.test(serialized) ||
+      result.preflight?.responseBodyByteCount >
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
+    throw new Error(
+      `joint-max fresh authored fields did not round-trip losslessly: ${JSON.stringify({ calls, status: result.status, reason: result.reason, selection: result.planSelection, responseBytes: result.preflight?.responseBodyByteCount, missingIndexes: expectedRoundTrips.map((value, index) => serialized.includes(value) ? -1 : index).filter((index) => index >= 0), plans: result.plans.map((planValue) => ({ id: planValue.id, motionKind: planValue.motionKind, jobTitle: planValue.jobTitle, skills: planValue.skills, buyer: planValue.contingentFinalists?.familyA?.d?.b?.[0]?.l, channel: planValue.contingentFinalists?.familyA?.d?.c?.[0]?.l, action: planValue.contingentFinalists?.familyA?.d?.a?.[0]?.l })) })}`
+    );
+  }
 }
 
 function plannerJob(scenario) {
@@ -10124,6 +12959,7 @@ function plan(overrides) {
     evidenceRefs: [],
     query: '',
     market: '',
+    targetRoleSubrole: 'executive',
     targetRoleTerms: [],
     organizationTerms: [],
     jobTitle: '',
@@ -10154,6 +12990,24 @@ function plan(overrides) {
         : motion.searchMode === 'local_organization'
           ? 'direct_buyer_org_decision_maker'
           : 'direct_buyer_person';
+  }
+  if (!Object.prototype.hasOwnProperty.call(
+    overrides,
+    'targetRoleSubrole'
+  )) {
+    const roleText = `${motion.targetRoleTerms.join(' ')} ${motion.counterparty}`
+      .toLowerCase();
+    motion.targetRoleSubrole = /pediatr|physician|doctor/.test(roleText)
+      ? 'doctor'
+      : /midwi|nurs/.test(roleText)
+        ? 'nursing'
+        : /software|developer|programmer/.test(roleText)
+          ? 'software'
+          : /partner|alliance/.test(roleText)
+            ? 'partnerships'
+            : /consult|sustainab|climate/.test(roleText)
+              ? 'consulting'
+              : 'executive';
   }
   if (!Object.prototype.hasOwnProperty.call(
     overrides,
@@ -10415,31 +13269,95 @@ function compactContingentFinalists(value) {
   const materialized = structuredClone(value);
   const familyA = materialized.familyA;
   const familyB = materialized.familyB;
+  const tokenFree = (value, fallback) => {
+    const canonical = String(value || '')
+      .replaceAll('{{TARGET_NAME}}', '')
+      .replaceAll('{{TARGET_URL}}', '')
+      .replaceAll('target:evidence', '')
+      .replace(/[{}:]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/^[;,\s]+|[;,\s]+$/g, '');
+    const text = [...canonical].slice(0, 72).join('').trim();
+    return text || fallback;
+  };
+  const roleBuyer = (item) => {
+    const label = tokenFree(item.l, 'Qualified commercial buyer');
+    return {
+      rp: label,
+      by: [...`{{TARGET_NAME}}: ${label}`].slice(0, 140).join(''),
+      pd: [...`{{TARGET_NAME}}: ${label}`].slice(0, 140).join(''),
+      e: item.e
+    };
+  };
+  const roleChannel = (item, index, family) => {
+    const suffix = tokenFree(
+      `${family === familyA ? 'alpha' : 'beta'} route ${index + 1}`,
+      `tactic option ${index + 1}`
+    );
+    return {
+      rp: `Review-first public professional profile {{TARGET_URL}} for ${suffix}`,
+      by: `Review-first public professional profile {{TARGET_URL}} for ${suffix}`,
+      pd: `Review-first official paid-demand page {{TARGET_URL}} for ${suffix}`,
+      e: item.e
+    };
+  };
+  const roleAction = (item, index, family) => {
+    const suffix = tokenFree(
+      `${family === familyA ? 'alpha' : 'beta'} route ${index + 1}`,
+      `tactic option ${index + 1}`
+    );
+    return {
+      rp: `After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer ${suffix} to book the current paid service`,
+      by: `After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service ${suffix}`,
+      pd: `After review via official paid-demand page {{TARGET_URL}}, submit a paid proposal to {{TARGET_NAME}} for ${suffix}`,
+      e: item.e
+    };
+  };
   const tactic = (family) => ({
     l: family.l,
-    m: family.m,
-    tacticKey: family.tacticKey,
-    e: family.e.slice(0, 2),
+    e: family.e.filter((ref) => /^observation:/i.test(ref)).slice(0, 2),
     s: family.s,
-    c: family.d.c,
-    a: family.d.a.map((action) => ({
-      rp: action.l,
-      by: action.l,
-      pd: action.l,
-      e: action.e
-    })),
+    c: family.d.c.map((item, index) =>
+      roleChannel(item, index, family)
+    ),
+    a: family.d.a.map((item, index) =>
+      roleAction(item, index, family)
+    ),
     f: family.d.f
   });
+  const compactRevenue = (revenueValue) => {
+    const revenue = structuredClone(revenueValue);
+    delete revenue.v;
+    delete revenue.a;
+    delete revenue.c;
+    delete revenue.o;
+    revenue.l = tokenFree(
+      revenue.l,
+      'Current attributable paid outcome'
+    );
+    revenue.k = {
+      n: revenue.k?.n ?? 14,
+      u: revenue.k?.u ?? 'calendar_days'
+    };
+    revenue.cd = tokenFree(
+      revenue.cd,
+      'The official paid conversion destination'
+    );
+    if (revenue.g?.d) {
+      revenue.g.d.l = tokenFree(
+        revenue.g.d.l,
+        'The official paid conversion destination'
+      );
+    }
+    return revenue;
+  };
   return {
     seedContract: materialized.seedContract,
     pathBase: {
-      e: familyA.e,
-      r: familyA.d.r.map((revenue) => ({
-        ...revenue,
-        c: 'project_first_viable_tactic_action'
-      })),
+      e: familyA.e.filter((ref) => /^observation:/i.test(ref)),
+      r: familyA.d.r.map(compactRevenue),
       o: familyA.d.o,
-      b: familyA.d.b,
+      b: familyA.d.b.map(roleBuyer),
       t: familyA.d.t,
       p: familyA.d.p
     },
@@ -10447,4 +13365,62 @@ function compactContingentFinalists(value) {
     tacticB: tactic(familyB),
     w: materialized.w
   };
+}
+
+function compactFreshPlannerPlans(values) {
+  return (values || []).map((planValue) => {
+    const freshPlan = structuredClone(planValue);
+    if (freshPlan.contingentFinalists?.familyA &&
+        freshPlan.contingentFinalists?.familyB) {
+      freshPlan.contingentFinalists = compactContingentFinalists(
+        freshPlan.contingentFinalists
+      );
+    }
+    return freshPlan;
+  });
+}
+
+function canonicalMaterializedPlannerPlans(values) {
+  return (values || []).map((planValue) => {
+    const motion = structuredClone(planValue);
+    const original = motion.contingentFinalists;
+    if (!original?.familyA || !original?.familyB) return motion;
+    const compact = compactContingentFinalists(original);
+    const roleField = motion.commercialRole === 'referral_partner'
+      ? 'rp'
+      : motion.commercialRole === 'buyer'
+        ? 'by'
+        : 'pd';
+    const selectItems = (items) => (items || []).map((item) => ({
+      l: item[roleField],
+      e: structuredClone(item.e)
+    }));
+    const materializeFamily = (familyKey, tacticKey, key) => {
+      const source = structuredClone(original[familyKey]);
+      const tactic = compact[tacticKey];
+      source.m = motion.acquisitionMode;
+      source.tacticKey = key;
+      source.d.b = selectItems(compact.pathBase.b);
+      source.d.c = selectItems(tactic.c);
+      source.d.a = selectItems(tactic.a);
+      const compactRevenue = structuredClone(compact.pathBase.r[0]);
+      const originalRevenue = source.d.r[0];
+      source.d.r[0] = {
+        ...compactRevenue,
+        v: originalRevenue.v,
+        a: motion.acquisitionMode,
+        c: source.d.a[0].l,
+        o: originalRevenue.o,
+        k: originalRevenue.k
+      };
+      return source;
+    };
+    motion.contingentFinalists = {
+      seedContract: original.seedContract,
+      familyA: materializeFamily('familyA', 'tacticA', 'tactic_a'),
+      familyB: materializeFamily('familyB', 'tacticB', 'tactic_b'),
+      w: structuredClone(original.w)
+    };
+    return motion;
+  });
 }

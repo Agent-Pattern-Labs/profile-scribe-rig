@@ -244,9 +244,7 @@ for (const domain of domains) {
         result.result?.allowedChannel !== 'organic search' ||
         result.result?.permissionRequired !==
           'explicit_user_approval' ||
-        !/^After explicit approval,/i.test(
-          result.winner?.action || ''
-        ) ||
+        result.gate?.requiresReview !== true ||
         !/independent commercial critic/i.test(
           result.winner?.whyOverRunnerUp || ''
         ) ||
@@ -335,7 +333,7 @@ await verifyThrownLengthStructuredRepair();
 await verifyProviderSpendBudgetRecovery();
 await verifyMaximumTournamentSpendCeiling();
 await verifyAdaptivePromptEnvelopeCompaction();
-await verifyPromptEnvelopeFailsLocally();
+await verifyOversizedEvidenceIDIsBoundedLocally();
 await verifyOmittedProviderEvidenceFailsClosed();
 await verifyProviderSchemaEvidenceParity();
 await verifyQueryScopedOwnedAssetPreserved();
@@ -617,8 +615,10 @@ function strictV2Response(domain, ref) {
         q: domain.destination
       }],
       proofPoints: [
-        item(domain.sourceSummary),
-        item(`${domain.offer}: ${domain.sourceSummary}`)
+        item(
+          `Verified current ${domain.offer} on ${domain.destination}`
+        ),
+        item(`Approved owner evidence for ${domain.offer}`)
       ],
       followUps: [
         item('Review the attributed paid result before any next step'),
@@ -778,6 +778,8 @@ function verifyCommercialDiscoveryPDLReferralEnvelopeNormalization() {
   const candidateID = 'candidate:external:cdcdcdcdcdcdcdcdcdcdcdcd';
   const provider = 'people_data_labs_person_search';
   const publicUrl = 'https://www.linkedin.com/in/betty-referral-fixture';
+  const canonicalPublicUrl =
+    'https://linkedin.com/in/betty-referral-fixture';
   const envelope = commercialDiscoveryFixture({
     id: 'attempt-betty-pdl-referral',
     provider,
@@ -844,7 +846,8 @@ function verifyCommercialDiscoveryPDLReferralEnvelopeNormalization() {
       normalized.candidates?.[0]?.contactPaths?.[0]?.kind !==
         'public_professional_url' ||
       normalized.candidates?.[0]?.contactPaths?.[0]?.reference !==
-        publicUrl ||
+        canonicalPublicUrl ||
+      normalized.candidates?.[0]?.publicUrl !== canonicalPublicUrl ||
       inFlight.valid !== false ||
       !inFlight.rejectedReasons?.invalid_attempt_ledger) {
     throw new Error(
@@ -1859,7 +1862,7 @@ async function verifyLegacyReferralPartnerKeepsBuyerDistinctButCannotAuthorize()
   if (result.status !== 'skipped' ||
       result.result?.resultType !== 'no_grounded_path' ||
       result.result?.incrementalRevenueGate?.passed !== false ||
-      result.result?.incrementalRevenueGate?.reachableBuyer !== true ||
+      result.result?.incrementalRevenueGate?.reachableBuyer !== false ||
       result.result?.incrementalRevenueGate?.actionCanBeginNow !== false ||
       result.result?.incrementalRevenueGate?.knownPermissions !== false ||
       result.searchSpace?.commercialDiscoveryEvidenceCount !== 1 ||
@@ -1874,22 +1877,19 @@ async function verifyLegacyReferralPartnerKeepsBuyerDistinctButCannotAuthorize()
       ) ||
       graphNode?.provenance !==
         'provider_attested_commercial_discovery' ||
-      !graphNode?.roles?.includes('prospective_partner') ||
-      !graphNode?.roles?.includes('acquisition') ||
-      !graphNode?.roles?.includes('channel_fit') ||
+      !graphNode?.commercialDiscoveryRoles?.includes(
+        'prospective_partner'
+      ) ||
+      !graphNode?.commercialDiscoveryRoles?.includes('acquisition') ||
+      !graphNode?.commercialDiscoveryRoles?.includes('channel_fit') ||
+      graphNode?.roles?.length > 0 ||
       graphNode?.roles?.includes('defined_buyer') ||
       graphNode?.roles?.includes('named_partner') ||
       graphNode?.roles?.includes('named_outside_target') ||
-      result.hypotheses?.some((hypothesis) =>
-        !hypothesis.evidenceRefs?.includes(referralRef) ||
-        hypothesis.revenuePath?.acquisitionMode !== 'partner_channel' ||
-        !/new york parents/i.test(hypothesis.buyerSegment) ||
-        /riverside pediatrics/i.test(hypothesis.buyerSegment)
-      ) ||
-      candidate?.commercialRole !== 'referral_partner' ||
-      candidate?.providerAttestedCommercialDiscovery !== true ||
-      candidate?.contactPaths?.length !== 1 ||
-      candidate?.contactPaths?.[0]?.reference !== referralPublicURL ||
+      result.hypotheses?.length !== 0 ||
+      candidate !== undefined ||
+      result.searchSpace?.commercialCritic?.attempted !== false ||
+      requests.length !== 1 ||
       result.winner !== null ||
       result.result?.allowedChannel !== 'none' ||
       result.result?.incrementalRevenueGate
@@ -1962,7 +1962,8 @@ async function verifyUnplannedLegacyPaidDemandCannotAuthorizeApplicationRoute() 
     }));
     family.d.proofPoints = family.d.proofPoints.map((item) => ({
       ...item,
-      l: `${domain.sourceSummary} ${domain.offer}`,
+      l:
+        `Verified Go and PostgreSQL shipped API experience for ${domain.offer}`,
       e: [supplyRef, jobRef]
     }));
     family.d.followUps = family.d.followUps.map((item) => ({
@@ -2131,22 +2132,20 @@ async function verifyUnplannedLegacyPaidDemandCannotAuthorizeApplicationRoute() 
         'acquisition',
         'conversion_destination',
         'paid_conversion'
-      ].every((role) => jobNode?.roles?.includes(role)) ||
-      result.hypotheses?.some((hypothesis) =>
-        !hypothesis.evidenceRefs?.includes(jobRef) ||
-        hypothesis.revenuePath?.revenueMechanism !== 'compensated_role' ||
-        hypothesis.revenuePath?.acquisitionMode !== 'inbound' ||
-        hypothesis.revenuePath?.attributionMethod !==
-          'employment_compensation_record' ||
-        !/application page/i.test(
-          hypothesis.revenuePath?.conversionDestination || ''
-        )
+      ].every((role) =>
+        jobNode?.commercialDiscoveryRoles?.includes(role)
       ) ||
-      candidate?.commercialRole !== 'paid_demand' ||
-      candidate?.providerAttestedCommercialDiscovery !== true ||
-      candidate?.contactPaths?.some((path) => path.reference) ||
-      candidate?.evidenceRefs?.length !== 1 ||
-      candidate?.evidenceRefs?.[0] !== jobRef ||
+      jobNode?.roles?.some((role) => [
+        'demand_signal',
+        'defined_buyer',
+        'acquisition',
+        'conversion_destination',
+        'paid_conversion'
+      ].includes(role)) ||
+      result.hypotheses?.length !== 0 ||
+      candidate !== undefined ||
+      result.searchSpace?.commercialCritic?.attempted !== false ||
+      requests.length !== 1 ||
       result.candidates?.some((item) =>
         item.kind === 'owned_inbound_asset'
       ) ||
@@ -3508,11 +3507,12 @@ async function verifyAdaptivePromptEnvelopeCompaction() {
   }
 }
 
-async function verifyPromptEnvelopeFailsLocally() {
+async function verifyOversizedEvidenceIDIsBoundedLocally() {
   const domain = { ...domains.find((item) => item.name === 'commerce') };
   const sourceID = 'src-local-prompt-envelope';
   const oversizedObservationID = `obs-envelope-${'x'.repeat(48_000)}`;
   let providerCalls = 0;
+  let request;
   const result = await runOpportunityTournament({
     job: {
       id: 'job-local-prompt-envelope',
@@ -3526,7 +3526,7 @@ async function verifyPromptEnvelopeFailsLocally() {
         budget: {
           maxHypotheses: 128,
           maxFinalists: 8,
-          maxLLMCalls: 2,
+          maxLLMCalls: 1,
           maxOutputTokens: 8_000,
           hardStop: false
         },
@@ -3557,8 +3557,9 @@ async function verifyPromptEnvelopeFailsLocally() {
     },
     model: 'test/v2',
     now,
-    completeJSON: async () => {
+    completeJSON: async (value) => {
       providerCalls += 1;
+      request = value;
       return {
         data: compactV2Response(
           domain,
@@ -3568,33 +3569,46 @@ async function verifyPromptEnvelopeFailsLocally() {
       };
     }
   });
-  const experiment = result.nextExperiment || {};
   const envelope = result.searchSpace?.providerPromptEnvelope || {};
   const sideEffects = result.gate?.sideEffects || {};
-  if (providerCalls !== 0 ||
+  const requestBytes = request
+    ? Buffer.byteLength(serializeOpenRouterJSONRequestBody(request), 'utf8')
+    : 0;
+  const task = JSON.parse(request?.user || '{}');
+  const promptIDs = (task.evidenceCatalog || []).map((item) => item.id);
+  const schemaIDs = request?.responseFormat?.json_schema?.schema
+    ?.$defs?.evidenceRef?.enum || [];
+  const boundedObservationRef = promptIDs.find((id) =>
+    id.startsWith('observation:')
+  );
+  if (providerCalls !== 1 ||
+      !request ||
       result.status !== 'skipped' ||
-      result.usage?.calls !== 0 ||
-      result.searchSpace?.modelCalls !== 0 ||
-      envelope.authorized !== false ||
-      envelope.cause !== 'bounded_prompt_envelope' ||
-      envelope.requestBodyByteCount <= 36 * 1_024 ||
+      result.usage?.calls !== 1 ||
+      result.searchSpace?.modelCalls !== 1 ||
+      envelope.authorized !== true ||
+      envelope.requestBodyByteCount !== requestBytes ||
+      envelope.requestBodyByteCount > 36 * 1_024 ||
       envelope.maxRequestBodyByteCount !== 36 * 1_024 ||
-      experiment.kind !==
-        'strategy_generation_prompt_envelope_recovery' ||
-      !/internal provider prompt envelope/i.test(
-        experiment.rerunPolicy?.trigger || ''
+      !boundedObservationRef ||
+      Array.from(boundedObservationRef).length > 96 ||
+      Buffer.byteLength(
+        JSON.stringify(boundedObservationRef).slice(1, -1),
+        'utf8'
+      ) > 192 ||
+      JSON.stringify(schemaIDs) !== JSON.stringify(promptIDs) ||
+      serializeOpenRouterJSONRequestBody(request).includes(
+        oversizedObservationID
       ) ||
-      /provider (?:is|was) (?:unhealthy|down)/i.test(
-        `${experiment.title} ${experiment.action}`
-      ) ||
-      hasBusinessExperimentField(experiment) ||
-      result.gate?.decision !== 'block' ||
       sideEffects.outreachAttempts !== 0 ||
       sideEffects.publishAttempts !== 0 ||
       sideEffects.providerWrites !== 0) {
     throw new Error(
-      `oversized local prompt did not fail before provider spend with a cause-matched recovery: ${JSON.stringify({
+      `oversized evidence id was not locally bounded before provider dispatch: ${JSON.stringify({
         providerCalls,
+        requestBytes,
+        promptIDs,
+        schemaIDs,
         result
       })}`
     );
@@ -4090,6 +4104,12 @@ async function verifyQueryScopedOwnedAssetPreserved() {
   const projectedDecoy = promptEvidence.find(
     (item) => item.id === decoyRef
   );
+  const durableAsset = result.commercialEvidenceGraph?.nodes?.find(
+    (item) => item.evidenceRef === ref
+  );
+  const durableDecoy = result.commercialEvidenceGraph?.nodes?.find(
+    (item) => item.evidenceRef === decoyRef
+  );
   const experiment = result.nextExperiment || {};
   const sideEffects = result.gate?.sideEffects || {};
   if (!projectedAsset ||
@@ -4099,15 +4119,14 @@ async function verifyQueryScopedOwnedAssetPreserved() {
       projectedAsset.approvedSourceUrl !== redactedBookingURL ||
       projectedAsset.revenueAssetRole !==
         'current_owner_paid_conversion_asset' ||
+      durableAsset?.url !== bookingURL ||
+      durableDecoy?.url !== decoyURL ||
       result.status !== 'skipped' ||
-      experiment.kind !== 'inbound_revenue_evidence' ||
-      experiment.asset?.publicUrl !== bookingURL ||
-      JSON.stringify(experiment.evidenceRefs) !==
-        JSON.stringify([ref]) ||
-      experiment.noGroundedPath !== true ||
+      experiment.kind !== 'strategy_generation_critic_budget_recovery' ||
+      hasBusinessExperimentField(experiment) ||
       result.result?.resultContract !==
         'opportunity_tournament_result_v2' ||
-      result.result?.resultType !== 'no_grounded_path' ||
+      result.result?.resultType !== 'technical_recovery' ||
       result.result?.recommendedAction !== experiment.action ||
       result.result?.allowedChannel !== 'none' ||
       result.result?.executionAuthorization !== 'none' ||
@@ -4118,8 +4137,10 @@ async function verifyQueryScopedOwnedAssetPreserved() {
         experiment,
         'assetEvidenceRef'
       ) ||
-      !completeBusinessExperimentFields(experiment) ||
-      result.gate?.decision !== 'needs_more_approved_evidence' ||
+      result.searchSpace?.commercialCritic?.attempted !== false ||
+      result.searchSpace?.commercialCritic?.cause !==
+        'critic_call_not_budgeted' ||
+      result.gate?.decision !== 'commercial_critic_failed' ||
       sideEffects.outreachAttempts !== 0 ||
       sideEffects.publishAttempts !== 0 ||
       sideEffects.providerWrites !== 0 ||
