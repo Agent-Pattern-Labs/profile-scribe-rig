@@ -129,11 +129,14 @@ const MAX_PROVIDER_PRICE = {
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  order: ['openai'],
-  only: ['openai'],
-  // Keep the model and provider family pinned while allowing OpenRouter to
-  // fail over between compatible OpenAI endpoints inside this one authorized
-  // call. This is router-level resilience, not an additional model call.
+  order: ['openai', 'azure', 'amazon-bedrock'],
+  only: ['openai', 'azure', 'amazon-bedrock'],
+  // Keep the model pinned while allowing OpenRouter to fail over across the
+  // currently published OpenAI, Azure, and Amazon Bedrock vendor families
+  // inside this one authorized call. Strict parameter, privacy, and price
+  // filters below remain authoritative, so a vendor is eligible only when it
+  // can honor the complete structured-output and spend contract. This is
+  // router-level resilience, not an additional model call.
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'

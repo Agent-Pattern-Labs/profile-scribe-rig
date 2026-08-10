@@ -135,11 +135,15 @@ const server = createServer(async (request, response) => {
             provider: 'OpenAI',
             model: 'openai/gpt-5.6-luna',
             selected: false
+          }, {
+            provider: 'Azure',
+            model: 'openai/gpt-5.6-luna',
+            selected: false
           }]
         },
         attempts: [
           { provider: 'OpenAI', status: 502 },
-          { provider: 'OpenAI', status: 502 }
+          { provider: 'Azure', status: 502 }
         ]
       }
     }));
@@ -182,12 +186,16 @@ const server = createServer(async (request, response) => {
         available: [{
           provider: 'OpenAI',
           model: 'openai/gpt-5.6-luna',
+          selected: false
+        }, {
+          provider: 'Azure',
+          model: 'openai/gpt-5.6-luna',
           selected: true
         }]
       },
       attempts: [
         { provider: 'OpenAI', status: 502 },
-        { provider: 'OpenAI', status: 200 }
+        { provider: 'Azure', status: 200 }
       ]
     }
   }));
@@ -682,7 +690,12 @@ function verifySuccessfulTournament(receipt, job, calls) {
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerFallbackUsed,
       true,
-      'successful call did not record internal endpoint fallback'
+      'successful call did not record cross-vendor fallback'
+    );
+    assertEqual(
+      providerReceipt?.responseDiagnostics?.routerSelectedProvider,
+      'Azure',
+      'successful call lost its selected fallback vendor'
     );
     assertEqual(
       JSON.stringify(
@@ -1004,12 +1017,17 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     call.envelope.provider?.allow_fallbacks,
     true,
-    'generator disabled compatible OpenAI endpoint fallback'
+    'generator disabled compatible cross-vendor fallback'
+  );
+  assertEqual(
+    JSON.stringify(call.envelope.provider?.order),
+    JSON.stringify(['openai', 'azure', 'amazon-bedrock']),
+    'generator lost the ordered cross-vendor fallback route'
   );
   assertEqual(
     JSON.stringify(call.envelope.provider?.only),
-    JSON.stringify(['openai']),
-    'generator widened fallback beyond OpenAI'
+    JSON.stringify(['openai', 'azure', 'amazon-bedrock']),
+    'generator allowed an unreviewed fallback vendor'
   );
   assertEqual(
     call.envelope.provider?.require_parameters,

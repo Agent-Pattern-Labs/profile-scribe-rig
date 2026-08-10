@@ -4149,8 +4149,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           request: 0
         },
         providerRouting: {
-          order: ['openai'],
-          only: ['openai'],
+          order: ['openai', 'azure', 'amazon-bedrock'],
+          only: ['openai', 'azure', 'amazon-bedrock'],
           allow_fallbacks: true,
           require_parameters: true,
           data_collection: 'deny',

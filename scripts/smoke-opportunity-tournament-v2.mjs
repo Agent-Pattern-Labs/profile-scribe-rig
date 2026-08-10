@@ -2638,8 +2638,10 @@ async function verifyLengthFinishedStructuredRepair() {
       requests.some((request) =>
         request.model !== 'test/v2' ||
         request.temperature !== undefined ||
-        JSON.stringify(request.provider?.order) !== '["openai"]' ||
-        JSON.stringify(request.provider?.only) !== '["openai"]' ||
+        JSON.stringify(request.provider?.order) !==
+          '["openai","azure","amazon-bedrock"]' ||
+        JSON.stringify(request.provider?.only) !==
+          '["openai","azure","amazon-bedrock"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
         request.provider?.max_price?.prompt !== 0.2 ||
