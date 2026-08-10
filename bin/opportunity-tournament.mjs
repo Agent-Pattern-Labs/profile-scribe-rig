@@ -98,6 +98,7 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION =
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE = 'exa';
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
+const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL = 'openai/gpt-5.6-luna';
 // GPT-5.6 Luna native context window on OpenRouter (openai/gpt-5.6-luna).
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE = 1_050_000;
@@ -1201,6 +1202,10 @@ export function opportunityCommercialDiscoveryCapabilities() {
       providerPriceCaps: { ...MAX_PROVIDER_PRICE },
       framingTokenReserve: OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
       generator: {
+        pluginIds: [
+          'web',
+          OPENROUTER_RESPONSE_HEALING_PLUGIN
+        ],
         requestMaxBytes: MAX_PROVIDER_REQUEST_BODY_BYTES,
         promptTokenCeiling:
           OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
@@ -1211,6 +1216,7 @@ export function opportunityCommercialDiscoveryCapabilities() {
           MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
       },
       critic: {
+        pluginIds: [OPENROUTER_RESPONSE_HEALING_PLUGIN],
         requestMaxBytes: MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES,
         promptTokenCeiling:
           MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING,
@@ -1680,6 +1686,8 @@ export async function runOpportunityDiscoveryPlanner({
         id: 'web',
         engine: OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE,
         max_results: OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS
+      }, {
+        id: OPENROUTER_RESPONSE_HEALING_PLUGIN
       }],
       additionalPromptTokenReserve:
         OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
@@ -16242,7 +16250,7 @@ async function runCommercialCritic({
       MAX_CRITIC_OUTPUT_TOKENS
     ),
     responseFormat: commercialCriticResponseFormat(finalists),
-    plugins: [{ id: 'response-healing' }],
+    plugins: [{ id: OPENROUTER_RESPONSE_HEALING_PLUGIN }],
     provider: {
       ...TOURNAMENT_PROVIDER_ROUTING,
       max_price: {

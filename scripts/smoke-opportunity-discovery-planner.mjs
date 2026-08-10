@@ -462,6 +462,8 @@ for (const scenario of cases) {
       requestSeen.plugins?.[0]?.id !== 'web' ||
       requestSeen.plugins?.[0]?.engine !== 'exa' ||
       requestSeen.plugins?.[0]?.max_results !== 5 ||
+      requestSeen.plugins?.[1]?.id !== 'response-healing' ||
+      requestSeen.plugins?.length !== 2 ||
       requestSeen.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       !requestSeen.system?.includes(
         'Obey outputContract and hardRules exactly'
@@ -4148,6 +4150,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         },
         framingTokenReserve: 1_024,
         generator: {
+          pluginIds: ['web', 'response-healing'],
           requestMaxBytes: 36 * 1_024,
           promptTokenCeiling: 1_050_000,
           outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
@@ -4156,6 +4159,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
         },
         critic: {
+          pluginIds: ['response-healing'],
           requestMaxBytes: 64 * 1_024,
           promptTokenCeiling: 65_536 + 1_024,
           outputTokenCeiling: 1_200,
@@ -6303,6 +6307,8 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
         item.id === sellerFocusEvidence.id
       ) ||
       requestSeen?.plugins?.[0]?.engine !== 'exa' ||
+      requestSeen?.plugins?.[1]?.id !== 'response-healing' ||
+      requestSeen?.plugins?.length !== 2 ||
       result.preflight?.fixedToolFeeMicros !== 5_000 ||
       !prompt.hardRules?.some((rule) =>
         /Audience\/directory\/category pages can inform buyer context but cannot redefine the seller/i.test(
