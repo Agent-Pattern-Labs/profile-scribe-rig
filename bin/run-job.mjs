@@ -31,7 +31,7 @@ Environment:
   PROFILESCRIBE_RIG_OPENROUTER_MODEL   Optional OpenRouter model override for non-draft native tasks
   PROFILESCRIBE_RIG_OPENROUTER_RESPONSES_URL Optional Responses endpoint for @openrouter/agent workflows
   PROFILESCRIBE_RIG_DRAFT_MODEL        Optional OpenRouter model override for final post drafting
-  PROFILESCRIBE_RIG_TOURNAMENT_MODEL   Must be openai/gpt-5.6-luna when set; other tournament routes fail closed
+  PROFILESCRIBE_RIG_TOURNAMENT_MODEL   Must be google/gemini-2.5-flash-lite when set; other tournament routes fail closed
   PROFILESCRIBE_APP_URL                Optional public ProfileScribe base URL for internal profile candidates
   PROFILESCRIBE_RIG_DRAFTER_COMMAND    Optional command that receives context JSON and returns draft JSON
   PROFILESCRIBE_RIG_REWRITE_COMMAND    Optional command that receives rewrite context JSON and returns draft JSON
@@ -40,7 +40,8 @@ Environment:
 `;
 
 const DEFAULT_OPENROUTER_MODEL = 'deepseek/deepseek-v4-pro';
-const DEFAULT_OPENROUTER_TOURNAMENT_MODEL = 'openai/gpt-5.6-luna';
+const DEFAULT_OPENROUTER_TOURNAMENT_MODEL =
+  'google/gemini-2.5-flash-lite';
 const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-5';
 const DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_OPENROUTER_RESPONSES_URL = 'https://openrouter.ai/api/v1/responses';

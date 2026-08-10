@@ -99,24 +99,25 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE = 'exa';
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
-const OPPORTUNITY_DISCOVERY_PLANNER_MODEL = 'openai/gpt-5.6-luna';
+const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
+  'google/gemini-2.5-flash-lite';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
-  'google/gemini-2.5-flash-lite',
+  'openai/gpt-5.6-luna',
   'xiaomi/mimo-v2.5'
 ]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'openai',
-    minimumContextTokens: 1_050_000,
+    family: 'google',
+    minimumContextTokens: 1_048_576,
     minimumOutputTokens: 16_000,
     maximumPromptPrice: 0.2,
     maximumCompletionPrice: 0.9
   }),
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
-    family: 'google',
-    minimumContextTokens: 1_048_576,
+    family: 'openai',
+    minimumContextTokens: 1_050_000,
     minimumOutputTokens: 16_000,
     maximumPromptPrice: 0.2,
     maximumCompletionPrice: 0.9
@@ -135,7 +136,7 @@ const OPPORTUNITY_DISCOVERY_REQUIRED_MODEL_PARAMETERS = Object.freeze([
   'response_format',
   'structured_outputs'
 ]);
-// GPT-5.6 Luna native context window on OpenRouter (openai/gpt-5.6-luna).
+// Gemini 2.5 Flash Lite native context window on OpenRouter.
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE = 1_050_000;
 
 const MAX_HYPOTHESES = 10_000;
@@ -153,10 +154,9 @@ const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
 // spend or the total price of a generation. Callers may tighten, but never
 // loosen, these tournament-specific caps.
 //
-// Pinned openai/gpt-5.6-luna OpenRouter list prices (2026-08): base $0.10/$0.60
-// per 1M, high-context (>=272k prompt) $0.20/$0.90 per 1M, no fixed request
-// fee. Caps use the high-context tier so a full-context web-search call stays
-// inside the preflight ceiling.
+// Pinned google/gemini-2.5-flash-lite OpenRouter list prices (2026-08):
+// $0.10/$0.40 per 1M with no fixed request fee. The conservative caps also
+// admit Luna's high-context tier and the independently qualified Xiaomi route.
 const MAX_PROVIDER_PRICE = {
   prompt: 0.2,
   completion: 0.9,
@@ -182,7 +182,7 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'xiaomi',
     'parasail'
   ],
-  // OpenRouter first tries the pinned Luna route, then the two independently
+  // OpenRouter first tries the pinned Gemini route, then the two independently
   // qualified non-OpenAI model families within this same authorized request.
   // Strict parameter, privacy, and price filters remain authoritative.
   allow_fallbacks: true,
@@ -1346,10 +1346,9 @@ export function buildOpenRouterJSONRequestBody({
   provider,
   responseFormat,
   plugins
-  // temperature is intentionally not sent. The pinned tournament route
-  // (openai/gpt-5.6-luna) does not advertise temperature under OpenRouter
-  // require_parameters:true; including it filters the only allowed OpenAI
-  // route out.
+  // Temperature is intentionally not sent so the same exact request remains
+  // eligible for the Luna fallback, which does not advertise that parameter
+  // under OpenRouter require_parameters:true.
 }) {
   const requestedPlugins = asArray(plugins)
     .filter((item) =>
