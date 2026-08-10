@@ -78,6 +78,7 @@
     "@agent-pattern-labs/iso-preflight": "^0.1.1",
     "@agent-pattern-labs/iso-redact": "^0.1.1",
     "@agent-pattern-labs/iso-trace": "^0.5.1",
+    "@openrouter/agent": "0.8.0",
     "playwright": "^1.58.1"
   },
   "devDependencies": {

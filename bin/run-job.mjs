@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
+import { OpenRouter, stepCountIs } from '@openrouter/agent';
 import {
   OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
   OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION,
@@ -28,6 +29,7 @@ Environment:
   PROFILESCRIBE_MCP_URL                Hosted MCP endpoint
   OPENROUTER_API_KEY                   Optional OpenRouter key for native rig drafting/interviews
   PROFILESCRIBE_RIG_OPENROUTER_MODEL   Optional OpenRouter model override for non-draft native tasks
+  PROFILESCRIBE_RIG_OPENROUTER_RESPONSES_URL Optional Responses endpoint for @openrouter/agent workflows
   PROFILESCRIBE_RIG_DRAFT_MODEL        Optional OpenRouter model override for final post drafting
   PROFILESCRIBE_RIG_TOURNAMENT_MODEL   Must be openai/gpt-5.6-luna when set; other tournament routes fail closed
   PROFILESCRIBE_APP_URL                Optional public ProfileScribe base URL for internal profile candidates
@@ -41,6 +43,7 @@ const DEFAULT_OPENROUTER_MODEL = 'deepseek/deepseek-v4-pro';
 const DEFAULT_OPENROUTER_TOURNAMENT_MODEL = 'openai/gpt-5.6-luna';
 const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-5';
 const DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const DEFAULT_OPENROUTER_RESPONSES_URL = 'https://openrouter.ai/api/v1/responses';
 
 function argValue(name) {
   const index = args.indexOf(name);
@@ -2718,7 +2721,7 @@ async function resolveInterviewMessage(job, context) {
   try {
     const payload = object(job.payload);
     const model = openRouterModel();
-    const completion = await callOpenRouterJSON({
+    const completion = await callOpenRouterAgentJSON({
       model,
       system: `You are a ProfileScribe managed-agent interview agent.
 Ask one concise question that helps the user provide source-backed professional evidence.
@@ -2749,6 +2752,7 @@ Return only JSON with keys: kind, body, status, summary, complete.`,
       metadata: {
         provider: 'openrouter',
         model,
+        runtime: 'openrouter_agent_v1',
         openRouterUsage: completion.usage
       }
     };
@@ -2859,7 +2863,7 @@ async function resolveAgentAvatarChatReply(job, chatContext) {
   }
   try {
     const model = openRouterModel();
-    const completion = await callOpenRouterJSON({
+    const completion = await callOpenRouterAgentJSON({
       model,
       system: `You are a ProfileScribe agent-avatar chat agent.
 Reply as the profile owner's delegated professional agent avatar, not as a human owner.
@@ -2881,6 +2885,7 @@ Return only JSON with keys: body, handoffRecommended, handoffReason, agentName.`
     return normalizeAgentChatReply(completion.data, {
       provider: 'openrouter',
       model,
+      runtime: 'openrouter_agent_v1',
       openRouterUsage: completion.usage
     });
   } catch (error) {
@@ -2892,6 +2897,111 @@ Return only JSON with keys: body, handoffRecommended, handoffReason, agentName.`
       openRouterUsage: openRouterFailureUsage(error)
     });
   }
+}
+
+async function callOpenRouterAgentJSON({
+  model,
+  system,
+  user,
+  maxTokens,
+  temperature,
+  timeoutMs
+}) {
+  const apiKey = openRouterApiKey();
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
+  model = text(model) || openRouterModel();
+  const resolvedTimeoutMs = numberOr(
+    timeoutMs,
+    numberOr(process.env.PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS, 120_000)
+  );
+  const client = new OpenRouter({
+    apiKey,
+    httpReferer: 'https://profilescribe.com',
+    appTitle: 'ProfileScribe Rig',
+    serverURL: openRouterResponsesBaseURL(),
+    timeoutMs: resolvedTimeoutMs,
+    retryConfig: { strategy: 'none' }
+  });
+  let response;
+  let content = '';
+  try {
+    const result = client.callModel({
+      model,
+      instructions: text(system),
+      input: text(user),
+      maxOutputTokens: positiveInteger(maxTokens) || 700,
+      ...(Number.isFinite(Number(temperature))
+        ? { temperature: Number(temperature) }
+        : {}),
+      store: false,
+      stopWhen: stepCountIs(1),
+      allowFinalResponse: false,
+      strictFinalResponse: true
+    });
+    [response, content] = await Promise.all([
+      result.getResponse(),
+      result.getText()
+    ]);
+  } catch (error) {
+    if (error?.name === 'AbortError' || /timed?\s*out/i.test(text(error?.message))) {
+      error.openRouterFailureCode = 'openrouter_timeout';
+    }
+    throw error;
+  }
+  const usage = normalizeOpenRouterUsage(response?.usage);
+  const diagnostics = compact({
+    finishReason: truncate(text(response?.status), 64),
+    nativeFinishReason: truncate(text(response?.incompleteDetails?.reason), 64),
+    contentByteCount: Buffer.byteLength(content, 'utf8'),
+    contentSha256: createHash('sha256').update(content).digest('hex'),
+    routerSelectedProvider: truncate(
+      text(response?.openrouterMetadata?.provider),
+      64
+    )
+  });
+  if (response?.error) {
+    throw openRouterProviderError(
+      response.error,
+      usage,
+      diagnostics,
+      response?.id
+    );
+  }
+  if (openRouterDiagnosticsIndicateTruncation(diagnostics)) {
+    throw attachOpenRouterResponseMetadata(
+      new Error('OpenRouter ended agent output at its token limit'),
+      usage,
+      diagnostics,
+      response?.id
+    );
+  }
+  if (!text(content)) {
+    const error = new Error('OpenRouter agent returned an empty response');
+    error.openRouterFailureCode = 'openrouter_empty_response';
+    throw attachOpenRouterResponseMetadata(
+      error,
+      usage,
+      diagnostics,
+      response?.id
+    );
+  }
+  let data;
+  try {
+    data = parseJSON(extractJSONObject(content), 'OpenRouter agent JSON response');
+  } catch (error) {
+    throw attachOpenRouterResponseMetadata(
+      error,
+      usage,
+      diagnostics,
+      response?.id
+    );
+  }
+  return {
+    data,
+    usage,
+    generationId: text(response?.id),
+    diagnostics
+  };
 }
 
 function normalizeAgentChatReply(reply, metadata) {
@@ -3302,8 +3412,12 @@ function normalizeOpenRouterUsage(usage) {
     prompt_tokens: positiveInteger(usage.prompt_tokens),
     completion_tokens: positiveInteger(usage.completion_tokens),
     total_tokens: positiveInteger(usage.total_tokens),
-    promptTokens: positiveInteger(usage.promptTokens),
-    completionTokens: positiveInteger(usage.completionTokens),
+    promptTokens: positiveInteger(
+      usage.promptTokens ?? usage.inputTokens
+    ),
+    completionTokens: positiveInteger(
+      usage.completionTokens ?? usage.outputTokens
+    ),
     totalTokens: positiveInteger(usage.totalTokens),
     cost: providerCost(usage.cost)
   });
@@ -3543,6 +3657,24 @@ function openRouterChatCompletionsURL() {
   return text(process.env.PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL) ||
     text(process.env.PROFILESCRIBE_OPENROUTER_CHAT_COMPLETIONS_URL) ||
     DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL;
+}
+
+function openRouterResponsesBaseURL() {
+  const configured = text(
+    process.env.PROFILESCRIBE_RIG_OPENROUTER_RESPONSES_URL
+  );
+  const raw = configured || openRouterChatCompletionsURL();
+  try {
+    const parsed = new URL(raw);
+    parsed.pathname = parsed.pathname
+      .replace(/\/chat\/completions\/?$/, '')
+      .replace(/\/responses\/?$/, '');
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return DEFAULT_OPENROUTER_RESPONSES_URL.replace(/\/responses$/, '');
+  }
 }
 
 function compactProfile(profile) {

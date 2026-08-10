@@ -10,6 +10,7 @@ const root = resolve(new URL('..', import.meta.url).pathname);
 const tmp = mkdtempSync(join(tmpdir(), 'profilescribe-rig-agent-chat-'));
 const toolCalls = [];
 const sentMessages = [];
+const agentRequests = [];
 
 const peer = {
   tenantId: 'acme',
@@ -45,6 +46,56 @@ const source = {
 const server = createServer(async (request, response) => {
   let raw = '';
   for await (const chunk of request) raw += chunk;
+  if (new URL(request.url || '/', 'http://127.0.0.1').pathname === '/responses') {
+    const agentRequest = JSON.parse(raw || '{}');
+    agentRequests.push(agentRequest);
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      object: 'response',
+      id: 'gen-agent-chat-1',
+      created_at: 1,
+      completed_at: 2,
+      status: 'completed',
+      error: null,
+      incomplete_details: null,
+      instructions: null,
+      max_output_tokens: agentRequest.max_output_tokens,
+      model: agentRequest.model,
+      output: [{
+        type: 'message',
+        id: 'msg-agent-chat-1',
+        role: 'assistant',
+        status: 'completed',
+        content: [{
+          type: 'output_text',
+          text: JSON.stringify({
+            body: 'Our agents found a source-backed review-loop overlap worth comparing.',
+            handoffRecommended: true,
+            handoffReason: 'Both systems gate professional publishing on evidence.',
+            agentName: 'ProfileScribe agent'
+          }),
+          annotations: []
+        }]
+      }],
+      parallel_tool_calls: false,
+      temperature: null,
+      tool_choice: 'auto',
+      tools: [],
+      top_p: null,
+      presence_penalty: null,
+      frequency_penalty: null,
+      metadata: null,
+      usage: {
+        input_tokens: 120,
+        input_tokens_details: { cached_tokens: 0 },
+        output_tokens: 32,
+        output_tokens_details: { reasoning_tokens: 0 },
+        total_tokens: 152,
+        cost: 0.0042
+      }
+    }));
+    return;
+  }
   const envelope = JSON.parse(raw || '{}');
   const name = envelope?.params?.name || '';
   const args = envelope?.params?.arguments || {};
@@ -186,6 +237,49 @@ process.stdin.on('end', () => {
   }
   if (!receipt.metadata?.trace?.tools?.includes('send_agent_chat_message')) {
     throw new Error(`expected chat trace tools, got ${JSON.stringify(receipt.metadata?.trace)}`);
+  }
+
+  writeFileSync(jobFile, `${JSON.stringify({
+    id: 'job-agent-chat-sdk-smoke',
+    kind: 'agent_avatar_chat',
+    payload: {
+      targetSlug: peer.slug,
+      agentName: 'ProfileScribe agent'
+    }
+  })}\n`, 'utf8');
+  const sdkRun = await spawnRun(
+    process.execPath,
+    [join(root, 'bin/run-job.mjs'), '--job-file', jobFile],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        OPENROUTER_API_KEY: 'sk-or-test',
+        PROFILESCRIBE_AGENT_TOKEN: 'test-token',
+        PROFILESCRIBE_MCP_URL: `http://127.0.0.1:${port}`,
+        PROFILESCRIBE_RIG_CHAT_COMMAND: '',
+        PROFILESCRIBE_RIG_OPENROUTER_RESPONSES_URL:
+          `http://127.0.0.1:${port}/responses`
+      }
+    }
+  );
+  if (sdkRun.code !== 0) {
+    console.error(sdkRun.stdout);
+    console.error(sdkRun.stderr);
+    throw new Error(`SDK-backed run-job exited with status ${sdkRun.code}`);
+  }
+  const sdkReceipt = JSON.parse(sdkRun.stdout || '{}');
+  if (agentRequests.length !== 1 || agentRequests[0].store !== false ||
+      agentRequests[0].max_output_tokens !== 450) {
+    throw new Error(`unexpected OpenRouter Agent request ${JSON.stringify(agentRequests)} receipt=${JSON.stringify(sdkReceipt)}`);
+  }
+  if (sdkReceipt.metadata?.responder?.runtime !== 'openrouter_agent_v1' ||
+      sdkReceipt.metadata?.responder?.openRouterUsage?.cost !== 0.0042) {
+    throw new Error(`expected SDK runtime and usage receipt, got ${JSON.stringify(sdkReceipt.metadata?.responder)}`);
+  }
+  if (sentMessages.length !== 2 ||
+      !/source-backed review-loop overlap/i.test(sentMessages[1]?.body || '')) {
+    throw new Error(`expected the SDK-backed reply to be sent once, got ${JSON.stringify(sentMessages)}`);
   }
 
   console.log('profile-scribe-rig agent-avatar chat smoke check passed.');
