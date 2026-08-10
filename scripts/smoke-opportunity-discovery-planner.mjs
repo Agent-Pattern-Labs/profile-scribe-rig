@@ -6105,7 +6105,7 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
   );
   if (accepted.status !== 'planned' || !acceptedMotion ||
       acceptedActions.length !== 4 ||
-      new Set(acceptedActions).size !== 2 ||
+      new Set(acceptedActions).size !== 4 ||
       accepted.planSelection?.rejectedPlanCount !== 0 ||
       accepted.plannerDiagnostic) {
     throw new Error(
@@ -6130,7 +6130,7 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
       }
     }
   }
-  const rejected = await runOpportunityDiscoveryPlanner({
+  const projected = await runOpportunityDiscoveryPlanner({
     job,
     model: 'openai/gpt-5.6-luna',
     now,
@@ -6159,25 +6159,25 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
       }]
     })
   });
-  const diagnostic = rejected.plannerDiagnostic;
-  if (rejected.status !== 'blocked' || rejected.plans.length !== 0 ||
-      rejected.planSelection?.rejectedPlanCount !== 2 ||
-      diagnostic?.contractVersion !==
-        OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT ||
-      diagnostic?.code !== 'primary_action_diversity' ||
-      diagnostic?.motionId !==
-        rejected.planSelection?.rejectedPlans?.[0]?.id ||
-      diagnostic?.returnedActionCount !== 4 ||
-      diagnostic?.distinctActionCount !== 1 ||
-      diagnostic?.viableDistinctActionCount !== 1 ||
-      JSON.stringify(diagnostic?.familyDistinctActionCounts) !== '[1,1]' ||
-      diagnostic?.failedMotionCount !== 2 ||
-      !/at least two distinct active commercial primary-action variants/i.test(
-        rejected.reason
-      ) ||
-      rejected.sideEffectsPerformed !== 0) {
+  const projectedActions = projected.plans.flatMap((plan) =>
+    ['familyA', 'familyB'].flatMap((familyKey) =>
+      plan.contingentFinalists?.[familyKey]?.d?.a?.map(
+        (action) => action.l
+      ) || []
+    )
+  );
+  if (projected.status !== 'planned' || projected.plans.length !== 2 ||
+      projected.planSelection?.rejectedPlanCount !== 0 ||
+      projected.plannerDiagnostic || projectedActions.length !== 8 ||
+      projected.plans.some((plan) => new Set(
+        ['familyA', 'familyB'].flatMap((familyKey) =>
+          plan.contingentFinalists?.[familyKey]?.d?.a?.map(
+            (action) => action.l
+          ) || []
+        )
+      ).size !== 4) || projected.sideEffectsPerformed !== 0) {
     throw new Error(
-      `collapsed selected-role actions lacked a bounded typed diagnostic: ${JSON.stringify(rejected)}`
+      `collapsed selected-role actions were not projected from the closed positional enum: ${JSON.stringify(projected)}`
     );
   }
 }

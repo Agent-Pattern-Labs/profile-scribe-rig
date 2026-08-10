@@ -91,6 +91,26 @@ const CONTINGENT_PLANNER_ACTION_FIELD_BY_COMMERCIAL_ROLE = Object.freeze({
   buyer: 'by',
   paid_demand: 'pd'
 });
+const CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE = Object.freeze({
+  referral_partner: Object.freeze([
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to purchase the current paid offer',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to buy the current paid offer',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to sign up for the current paid offer'
+  ]),
+  buyer: Object.freeze([
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid service package',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
+  ]),
+  paid_demand: Object.freeze([
+    'After review via official paid-demand page {{TARGET_URL}}, apply a compensated application to {{TARGET_NAME}}',
+    'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
+    'After review via official paid-demand page {{TARGET_URL}}, bid one paid proposal to {{TARGET_NAME}}',
+    'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
+  ])
+});
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER =
   'openrouter_exa_web_search';
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION =
@@ -2372,34 +2392,19 @@ function opportunityDiscoveryPlannerResponseFormat(
       properties: {
         rp: {
           type: 'string',
-          enum: [
-            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer',
-            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to purchase the current paid offer',
-            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to buy the current paid offer',
-            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to sign up for the current paid offer'
-          ],
+          enum: [...CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE.referral_partner],
           description:
             'Referral action: target introduces or recommends a qualified buyer to book or buy the paid offer.'
         },
         by: {
           type: 'string',
-          enum: [
-            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation',
-            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package',
-            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid service package',
-            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
-          ],
+          enum: [...CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE.buyer],
           description:
             'Buyer action: target books, buys, signs, or subscribes to the current paid offer.'
         },
         pd: {
           type: 'string',
-          enum: [
-            'After review via official paid-demand page {{TARGET_URL}}, apply a compensated application to {{TARGET_NAME}}',
-            'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
-            'After review via official paid-demand page {{TARGET_URL}}, bid one paid proposal to {{TARGET_NAME}}',
-            'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
-          ],
+          enum: [...CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE.paid_demand],
           description:
             'Demand action: paid application, bid, proposal, or response via the official demand page.'
         },
@@ -3879,8 +3884,9 @@ function neutralContingentFollowUp(value) {
  * Call 1 authors the common paid path once and only the three tactic-local
  * dimensions twice. Downstream validation, target binding, persistence, and
  * the independent critic deliberately continue to consume the established
- * familyA/familyB contract. This is structural copying only: no commercial
- * text, evidence reference, or score is synthesized here.
+ * familyA/familyB contract. This is structural copying plus positional
+ * selection from the schema's closed action enum: no commercial prose,
+ * evidence reference, or score is synthesized here.
  *
  * Previously persisted planner receipts already contain materialized
  * familyA/familyB values. Canonicalizing that shape to its supported keys
@@ -3914,16 +3920,29 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
     CONTINGENT_PLANNER_ACTION_FIELD_BY_COMMERCIAL_ROLE[
       firstText(asObject(planValue).commercialRole)
     ] || '';
-  const roleItems = (items) => asArray(items).map((itemValue) => {
+  const roleItems = (items, labels = []) => asArray(items).map((itemValue, index) => {
     const item = asObject(itemValue);
     return {
-      l: typeof item[roleField] === 'string'
+      l: typeof labels[index] === 'string'
+        ? labels[index]
+        : typeof item[roleField] === 'string'
         ? item[roleField]
         : firstText(item.l),
       e: copy(asArray(item.e))
     };
   });
-  const family = (tactic) => ({
+  const approvedActionLabels =
+    CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE[
+      firstText(asObject(planValue).commercialRole)
+    ] || [];
+  const authoredActionLabels = [tacticA, tacticB].flatMap((tactic) =>
+    asArray(tactic.a).map((item) => firstText(asObject(item)[roleField]))
+  );
+  const selectedActionLabels = authoredActionLabels.length === 4 &&
+    authoredActionLabels.every((label) => approvedActionLabels.includes(label))
+    ? approvedActionLabels
+    : [];
+  const family = (tactic, tacticIndex) => ({
     l: tactic.l,
     e: compactStrings([
       ...asArray(pathBase.e),
@@ -3935,7 +3954,10 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
       o: copy(asArray(pathBase.o)),
       b: roleItems(pathBase.b),
       c: roleItems(tactic.c),
-      a: roleItems(tactic.a),
+      a: roleItems(
+        tactic.a,
+        selectedActionLabels.slice(tacticIndex * 2, tacticIndex * 2 + 2)
+      ),
       t: copy(asArray(pathBase.t)),
       p: copy(asArray(pathBase.p)),
       f: copy(asArray(tactic.f))
@@ -3943,8 +3965,8 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
   });
   return {
     seedContract: raw.seedContract,
-    familyA: family(tacticA),
-    familyB: family(tacticB),
+    familyA: family(tacticA, 0),
+    familyB: family(tacticB, 1),
     w: copy(asObject(raw.w))
   };
 }
