@@ -2444,11 +2444,7 @@ function opportunityDiscoveryPlannerResponseFormat(
                   description:
                     'Bounded organization context for local organization discovery; code drops it for direct person and paid-demand routes.'
                 },
-                jobTitle: {
-                  ...targetTokenFreeText(100),
-                  description:
-                    'Nonempty paid-role query text for compensated-job motions; code drops it for routes that do not consume it.'
-                },
+                jobTitle: targetTokenFreeText(100),
                 skills: targetTokenFreeStringArray(6),
                 conversionDestination: targetTokenFreeText(180),
                 paidConversion: targetTokenFreeText(140),

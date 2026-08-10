@@ -1011,6 +1011,9 @@ for (const scenario of cases) {
 }
 
 verifyGeneratedPlannerSchemaResponseBound(representativePlannerSchema);
+verifyPlannerOpenAIStructuredOutputSchemaSubset(
+  representativePlannerSchema
+);
 
 const envelopeScenario = cases[0];
 const envelopeJob = plannerJob(envelopeScenario);
@@ -12275,6 +12278,212 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
       `fresh planner schema exceeded its derived response proof: ${JSON.stringify({ stats, astralTextBytes, maximumEvidenceRefBytes, derivedBound, declaredBound: MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES, runtimeCap: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES })}`
     );
   }
+}
+
+function verifyPlannerOpenAIStructuredOutputSchemaSubset(schemaValue) {
+  const root = schemaValue || {};
+  const supportedKeywords = new Set([
+    '$defs',
+    '$ref',
+    'additionalProperties',
+    'anyOf',
+    'const',
+    'description',
+    'enum',
+    'exclusiveMaximum',
+    'exclusiveMinimum',
+    'format',
+    'items',
+    'maxItems',
+    'maxLength',
+    'maximum',
+    'minItems',
+    'minLength',
+    'minimum',
+    'multipleOf',
+    'pattern',
+    'properties',
+    'required',
+    'type'
+  ]);
+  const unsupportedComposition = new Set([
+    'allOf',
+    'dependentRequired',
+    'dependentSchemas',
+    'else',
+    'if',
+    'not',
+    'then'
+  ]);
+  const supportedFormats = new Set([
+    'date-time',
+    'time',
+    'date',
+    'duration',
+    'email',
+    'hostname',
+    'ipv4',
+    'ipv6',
+    'uuid'
+  ]);
+  let objectPropertyCount = 0;
+  let enumValueCount = 0;
+  let schemaStringLength = 0;
+  let maximumObjectDepth = 0;
+  const unsupported = [];
+  const walk = (schema, objectDepth = 0, path = '#') => {
+    if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+      throw new Error(`structured-output schema has invalid node ${path}`);
+    }
+    for (const key of Object.keys(schema)) {
+      if (!supportedKeywords.has(key)) {
+        unsupported.push(`${path}:${key}`);
+      }
+      if (unsupportedComposition.has(key)) {
+        unsupported.push(`${path}:${key}`);
+      }
+    }
+    if (schema.$ref) {
+      if (Object.keys(schema).length !== 1 ||
+          typeof schema.$ref !== 'string' ||
+          !schema.$ref.startsWith('#/')) {
+        unsupported.push(`${path}:non_local_or_sibling_ref`);
+      }
+      return;
+    }
+    if (Array.isArray(schema.enum)) {
+      enumValueCount += schema.enum.length;
+      schemaStringLength += schema.enum.reduce((total, value) =>
+        total + (typeof value === 'string' ? value.length : 0), 0
+      );
+      if (schema.enum.length > 1_000) {
+        unsupported.push(`${path}:enum_value_limit`);
+      }
+      if (schema.enum.length > 250 &&
+          schema.enum.reduce((total, value) =>
+            total + (typeof value === 'string' ? value.length : 0), 0
+          ) > 15_000) {
+        unsupported.push(`${path}:single_enum_string_limit`);
+      }
+    }
+    if (typeof schema.const === 'string') {
+      schemaStringLength += schema.const.length;
+    }
+    if (schema.format && !supportedFormats.has(schema.format)) {
+      unsupported.push(`${path}:unsupported_format_${schema.format}`);
+    }
+    if (schema.type === 'object') {
+      const properties = schema.properties || {};
+      const keys = Object.keys(properties);
+      const required = Array.isArray(schema.required)
+        ? schema.required
+        : [];
+      objectPropertyCount += keys.length;
+      maximumObjectDepth = Math.max(maximumObjectDepth, objectDepth + 1);
+      schemaStringLength += keys.reduce((total, key) =>
+        total + key.length, 0
+      );
+      if (schema.additionalProperties !== false ||
+          required.length !== keys.length ||
+          required.some((key) => !Object.prototype.hasOwnProperty.call(
+            properties,
+            key
+          ))) {
+        unsupported.push(`${path}:non_total_object`);
+      }
+      for (const [key, child] of Object.entries(properties)) {
+        walk(child, objectDepth + 1, `${path}/properties/${key}`);
+      }
+    } else if (schema.type === 'array') {
+      walk(schema.items, objectDepth, `${path}/items`);
+    }
+    if (Array.isArray(schema.anyOf)) {
+      schema.anyOf.forEach((child, index) =>
+        walk(child, objectDepth, `${path}/anyOf/${index}`)
+      );
+    }
+    if (schema.$defs && typeof schema.$defs === 'object') {
+      for (const [name, child] of Object.entries(schema.$defs)) {
+        schemaStringLength += name.length;
+        walk(child, 0, `${path}/$defs/${name}`);
+      }
+    }
+  };
+  walk(root);
+  const resolveRef = (ref) => ref.slice(2).split('/').reduce(
+    (value, segment) => value?.[
+      segment.replaceAll('~1', '/').replaceAll('~0', '~')
+    ],
+    root
+  );
+  const resolvedObjectDepth = (schema, objectDepth = 0, refs = []) => {
+    if (schema.$ref) {
+      if (refs.includes(schema.$ref)) {
+        throw new Error(
+          `planner schema depth proof found recursive ref ${schema.$ref}`
+        );
+      }
+      const resolved = resolveRef(schema.$ref);
+      if (!resolved) {
+        throw new Error(
+          `planner schema depth proof found missing ref ${schema.$ref}`
+        );
+      }
+      return resolvedObjectDepth(
+        resolved,
+        objectDepth,
+        [...refs, schema.$ref]
+      );
+    }
+    let deepest = objectDepth;
+    if (schema.type === 'object') {
+      const nextDepth = objectDepth + 1;
+      deepest = nextDepth;
+      for (const child of Object.values(schema.properties || {})) {
+        deepest = Math.max(
+          deepest,
+          resolvedObjectDepth(child, nextDepth, refs)
+        );
+      }
+    } else if (schema.type === 'array') {
+      deepest = Math.max(
+        deepest,
+        resolvedObjectDepth(schema.items, objectDepth, refs)
+      );
+    }
+    if (Array.isArray(schema.anyOf)) {
+      for (const child of schema.anyOf) {
+        deepest = Math.max(
+          deepest,
+          resolvedObjectDepth(child, objectDepth, refs)
+        );
+      }
+    }
+    return deepest;
+  };
+  maximumObjectDepth = Math.max(
+    maximumObjectDepth,
+    resolvedObjectDepth(root),
+    ...Object.values(root.$defs || {}).map((definition) =>
+      resolvedObjectDepth(definition)
+    )
+  );
+  if (root.type !== 'object' || root.anyOf ||
+      objectPropertyCount > 5_000 ||
+      maximumObjectDepth > 10 ||
+      schemaStringLength > 120_000 ||
+      enumValueCount > 1_000 ||
+      unsupported.length > 0) {
+    throw new Error(
+      `planner schema exceeds OpenAI Structured Outputs subset: ${JSON.stringify({ objectPropertyCount, maximumObjectDepth, schemaStringLength, enumValueCount, unsupported })}`
+    );
+  }
+  return {
+    objectPropertyCount,
+    maximumObjectDepth,
+    schemaStringLength,
+    enumValueCount
+  };
 }
 
 function verifyFreshPlannerStrictSchemaTotality({
