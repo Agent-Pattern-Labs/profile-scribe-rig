@@ -136,7 +136,8 @@ const cases = [
       },
       skills: [{ name: 'Go' }, { name: 'PostgreSQL' }]
     },
-    evidence: 'Shipped production APIs in Go backed by PostgreSQL.',
+    evidence:
+      'Shipped production APIs in Go backed by PostgreSQL and offers paid Go and PostgreSQL implementation work.',
     plans: (ref) => [
       plan({
         id: 'active_backend_role',
@@ -668,7 +669,8 @@ for (const scenario of cases) {
       !plannerPlanSchema.targetRoleSubrole?.enum?.includes('partnerships') ||
       plannerPlanSchema.organizationTerms?.minItems !== 1 ||
       [
-        plannerPlanSchema.paidOffer,
+        plannerPlanSchema.paidOffer?.properties?.seller,
+        plannerPlanSchema.paidOffer?.properties?.compensatedJob,
         plannerPlanSchema.organizationTerms?.items,
         plannerPlanSchema.jobTitle,
         plannerPlanSchema.skills?.items,
@@ -909,7 +911,8 @@ for (const scenario of cases) {
       )) {
     throw new Error(
       `${scenario.name}: call 1 omitted its compact semantic contract ${JSON.stringify({ blankSchemas: [
-        plannerPlanSchema.paidOffer,
+        plannerPlanSchema.paidOffer?.properties?.seller,
+        plannerPlanSchema.paidOffer?.properties?.compensatedJob,
         plannerPlanSchema.organizationTerms?.items,
         plannerPlanSchema.jobTitle,
         plannerPlanSchema.skills?.items,
@@ -1877,7 +1880,11 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
     reason: '',
     plans: compactFreshPlannerPlans(twoMarketPlans).map((motion) => ({
       motionKind: motion.motionKind,
-      paidOffer: motion.paidOffer,
+      paidOffer: {
+        seller: motion.paidOffer,
+        compensatedJob:
+          'A current compensated role matching verified professional skills'
+      },
       market: typedMarket.market,
       targetRoleSubrole: motion.targetRoleSubrole,
       organizationTerms: motion.organizationTerms?.length > 0
@@ -2049,7 +2056,7 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       proseOnlyResult.plans.length !== 0 ||
       proseOnlyResult.planSelection?.rejectedPlanCount !== 0 ||
       proseOnlyResult.preflight?.cause !==
-        'planner_route_capability_unavailable' ||
+        'planner_market_scope_unavailable' ||
       proseOnlyResult.usage?.calls !== 0) {
     throw new Error(
       `owner title/summary prose was treated as approved geography: ${JSON.stringify(proseOnlyResult)}`
@@ -2375,14 +2382,17 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
         ?.properties?.plans?.items?.properties?.motionKind?.enum || [];
     }
   );
-  if (remoteOnlyCalls !== 0 ||
-      explicitRemote.status !== 'blocked' ||
-      explicitRemote.plans.length !== 0 ||
-      explicitRemote.preflight?.cause !==
-        'planner_route_capability_unavailable' ||
-      remoteOnlyMotionKinds.length !== 0) {
+  if (remoteOnlyCalls !== 1 ||
+      explicitRemote.status !== 'planned' ||
+      explicitRemote.plans.length !== 2 ||
+      explicitRemote.plans.some((motion) =>
+        motion.motionKind !== 'compensated_job' ||
+        motion.market !== 'Remote'
+      ) ||
+      JSON.stringify(remoteOnlyMotionKinds) !==
+        JSON.stringify(['compensated_job'])) {
     throw new Error(
-      `Remote-only scope did not stop before a one-route provider call: ${JSON.stringify({ remoteOnlyCalls, remoteOnlyMotionKinds, explicitRemote })}`
+      `Remote-only scope did not constrain both plans to compensated-job discovery: ${JSON.stringify({ remoteOnlyCalls, remoteOnlyMotionKinds, explicitRemote })}`
     );
   }
 
@@ -6332,17 +6342,30 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     status: 'approved',
     profileControlled: true
   };
-  job.payload.evidenceSnapshot.sourceEvidence = [{
-    id: 'profilescribe-lactation-directory',
-    observationId: 'profilescribe-lactation-directory',
-    sourceId: 'profilescribe-owner-site',
-    label: 'Find Lactation consultants | ProfileScribe',
-    summary:
-      'This SearchResultsPage contains an ItemList for finding lactation consultants.',
-    url: 'https://profilescribe.com/profession/lactation-consultants',
-    observedAt: now.toISOString(),
-    status: 'approved'
-  }];
+  job.payload.evidenceSnapshot.sourceEvidence = [
+    {
+      id: 'profilescribe-lactation-directory',
+      observationId: 'profilescribe-lactation-directory',
+      sourceId: 'profilescribe-owner-site',
+      label: 'Find Lactation consultants | ProfileScribe',
+      summary:
+        'This SearchResultsPage contains an ItemList for finding lactation consultants.',
+      url: 'https://profilescribe.com/profession/lactation-consultants',
+      observedAt: now.toISOString(),
+      status: 'approved'
+    },
+    {
+      id: 'profilescribe-paid-subscription',
+      observationId: 'profilescribe-paid-subscription',
+      sourceId: 'profilescribe-owner-site',
+      label: 'ProfileScribe paid subscription pricing',
+      summary:
+        'Current paid subscription with a checkout destination for professional-presence service.',
+      url: 'https://profilescribe.com/pricing',
+      observedAt: now.toISOString(),
+      status: 'approved'
+    }
+  ];
 
   const catalog = buildEvidenceCatalog(job.payload, {}, now, {
     includeSystemAttributionCapability: true
@@ -6577,11 +6600,22 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     colonSellerFocus;
   colonSellerJob.payload.evidenceSnapshot.profile.currentFocus[1].name =
     colonSellerFocus;
+  const colonPaidObservation =
+    colonSellerJob.payload.evidenceSnapshot.sourceEvidence.find((item) =>
+      item.id === 'profilescribe-paid-subscription'
+    );
+  colonPaidObservation.label = `${colonSellerFocus} paid engagement`;
+  colonPaidObservation.summary =
+    `Current paid ${colonSellerFocus} engagement with a checkout destination.`;
   const colonPaidOffer =
     `${colonSellerFocus} paid advisory engagement`;
   const colonSellerMotions = scenario.plans(evidenceRef).map(
     (motion) => {
-      motion.paidOffer = colonPaidOffer;
+      motion.paidOffer = {
+        seller: colonPaidOffer,
+        compensatedJob:
+          'A current compensated role matching verified professional skills'
+      };
       motion.evidenceRefs = [
         ...motion.evidenceRefs,
         sellerFocusEvidence.id
@@ -6622,7 +6656,8 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     colonSellerRequest?.user || '{}'
   );
   const colonOfferPattern = colonSellerRequest?.responseFormat?.json_schema
-    ?.schema?.properties?.plans?.items?.properties?.paidOffer?.pattern || '';
+    ?.schema?.properties?.plans?.items?.properties?.paidOffer?.properties
+    ?.seller?.pattern || '';
   let colonOfferMatchesSchema = false;
   try {
     colonOfferMatchesSchema = new RegExp(colonOfferPattern, 'u').test(
@@ -11788,6 +11823,12 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
     status: 'active',
     priority: 'primary'
   }];
+  const maxPaidOfferObservation =
+    maxCardinalityJob.payload.evidenceSnapshot.sourceEvidence[0];
+  maxPaidOfferObservation.label =
+    `${reservedSellerFocus} current paid professional service`;
+  maxPaidOfferObservation.summary =
+    `${reservedSellerFocus} is a current paid professional service with a checkout destination and verified payment attribution.`;
   maxCardinalityJob.payload.evidenceSnapshot.facts = [
     ...(maxCardinalityJob.payload.evidenceSnapshot.facts || []),
     {
@@ -11850,7 +11891,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
     url: `https://owner.example/crowding/project/${index + 1}`,
     confidence: 'high'
   }));
-  for (let index = 0; index < 2; index += 1) {
+  for (let index = 1; index < 3; index += 1) {
     const item = maxCardinalityJob.payload.evidenceSnapshot
       .sourceEvidence[index];
     item.label =
@@ -12619,7 +12660,11 @@ function verifyFreshPlannerStrictSchemaTotality({
     const motion = structuredClone(motionValue);
     return {
       motionKind: motion.motionKind,
-      paidOffer: motion.paidOffer,
+      paidOffer: {
+        seller: motion.paidOffer,
+        compensatedJob:
+          'A current compensated role matching verified professional skills'
+      },
       market,
       targetRoleSubrole: motion.targetRoleSubrole,
       organizationTerms: motion.organizationTerms?.length > 0
@@ -12681,6 +12726,26 @@ function verifyFreshPlannerStrictSchemaTotality({
     });
   }
   for (const [label, mutate] of [
+    ['emoji-only conversion destination', (response) => {
+      response.plans[0].conversionDestination = '👥👥👥👥';
+    }],
+    ['emoji-only paid conversion', (response) => {
+      response.plans[0].paidConversion = '💸💸💸💸';
+    }],
+    ['emoji-only attribution signal', (response) => {
+      response.plans[0].attributionSignal = '👀👀👀👀';
+    }],
+    ['emoji-only revenue outcome', (response) => {
+      response.plans[0].contingentFinalists.pathBase.r[0].io =
+        '💰💰💰💰';
+    }],
+    ['emoji-only revenue destination', (response) => {
+      response.plans[0].contingentFinalists.pathBase.r[0].g.d.l =
+        '🔗🔗🔗🔗';
+    }],
+    ['emoji-only tactic label', (response) => {
+      response.plans[0].contingentFinalists.tacticA.l = '🎯🎯🎯🎯';
+    }],
     ['invented base observation', (response) => {
       response.plans[0].contingentFinalists.pathBase.e = [
         'observation:invented'
@@ -12762,7 +12827,7 @@ function verifyFreshPlannerStrictSchemaTotality({
     return `${text}${'😀'.repeat(maxCodepoints - length)}`;
   };
   const maxFieldPaths = [
-    ['paidOffer', ['plans', 0, 'paidOffer'], 140],
+    ['paidOffer', ['plans', 0, 'paidOffer', 'seller'], 140],
     ['organizationTerms', ['plans', 0, 'organizationTerms', 0], 80],
     ['jobTitle', ['plans', 0, 'jobTitle'], 100],
     ['skills', ['plans', 0, 'skills', 0], 80],
@@ -13075,7 +13140,11 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   );
   response.plans[1] = {
     motionKind: 'compensated_job',
-    paidOffer: rawJobMotion.paidOffer,
+    paidOffer: {
+      seller: rawJobMotion.paidOffer,
+      compensatedJob:
+        'A current compensated role matching verified professional skills'
+    },
     market: response.plans[0].market,
     targetRoleSubrole: 'executive',
     organizationTerms: ['Verified employer organization'],
@@ -13097,7 +13166,7 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   const first = response.plans[0];
   const second = response.plans[1];
   const expectedRoundTrips = [
-    first.paidOffer,
+    first.paidOffer.seller,
     first.organizationTerms[0],
     first.conversionDestination,
     first.paidConversion,

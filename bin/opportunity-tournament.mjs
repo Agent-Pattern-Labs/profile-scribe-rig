@@ -725,6 +725,8 @@ const DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION =
   'Review-first public professional profile';
 const DISCOVERY_PAID_DEMAND_ACQUISITION =
   'Review-first official paid-demand page';
+const DISCOVERY_COMPENSATED_JOB_PAID_OFFER =
+  'A current compensated role matching verified professional skills';
 const DISCOVERY_PLAN_ACQUISITION_MECHANISMS = new Set([
   DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION,
   DISCOVERY_PAID_DEMAND_ACQUISITION
@@ -1479,7 +1481,8 @@ export async function runOpportunityDiscoveryPlanner({
         searchMode: 'professional_counterparty'
       }, commercialContext, evidenceCatalog);
   }) || '';
-  const allowedMotionKinds = providerAllowedMotionKinds.filter((motionKind) => {
+  const authoritativePlannerMarket = firstText(allowedMarketValues[0]);
+  let allowedMotionKinds = providerAllowedMotionKinds.filter((motionKind) => {
     const route = DISCOVERY_MOTION_ROUTES.get(motionKind);
     return !['professional_counterparty', 'local_organization'].includes(
       firstText(route?.searchMode)
@@ -1502,6 +1505,23 @@ export async function runOpportunityDiscoveryPlanner({
     workerSellerContract.requiredEvidenceRefs.length > 0
       ? workerSellerContract.requiredEvidenceRefs
       : derivedSellerEvidenceRefs;
+  const sellerHasCurrentPaidOfferEvidence =
+    opportunityDiscoverySellerHasCurrentPaidOfferEvidence(
+      evidenceCatalog,
+      requiredSellerFocus,
+      now
+    );
+  // A referral or direct-buyer search is useful only when approved evidence
+  // already proves what the profile owner can currently sell. When that
+  // proof is absent, do not spend a person-search credit on an acquisition
+  // path whose paid offer and conversion destination will necessarily fail
+  // the later revenue gate. A current compensated role remains a valid
+  // incremental-income route because the employer-authored job record itself
+  // supplies the paid offer, destination, and conversion evidence.
+  allowedMotionKinds = allowedMotionKinds.filter((motionKind) =>
+    motionKind === 'compensated_job' ||
+      sellerHasCurrentPaidOfferEvidence
+  );
   const sellerContractIssue = commercialSellerContractIssue({
     workerSellerContract,
     derivedSellerFocus,
@@ -1638,11 +1658,11 @@ export async function runOpportunityDiscoveryPlanner({
       reason: 'The tournament budget does not authorize discovery planning.'
     };
   }
-  if (allowedMotionKinds.length < MAX_DISCOVERY_PLANNER_PLANS) {
+  if (allowedMotionKinds.length === 0) {
     return {
       ...base,
       reason:
-        'Fewer than two distinct configured read-only discovery routes can execute the required commercial motions.',
+        'No configured read-only discovery route can execute a grounded commercial motion.',
       preflight: {
         authorized: false,
         cause: 'planner_route_capability_unavailable'
@@ -1788,7 +1808,7 @@ export async function runOpportunityDiscoveryPlanner({
       responseFormat: opportunityDiscoveryPlannerResponseFormat(
         promptEvidenceCatalog,
         allowedMotionKinds,
-        [authoritativePersonMarket],
+        [authoritativePlannerMarket],
         requiredSellerFocus
       ),
       plugins: [{
@@ -1945,7 +1965,7 @@ export async function runOpportunityDiscoveryPlanner({
       allowPlannerProjection: true,
       stampProfessionalRoleQueryContract: true,
       authoritativeSellerEvidenceRefs: requiredSellerEvidenceRefs,
-      authoritativePersonMarket
+      authoritativePersonMarket: authoritativePlannerMarket
     }
   );
   const webSearchReceipt = normalizeOpportunityDiscoveryWebSearchReceipt({
@@ -1966,7 +1986,7 @@ export async function runOpportunityDiscoveryPlanner({
     allowedMotionKinds,
     requiredSellerFocus,
     requiredSellerEvidenceRefs,
-    authoritativePersonMarket
+    authoritativePersonMarket: authoritativePlannerMarket
   });
   normalized.plans = selection.plans;
   normalized.planSelection = selection.diagnostics;
@@ -2156,10 +2176,14 @@ function opportunityDiscoveryPlannerResponseFormat(
   const approvedObservationEvidenceRefs = compactStrings(
     asArray(evidenceCatalog).map((item) => firstText(asObject(item).id))
   ).filter((ref) => /^observation:/i.test(ref));
-  const canonicalAuthoredToken =
-    '[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b\\u200e-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ud800-\\udfff\\ufeff\\ufffd\\ufff9-\\ufffb{}:]+';
+  const canonicalAuthoredCharacter =
+    '[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b\\u200e-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ud800-\\udfff\\ufeff\\ufffd\\ufff9-\\ufffb{}:]';
+  const canonicalAuthoredToken = `${canonicalAuthoredCharacter}+`;
   const canonicalAuthoredText =
     `${canonicalAuthoredToken}(?: ${canonicalAuthoredToken})*`;
+  const canonicalCommercialSemanticText =
+    `[A-Za-z]${canonicalAuthoredCharacter}*` +
+    `(?: ${canonicalAuthoredToken})*`;
   const canonicalTextDefinition = (maxLength, allowEmpty = false) => ({
     type: 'string',
     maxLength,
@@ -2175,6 +2199,24 @@ function opportunityDiscoveryPlannerResponseFormat(
     canonicalText220: canonicalTextDefinition(220),
     canonicalOptionalText180: canonicalTextDefinition(180, true)
   };
+  const commercialSemanticTextDefinition = (
+    maxLength,
+    allowEmpty = false
+  ) => ({
+    type: 'string',
+    maxLength,
+    ...(allowEmpty ? {} : { minLength: 8 }),
+    pattern: allowEmpty
+      ? `^(?:|${canonicalCommercialSemanticText})$`
+      : `^${canonicalCommercialSemanticText}$`
+  });
+  const commercialSemanticTextDefinitions = {
+    commercialSemanticText140: commercialSemanticTextDefinition(140),
+    commercialSemanticText180: commercialSemanticTextDefinition(180),
+    commercialSemanticText220: commercialSemanticTextDefinition(220),
+    commercialOptionalSemanticText180:
+      commercialSemanticTextDefinition(180, true)
+  };
   const targetTokenFreeText = (maxLength, allowEmpty = false) => {
     const definitionName = allowEmpty
       ? `canonicalOptionalText${maxLength}`
@@ -2184,6 +2226,18 @@ function opportunityDiscoveryPlannerResponseFormat(
       definitionName
     )) {
       throw new Error(`missing canonical authored-text schema ${definitionName}`);
+    }
+    return { $ref: `#/$defs/${definitionName}` };
+  };
+  const commercialSemanticText = (maxLength, allowEmpty = false) => {
+    const definitionName = allowEmpty
+      ? `commercialOptionalSemanticText${maxLength}`
+      : `commercialSemanticText${maxLength}`;
+    if (!Object.prototype.hasOwnProperty.call(
+      commercialSemanticTextDefinitions,
+      definitionName
+    )) {
+      throw new Error(`missing commercial semantic-text schema ${definitionName}`);
     }
     return { $ref: `#/$defs/${definitionName}` };
   };
@@ -2201,6 +2255,20 @@ function opportunityDiscoveryPlannerResponseFormat(
           `(?: ${canonicalAuthoredText})?$`
       }
     : targetTokenFreeText(140);
+  const paidOfferAlternatives = {
+    type: 'object',
+    properties: {
+      seller: paidOfferText,
+      compensatedJob: {
+        type: 'string',
+        enum: [DISCOVERY_COMPENSATED_JOB_PAID_OFFER]
+      }
+    },
+    required: ['seller', 'compensatedJob'],
+    additionalProperties: false,
+    description:
+      'Author both closed paid-offer alternatives; code selects seller for buyer/referral routes and compensatedJob for compensated_job.'
+  };
   const targetTokenFreeStringArray = (maxItems, maxLength = 80) => ({
     type: 'array',
     items: targetTokenFreeText(maxLength),
@@ -2232,7 +2300,7 @@ function opportunityDiscoveryPlannerResponseFormat(
       ...definition,
       properties: {
         ...properties,
-        l: targetTokenFreeText(labelMaxLength),
+        l: commercialSemanticText(labelMaxLength),
         ...(Object.prototype.hasOwnProperty.call(properties, 'q')
           ? { q: targetTokenFreeText(140) }
           : {})
@@ -2298,6 +2366,7 @@ function opportunityDiscoveryPlannerResponseFormat(
   };
   const contingentDefs = {
     ...canonicalTextDefinitions,
+    ...commercialSemanticTextDefinitions,
     evidenceRef: contingentSchema.$defs.evidenceRef,
     evidenceRefs: contingentSchema.$defs.evidenceRefs,
     compactEvidenceRefs: contingentSchema.$defs.compactEvidenceRefs,
@@ -2441,14 +2510,14 @@ function opportunityDiscoveryPlannerResponseFormat(
       properties: {
         ...authoredRevenuePathProperties,
         rm: { $ref: '#/$defs/revenueMechanism' },
-        l: targetTokenFreeText(140),
-        io: targetTokenFreeText(180),
+        l: commercialSemanticText(140),
+        io: commercialSemanticText(180),
         atm: { $ref: '#/$defs/attributionMethod' },
-        ats: targetTokenFreeText(220),
-        cd: targetTokenFreeText(180),
-        st: targetTokenFreeText(180),
+        ats: commercialSemanticText(220),
+        cd: commercialSemanticText(180),
+        st: commercialSemanticText(180),
         k: { $ref: '#/$defs/causalWitness' },
-        sb: targetTokenFreeText(180, true),
+        sb: commercialSemanticText(180, true),
         vm: {
           type: 'integer',
           minimum: 1,
@@ -2462,7 +2531,7 @@ function opportunityDiscoveryPlannerResponseFormat(
               ...destinationGrounding,
               properties: {
                 ...asObject(destinationGrounding.properties),
-                l: targetTokenFreeText(180)
+                l: commercialSemanticText(180)
               }
             }
           }
@@ -2492,7 +2561,7 @@ function opportunityDiscoveryPlannerResponseFormat(
     tactic: {
       type: 'object',
       properties: {
-        l: targetTokenFreeText(140),
+        l: commercialSemanticText(140),
         e: { $ref: '#/$defs/compactObservationEvidenceRefs' },
         s: asObject(contingentFamily.properties).s,
         c: contingentDimensionProperties.c,
@@ -2543,7 +2612,7 @@ function opportunityDiscoveryPlannerResponseFormat(
                   type: 'string',
                   enum: [...allowedMotionKinds]
                 },
-                paidOffer: paidOfferText,
+                paidOffer: paidOfferAlternatives,
                 market: {
                   type: 'string',
                   enum: [...allowedMarketValues],
@@ -2566,9 +2635,9 @@ function opportunityDiscoveryPlannerResponseFormat(
                 },
                 jobTitle: targetTokenFreeText(100),
                 skills: targetTokenFreeStringArray(6),
-                conversionDestination: targetTokenFreeText(180),
-                paidConversion: targetTokenFreeText(140),
-                attributionSignal: targetTokenFreeText(180),
+                conversionDestination: commercialSemanticText(180),
+                paidConversion: commercialSemanticText(140),
+                attributionSignal: commercialSemanticText(180),
                 contingentFinalists: {
                   type: 'object',
                   properties: {
@@ -2657,7 +2726,7 @@ function compactOpportunityDiscoveryOutputContract() {
 function compactOpportunityDiscoveryHardRules() {
   return [
     'Exactly 2 distinct motions: each pathBase+2 causal tactics. Unknown outside identities require the declared target slot and bounded read-only discovery; never return 0 plans or treat a missing exact target as missing supply evidence.',
-    'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names; every paidOffer must include that exact focus. Code exact-filters model evidence refs and appends the authoritative seller evidence ref. Audience/directory/category pages can inform buyer context but cannot redefine the seller or become proof that the seller offers the listed profession service.',
+    'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names. Author paidOffer.seller with that exact focus and paidOffer.compensatedJob with the exact schema enum; code selects seller for buyer/referral routes and compensatedJob only for compensated_job. Buyer/referral routes are unavailable unless approved evidence proves a current paid seller offer. Code exact-filters evidence refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
     `top-level buyer is the payer/end-buyer archetype and contains no target token. Contingent b.l has {{TARGET_NAME}} once for buyer/paid_demand and zero times for referral_partner; action/channel use typed target tokens. Never return ${CONTINGENT_TARGET_EVIDENCE_REF} in an e array; code allocates the target slot and binds that sentinel after typed-role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
@@ -2834,6 +2903,30 @@ function sellerFocusEvidenceRefs(evidenceCatalogValue, focusValue) {
     .map((evidence) => firstText(evidence.id))
     .filter(Boolean)
     .slice(0, 1);
+}
+
+function opportunityDiscoverySellerHasCurrentPaidOfferEvidence(
+  evidenceCatalogValue,
+  focusValue,
+  referenceTime
+) {
+  const focus = firstText(focusValue);
+  const mechanisms = [...REVENUE_MECHANISMS].filter((mechanism) =>
+    mechanism !== 'compensated_role'
+  );
+  return asArray(evidenceCatalogValue).map(asObject).some((evidence) => {
+    if (focus && !evidenceTextSupportsSellerFocus(evidence, focus)) {
+      return false;
+    }
+    return mechanisms.some((mechanism) =>
+      currentAffirmativeRevenueEvidence(
+        evidence,
+        mechanism,
+        referenceTime,
+        'paid_offer'
+      )
+    );
+  });
 }
 
 function typedDiscoveryMotionRoute(planValue) {
@@ -3072,6 +3165,23 @@ function normalizeOpportunityDiscoveryPlan(
     const routedPlan = typedRoute
       ? { ...routeInput, ...typedRoute }
       : routeInput;
+    const rawPaidOffer = asObject(routedPlan.paidOffer);
+    const normalizedPaidOffer = deriveFreshPlannerAuthority
+      ? firstText(routedPlan.motionKind) === 'compensated_job'
+        ? firstText(
+            rawPaidOffer.compensatedJob,
+            typeof routedPlan.paidOffer === 'string'
+              ? routedPlan.paidOffer
+              : '',
+            DISCOVERY_COMPENSATED_JOB_PAID_OFFER
+          )
+        : firstText(
+            rawPaidOffer.seller,
+            typeof routedPlan.paidOffer === 'string'
+              ? routedPlan.paidOffer
+              : ''
+          )
+      : firstText(routedPlan.paidOffer);
     const evidenceRefs = normalizedDiscoveryPlanEvidenceRefs(
       deriveFreshPlannerAuthority
         ? { ...routedPlan, evidenceRefs: [] }
@@ -3093,6 +3203,7 @@ function normalizeOpportunityDiscoveryPlan(
     const planWithCanonicalEvidence = {
       ...routedPlan,
       ...searchFields,
+      paidOffer: normalizedPaidOffer,
       evidenceRefs
     };
     const targetSlot = normalizeContingentTargetSlot(
@@ -3160,7 +3271,7 @@ function normalizeOpportunityDiscoveryPlan(
           )
         : truncate(firstText(routedPlan.counterparty), 180),
       paidOffer: deriveFreshPlannerAuthority
-        ? opportunityDiscoveryFreshSchemaText(routedPlan.paidOffer, 140)
+        ? opportunityDiscoveryFreshSchemaText(normalizedPaidOffer, 140)
         : truncate(firstText(routedPlan.paidOffer), 180),
       evidenceRefs,
       query: deterministicCommercialDiscoveryQuery(
@@ -4447,7 +4558,7 @@ function opportunityDiscoveryPlanIssue(
         return `Discovery plan ${item.id} is missing ${field}.`;
       }
     }
-    if (requiredSellerFocus &&
+    if (requiredSellerFocus && item.motionKind !== 'compensated_job' &&
         !opportunityDiscoveryUnicodeIdentityContains(
           item.paidOffer,
           requiredSellerFocus
@@ -4457,7 +4568,7 @@ function opportunityDiscoveryPlanIssue(
     const requiredSellerEvidenceRefs = new Set(
       compactStrings(sellerEvidenceRefsValue)
     );
-    if (requiredSellerFocus &&
+    if (requiredSellerFocus && item.motionKind !== 'compensated_job' &&
         (requiredSellerEvidenceRefs.size === 0 ||
           !asArray(item.evidenceRefs).some((ref) =>
             requiredSellerEvidenceRefs.has(firstText(ref))
