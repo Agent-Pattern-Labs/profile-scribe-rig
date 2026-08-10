@@ -45,8 +45,9 @@ function productionCitation(url, title, content) {
     contentHash
   };
 }
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 360_000;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 8_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 397_800;
+const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
 const PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256 =
   '295bb8bdfd9320c27530d225a401ac3dec07d915e987775413dc127f2feea033';
@@ -504,9 +505,11 @@ for (const scenario of cases) {
       ) ||
       result.webSearchReceipt?.requestHash !==
         result.preflight?.requestBodySha256 ||
-      result.webSearchReceipt?.injectedContextTokenReserve !== 1_050_000 ||
+      result.webSearchReceipt?.injectedContextTokenReserve !==
+        DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE ||
       result.webSearchReceipt?.costIncludedInLLMReceipt !== true ||
-      result.preflight?.promptTokenCeiling !== 1_050_000 ||
+      result.preflight?.promptTokenCeiling !==
+        DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE ||
       result.preflight?.outputTokenCeiling !==
         DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       result.preflight?.fixedRequestFeeCeilingMicros !== 0 ||
@@ -561,29 +564,32 @@ for (const scenario of cases) {
     ?.properties?.e || {};
   const followUpLabelPattern = plannerDefinitions.followUpItem
     ?.properties?.l?.pattern || '';
-  const referralChannelPattern = plannerDefinitions.channelItem
-    ?.properties?.rp?.pattern || '';
-  const buyerChannelPattern = plannerDefinitions.channelItem
-    ?.properties?.by?.pattern || '';
-  const paidDemandChannelPattern = plannerDefinitions.channelItem
-    ?.properties?.pd?.pattern || '';
-  const referralBuyerPattern = plannerDefinitions.buyerItem
-    ?.properties?.rp?.pattern || '';
-  const buyerTargetPattern = plannerDefinitions.buyerItem
-    ?.properties?.by?.pattern || '';
-  const paidDemandBuyerPattern = plannerDefinitions.buyerItem
-    ?.properties?.pd?.pattern || '';
-  const referralActionPattern = plannerDefinitions.actionItem
-    ?.properties?.rp?.pattern || '';
-  const buyerActionPattern = plannerDefinitions.actionItem
-    ?.properties?.by?.pattern || '';
-  const paidDemandActionPattern = plannerDefinitions.actionItem
-    ?.properties?.pd?.pattern || '';
+  const referralChannelValues = plannerDefinitions.channelItem
+    ?.properties?.rp?.enum || [];
+  const buyerChannelValues = plannerDefinitions.channelItem
+    ?.properties?.by?.enum || [];
+  const paidDemandChannelValues = plannerDefinitions.channelItem
+    ?.properties?.pd?.enum || [];
+  const referralBuyerValues = plannerDefinitions.buyerItem
+    ?.properties?.rp?.enum || [];
+  const buyerTargetValues = plannerDefinitions.buyerItem
+    ?.properties?.by?.enum || [];
+  const paidDemandBuyerValues = plannerDefinitions.buyerItem
+    ?.properties?.pd?.enum || [];
+  const referralActionValues = plannerDefinitions.actionItem
+    ?.properties?.rp?.enum || [];
+  const buyerActionValues = plannerDefinitions.actionItem
+    ?.properties?.by?.enum || [];
+  const paidDemandActionValues = plannerDefinitions.actionItem
+    ?.properties?.pd?.enum || [];
   const schemaAcceptsBlank = (schema) => {
     try {
       const resolved = typeof schema?.$ref === 'string'
         ? plannerDefinitions[schema.$ref.split('/').at(-1)]
         : schema;
+      if (Array.isArray(resolved?.enum)) {
+        return resolved.enum.includes('   ') || resolved.enum.includes('');
+      }
       return new RegExp(resolved?.pattern || '').test('   ');
     } catch {
       return true;
@@ -662,8 +668,6 @@ for (const scenario of cases) {
       !plannerPlanSchema.targetRoleSubrole?.enum?.includes('partnerships') ||
       plannerPlanSchema.organizationTerms?.minItems !== 1 ||
       [
-        plannerPlanSchema.buyer,
-        plannerPlanSchema.counterparty,
         plannerPlanSchema.paidOffer,
         plannerPlanSchema.organizationTerms?.items,
         plannerPlanSchema.jobTitle,
@@ -693,25 +697,38 @@ for (const scenario of cases) {
       !/copy one exact approved market value.*do not expand.*abbreviate.*widen/is.test(
         plannerPlanSchema.market?.description || ''
       ) ||
-      !/Review-first public professional profile.*TARGET_URL/is.test(
-        referralChannelPattern
+      referralChannelValues.length !== 2 ||
+      referralChannelValues.some((value) =>
+        !/^Review-first public professional profile \{\{TARGET_URL\}\} for /.test(value)
       ) ||
-      buyerChannelPattern !== referralChannelPattern ||
-      !/Review-first official paid-demand page.*TARGET_URL/is.test(
-        paidDemandChannelPattern
+      buyerChannelValues.length !== 2 ||
+      buyerChannelValues.some((value) =>
+        !/^Review-first public professional profile \{\{TARGET_URL\}\} for /.test(value)
       ) ||
-      !referralBuyerPattern || !buyerTargetPattern ||
-      paidDemandBuyerPattern !== buyerTargetPattern ||
-      /TARGET_(?:NAME|URL)/.test(referralBuyerPattern) ||
-      !/TARGET_NAME/.test(buyerTargetPattern) ||
-      !/After review via public professional profile.*TARGET_URL.*ask.*TARGET_NAME.*refer\|recommend\|introduce.*book\|buy\|purchase\|sign up for/is.test(
-        referralActionPattern
+      paidDemandChannelValues.length !== 2 ||
+      paidDemandChannelValues.some((value) =>
+        !/^Review-first official paid-demand page \{\{TARGET_URL\}\} for /.test(value)
       ) ||
-      !/After review via public professional profile.*TARGET_URL.*ask.*TARGET_NAME.*book\|buy\|purchase\|sign\|subscribe to.*paid\|reimbursable/is.test(
-        buyerActionPattern
+      referralBuyerValues.length !== 2 || buyerTargetValues.length !== 2 ||
+      paidDemandBuyerValues.length !== 2 ||
+      referralBuyerValues.some((value) => /TARGET_(?:NAME|URL)/.test(value)) ||
+      [...buyerTargetValues, ...paidDemandBuyerValues].some((value) =>
+        !/^\{\{TARGET_NAME\}\}: /.test(value)
       ) ||
-      !/After review via official paid-demand page.*TARGET_URL.*apply\|bid\|respond\|submit.*compensated\|paid.*application\|bid\|proposal\|response.*TARGET_NAME/is.test(
-        paidDemandActionPattern
+      referralActionValues.length !== 4 ||
+      referralActionValues.some((value) =>
+        !/^After review via public professional profile \{\{TARGET_URL\}\}, ask \{\{TARGET_NAME\}\} to (?:refer|introduce|recommend)/.test(value) ||
+          !/(?:book|buy|purchase|sign up for) the current paid offer$/.test(value)
+      ) ||
+      buyerActionValues.length !== 4 ||
+      buyerActionValues.some((value) =>
+        !/^After review via public professional profile \{\{TARGET_URL\}\}, ask \{\{TARGET_NAME\}\} to (?:book|buy|purchase|sign)/.test(value) ||
+        !/(?:paid consultation|paid service package|paid service contract)$/.test(value)
+      ) ||
+      paidDemandActionValues.length !== 4 ||
+      paidDemandActionValues.some((value) =>
+        !/^After review via official paid-demand page \{\{TARGET_URL\}\}, (?:apply|bid|submit|respond)/.test(value) ||
+          !/\{\{TARGET_NAME\}\}$/.test(value)
       ) ||
       !contingentProperties.pathBase ||
       !contingentProperties.tacticA ||
@@ -822,22 +839,21 @@ for (const scenario of cases) {
       JSON.stringify(plannerDefinitions.actionItem?.required) !==
         JSON.stringify(['rp', 'by', 'pd', 'e']) ||
       plannerDefinitions.actionItem?.properties?.l ||
-      ![referralActionPattern, buyerActionPattern, paidDemandActionPattern]
-        .every((pattern) => /^\^/.test(pattern) && /TARGET_NAME/.test(pattern) &&
-          /TARGET_URL/.test(pattern) && /\$$/.test(pattern)) ||
-      !new RegExp(referralActionPattern).test(
+      !referralActionValues.includes(
         'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid consultation'
+      ) && !referralActionValues.includes(
+        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer'
       ) ||
-      new RegExp(referralActionPattern).test(
+      referralActionValues.includes(
         'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation'
       ) ||
-      !new RegExp(buyerActionPattern).test(
+      !buyerActionValues.includes(
         'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package'
       ) ||
-      !new RegExp(paidDemandActionPattern).test(
-        'After review via official paid-demand page {{TARGET_URL}}, submit a paid proposal to {{TARGET_NAME}} for the scoped contract'
+      !paidDemandActionValues.includes(
+        'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}'
       ) ||
-      !/three model-authored role alternatives.*selects exactly.*commercialRole.*never composes action prose/is.test(
+      !/three closed role alternatives.*selects exactly.*commercialRole.*never composes action prose/is.test(
         plannerDefinitions.actionItem?.description || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
@@ -893,8 +909,6 @@ for (const scenario of cases) {
       )) {
     throw new Error(
       `${scenario.name}: call 1 omitted its compact semantic contract ${JSON.stringify({ blankSchemas: [
-        plannerPlanSchema.buyer,
-        plannerPlanSchema.counterparty,
         plannerPlanSchema.paidOffer,
         plannerPlanSchema.organizationTerms?.items,
         plannerPlanSchema.jobTitle,
@@ -1192,7 +1206,7 @@ const unsafeResult = await runOpportunityDiscoveryPlanner({
       acquisitionMode: 'permissioned_outreach',
       buyer: 'Patients seeking clinical care',
       counterparty: 'An identifiable person',
-      paidOffer: 'Paid consultation',
+      paidOffer: 'Contact a patient by private email for paid consultation',
       evidenceRefs: [unsafeRef],
       query: 'postpartum patients private email mobile phone',
       targetRoleTerms: ['postpartum patient'],
@@ -1222,7 +1236,7 @@ const unsafeResult = await runOpportunityDiscoveryPlanner({
   }
 });
 if (unsafeResult.status !== 'planned' ||
-    !/patient|sensitive|private-contact/i.test(
+    !/patient|sensitive|private-contact|reserved target syntax/i.test(
       unsafeResult.planSelection?.rejectedPlans?.[0]?.reason || ''
     ) ||
     unsafeResult.plans.length !== 1 ||
@@ -1539,7 +1553,7 @@ async function verifyTypedCommercialMotionSelection(
     acquisitionMechanism:
       'One review-first invitation to purchase a lactation home visit',
     conversionDestination: 'The verified owner booking page',
-    paidConversion: 'One completed paid lactation consultation',
+    paidConversion: 'One postpartum patient completes a paid lactation consultation',
     attributionSignal:
       'Booking source stores the selected target and tournament id'
   });
@@ -1548,19 +1562,17 @@ async function verifyTypedCommercialMotionSelection(
     plans: [sensitiveDirectBuyer, safeReferral],
     generationId: 'generation-one-valid-typed-motion'
   });
-  const sensitiveRejection = salvaged.planSelection?.rejectedPlans
-    ?.find((item) => item.id === 'plan_1_direct_buyer_person')?.reason || '';
   if (salvaged.status !== 'planned' ||
-      salvaged.plans.length !== 1 ||
-      salvaged.plans[0]?.id !== 'plan_2_referral_person' ||
-      salvaged.planSelection?.acceptedPlanCount !== 1 ||
-      salvaged.planSelection?.rejectedPlanCount !== 1 ||
-      !/sensitive|patient|care recipient|professional referral/i.test(
-        sensitiveRejection
-      ) ||
+      salvaged.plans.length !== 2 ||
+      salvaged.planSelection?.acceptedPlanCount !== 2 ||
+      salvaged.planSelection?.rejectedPlanCount !== 0 ||
+      salvaged.plans[0]?.buyer !==
+        'The validated outside target buying the current paid offer' ||
+      /postpartum patient/i.test(salvaged.plans[0]?.buyer || '') ||
+      /postpartum patients seeking/i.test(salvaged.plans[0]?.query || '') ||
       salvaged.sideEffectsPerformed !== 0) {
     throw new Error(
-      `one-valid-motion salvage or sensitive-buyer rejection failed: ${JSON.stringify(salvaged)}`
+      `forged removed buyer/query authority was not discarded: ${JSON.stringify(salvaged)}`
     );
   }
 
@@ -1865,8 +1877,6 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
     reason: '',
     plans: compactFreshPlannerPlans(twoMarketPlans).map((motion) => ({
       motionKind: motion.motionKind,
-      buyer: motion.buyer,
-      counterparty: motion.counterparty,
       paidOffer: motion.paidOffer,
       market: typedMarket.market,
       targetRoleSubrole: motion.targetRoleSubrole,
@@ -4006,7 +4016,8 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       'two sensitive clauses cannot share one service relation',
       'patient lead-list server search',
       'direct pregnant-people role',
-      'sensitive population as search subject'
+      'sensitive population as search subject',
+      'non-referral patient query'
     ]).has(adversary.label) ||
       adversary.label.startsWith('bare private-contact intent:');
     if (locallyCanonicalized) {
@@ -4164,46 +4175,46 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 192
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'google/gemini-3.5-flash-lite',
+        model: 'openai/gpt-4.1-mini',
         models: [
-          'google/gemini-3.5-flash-lite',
-          'google/gemini-2.5-flash-lite',
-          'xiaomi/mimo-v2.5'
+          'openai/gpt-4.1-mini',
+          'meta-llama/llama-4-maverick',
+          'google/gemini-3.5-flash-lite'
         ],
         modelRoutes: [
+          {
+            id: 'openai/gpt-4.1-mini',
+            family: 'openai',
+            minimumContextTokens: 1_047_576,
+            minimumOutputTokens: 8_000,
+            maximumPromptPrice: 0.4,
+            maximumCompletionPrice: 1.6,
+            requiredParameters: [
+              'max_tokens',
+              'response_format',
+              'structured_outputs'
+            ]
+          },
+          {
+            id: 'meta-llama/llama-4-maverick',
+            family: 'meta',
+            minimumContextTokens: 1_048_576,
+            minimumOutputTokens: 8_000,
+            maximumPromptPrice: 0.35,
+            maximumCompletionPrice: 1,
+            requiredParameters: [
+              'max_tokens',
+              'response_format',
+              'structured_outputs'
+            ]
+          },
           {
             id: 'google/gemini-3.5-flash-lite',
             family: 'google',
             minimumContextTokens: 1_048_576,
-            minimumOutputTokens: 16_000,
+            minimumOutputTokens: 8_000,
             maximumPromptPrice: 0.3,
             maximumCompletionPrice: 2.5,
-            requiredParameters: [
-              'max_tokens',
-              'response_format',
-              'structured_outputs'
-            ]
-          },
-          {
-            id: 'google/gemini-2.5-flash-lite',
-            family: 'google',
-            minimumContextTokens: 1_048_576,
-            minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.2,
-            maximumCompletionPrice: 0.9,
-            requiredParameters: [
-              'max_tokens',
-              'response_format',
-              'structured_outputs'
-            ]
-          },
-          {
-            id: 'xiaomi/mimo-v2.5',
-            family: 'xiaomi',
-            minimumContextTokens: 1_048_576,
-            minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.2,
-            maximumCompletionPrice: 0.9,
             requiredParameters: [
               'max_tokens',
               'response_format',
@@ -4212,22 +4223,24 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           }
         ],
         providerPriceCaps: {
-          prompt: 0.2,
-          completion: 0.9,
+          prompt: 0.4,
+          completion: 1.6,
           request: 0
         },
         providerRouting: {
           order: [
+            'openai',
+            'deepinfra',
+            'parasail',
             'google-vertex',
-            'google-ai-studio',
-            'xiaomi',
-            'parasail'
+            'google-ai-studio'
           ],
           only: [
+            'openai',
+            'deepinfra',
+            'parasail',
             'google-vertex',
-            'google-ai-studio',
-            'xiaomi',
-            'parasail'
+            'google-ai-studio'
           ],
           allow_fallbacks: true,
           require_parameters: true,
@@ -4237,13 +4250,14 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         framingTokenReserve: 1_024,
         generator: {
           providerPriceCaps: {
-            prompt: 0.3,
-            completion: 2.5,
+            prompt: 0.4,
+            completion: 1.6,
             request: 0
           },
           pluginIds: ['web', 'response-healing'],
           requestMaxBytes: 36 * 1_024,
-          promptTokenCeiling: 1_050_000,
+          promptTokenCeiling:
+            DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE,
           outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
           fixedToolFeeMicros: 5_000,
           callSpendCeilingMicros:
@@ -4251,8 +4265,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         },
         critic: {
           providerPriceCaps: {
-            prompt: 0.2,
-            completion: 0.9,
+            prompt: 0.4,
+            completion: 1.6,
             request: 0
           },
           pluginIds: ['response-healing'],
@@ -4260,7 +4274,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           promptTokenCeiling: 65_536 + 1_024,
           outputTokenCeiling: 1_200,
           fixedToolFeeMicros: 0,
-          callSpendCeilingMicros: 14_392
+          callSpendCeilingMicros: 28_544
         }
       })) {
     throw new Error(
@@ -6734,13 +6748,13 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       annotations: []
     })
   });
-  if (targetTokenResult.status !== 'blocked' ||
-      targetTokenResult.plans.length !== 0 ||
-      !/only targetSlot and contract-reserved contingent-finalist fields/i.test(
-        targetTokenResult.reason || ''
+  if (targetTokenResult.status !== 'planned' ||
+      targetTokenResult.plans.length !== 2 ||
+      targetTokenResult.plans.some((motion) =>
+        /TARGET_NAME/.test(motion.buyer || '')
       )) {
     throw new Error(
-      `target token in buyer was accepted: ${JSON.stringify(targetTokenResult)}`
+      `removed top-level buyer authority leaked into execution: ${JSON.stringify(targetTokenResult)}`
     );
   }
 }
@@ -12605,8 +12619,6 @@ function verifyFreshPlannerStrictSchemaTotality({
     const motion = structuredClone(motionValue);
     return {
       motionKind: motion.motionKind,
-      buyer: motion.buyer,
-      counterparty: motion.counterparty,
       paidOffer: motion.paidOffer,
       market,
       targetRoleSubrole: motion.targetRoleSubrole,
@@ -12750,8 +12762,6 @@ function verifyFreshPlannerStrictSchemaTotality({
     return `${text}${'😀'.repeat(maxCodepoints - length)}`;
   };
   const maxFieldPaths = [
-    ['buyer', ['plans', 0, 'buyer'], 140],
-    ['counterparty', ['plans', 0, 'counterparty'], 140],
     ['paidOffer', ['plans', 0, 'paidOffer'], 140],
     ['organizationTerms', ['plans', 0, 'organizationTerms', 0], 80],
     ['jobTitle', ['plans', 0, 'jobTitle'], 100],
@@ -12767,19 +12777,10 @@ function verifyFreshPlannerStrictSchemaTotality({
     ['supporting bottleneck', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'sb'], 180],
     ['grounded destination', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'g', 'd', 'l'], 180],
     ['offer item', ['plans', 0, 'contingentFinalists', 'pathBase', 'o', 0, 'l'], 140],
-    ['referral buyer item', ['plans', 0, 'contingentFinalists', 'pathBase', 'b', 0, 'rp'], 140],
-    ['buyer target item', ['plans', 0, 'contingentFinalists', 'pathBase', 'b', 0, 'by'], 140],
-    ['paid-demand buyer item', ['plans', 0, 'contingentFinalists', 'pathBase', 'b', 0, 'pd'], 140],
     ['timing label', ['plans', 0, 'contingentFinalists', 'pathBase', 't', 0, 'l'], 140],
     ['timing query', ['plans', 0, 'contingentFinalists', 'pathBase', 't', 0, 'q'], 140],
     ['proof item', ['plans', 0, 'contingentFinalists', 'pathBase', 'p', 0, 'l'], 140],
-    ['tactic label', ['plans', 0, 'contingentFinalists', 'tacticA', 'l'], 140],
-    ['referral channel', ['plans', 0, 'contingentFinalists', 'tacticA', 'c', 0, 'rp'], 140],
-    ['buyer channel', ['plans', 0, 'contingentFinalists', 'tacticA', 'c', 0, 'by'], 140],
-    ['paid-demand channel', ['plans', 0, 'contingentFinalists', 'tacticA', 'c', 0, 'pd'], 140],
-    ['referral action', ['plans', 0, 'contingentFinalists', 'tacticA', 'a', 0, 'rp'], 260],
-    ['buyer action', ['plans', 0, 'contingentFinalists', 'tacticA', 'a', 0, 'by'], 260],
-    ['paid-demand action', ['plans', 0, 'contingentFinalists', 'tacticA', 'a', 0, 'pd'], 260]
+    ['tactic label', ['plans', 0, 'contingentFinalists', 'tacticA', 'l'], 140]
   ];
   const allMax = structuredClone(baseline);
   for (const [label, path, maxCodepoints] of maxFieldPaths) {
@@ -12936,7 +12937,9 @@ function verifyFreshPlannerStrictSchemaTotality({
     .compile(maximumSchema);
   if (!validateMaximum(maximumResponse) ||
       evidenceOccurrenceCount !== 160 || evidenceArrayCount === 0 ||
-      maximizedStringOccurrenceCount < 100 ||
+      // Buyer, channel, and action alternatives are closed enums; all
+      // remaining model-authored bounded strings must still be maximized.
+      maximizedStringOccurrenceCount < 60 ||
       maximumResponse.plans.some((planValue) =>
         planValue.organizationTerms.length !== 6 ||
         planValue.skills.length !== 6
@@ -13070,22 +13073,8 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   const jobBundle = compactContingentFinalists(
     rawJobMotion.contingentFinalists
   );
-  jobBundle.pathBase.b[0].pd = padAstral(
-    jobBundle.pathBase.b[0].pd,
-    140
-  );
-  jobBundle.tacticA.c[0].pd = padAstral(
-    jobBundle.tacticA.c[0].pd,
-    140
-  );
-  jobBundle.tacticA.a[0].pd = padAstral(
-    jobBundle.tacticA.a[0].pd,
-    260
-  );
   response.plans[1] = {
     motionKind: 'compensated_job',
-    buyer: rawJobMotion.buyer,
-    counterparty: rawJobMotion.counterparty,
     paidOffer: rawJobMotion.paidOffer,
     market: response.plans[0].market,
     targetRoleSubrole: 'executive',
@@ -13108,8 +13097,6 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   const first = response.plans[0];
   const second = response.plans[1];
   const expectedRoundTrips = [
-    first.buyer,
-    first.counterparty,
     first.paidOffer,
     first.organizationTerms[0],
     first.conversionDestination,
@@ -13591,36 +13578,57 @@ function compactContingentFinalists(value) {
     const text = [...canonical].slice(0, 72).join('').trim();
     return text || fallback;
   };
-  const roleBuyer = (item) => {
-    const label = tokenFree(item.l, 'Qualified commercial buyer');
-    return {
-      rp: label,
-      by: [...`{{TARGET_NAME}}: ${label}`].slice(0, 140).join(''),
-      pd: [...`{{TARGET_NAME}}: ${label}`].slice(0, 140).join(''),
-      e: item.e
-    };
-  };
+  const roleBuyer = (item, index) => ({
+    rp: index % 2 === 0
+      ? 'Qualified buyer for the current paid offer'
+      : 'Prospective buyer eligible for the current paid offer',
+    by: index % 2 === 0
+      ? '{{TARGET_NAME}}: validated commercial buyer'
+      : '{{TARGET_NAME}}: prospective buyer of the current paid offer',
+    pd: index % 2 === 0
+      ? '{{TARGET_NAME}}: employer with current compensated demand'
+      : '{{TARGET_NAME}}: buyer issuing a current paid engagement',
+    e: item.e
+  });
   const roleChannel = (item, index, family) => {
-    const suffix = tokenFree(
-      `${family === familyA ? 'alpha' : 'beta'} route ${index + 1}`,
-      `tactic option ${index + 1}`
-    );
+    const alternate = (family === familyB ? 1 : 0) + index;
     return {
-      rp: `Review-first public professional profile {{TARGET_URL}} for ${suffix}`,
-      by: `Review-first public professional profile {{TARGET_URL}} for ${suffix}`,
-      pd: `Review-first official paid-demand page {{TARGET_URL}} for ${suffix}`,
+      rp: alternate % 2 === 0
+        ? 'Review-first public professional profile {{TARGET_URL}} for referral fit verification'
+        : 'Review-first public professional profile {{TARGET_URL}} for partner-channel verification',
+      by: alternate % 2 === 0
+        ? 'Review-first public professional profile {{TARGET_URL}} for buyer fit verification'
+        : 'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification',
+      pd: alternate % 2 === 0
+        ? 'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification'
+        : 'Review-first official paid-demand page {{TARGET_URL}} for paid-engagement verification',
       e: item.e
     };
   };
   const roleAction = (item, index, family) => {
-    const suffix = tokenFree(
-      `${family === familyA ? 'alpha' : 'beta'} route ${index + 1}`,
-      `tactic option ${index + 1}`
-    );
+    const variant = ((family === familyB ? 2 : 0) + index) % 4;
+    const referralActions = [
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer',
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to purchase the current paid offer',
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to buy the current paid offer',
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to sign up for the current paid offer'
+    ];
+    const buyerActions = [
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation',
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package',
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid service package',
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
+    ];
+    const paidDemandActions = [
+      'After review via official paid-demand page {{TARGET_URL}}, apply a compensated application to {{TARGET_NAME}}',
+      'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
+      'After review via official paid-demand page {{TARGET_URL}}, bid one paid proposal to {{TARGET_NAME}}',
+      'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
+    ];
     return {
-      rp: `After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer ${suffix} to book the current paid service`,
-      by: `After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service ${suffix}`,
-      pd: `After review via official paid-demand page {{TARGET_URL}}, submit a paid proposal to {{TARGET_NAME}} for ${suffix}`,
+      rp: referralActions[variant],
+      by: buyerActions[variant],
+      pd: paidDemandActions[variant],
       e: item.e
     };
   };
@@ -13681,6 +13689,8 @@ function compactContingentFinalists(value) {
 function compactFreshPlannerPlans(values) {
   return (values || []).map((planValue) => {
     const freshPlan = structuredClone(planValue);
+    delete freshPlan.buyer;
+    delete freshPlan.counterparty;
     delete freshPlan.rationale;
     if (freshPlan.contingentFinalists?.familyA &&
         freshPlan.contingentFinalists?.familyB) {

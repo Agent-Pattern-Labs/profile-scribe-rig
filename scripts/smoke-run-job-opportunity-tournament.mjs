@@ -212,7 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
-    model: 'xiaomi/mimo-v2.5',
+    model: 'meta-llama/llama-4-maverick',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -221,27 +221,22 @@ const server = createServer(async (request, response) => {
     usage,
     openrouter_metadata: {
       strategy: 'fallback',
-      attempt: 3,
+      attempt: 2,
       endpoints: {
-        total: 3,
+        total: 2,
         available: [{
-          provider: 'Google AI Studio',
-          model: 'google/gemini-3.5-flash-lite',
+          provider: 'OpenAI',
+          model: 'openai/gpt-4.1-mini',
           selected: false
         }, {
-          provider: 'Google AI Studio',
-          model: 'google/gemini-2.5-flash-lite',
-          selected: false
-        }, {
-          provider: 'Parasail',
-          model: 'xiaomi/mimo-v2.5',
+          provider: 'DeepInfra',
+          model: 'meta-llama/llama-4-maverick',
           selected: true
         }]
       },
       attempts: [
-        { provider: 'Google AI Studio', status: 502 },
-        { provider: 'Google AI Studio', status: 502 },
-        { provider: 'Parasail', status: 200 }
+        { provider: 'OpenAI', status: 502 },
+        { provider: 'DeepInfra', status: 200 }
       ]
     }
   }));
@@ -742,7 +737,7 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerAttempt,
-      3,
+      2,
       'successful call lost its router attempt count'
     );
     assertEqual(
@@ -752,29 +747,29 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedProvider,
-      'Parasail',
+      'DeepInfra',
       'successful call lost its selected fallback vendor'
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'xiaomi/mimo-v2.5',
+      'meta-llama/llama-4-maverick',
       'successful call lost its selected fallback model'
     );
     assertEqual(
       providerReceipt?.model,
-      'xiaomi/mimo-v2.5',
+      'meta-llama/llama-4-maverick',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'google/gemini-3.5-flash-lite',
+      'openai/gpt-4.1-mini',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
       JSON.stringify(
         providerReceipt?.responseDiagnostics?.routerAttemptStatuses
       ),
-      JSON.stringify([502, 502, 200]),
+      JSON.stringify([502, 200]),
       'successful call lost bounded fallback statuses'
     );
   }
@@ -1111,9 +1106,9 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.models),
     JSON.stringify([
-      'google/gemini-3.5-flash-lite',
-      'google/gemini-2.5-flash-lite',
-      'xiaomi/mimo-v2.5'
+      'openai/gpt-4.1-mini',
+      'meta-llama/llama-4-maverick',
+      'google/gemini-3.5-flash-lite'
     ]),
     'generator lost the bounded model fallback order'
   );
@@ -1130,20 +1125,22 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.provider?.order),
     JSON.stringify([
+      'openai',
+      'deepinfra',
+      'parasail',
       'google-vertex',
-      'google-ai-studio',
-      'xiaomi',
-      'parasail'
+      'google-ai-studio'
     ]),
     'generator lost the ordered cross-vendor fallback route'
   );
   assertEqual(
     JSON.stringify(call.envelope.provider?.only),
     JSON.stringify([
+      'openai',
+      'deepinfra',
+      'parasail',
       'google-vertex',
-      'google-ai-studio',
-      'xiaomi',
-      'parasail'
+      'google-ai-studio'
     ]),
     'generator allowed an unreviewed fallback vendor'
   );
@@ -1242,7 +1239,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'google/gemini-3.5-flash-lite',
+          'openai/gpt-4.1-mini',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

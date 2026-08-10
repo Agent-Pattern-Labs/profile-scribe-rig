@@ -2639,18 +2639,18 @@ async function verifyLengthFinishedStructuredRepair() {
         request.model !== 'test/v2' ||
         JSON.stringify(request.models) !== JSON.stringify([
           'test/v2',
-          'google/gemini-2.5-flash-lite',
-          'xiaomi/mimo-v2.5'
+          'meta-llama/llama-4-maverick',
+          'google/gemini-3.5-flash-lite'
         ]) ||
         request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !==
-          '["google-vertex","google-ai-studio","xiaomi","parasail"]' ||
+          '["openai","deepinfra","parasail","google-vertex","google-ai-studio"]' ||
         JSON.stringify(request.provider?.only) !==
-          '["google-vertex","google-ai-studio","xiaomi","parasail"]' ||
+          '["openai","deepinfra","parasail","google-vertex","google-ai-studio"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
-        request.provider?.max_price?.prompt !== 0.2 ||
-        request.provider?.max_price?.completion !== 0.9
+        request.provider?.max_price?.prompt !== 0.4 ||
+        request.provider?.max_price?.completion !== 1.6
       ) ||
       repairSchema?.properties?.familyA?.$ref !== '#/$defs/family' ||
       repairSchema?.properties?.familyB?.$ref !== '#/$defs/family' ||
@@ -2833,10 +2833,10 @@ async function verifyProviderSpendBudgetRecovery() {
       diagnostics: [{ finishReason: 'stop' }, { finishReason: 'stop' }],
       usages: [initialUsage, usage],
       budgetOverrides: {
-        // Authorizes the initial Luna-priced call, but not a repair once the
+        // Authorizes the initial current-route call, but not a repair once the
         // full conservative first-call ceiling is reserved for invalid cost
-        // accounting (request fee is $0 for openai/gpt-5.6-luna).
-        maxLLMSpendMicros: 15_000
+        // accounting (the request-fee ceiling remains zero).
+        maxLLMSpendMicros: 30_000
       },
       onRequest: () => {
         unreportedCalls += 1;

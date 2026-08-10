@@ -100,35 +100,35 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'google/gemini-3.5-flash-lite';
+  'openai/gpt-4.1-mini';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
-  'google/gemini-2.5-flash-lite',
-  'xiaomi/mimo-v2.5'
+  'meta-llama/llama-4-maverick',
+  'google/gemini-3.5-flash-lite'
 ]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'google',
-    minimumContextTokens: 1_048_576,
-    minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.3,
-    maximumCompletionPrice: 2.5
+    family: 'openai',
+    minimumContextTokens: 1_047_576,
+    minimumOutputTokens: 8_000,
+    maximumPromptPrice: 0.4,
+    maximumCompletionPrice: 1.6
   }),
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
-    family: 'google',
+    family: 'meta',
     minimumContextTokens: 1_048_576,
-    minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.2,
-    maximumCompletionPrice: 0.9
+    minimumOutputTokens: 8_000,
+    maximumPromptPrice: 0.35,
+    maximumCompletionPrice: 1
   }),
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
-    family: 'xiaomi',
+    family: 'google',
     minimumContextTokens: 1_048_576,
-    minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.2,
-    maximumCompletionPrice: 0.9
+    minimumOutputTokens: 8_000,
+    maximumPromptPrice: 0.3,
+    maximumCompletionPrice: 2.5
   })
 ]);
 if (1 + OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS.length > 3) {
@@ -139,8 +139,7 @@ const OPPORTUNITY_DISCOVERY_REQUIRED_MODEL_PARAMETERS = Object.freeze([
   'response_format',
   'structured_outputs'
 ]);
-// Gemini Flash Lite native context window on OpenRouter.
-const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE = 1_050_000;
+const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE = 950_000;
 
 const MAX_HYPOTHESES = 10_000;
 const MAX_FINALISTS = 20;
@@ -161,28 +160,30 @@ const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
 // The discovery generator has a separate Gemini 3.5 ceiling below so raising
 // its complex-contract capacity cannot silently widen historical call spend.
 const MAX_PROVIDER_PRICE = {
-  prompt: 0.2,
-  completion: 0.9,
+  prompt: 0.4,
+  completion: 1.6,
   request: 0
 };
 const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
-  prompt: 0.3,
-  completion: 2.5,
+  prompt: 0.4,
+  completion: 1.6,
   request: 0
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
   order: [
+    'openai',
+    'deepinfra',
+    'parasail',
     'google-vertex',
-    'google-ai-studio',
-    'xiaomi',
-    'parasail'
+    'google-ai-studio'
   ],
   only: [
+    'openai',
+    'deepinfra',
+    'parasail',
     'google-vertex',
-    'google-ai-studio',
-    'xiaomi',
-    'parasail'
+    'google-ai-studio'
   ],
   // OpenRouter first tries the pinned Gemini route, then the two independently
   // qualified non-OpenAI model families within this same authorized request.
@@ -481,12 +482,12 @@ const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
 // production two-motion trace exhausted 9,000 tokens at 45,055 raw bytes; the
 // parsed cap below now also dominates the strict grammar's computed worst-case
 // Unicode/evidence envelope instead of relying on representative samples.
-const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 360_000;
+const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 8_000;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 397_800;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
-const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 14_392;
+const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 28_544;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
     OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE *
@@ -2303,18 +2304,26 @@ function opportunityDiscoveryPlannerResponseFormat(
     buyerItem: {
       type: 'object',
       properties: {
-        // Keep this one role-discriminating pattern inline; the bridge smoke
-        // verifies that the referral label alone cannot carry target tokens.
-        rp: canonicalTextDefinition(140),
+        rp: {
+          type: 'string',
+          enum: [
+            'Qualified buyer for the current paid offer',
+            'Prospective buyer eligible for the current paid offer'
+          ]
+        },
         by: {
           type: 'string',
-          maxLength: 140,
-          pattern: `^\\{\\{TARGET_NAME\\}\\}: ${canonicalAuthoredText}$`
+          enum: [
+            '{{TARGET_NAME}}: validated commercial buyer',
+            '{{TARGET_NAME}}: prospective buyer of the current paid offer'
+          ]
         },
         pd: {
           type: 'string',
-          maxLength: 140,
-          pattern: `^\\{\\{TARGET_NAME\\}\\}: ${canonicalAuthoredText}$`
+          enum: [
+            '{{TARGET_NAME}}: employer with current compensated demand',
+            '{{TARGET_NAME}}: buyer issuing a current paid engagement'
+          ]
         },
         e: asObject(
           asObject(contingentSchema.$defs.buyerItem).properties
@@ -2330,21 +2339,24 @@ function opportunityDiscoveryPlannerResponseFormat(
       properties: {
         rp: {
           type: 'string',
-          maxLength: 140,
-          pattern:
-            `^Review-first public professional profile \\{\\{TARGET_URL\\}\\} for ${canonicalAuthoredText}$`
+          enum: [
+            'Review-first public professional profile {{TARGET_URL}} for referral fit verification',
+            'Review-first public professional profile {{TARGET_URL}} for partner-channel verification'
+          ]
         },
         by: {
           type: 'string',
-          maxLength: 140,
-          pattern:
-            `^Review-first public professional profile \\{\\{TARGET_URL\\}\\} for ${canonicalAuthoredText}$`
+          enum: [
+            'Review-first public professional profile {{TARGET_URL}} for buyer fit verification',
+            'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification'
+          ]
         },
         pd: {
           type: 'string',
-          maxLength: 140,
-          pattern:
-            `^Review-first official paid-demand page \\{\\{TARGET_URL\\}\\} for ${canonicalAuthoredText}$`
+          enum: [
+            'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification',
+            'Review-first official paid-demand page {{TARGET_URL}} for paid-engagement verification'
+          ]
         },
         e: asObject(
           asObject(contingentSchema.$defs.channelItem).properties
@@ -2360,25 +2372,34 @@ function opportunityDiscoveryPlannerResponseFormat(
       properties: {
         rp: {
           type: 'string',
-          maxLength: 260,
-          pattern:
-            `^After review via public professional profile \\{\\{TARGET_URL\\}\\}, ask \\{\\{TARGET_NAME\\}\\} to (?:refer|recommend|introduce) ${canonicalAuthoredText} to (?:book|buy|purchase|sign up for) ${canonicalAuthoredText}$`,
+          enum: [
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer',
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to purchase the current paid offer',
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to buy the current paid offer',
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to sign up for the current paid offer'
+          ],
           description:
             'Referral action: target introduces or recommends a qualified buyer to book or buy the paid offer.'
         },
         by: {
           type: 'string',
-          maxLength: 260,
-          pattern:
-            `^After review via public professional profile \\{\\{TARGET_URL\\}\\}, ask \\{\\{TARGET_NAME\\}\\} to (?:book|buy|purchase|sign|subscribe to) the current (?:paid|reimbursable) ${canonicalAuthoredText}$`,
+          enum: [
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation',
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package',
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid service package',
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
+          ],
           description:
             'Buyer action: target books, buys, signs, or subscribes to the current paid offer.'
         },
         pd: {
           type: 'string',
-          maxLength: 260,
-          pattern:
-            `^After review via official paid-demand page \\{\\{TARGET_URL\\}\\}, (?:apply|bid|respond|submit) (?:a|one|the) (?:compensated|paid) (?:application|bid|proposal|response) (?:to|for) \\{\\{TARGET_NAME\\}\\}(?: ${canonicalAuthoredText})?$`,
+          enum: [
+            'After review via official paid-demand page {{TARGET_URL}}, apply a compensated application to {{TARGET_NAME}}',
+            'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
+            'After review via official paid-demand page {{TARGET_URL}}, bid one paid proposal to {{TARGET_NAME}}',
+            'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
+          ],
           description:
             'Demand action: paid application, bid, proposal, or response via the official demand page.'
         },
@@ -2387,7 +2408,7 @@ function opportunityDiscoveryPlannerResponseFormat(
       required: ['rp', 'by', 'pd', 'e'],
       additionalProperties: false,
       description:
-        'Three model-authored role alternatives; code selects exactly commercialRole and never composes action prose.'
+        'Three closed role alternatives; code selects exactly commercialRole and never composes action prose.'
     },
     timingItem: {
       ...boundedItemDefinition('timingItem'),
@@ -2517,8 +2538,6 @@ function opportunityDiscoveryPlannerResponseFormat(
                   type: 'string',
                   enum: [...allowedMotionKinds]
                 },
-                buyer: targetTokenFreeText(140),
-                counterparty: targetTokenFreeText(140),
                 paidOffer: paidOfferText,
                 market: {
                   type: 'string',
@@ -2569,8 +2588,6 @@ function opportunityDiscoveryPlannerResponseFormat(
               },
               required: [
                 'motionKind',
-                'buyer',
-                'counterparty',
                 'paidOffer',
                 'market',
                 'targetRoleSubrole',
@@ -2599,7 +2616,7 @@ function compactOpportunityDiscoveryOutputContract() {
     plan:
       'Return exactly 2 ranked, economically distinct plans; fill every required field.',
     route:
-      'motionKind locally fixes route/search/commercial/acquisition/artifact/slot',
+      'motionKind locally fixes route/search/commercial/acquisition/artifact/slot and the distinct buyer/counterparty roles',
     professionalRole:
       'targetRoleSubrole=one exact schema-enumerated PDL canonical subrole; code derives targetRoleRole and professional_role_query_v2 only for person routes',
     targetRoleMap: {
@@ -2832,6 +2849,36 @@ function typedDiscoveryMotionRoute(planValue) {
         ? DISCOVERY_PAID_DEMAND_ACQUISITION
         : DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION
   };
+}
+
+function opportunityDiscoveryBuyerForMotionKind(motionKindValue) {
+  switch (firstText(motionKindValue)) {
+  case 'referral_person':
+  case 'referral_org_decision_maker':
+    return 'A qualified buyer for the current paid offer';
+  case 'direct_buyer_person':
+  case 'direct_buyer_org_decision_maker':
+    return 'The validated outside target buying the current paid offer';
+  case 'compensated_job':
+    return 'The validated employer buying compensated professional work';
+  default:
+    return '';
+  }
+}
+
+function opportunityDiscoveryCounterpartyForMotionKind(motionKindValue) {
+  switch (firstText(motionKindValue)) {
+  case 'referral_person':
+  case 'referral_org_decision_maker':
+    return 'A prospective professional referral partner';
+  case 'direct_buyer_person':
+  case 'direct_buyer_org_decision_maker':
+    return 'A prospective commercial buyer';
+  case 'compensated_job':
+    return 'A current employer with a compensated role';
+  default:
+    return '';
+  }
 }
 
 function normalizeCommercialDiscoveryCapabilities(value) {
@@ -3100,12 +3147,11 @@ function normalizeOpportunityDiscoveryPlan(
       commercialRole: firstText(routedPlan.commercialRole),
       acquisitionMode: firstText(routedPlan.acquisitionMode),
       buyer: deriveFreshPlannerAuthority
-        ? opportunityDiscoveryFreshSchemaText(routedPlan.buyer, 140)
+        ? opportunityDiscoveryBuyerForMotionKind(routedPlan.motionKind)
         : truncate(firstText(routedPlan.buyer), 180),
       counterparty: deriveFreshPlannerAuthority
-        ? opportunityDiscoveryFreshSchemaText(
-            routedPlan.counterparty,
-            140
+        ? opportunityDiscoveryCounterpartyForMotionKind(
+            routedPlan.motionKind
           )
         : truncate(firstText(routedPlan.counterparty), 180),
       paidOffer: deriveFreshPlannerAuthority
