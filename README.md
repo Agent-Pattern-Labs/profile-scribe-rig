@@ -113,6 +113,12 @@ export PROFILESCRIBE_RIG_CHAT_COMMAND='your-agent-chat-command'
 export PROFILESCRIBE_RIG_INTERVIEW_COMMAND='your-interview-command'
 ```
 
+Opportunity-tournament generator and critic calls use one bounded OpenRouter
+request per logical stage. The ordered route is Luna, Gemini 2.5 Flash Lite,
+then MiMo v2.5; OpenRouter may select a later model only when an earlier model
+fails before usable output. The selected model is preserved in the receipt,
+while partial or invalid structured output remains fail-closed.
+
 When OpenRouter is configured and no custom command is present, the rig fetches
 short approved-source and child-evidence extracts, builds a pre-draft timeline
 brief from recent posts and timeline search, ranks source and evidence

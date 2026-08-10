@@ -3091,6 +3091,7 @@ function agentChatTraceTools(resolvedFromList) {
 
 async function callOpenRouterJSON({
   model,
+  models,
   system,
   user,
   maxTokens,
@@ -3105,6 +3106,7 @@ async function callOpenRouterJSON({
   model = text(model) || openRouterModel();
   const requestBody = serializeOpenRouterJSONRequestBody({
     model,
+    models,
     system,
     user,
     maxTokens,
@@ -3159,7 +3161,10 @@ async function callOpenRouterJSON({
     const usage = normalizeOpenRouterUsage(envelope?.usage);
     const diagnostics = {
       ...openRouterResponseDiagnostics({}, body),
-      ...openRouterRouterDiagnostics(envelope?.openrouter_metadata),
+      ...openRouterRouterDiagnostics(
+        envelope?.openrouter_metadata,
+        envelope?.model
+      ),
       httpStatus: response.status
     };
     const generationId = text(
@@ -3222,7 +3227,10 @@ async function callOpenRouterJSON({
     });
   const diagnostics = {
     ...openRouterResponseDiagnostics(choice, rawContent),
-    ...openRouterRouterDiagnostics(envelope?.openrouter_metadata),
+    ...openRouterRouterDiagnostics(
+      envelope?.openrouter_metadata,
+      envelope?.model
+    ),
     httpStatus: response.status
   };
   if (envelope?.error) {
@@ -3290,7 +3298,7 @@ function openRouterResponseDiagnostics(choice, rawContent) {
   });
 }
 
-function openRouterRouterDiagnostics(value) {
+function openRouterRouterDiagnostics(value, selectedModelValue) {
   const metadata = object(value);
   const endpoints = object(metadata.endpoints);
   const available = arrayOfObjects(endpoints.available);
@@ -3302,6 +3310,7 @@ function openRouterRouterDiagnostics(value) {
       status >= 100 && status <= 599);
   const attempt = nonNegativeInteger(metadata.attempt);
   const provider = text(selected?.provider);
+  const selectedModel = text(selectedModelValue).toLowerCase();
   return compact({
     routerStrategy: /^[a-z][a-z0-9_-]{0,31}$/.test(
       text(metadata.strategy).toLowerCase()
@@ -3315,6 +3324,10 @@ function openRouterRouterDiagnostics(value) {
     routerSelectedProvider:
       /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
         ? provider
+        : undefined,
+    routerSelectedModel:
+      /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(selectedModel)
+        ? selectedModel
         : undefined
   });
 }

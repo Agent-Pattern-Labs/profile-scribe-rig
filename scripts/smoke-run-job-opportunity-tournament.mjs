@@ -150,6 +150,46 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (input.objective?.id === 'objective-run-job-embedded-502') {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      id: 'gen-run-job-embedded-502',
+      model: 'openai/gpt-5.6-luna',
+      error: {
+        code: 502,
+        message: 'raw-embedded-provider-secret-sentinel',
+        metadata: {
+          error_type: 'provider_unavailable',
+          provider_code: 'upstream_502'
+        }
+      },
+      choices: [{
+        finish_reason: 'error',
+        native_finish_reason: 'error',
+        message: { content: '{"partial":"must-not-be-accepted"}' }
+      }],
+      usage,
+      openrouter_metadata: {
+        strategy: 'fallback',
+        attempt: 3,
+        endpoints: {
+          total: 3,
+          available: [{
+            provider: 'OpenAI',
+            model: 'openai/gpt-5.6-luna',
+            selected: true
+          }]
+        },
+        attempts: [
+          { provider: 'OpenAI', status: 502 },
+          { provider: 'Google AI Studio', status: 502 },
+          { provider: 'Parasail', status: 502 }
+        ]
+      }
+    }));
+    return;
+  }
+
   let data;
   if (schemaName === 'opportunity_tournament_critic_v1') {
     data = criticResponse(input.finalists || []);
@@ -172,6 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
+    model: 'google/gemini-2.5-flash-lite',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -188,14 +229,14 @@ const server = createServer(async (request, response) => {
           model: 'openai/gpt-5.6-luna',
           selected: false
         }, {
-          provider: 'Azure',
-          model: 'openai/gpt-5.6-luna',
+          provider: 'Google AI Studio',
+          model: 'google/gemini-2.5-flash-lite',
           selected: true
         }]
       },
       attempts: [
         { provider: 'OpenAI', status: 502 },
-        { provider: 'Azure', status: 200 }
+        { provider: 'Google AI Studio', status: 200 }
       ]
     }
   }));
@@ -287,6 +328,18 @@ try {
   verifyProvider502Failure(
     providerFailure,
     providerCalls.slice(providerFailureCallOffset)
+  );
+
+  const embeddedFailureJob = tournamentJob(
+    'embedded-502',
+    'objective-run-job-embedded-502'
+  );
+  const embeddedFailureFile = writeJob('embedded-502', embeddedFailureJob);
+  const embeddedFailureCallOffset = providerCalls.length;
+  const embeddedFailure = await runJob(embeddedFailureFile, port);
+  verifyEmbeddedProviderFailure(
+    embeddedFailure,
+    providerCalls.slice(embeddedFailureCallOffset)
   );
 
   assertEqual(
@@ -694,8 +747,23 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedProvider,
-      'Azure',
+      'Google AI Studio',
       'successful call lost its selected fallback vendor'
+    );
+    assertEqual(
+      providerReceipt?.responseDiagnostics?.routerSelectedModel,
+      'google/gemini-2.5-flash-lite',
+      'successful call lost its selected fallback model'
+    );
+    assertEqual(
+      providerReceipt?.model,
+      'google/gemini-2.5-flash-lite',
+      'successful receipt did not account against the selected model'
+    );
+    assertEqual(
+      providerReceipt?.requestedModel,
+      'openai/gpt-5.6-luna',
+      'successful receipt lost the requested primary model'
     );
     assertEqual(
       JSON.stringify(
@@ -973,6 +1041,32 @@ function verifyProvider502Failure(receipt, calls) {
   verifyNoExecution(metadata);
 }
 
+function verifyEmbeddedProviderFailure(receipt, calls) {
+  const metadata = receipt.metadata || {};
+  const providerReceipt = metadata.llm?.strategyGeneratorJudge || {};
+  const diagnostics = providerReceipt.responseDiagnostics || {};
+  assertEqual(receipt.status, 'skipped', 'embedded provider error did not stop safely');
+  assertEqual(calls.length, 1, 'partial provider output caused an application redispatch');
+  assertEqual(metadata.usage?.calls, 1, 'embedded provider error lost its call count');
+  assertEqual(metadata.usage?.successfulCalls, 0, 'partial provider output was counted as successful');
+  assertEqual(providerReceipt.status, 'failed', 'partial provider output was accepted');
+  assertEqual(providerReceipt.error, 'openrouter_provider_unavailable', 'embedded provider error lost its cause');
+  assertEqual(
+    diagnostics.httpStatus,
+    undefined,
+    'embedded provider error promoted its successful transport status to provider authority'
+  );
+  assertEqual(diagnostics.providerErrorType, 'provider_unavailable', 'embedded provider error lost upstream type');
+  assertEqual(diagnostics.providerErrorCode, 'upstream_502', 'embedded provider error lost upstream code');
+  assertEqual(diagnostics.routerAttempt, 3, 'embedded provider error lost the exhausted route count');
+  assert(
+    !JSON.stringify(receipt).includes('must-not-be-accepted') &&
+      !JSON.stringify(receipt).includes('raw-embedded-provider-secret-sentinel'),
+    'embedded provider error leaked or accepted partial/raw output'
+  );
+  verifyNoExecution(metadata);
+}
+
 function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     call.schemaName,
@@ -1008,7 +1102,16 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(dimensions.r?.minItems, 1, 'generator schema lost its revenue path');
   assertEqual(dimensions.r?.maxItems, 1, 'generator schema allowed extra revenue paths');
   assertEqual(call.envelope.temperature, undefined, 'generator must omit temperature for Luna require_parameters');
-  assertEqual(call.envelope.model, 'openai/gpt-5.6-luna', 'generator must use pinned Luna OpenRouter model');
+  assertEqual(call.envelope.model, undefined, 'generator must use the ordered OpenRouter models contract');
+  assertEqual(
+    JSON.stringify(call.envelope.models),
+    JSON.stringify([
+      'openai/gpt-5.6-luna',
+      'google/gemini-2.5-flash-lite',
+      'xiaomi/mimo-v2.5'
+    ]),
+    'generator lost the bounded model fallback order'
+  );
   assertEqual(
     call.envelope.provider?.data_collection,
     'deny',
@@ -1021,12 +1124,28 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   );
   assertEqual(
     JSON.stringify(call.envelope.provider?.order),
-    JSON.stringify(['openai', 'azure', 'amazon-bedrock']),
+    JSON.stringify([
+      'openai',
+      'azure',
+      'amazon-bedrock',
+      'google-vertex',
+      'google-ai-studio',
+      'xiaomi',
+      'parasail'
+    ]),
     'generator lost the ordered cross-vendor fallback route'
   );
   assertEqual(
     JSON.stringify(call.envelope.provider?.only),
-    JSON.stringify(['openai', 'azure', 'amazon-bedrock']),
+    JSON.stringify([
+      'openai',
+      'azure',
+      'amazon-bedrock',
+      'google-vertex',
+      'google-ai-studio',
+      'xiaomi',
+      'parasail'
+    ]),
     'generator allowed an unreviewed fallback vendor'
   );
   assertEqual(

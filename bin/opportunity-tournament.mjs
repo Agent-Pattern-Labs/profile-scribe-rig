@@ -100,6 +100,41 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL = 'openai/gpt-5.6-luna';
+const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
+  'google/gemini-2.5-flash-lite',
+  'xiaomi/mimo-v2.5'
+]);
+const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
+  Object.freeze({
+    id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
+    family: 'openai',
+    minimumContextTokens: 1_050_000,
+    minimumOutputTokens: 16_000,
+    maximumPromptPrice: 0.2,
+    maximumCompletionPrice: 0.9
+  }),
+  Object.freeze({
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
+    family: 'google',
+    minimumContextTokens: 1_048_576,
+    minimumOutputTokens: 16_000,
+    maximumPromptPrice: 0.2,
+    maximumCompletionPrice: 0.9
+  }),
+  Object.freeze({
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
+    family: 'xiaomi',
+    minimumContextTokens: 1_048_576,
+    minimumOutputTokens: 16_000,
+    maximumPromptPrice: 0.2,
+    maximumCompletionPrice: 0.9
+  })
+]);
+const OPPORTUNITY_DISCOVERY_REQUIRED_MODEL_PARAMETERS = Object.freeze([
+  'max_tokens',
+  'response_format',
+  'structured_outputs'
+]);
 // GPT-5.6 Luna native context window on OpenRouter (openai/gpt-5.6-luna).
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE = 1_050_000;
 
@@ -129,14 +164,27 @@ const MAX_PROVIDER_PRICE = {
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  order: ['openai', 'azure', 'amazon-bedrock'],
-  only: ['openai', 'azure', 'amazon-bedrock'],
-  // Keep the model pinned while allowing OpenRouter to fail over across the
-  // currently published OpenAI, Azure, and Amazon Bedrock vendor families
-  // inside this one authorized call. Strict parameter, privacy, and price
-  // filters below remain authoritative, so a vendor is eligible only when it
-  // can honor the complete structured-output and spend contract. This is
-  // router-level resilience, not an additional model call.
+  order: [
+    'openai',
+    'azure',
+    'amazon-bedrock',
+    'google-vertex',
+    'google-ai-studio',
+    'xiaomi',
+    'parasail'
+  ],
+  only: [
+    'openai',
+    'azure',
+    'amazon-bedrock',
+    'google-vertex',
+    'google-ai-studio',
+    'xiaomi',
+    'parasail'
+  ],
+  // OpenRouter first tries the pinned Luna route, then the two independently
+  // qualified non-OpenAI model families within this same authorized request.
+  // Strict parameter, privacy, and price filters remain authoritative.
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
@@ -1206,6 +1254,16 @@ export function opportunityCommercialDiscoveryCapabilities() {
     },
     plannerCallEnvelope: {
       model: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
+      models: [
+        OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
+        ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS
+      ],
+      modelRoutes: OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES.map((route) => ({
+        ...route,
+        requiredParameters: [
+          ...OPPORTUNITY_DISCOVERY_REQUIRED_MODEL_PARAMETERS
+        ]
+      })),
       providerPriceCaps: { ...MAX_PROVIDER_PRICE },
       providerRouting: {
         ...TOURNAMENT_PROVIDER_ROUTING,
@@ -1281,6 +1339,7 @@ export function opportunityCommercialDiscoveryCapabilities() {
 
 export function buildOpenRouterJSONRequestBody({
   model,
+  models,
   system,
   user,
   maxTokens,
@@ -1297,8 +1356,14 @@ export function buildOpenRouterJSONRequestBody({
       item && typeof item === 'object' && !Array.isArray(item)
     );
   const requestedMaxTokens = Number(maxTokens);
+  const requestedModels = asArray(models)
+    .map((item) => firstText(item))
+    .filter(Boolean)
+    .filter((item, index, values) => values.indexOf(item) === index);
   return {
-    model: firstText(model),
+    ...(requestedModels.length > 0
+      ? { models: requestedModels }
+      : { model: firstText(model) }),
     max_tokens: Number.isFinite(requestedMaxTokens) &&
       requestedMaxTokens > 0
       ? requestedMaxTokens
@@ -1677,6 +1742,7 @@ export async function runOpportunityDiscoveryPlanner({
     });
     request = {
       model,
+      models: [model, ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS],
       system,
       user,
       maxTokens: Math.min(
@@ -7746,6 +7812,7 @@ async function runOpportunityTournamentCore({
       });
       const repairCompletionRequest = {
         model,
+        models: [model, ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS],
         system: repairPrompt.system,
         user: repairPrompt.user,
         maxTokens: Math.min(
@@ -13402,6 +13469,7 @@ function boundedStrategyGenerationRequest({
     });
     const request = {
       model,
+      models: [model, ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS],
       system: prompt.system,
       user: prompt.user,
       maxTokens: budget.maxOutputTokens,
@@ -16254,6 +16322,7 @@ async function runCommercialCritic({
   );
   const request = {
     model,
+    models: [model, ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS],
     system: prompt.system,
     user: prompt.user,
     maxTokens: Math.min(
@@ -23163,9 +23232,11 @@ function openRouterMetadata({
   const responseDiagnostics = normalizeOpenRouterResponseDiagnostics(
     diagnostics
   );
+  const selectedModel = firstText(responseDiagnostics.routerSelectedModel);
   return compact({
     provider: 'openrouter',
-    model: firstText(model),
+    model: selectedModel || firstText(model),
+    requestedModel: firstText(model),
     purpose: firstText(purpose),
     structuredOutputContract: firstText(structuredOutputContract),
     generatorContract:
@@ -23238,6 +23309,11 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       firstText(diagnostics.routerSelectedProvider)
     )
       ? firstText(diagnostics.routerSelectedProvider)
+      : undefined,
+    routerSelectedModel: /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(
+      firstText(diagnostics.routerSelectedModel).toLowerCase()
+    )
+      ? firstText(diagnostics.routerSelectedModel).toLowerCase()
       : undefined
   });
 }

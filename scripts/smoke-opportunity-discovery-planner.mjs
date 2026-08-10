@@ -4143,14 +4143,76 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
         model: 'openai/gpt-5.6-luna',
+        models: [
+          'openai/gpt-5.6-luna',
+          'google/gemini-2.5-flash-lite',
+          'xiaomi/mimo-v2.5'
+        ],
+        modelRoutes: [
+          {
+            id: 'openai/gpt-5.6-luna',
+            family: 'openai',
+            minimumContextTokens: 1_050_000,
+            minimumOutputTokens: 16_000,
+            maximumPromptPrice: 0.2,
+            maximumCompletionPrice: 0.9,
+            requiredParameters: [
+              'max_tokens',
+              'response_format',
+              'structured_outputs'
+            ]
+          },
+          {
+            id: 'google/gemini-2.5-flash-lite',
+            family: 'google',
+            minimumContextTokens: 1_048_576,
+            minimumOutputTokens: 16_000,
+            maximumPromptPrice: 0.2,
+            maximumCompletionPrice: 0.9,
+            requiredParameters: [
+              'max_tokens',
+              'response_format',
+              'structured_outputs'
+            ]
+          },
+          {
+            id: 'xiaomi/mimo-v2.5',
+            family: 'xiaomi',
+            minimumContextTokens: 1_048_576,
+            minimumOutputTokens: 16_000,
+            maximumPromptPrice: 0.2,
+            maximumCompletionPrice: 0.9,
+            requiredParameters: [
+              'max_tokens',
+              'response_format',
+              'structured_outputs'
+            ]
+          }
+        ],
         providerPriceCaps: {
           prompt: 0.2,
           completion: 0.9,
           request: 0
         },
         providerRouting: {
-          order: ['openai', 'azure', 'amazon-bedrock'],
-          only: ['openai', 'azure', 'amazon-bedrock'],
+          order: [
+            'openai',
+            'azure',
+            'amazon-bedrock',
+            'google-vertex',
+            'google-ai-studio',
+            'xiaomi',
+            'parasail'
+          ],
+          only: [
+            'openai',
+            'azure',
+            'amazon-bedrock',
+            'google-vertex',
+            'google-ai-studio',
+            'xiaomi',
+            'parasail'
+          ],
           allow_fallbacks: true,
           require_parameters: true,
           data_collection: 'deny',
