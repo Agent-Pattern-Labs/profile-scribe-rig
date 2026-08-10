@@ -2639,14 +2639,14 @@ async function verifyLengthFinishedStructuredRepair() {
         request.model !== 'test/v2' ||
         JSON.stringify(request.models) !== JSON.stringify([
           'test/v2',
-          'meta-llama/llama-4-maverick',
+          'openai/gpt-4.1-mini',
           'google/gemini-3.5-flash-lite'
         ]) ||
         request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !==
-          '["openai","deepinfra","parasail","google-vertex","google-ai-studio"]' ||
+          '["deepinfra","openai","parasail","google-vertex","google-ai-studio"]' ||
         JSON.stringify(request.provider?.only) !==
-          '["openai","deepinfra","parasail","google-vertex","google-ai-studio"]' ||
+          '["deepinfra","openai","parasail","google-vertex","google-ai-studio"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
         request.provider?.max_price?.prompt !== 0.4 ||

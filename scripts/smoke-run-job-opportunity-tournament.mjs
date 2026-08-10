@@ -212,7 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
-    model: 'meta-llama/llama-4-maverick',
+    model: 'openai/gpt-4.1-mini',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -225,18 +225,18 @@ const server = createServer(async (request, response) => {
       endpoints: {
         total: 2,
         available: [{
-          provider: 'OpenAI',
-          model: 'openai/gpt-4.1-mini',
-          selected: false
-        }, {
           provider: 'DeepInfra',
           model: 'meta-llama/llama-4-maverick',
+          selected: false
+        }, {
+          provider: 'OpenAI',
+          model: 'openai/gpt-4.1-mini',
           selected: true
         }]
       },
       attempts: [
-        { provider: 'OpenAI', status: 502 },
-        { provider: 'DeepInfra', status: 200 }
+        { provider: 'DeepInfra', status: 502 },
+        { provider: 'OpenAI', status: 200 }
       ]
     }
   }));
@@ -747,22 +747,22 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedProvider,
-      'DeepInfra',
+      'OpenAI',
       'successful call lost its selected fallback vendor'
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'meta-llama/llama-4-maverick',
+      'openai/gpt-4.1-mini',
       'successful call lost its selected fallback model'
     );
     assertEqual(
       providerReceipt?.model,
-      'meta-llama/llama-4-maverick',
+      'openai/gpt-4.1-mini',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'openai/gpt-4.1-mini',
+      'meta-llama/llama-4-maverick',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1106,8 +1106,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.models),
     JSON.stringify([
-      'openai/gpt-4.1-mini',
       'meta-llama/llama-4-maverick',
+      'openai/gpt-4.1-mini',
       'google/gemini-3.5-flash-lite'
     ]),
     'generator lost the bounded model fallback order'
@@ -1123,10 +1123,10 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
     'generator disabled compatible cross-vendor fallback'
   );
   assertEqual(
-    JSON.stringify(call.envelope.provider?.order),
-    JSON.stringify([
-      'openai',
+      JSON.stringify(call.envelope.provider?.order),
+      JSON.stringify([
       'deepinfra',
+      'openai',
       'parasail',
       'google-vertex',
       'google-ai-studio'
@@ -1134,10 +1134,10 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
     'generator lost the ordered cross-vendor fallback route'
   );
   assertEqual(
-    JSON.stringify(call.envelope.provider?.only),
-    JSON.stringify([
-      'openai',
+      JSON.stringify(call.envelope.provider?.only),
+      JSON.stringify([
       'deepinfra',
+      'openai',
       'parasail',
       'google-vertex',
       'google-ai-studio'
@@ -1239,7 +1239,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'openai/gpt-4.1-mini',
+          'meta-llama/llama-4-maverick',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

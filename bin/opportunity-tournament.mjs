@@ -100,27 +100,27 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'openai/gpt-4.1-mini';
+  'meta-llama/llama-4-maverick';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
-  'meta-llama/llama-4-maverick',
+  'openai/gpt-4.1-mini',
   'google/gemini-3.5-flash-lite'
 ]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'openai',
-    minimumContextTokens: 1_047_576,
-    minimumOutputTokens: 8_000,
-    maximumPromptPrice: 0.4,
-    maximumCompletionPrice: 1.6
-  }),
-  Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
     family: 'meta',
     minimumContextTokens: 1_048_576,
     minimumOutputTokens: 8_000,
     maximumPromptPrice: 0.35,
     maximumCompletionPrice: 1
+  }),
+  Object.freeze({
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
+    family: 'openai',
+    minimumContextTokens: 1_047_576,
+    minimumOutputTokens: 8_000,
+    maximumPromptPrice: 0.4,
+    maximumCompletionPrice: 1.6
   }),
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
@@ -172,20 +172,20 @@ const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
   order: [
-    'openai',
     'deepinfra',
+    'openai',
     'parasail',
     'google-vertex',
     'google-ai-studio'
   ],
   only: [
-    'openai',
     'deepinfra',
+    'openai',
     'parasail',
     'google-vertex',
     'google-ai-studio'
   ],
-  // OpenRouter first tries the pinned Gemini route, then the two independently
+  // OpenRouter first tries the pinned Maverick route, then the two independently
   // qualified non-OpenAI model families within this same authorized request.
   // Strict parameter, privacy, and price filters remain authoritative.
   allow_fallbacks: true,

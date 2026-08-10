@@ -4175,26 +4175,13 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 192
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'openai/gpt-4.1-mini',
+        model: 'meta-llama/llama-4-maverick',
         models: [
-          'openai/gpt-4.1-mini',
           'meta-llama/llama-4-maverick',
+          'openai/gpt-4.1-mini',
           'google/gemini-3.5-flash-lite'
         ],
         modelRoutes: [
-          {
-            id: 'openai/gpt-4.1-mini',
-            family: 'openai',
-            minimumContextTokens: 1_047_576,
-            minimumOutputTokens: 8_000,
-            maximumPromptPrice: 0.4,
-            maximumCompletionPrice: 1.6,
-            requiredParameters: [
-              'max_tokens',
-              'response_format',
-              'structured_outputs'
-            ]
-          },
           {
             id: 'meta-llama/llama-4-maverick',
             family: 'meta',
@@ -4202,6 +4189,19 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             minimumOutputTokens: 8_000,
             maximumPromptPrice: 0.35,
             maximumCompletionPrice: 1,
+            requiredParameters: [
+              'max_tokens',
+              'response_format',
+              'structured_outputs'
+            ]
+          },
+          {
+            id: 'openai/gpt-4.1-mini',
+            family: 'openai',
+            minimumContextTokens: 1_047_576,
+            minimumOutputTokens: 8_000,
+            maximumPromptPrice: 0.4,
+            maximumCompletionPrice: 1.6,
             requiredParameters: [
               'max_tokens',
               'response_format',
@@ -4229,15 +4229,15 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         },
         providerRouting: {
           order: [
-            'openai',
             'deepinfra',
+            'openai',
             'parasail',
             'google-vertex',
             'google-ai-studio'
           ],
           only: [
-            'openai',
             'deepinfra',
+            'openai',
             'parasail',
             'google-vertex',
             'google-ai-studio'
