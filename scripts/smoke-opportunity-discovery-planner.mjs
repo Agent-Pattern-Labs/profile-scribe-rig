@@ -4168,7 +4168,6 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         models: [
           'google/gemini-3.5-flash-lite',
           'google/gemini-2.5-flash-lite',
-          'openai/gpt-5.6-luna',
           'xiaomi/mimo-v2.5'
         ],
         modelRoutes: [
@@ -4199,19 +4198,6 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             ]
           },
           {
-            id: 'openai/gpt-5.6-luna',
-            family: 'openai',
-            minimumContextTokens: 1_050_000,
-            minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.2,
-            maximumCompletionPrice: 0.9,
-            requiredParameters: [
-              'max_tokens',
-              'response_format',
-              'structured_outputs'
-            ]
-          },
-          {
             id: 'xiaomi/mimo-v2.5',
             family: 'xiaomi',
             minimumContextTokens: 1_048_576,
@@ -4232,18 +4218,12 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         },
         providerRouting: {
           order: [
-            'openai',
-            'azure',
-            'amazon-bedrock',
             'google-vertex',
             'google-ai-studio',
             'xiaomi',
             'parasail'
           ],
           only: [
-            'openai',
-            'azure',
-            'amazon-bedrock',
             'google-vertex',
             'google-ai-studio',
             'xiaomi',

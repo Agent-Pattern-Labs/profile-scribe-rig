@@ -103,7 +103,6 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
   'google/gemini-3.5-flash-lite';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
   'google/gemini-2.5-flash-lite',
-  'openai/gpt-5.6-luna',
   'xiaomi/mimo-v2.5'
 ]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
@@ -125,14 +124,6 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   }),
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
-    family: 'openai',
-    minimumContextTokens: 1_050_000,
-    minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.2,
-    maximumCompletionPrice: 0.9
-  }),
-  Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[2],
     family: 'xiaomi',
     minimumContextTokens: 1_048_576,
     minimumOutputTokens: 16_000,
@@ -140,6 +131,9 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     maximumCompletionPrice: 0.9
   })
 ]);
+if (1 + OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS.length > 3) {
+  throw new Error('OpenRouter models fallback contract exceeds 3 routes');
+}
 const OPPORTUNITY_DISCOVERY_REQUIRED_MODEL_PARAMETERS = Object.freeze([
   'max_tokens',
   'response_format',
@@ -179,18 +173,12 @@ const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
   order: [
-    'openai',
-    'azure',
-    'amazon-bedrock',
     'google-vertex',
     'google-ai-studio',
     'xiaomi',
     'parasail'
   ],
   only: [
-    'openai',
-    'azure',
-    'amazon-bedrock',
     'google-vertex',
     'google-ai-studio',
     'xiaomi',

@@ -2640,14 +2640,13 @@ async function verifyLengthFinishedStructuredRepair() {
         JSON.stringify(request.models) !== JSON.stringify([
           'test/v2',
           'google/gemini-2.5-flash-lite',
-          'openai/gpt-5.6-luna',
           'xiaomi/mimo-v2.5'
         ]) ||
         request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !==
-          '["openai","azure","amazon-bedrock","google-vertex","google-ai-studio","xiaomi","parasail"]' ||
+          '["google-vertex","google-ai-studio","xiaomi","parasail"]' ||
         JSON.stringify(request.provider?.only) !==
-          '["openai","azure","amazon-bedrock","google-vertex","google-ai-studio","xiaomi","parasail"]' ||
+          '["google-vertex","google-ai-studio","xiaomi","parasail"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
         request.provider?.max_price?.prompt !== 0.2 ||

@@ -212,7 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
-    model: 'openai/gpt-5.6-luna',
+    model: 'xiaomi/mimo-v2.5',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -233,15 +233,15 @@ const server = createServer(async (request, response) => {
           model: 'google/gemini-2.5-flash-lite',
           selected: false
         }, {
-          provider: 'OpenAI',
-          model: 'openai/gpt-5.6-luna',
+          provider: 'Parasail',
+          model: 'xiaomi/mimo-v2.5',
           selected: true
         }]
       },
       attempts: [
         { provider: 'Google AI Studio', status: 502 },
         { provider: 'Google AI Studio', status: 502 },
-        { provider: 'OpenAI', status: 200 }
+        { provider: 'Parasail', status: 200 }
       ]
     }
   }));
@@ -752,17 +752,17 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedProvider,
-      'OpenAI',
+      'Parasail',
       'successful call lost its selected fallback vendor'
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'openai/gpt-5.6-luna',
+      'xiaomi/mimo-v2.5',
       'successful call lost its selected fallback model'
     );
     assertEqual(
       providerReceipt?.model,
-      'openai/gpt-5.6-luna',
+      'xiaomi/mimo-v2.5',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
@@ -1113,7 +1113,6 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
     JSON.stringify([
       'google/gemini-3.5-flash-lite',
       'google/gemini-2.5-flash-lite',
-      'openai/gpt-5.6-luna',
       'xiaomi/mimo-v2.5'
     ]),
     'generator lost the bounded model fallback order'
@@ -1131,9 +1130,6 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.provider?.order),
     JSON.stringify([
-      'openai',
-      'azure',
-      'amazon-bedrock',
       'google-vertex',
       'google-ai-studio',
       'xiaomi',
@@ -1144,9 +1140,6 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.provider?.only),
     JSON.stringify([
-      'openai',
-      'azure',
-      'amazon-bedrock',
       'google-vertex',
       'google-ai-studio',
       'xiaomi',
