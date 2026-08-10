@@ -2534,7 +2534,6 @@ function opportunityDiscoveryPlannerResponseFormat(
                 conversionDestination: targetTokenFreeText(180),
                 paidConversion: targetTokenFreeText(140),
                 attributionSignal: targetTokenFreeText(180),
-                rationale: targetTokenFreeText(180),
                 contingentFinalists: {
                   type: 'object',
                   properties: {
@@ -2570,7 +2569,6 @@ function opportunityDiscoveryPlannerResponseFormat(
                 'conversionDestination',
                 'paidConversion',
                 'attributionSignal',
-                'rationale',
                 'contingentFinalists'
               ],
               additionalProperties: false
@@ -3130,9 +3128,8 @@ function normalizeOpportunityDiscoveryPlan(
           )
         : truncate(firstText(routedPlan.attributionSignal), 220),
       rationale: deriveFreshPlannerAuthority
-        ? opportunityDiscoveryFreshSchemaText(routedPlan.rationale, 180)
-        : truncate(firstText(routedPlan.rationale), 260)
-      ,
+        ? ''
+        : truncate(firstText(routedPlan.rationale), 260),
       targetSlot,
       contingentFinalists: normalizeContingentFinalistBundle(
         routedPlan.contingentFinalists,
@@ -4365,7 +4362,7 @@ function opportunityDiscoveryPlanIssue(
       'conversionDestination',
       'paidConversion',
       'attributionSignal',
-      'rationale'
+      ...(legacy ? ['rationale'] : [])
     ]) {
       if (!firstText(item[field])) {
         return `Discovery plan ${item.id} is missing ${field}.`;
@@ -4398,7 +4395,7 @@ function opportunityDiscoveryPlanIssue(
       'conversionDestination',
       'paidConversion',
       'attributionSignal',
-      'rationale'
+      ...(legacy ? ['rationale'] : [])
     ]) {
       if (countExactToken(item[field], CONTINGENT_TARGET_NAME_TOKEN) > 0 ||
           countExactToken(item[field], CONTINGENT_TARGET_URL_TOKEN) > 0 ||

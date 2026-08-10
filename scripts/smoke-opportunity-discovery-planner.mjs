@@ -634,6 +634,8 @@ for (const scenario of cases) {
         ?.plans?.items?.required?.includes('motionKind') ||
       !requestSeen.responseFormat?.json_schema?.schema?.properties
         ?.plans?.items?.required?.includes('targetRoleSubrole') ||
+      requestSeen.responseFormat?.json_schema?.schema?.properties
+        ?.plans?.items?.required?.includes('rationale') ||
       [
         'id',
         'priority',
@@ -648,7 +650,8 @@ for (const scenario of cases) {
         'acquisitionMechanism',
         'targetSlot',
         'professionalRoleQueryContract',
-        'targetRoleRole'
+        'targetRoleRole',
+        'rationale'
       ].some((field) => Object.prototype.hasOwnProperty.call(
         plannerPlanSchema,
         field
@@ -668,7 +671,6 @@ for (const scenario of cases) {
         plannerPlanSchema.conversionDestination,
         plannerPlanSchema.paidConversion,
         plannerPlanSchema.attributionSignal,
-        plannerPlanSchema.rationale,
         plannerDefinitions.offerItem?.properties?.l,
         plannerDefinitions.buyerItem?.properties?.rp,
         plannerDefinitions.timingItem?.properties?.l,
@@ -900,7 +902,6 @@ for (const scenario of cases) {
         plannerPlanSchema.conversionDestination,
         plannerPlanSchema.paidConversion,
         plannerPlanSchema.attributionSignal,
-        plannerPlanSchema.rationale,
         plannerDefinitions.offerItem?.properties?.l,
         plannerDefinitions.buyerItem?.properties?.rp,
         plannerDefinitions.timingItem?.properties?.l,
@@ -1879,7 +1880,6 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       conversionDestination: motion.conversionDestination,
       paidConversion: motion.paidConversion,
       attributionSignal: motion.attributionSignal,
-      rationale: motion.rationale,
       contingentFinalists: motion.contingentFinalists
     }))
   };
@@ -3871,7 +3871,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     {
       label: 'explicit private-data retrieval outside route fields',
       candidate: baseReferral({
-        id: 'private_contact_retrieval',
+        id: 'ignored_rationale_retrieval',
         rationale: 'Find the target private email before review.'
       }),
       reason: /private-contact data \[private_contact_request\]/i
@@ -3887,7 +3887,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     {
       label: 'double-negative private-data retrieval',
       candidate: baseReferral({
-        id: 'double_negative_private_contact',
+        id: 'ignored_rationale_double_negative',
         rationale:
           'There is no reason not to find the target private email before review.'
       }),
@@ -3899,9 +3899,12 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       ['collecting_private_routes', 'Collecting phone numbers before review.'],
       ['retrieve_private_routes', 'Retrieve private emails before review.'],
       ['use_private_directory', 'Use target contact directory before review.']
-    ].map(([id, rationale]) => ({
+    ].map(([id, rationale], index) => ({
       label: `explicit private-data request ${id}`,
-      candidate: baseReferral({ id, rationale }),
+      candidate: baseReferral({
+        id: `ignored_rationale_request_${index + 1}`,
+        rationale
+      }),
       reason: /private-contact data \[private_contact_request\]/i
     })),
     {
@@ -3978,7 +3981,25 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       adversary.candidate,
       `generation-sensitive-adversary-${index + 1}`
     );
-    const locallyCanonicalized = new Set([
+    const rationaleOnly = new Set([
+      'literal email is forbidden even in descriptive prose',
+      'obfuscated literal email is forbidden',
+      'compact literal phone is forbidden',
+      'international literal phone is forbidden',
+      'parenthesized literal phone is forbidden',
+      'slash-separated literal phone is forbidden',
+      'unicode-dash literal phone is forbidden',
+      'fullwidth literal phone is forbidden',
+      'UK local literal phone is forbidden',
+      'country-code literal phone without plus is forbidden',
+      'fullwidth-at email literal is forbidden',
+      'zero-width email literal is forbidden',
+      'explicit private-data retrieval outside route fields',
+      'social handle with a trailing slash is forbidden',
+      'double-negative private-data retrieval'
+    ]).has(adversary.label) ||
+      adversary.label.startsWith('explicit private-data request ');
+    const locallyCanonicalized = rationaleOnly || new Set([
       'direct sensitive role',
       'sensitive organization target',
       'private contact request',
@@ -3996,6 +4017,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
           result.plans[0]?.organizationTerms?.length !== 0 ||
           result.plans[0]?.acquisitionMechanism !==
             'Review-first public professional profile' ||
+          result.plans[0]?.rationale !== '' ||
           /patient|pregnant|email|phone|lead list/i.test(
             result.plans[0]?.query || ''
           ) || result.sideEffectsPerformed !== 0) {
@@ -12594,7 +12616,6 @@ function verifyFreshPlannerStrictSchemaTotality({
       conversionDestination: motion.conversionDestination,
       paidConversion: motion.paidConversion,
       attributionSignal: motion.attributionSignal,
-      rationale: motion.rationale,
       contingentFinalists: compactContingentFinalists(
         motion.contingentFinalists
       )
@@ -12619,6 +12640,10 @@ function verifyFreshPlannerStrictSchemaTotality({
       throw new Error(`strict planner schema accepted ${label}`);
     }
   };
+  expectInvalid('model-authored rationale outside fresh authority', (response) => {
+    response.plans[0].rationale =
+      'This prose is deliberately outside the fresh execution contract.';
+  });
   for (const [label, value] of [
     ['leading whitespace', ' invalid'],
     ['trailing whitespace', 'invalid '],
@@ -12730,7 +12755,6 @@ function verifyFreshPlannerStrictSchemaTotality({
     ['conversionDestination', ['plans', 0, 'conversionDestination'], 180],
     ['paidConversion', ['plans', 0, 'paidConversion'], 140],
     ['attributionSignal', ['plans', 0, 'attributionSignal'], 180],
-    ['rationale', ['plans', 0, 'rationale'], 180],
     ['revenue label', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'l'], 140],
     ['incremental outcome', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'io'], 180],
     ['attribution signal', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'ats'], 220],
@@ -13067,7 +13091,6 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     conversionDestination: rawJobMotion.conversionDestination,
     paidConversion: rawJobMotion.paidConversion,
     attributionSignal: rawJobMotion.attributionSignal,
-    rationale: rawJobMotion.rationale,
     contingentFinalists: jobBundle
   };
   const validate = new Ajv({ allErrors: true, strict: false }).compile(
@@ -13088,7 +13111,6 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     first.conversionDestination,
     first.paidConversion,
     first.attributionSignal,
-    first.rationale,
     second.jobTitle,
     second.skills[0],
     first.contingentFinalists.pathBase.r[0].l,
@@ -13655,6 +13677,7 @@ function compactContingentFinalists(value) {
 function compactFreshPlannerPlans(values) {
   return (values || []).map((planValue) => {
     const freshPlan = structuredClone(planValue);
+    delete freshPlan.rationale;
     if (freshPlan.contingentFinalists?.familyA &&
         freshPlan.contingentFinalists?.familyB) {
       freshPlan.contingentFinalists = compactContingentFinalists(
