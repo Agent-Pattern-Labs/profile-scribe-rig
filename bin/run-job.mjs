@@ -3018,7 +3018,8 @@ async function callOpenRouterJSON({
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://profilescribe.com',
-        'X-Title': 'ProfileScribe Rig'
+        'X-Title': 'ProfileScribe Rig',
+        'X-OpenRouter-Metadata': 'enabled'
       },
       body: requestBody,
       signal: controller.signal
@@ -3038,7 +3039,44 @@ async function callOpenRouterJSON({
 
   const body = await response.text();
   if (!response.ok) {
-    throw new Error(`OpenRouter failed with HTTP ${response.status}: ${body.slice(0, 500)}`);
+    let envelope = {};
+    try {
+      envelope = parseJSON(body, 'OpenRouter error response');
+    } catch {
+      // The raw provider body is intentionally neither retained nor copied to
+      // the error. A bounded hash and byte count are sufficient diagnostics.
+    }
+    const usage = normalizeOpenRouterUsage(envelope?.usage);
+    const diagnostics = {
+      ...openRouterResponseDiagnostics({}, body),
+      ...openRouterRouterDiagnostics(envelope?.openrouter_metadata),
+      httpStatus: response.status
+    };
+    const generationId = text(
+      envelope?.id || response.headers.get('x-generation-id')
+    );
+    if (envelope?.error) {
+      throw openRouterProviderError(
+        envelope.error,
+        usage,
+        diagnostics,
+        generationId,
+        response.status
+      );
+    }
+    const error = new Error(
+      `OpenRouter failed with HTTP ${response.status}`
+    );
+    error.openRouterFailureCode = `openrouter_http_${response.status}`;
+    throw attachOpenRouterResponseMetadata(
+      error,
+      usage,
+      {
+        ...diagnostics,
+        providerErrorCode: String(response.status)
+      },
+      generationId
+    );
   }
   let envelope;
   try {
@@ -3072,7 +3110,11 @@ async function callOpenRouterJSON({
         }
       };
     });
-  const diagnostics = openRouterResponseDiagnostics(choice, rawContent);
+  const diagnostics = {
+    ...openRouterResponseDiagnostics(choice, rawContent),
+    ...openRouterRouterDiagnostics(envelope?.openrouter_metadata),
+    httpStatus: response.status
+  };
   if (envelope?.error) {
     throw openRouterProviderError(
       envelope.error,
@@ -3138,6 +3180,35 @@ function openRouterResponseDiagnostics(choice, rawContent) {
   });
 }
 
+function openRouterRouterDiagnostics(value) {
+  const metadata = object(value);
+  const endpoints = object(metadata.endpoints);
+  const available = arrayOfObjects(endpoints.available);
+  const selected = available.find((endpoint) => endpoint.selected === true);
+  const attemptStatuses = arrayOfObjects(metadata.attempts)
+    .slice(0, 8)
+    .map((attempt) => Number(attempt.status))
+    .filter((status) => Number.isInteger(status) &&
+      status >= 100 && status <= 599);
+  const attempt = nonNegativeInteger(metadata.attempt);
+  const provider = text(selected?.provider);
+  return compact({
+    routerStrategy: /^[a-z][a-z0-9_-]{0,31}$/.test(
+      text(metadata.strategy).toLowerCase()
+    )
+      ? text(metadata.strategy).toLowerCase()
+      : undefined,
+    routerAttempt: attempt,
+    routerCandidateCount: nonNegativeInteger(endpoints.total),
+    routerAttemptStatuses: attemptStatuses,
+    routerFallbackUsed: attempt > 1 ? true : undefined,
+    routerSelectedProvider:
+      /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
+        ? provider
+        : undefined
+  });
+}
+
 function attachOpenRouterResponseMetadata(
   error,
   usage,
@@ -3160,25 +3231,34 @@ function openRouterProviderError(
   value,
   usage,
   diagnostics,
-  generationId
+  generationId,
+  httpStatus
 ) {
   const details = object(value);
+  const detailsMetadata = object(details.metadata);
   const error = new Error(
     `OpenRouter generation failed: ${
       text(details.message) || 'unknown provider error'
     }`
   );
   const errorType = text(
-    object(details.metadata).error_type ?? details.error_type
+    detailsMetadata.error_type ?? details.error_type
   ).toLowerCase();
   const rawErrorCode = (
-    typeof details.code === 'number' ||
-    typeof details.code === 'string'
-      ? String(details.code).trim()
+    typeof detailsMetadata.provider_code === 'number' ||
+    typeof detailsMetadata.provider_code === 'string'
+      ? String(detailsMetadata.provider_code).trim()
+      : typeof details.code === 'number' ||
+          typeof details.code === 'string'
+        ? String(details.code).trim()
       : ''
   ).toLowerCase();
   const safeDiagnostics = {
     ...object(diagnostics),
+    ...(Number.isInteger(Number(httpStatus)) &&
+        Number(httpStatus) >= 400 && Number(httpStatus) <= 599
+      ? { httpStatus: Number(httpStatus) }
+      : {}),
     ...(/^[a-z][a-z0-9_]{0,63}$/.test(errorType)
       ? { providerErrorType: errorType }
       : {}),
@@ -3193,7 +3273,10 @@ function openRouterProviderError(
       ? 'openrouter_truncated_structured_output'
       : /^[a-z][a-z0-9_]{0,63}$/.test(errorType)
         ? `openrouter_${errorType}`
-        : 'openrouter_provider_error';
+        : Number.isInteger(Number(httpStatus)) &&
+            Number(httpStatus) >= 400 && Number(httpStatus) <= 599
+          ? `openrouter_http_${Number(httpStatus)}`
+          : 'openrouter_provider_error';
   return attachOpenRouterResponseMetadata(
     error,
     usage,
@@ -4003,13 +4086,60 @@ function safeOpenRouterUsageMetadata(value) {
 function safeOpenRouterResponseDiagnostics(value) {
   const diagnostics = object(value);
   const contentSha256 = text(diagnostics.contentSha256).toLowerCase();
+  const providerErrorType = text(
+    diagnostics.providerErrorType
+  ).toLowerCase();
+  const providerErrorCode = text(
+    diagnostics.providerErrorCode
+  ).toLowerCase();
+  const httpStatus = Number(diagnostics.httpStatus);
+  const routerStrategy = text(diagnostics.routerStrategy).toLowerCase();
+  const routerSelectedProvider = text(
+    diagnostics.routerSelectedProvider
+  );
   return compact({
     finishReason: truncate(diagnostics.finishReason, 64),
     nativeFinishReason: truncate(diagnostics.nativeFinishReason, 64),
     contentByteCount: nonNegativeInteger(diagnostics.contentByteCount),
     contentSha256: /^[a-f0-9]{64}$/.test(contentSha256)
       ? contentSha256
-      : undefined
+      : undefined,
+    providerErrorType: /^[a-z][a-z0-9_]{0,63}$/.test(providerErrorType)
+      ? providerErrorType
+      : undefined,
+    providerErrorCode: /^[a-z0-9][a-z0-9_.:-]{0,63}$/.test(
+      providerErrorCode
+    )
+      ? providerErrorCode
+      : undefined,
+    httpStatus: Number.isInteger(httpStatus) &&
+        httpStatus >= 400 && httpStatus <= 599
+      ? httpStatus
+      : undefined,
+    routerStrategy: /^[a-z][a-z0-9_-]{0,31}$/.test(routerStrategy)
+      ? routerStrategy
+      : undefined,
+    routerAttempt: nonNegativeInteger(diagnostics.routerAttempt),
+    routerCandidateCount: nonNegativeInteger(
+      diagnostics.routerCandidateCount
+    ),
+    routerAttemptStatuses: Array.isArray(
+      diagnostics.routerAttemptStatuses
+    )
+      ? diagnostics.routerAttemptStatuses
+        .slice(0, 8)
+        .map((status) => Number(status))
+        .filter((status) => Number.isInteger(status) &&
+          status >= 100 && status <= 599)
+      : undefined,
+    routerFallbackUsed:
+      diagnostics.routerFallbackUsed === true ? true : undefined,
+    routerSelectedProvider:
+      /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(
+        routerSelectedProvider
+      )
+        ? routerSelectedProvider
+        : undefined
   });
 }
 

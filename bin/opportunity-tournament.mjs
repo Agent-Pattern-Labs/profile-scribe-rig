@@ -131,10 +131,14 @@ const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
   order: ['openai'],
   only: ['openai'],
-  allow_fallbacks: false,
+  // Keep the model and provider family pinned while allowing OpenRouter to
+  // fail over between compatible OpenAI endpoints inside this one authorized
+  // call. This is router-level resilience, not an additional model call.
+  allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
 };
+const OPENROUTER_ROUTER_METADATA_LEVEL = 'enabled';
 const RESEARCH_ONLY_CONSTRAINT =
   'Research and recommendation only; do not contact, message, publish, purchase ads, or submit forms.';
 const RESEARCH_APPROVED_SOURCE_STATUSES = new Set([
@@ -1200,6 +1204,10 @@ export function opportunityCommercialDiscoveryCapabilities() {
     plannerCallEnvelope: {
       model: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
       providerPriceCaps: { ...MAX_PROVIDER_PRICE },
+      providerRouting: {
+        ...TOURNAMENT_PROVIDER_ROUTING,
+        routerMetadata: OPENROUTER_ROUTER_METADATA_LEVEL
+      },
       framingTokenReserve: OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
       generator: {
         pluginIds: [
@@ -23201,6 +23209,32 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       providerErrorCode
     )
       ? providerErrorCode
+      : undefined,
+    httpStatus: Number.isInteger(Number(diagnostics.httpStatus)) &&
+        Number(diagnostics.httpStatus) >= 400 &&
+        Number(diagnostics.httpStatus) <= 599
+      ? Number(diagnostics.httpStatus)
+      : undefined,
+    routerStrategy: /^[a-z][a-z0-9_-]{0,31}$/.test(
+      firstText(diagnostics.routerStrategy).toLowerCase()
+    )
+      ? firstText(diagnostics.routerStrategy).toLowerCase()
+      : undefined,
+    routerAttempt: nonNegativeInteger(diagnostics.routerAttempt),
+    routerCandidateCount: nonNegativeInteger(
+      diagnostics.routerCandidateCount
+    ),
+    routerAttemptStatuses: asArray(diagnostics.routerAttemptStatuses)
+      .slice(0, 8)
+      .map((status) => Number(status))
+      .filter((status) => Number.isInteger(status) &&
+        status >= 100 && status <= 599),
+    routerFallbackUsed:
+      diagnostics.routerFallbackUsed === true ? true : undefined,
+    routerSelectedProvider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(
+      firstText(diagnostics.routerSelectedProvider)
+    )
+      ? firstText(diagnostics.routerSelectedProvider)
       : undefined
   });
 }

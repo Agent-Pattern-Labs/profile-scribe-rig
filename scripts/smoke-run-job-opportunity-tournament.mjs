@@ -105,7 +105,46 @@ const server = createServer(async (request, response) => {
     (message) => message.role === 'user'
   )?.content || '{}';
   const input = JSON.parse(userMessage);
-  providerCalls.push({ envelope, input, schemaName });
+  providerCalls.push({
+    envelope,
+    input,
+    schemaName,
+    routerMetadataHeader: request.headers['x-openrouter-metadata']
+  });
+
+  if (input.objective?.id === 'objective-run-job-provider-502') {
+    response.writeHead(502, {
+      'Content-Type': 'application/json',
+      'X-Generation-Id': 'gen-run-job-provider-502'
+    });
+    response.end(JSON.stringify({
+      error: {
+        code: 502,
+        message: 'raw-provider-secret-sentinel',
+        metadata: {
+          error_type: 'provider_unavailable',
+          provider_code: 'upstream_502'
+        }
+      },
+      openrouter_metadata: {
+        strategy: 'fallback',
+        attempt: 2,
+        endpoints: {
+          total: 2,
+          available: [{
+            provider: 'OpenAI',
+            model: 'openai/gpt-5.6-luna',
+            selected: false
+          }]
+        },
+        attempts: [
+          { provider: 'OpenAI', status: 502 },
+          { provider: 'OpenAI', status: 502 }
+        ]
+      }
+    }));
+    return;
+  }
 
   let data;
   if (schemaName === 'opportunity_tournament_critic_v1') {
@@ -134,7 +173,23 @@ const server = createServer(async (request, response) => {
       native_finish_reason: 'stop',
       message: { content }
     }],
-    usage
+    usage,
+    openrouter_metadata: {
+      strategy: 'fallback',
+      attempt: 2,
+      endpoints: {
+        total: 2,
+        available: [{
+          provider: 'OpenAI',
+          model: 'openai/gpt-5.6-luna',
+          selected: true
+        }]
+      },
+      attempts: [
+        { provider: 'OpenAI', status: 502 },
+        { provider: 'OpenAI', status: 200 }
+      ]
+    }
   }));
 });
 
@@ -210,6 +265,21 @@ try {
     'missing-key preflight made a provider call'
   );
   verifyMissingKeyPreflight(missingKey);
+
+  const providerFailureJob = tournamentJob(
+    'provider-502',
+    'objective-run-job-provider-502'
+  );
+  const providerFailureFile = writeJob(
+    'provider-502',
+    providerFailureJob
+  );
+  const providerFailureCallOffset = providerCalls.length;
+  const providerFailure = await runJob(providerFailureFile, port);
+  verifyProvider502Failure(
+    providerFailure,
+    providerCalls.slice(providerFailureCallOffset)
+  );
 
   assertEqual(
     unexpectedRequests.length,
@@ -595,6 +665,33 @@ function verifySuccessfulTournament(receipt, job, calls) {
     metadata.llm?.commercialCritic?.generatorContract === undefined,
     'critic receipt was mislabeled as a generator call'
   );
+  for (const providerReceipt of [
+    metadata.llm?.strategyGeneratorJudge,
+    metadata.llm?.commercialCritic
+  ]) {
+    assertEqual(
+      providerReceipt?.responseDiagnostics?.routerStrategy,
+      'fallback',
+      'successful call lost router strategy diagnostics'
+    );
+    assertEqual(
+      providerReceipt?.responseDiagnostics?.routerAttempt,
+      2,
+      'successful call lost its router attempt count'
+    );
+    assertEqual(
+      providerReceipt?.responseDiagnostics?.routerFallbackUsed,
+      true,
+      'successful call did not record internal endpoint fallback'
+    );
+    assertEqual(
+      JSON.stringify(
+        providerReceipt?.responseDiagnostics?.routerAttemptStatuses
+      ),
+      JSON.stringify([502, 200]),
+      'successful call lost bounded fallback statuses'
+    );
+  }
   assert(
     metadata.trace?.notes?.includes(
       'two_bounded_llm_calls_generator_and_critic'
@@ -812,6 +909,57 @@ function verifyMissingKeyPreflight(receipt) {
   verifyNoExecution(metadata);
 }
 
+function verifyProvider502Failure(receipt, calls) {
+  const metadata = receipt.metadata || {};
+  const providerReceipt = metadata.llm?.strategyGeneratorJudge || {};
+  const diagnostics = providerReceipt.responseDiagnostics || {};
+  assertEqual(receipt.status, 'skipped', 'provider 502 did not stop safely');
+  assertEqual(calls.length, 1, 'provider 502 caused an application redispatch');
+  assertEqual(metadata.usage?.calls, 1, 'provider 502 lost its call count');
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    0,
+    'provider 502 recorded a successful model call'
+  );
+  assertEqual(
+    metadata.usage?.costReporting,
+    'unavailable',
+    'provider 502 fabricated exact cost accounting'
+  );
+  assertEqual(
+    providerReceipt.error,
+    'openrouter_provider_unavailable',
+    'provider 502 lost its cause-matched error type'
+  );
+  assertEqual(
+    providerReceipt.generationId,
+    'gen-run-job-provider-502',
+    'provider 502 lost its safe generation header'
+  );
+  assertEqual(diagnostics.httpStatus, 502, 'provider 502 lost HTTP status');
+  assertEqual(
+    diagnostics.providerErrorType,
+    'provider_unavailable',
+    'provider 502 lost the safe upstream type'
+  );
+  assertEqual(
+    diagnostics.providerErrorCode,
+    'upstream_502',
+    'provider 502 lost the safe upstream code'
+  );
+  assertEqual(diagnostics.routerAttempt, 2, 'provider 502 lost fallback count');
+  assertEqual(
+    JSON.stringify(diagnostics.routerAttemptStatuses),
+    JSON.stringify([502, 502]),
+    'provider 502 lost bounded fallback status diagnostics'
+  );
+  assert(
+    !JSON.stringify(receipt).includes('raw-provider-secret-sentinel'),
+    'provider 502 leaked the raw upstream response body'
+  );
+  verifyNoExecution(metadata);
+}
+
 function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     call.schemaName,
@@ -855,8 +1003,23 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   );
   assertEqual(
     call.envelope.provider?.allow_fallbacks,
-    false,
-    'generator allowed provider fallback'
+    true,
+    'generator disabled compatible OpenAI endpoint fallback'
+  );
+  assertEqual(
+    JSON.stringify(call.envelope.provider?.only),
+    JSON.stringify(['openai']),
+    'generator widened fallback beyond OpenAI'
+  );
+  assertEqual(
+    call.envelope.provider?.require_parameters,
+    true,
+    'generator allowed a fallback that cannot honor the strict request'
+  );
+  assertEqual(
+    call.routerMetadataHeader,
+    'enabled',
+    'generator did not opt into bounded router diagnostics'
   );
   assert(
     /research[- ]only/i.test(

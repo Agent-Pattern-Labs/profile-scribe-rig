@@ -4148,6 +4148,14 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           completion: 0.9,
           request: 0
         },
+        providerRouting: {
+          order: ['openai'],
+          only: ['openai'],
+          allow_fallbacks: true,
+          require_parameters: true,
+          data_collection: 'deny',
+          routerMetadata: 'enabled'
+        },
         framingTokenReserve: 1_024,
         generator: {
           pluginIds: ['web', 'response-healing'],

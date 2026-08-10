@@ -2640,7 +2640,7 @@ async function verifyLengthFinishedStructuredRepair() {
         request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !== '["openai"]' ||
         JSON.stringify(request.provider?.only) !== '["openai"]' ||
-        request.provider?.allow_fallbacks !== false ||
+        request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
         request.provider?.max_price?.prompt !== 0.2 ||
         request.provider?.max_price?.completion !== 0.9
