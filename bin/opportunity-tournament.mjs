@@ -100,8 +100,9 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'google/gemini-2.5-flash-lite';
+  'google/gemini-3.5-flash-lite';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
+  'google/gemini-2.5-flash-lite',
   'openai/gpt-5.6-luna',
   'xiaomi/mimo-v2.5'
 ]);
@@ -111,11 +112,19 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     family: 'google',
     minimumContextTokens: 1_048_576,
     minimumOutputTokens: 16_000,
+    maximumPromptPrice: 0.3,
+    maximumCompletionPrice: 2.5
+  }),
+  Object.freeze({
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
+    family: 'google',
+    minimumContextTokens: 1_048_576,
+    minimumOutputTokens: 16_000,
     maximumPromptPrice: 0.2,
     maximumCompletionPrice: 0.9
   }),
   Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
     family: 'openai',
     minimumContextTokens: 1_050_000,
     minimumOutputTokens: 16_000,
@@ -123,7 +132,7 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     maximumCompletionPrice: 0.9
   }),
   Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[2],
     family: 'xiaomi',
     minimumContextTokens: 1_048_576,
     minimumOutputTokens: 16_000,
@@ -136,7 +145,7 @@ const OPPORTUNITY_DISCOVERY_REQUIRED_MODEL_PARAMETERS = Object.freeze([
   'response_format',
   'structured_outputs'
 ]);
-// Gemini 2.5 Flash Lite native context window on OpenRouter.
+// Gemini Flash Lite native context window on OpenRouter.
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE = 1_050_000;
 
 const MAX_HYPOTHESES = 10_000;
@@ -154,12 +163,17 @@ const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
 // spend or the total price of a generation. Callers may tighten, but never
 // loosen, these tournament-specific caps.
 //
-// Pinned google/gemini-2.5-flash-lite OpenRouter list prices (2026-08):
-// $0.10/$0.40 per 1M with no fixed request fee. The conservative caps also
-// admit Luna's high-context tier and the independently qualified Xiaomi route.
+// The legacy tournament and critic retain the cheaper qualified-route caps.
+// The discovery generator has a separate Gemini 3.5 ceiling below so raising
+// its complex-contract capacity cannot silently widen historical call spend.
 const MAX_PROVIDER_PRICE = {
   prompt: 0.2,
   completion: 0.9,
+  request: 0
+};
+const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
+  prompt: 0.3,
+  completion: 2.5,
   request: 0
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
@@ -480,7 +494,7 @@ const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
 // parsed cap below now also dominates the strict grammar's computed worst-case
 // Unicode/evidence envelope instead of relying on representative samples.
 const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 229_400;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 360_000;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
@@ -488,13 +502,13 @@ const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 14_392;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
     OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE *
-      MAX_PROVIDER_PRICE.prompt
+      MAX_DISCOVERY_PLANNER_PROVIDER_PRICE.prompt
   ) +
   Math.ceil(
     MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS *
-      MAX_PROVIDER_PRICE.completion
+      MAX_DISCOVERY_PLANNER_PROVIDER_PRICE.completion
   ) +
-  Math.ceil(MAX_PROVIDER_PRICE.request * 1_000_000) +
+  Math.ceil(MAX_DISCOVERY_PLANNER_PROVIDER_PRICE.request * 1_000_000) +
   OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS;
 if (computedDiscoveryPlannerCallSpendCeilingMicros !==
     MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS) {
@@ -1271,6 +1285,9 @@ export function opportunityCommercialDiscoveryCapabilities() {
       },
       framingTokenReserve: OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
       generator: {
+        providerPriceCaps: {
+          ...MAX_DISCOVERY_PLANNER_PROVIDER_PRICE
+        },
         pluginIds: [
           'web',
           OPENROUTER_RESPONSE_HEALING_PLUGIN
@@ -1285,6 +1302,7 @@ export function opportunityCommercialDiscoveryCapabilities() {
           MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
       },
       critic: {
+        providerPriceCaps: { ...MAX_PROVIDER_PRICE },
         pluginIds: [OPENROUTER_RESPONSE_HEALING_PLUGIN],
         requestMaxBytes: MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES,
         promptTokenCeiling:
@@ -1405,7 +1423,13 @@ export async function runOpportunityDiscoveryPlanner({
   const payload = asObject(job?.payload);
   const objective = normalizeObjective(payload.objective, payload);
   const constraints = normalizeConstraints(objective, payload);
-  const budget = normalizeBudget(payload.budget);
+  const normalizedBudget = normalizeBudget(payload.budget);
+  const budget = {
+    ...normalizedBudget,
+    providerMaxPrice: {
+      ...MAX_DISCOVERY_PLANNER_PROVIDER_PRICE
+    }
+  };
   const discoveryCapabilities =
     normalizeCommercialDiscoveryCapabilities(
       payload.commercialDiscoveryCapabilities

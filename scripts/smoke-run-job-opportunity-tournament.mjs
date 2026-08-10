@@ -221,10 +221,14 @@ const server = createServer(async (request, response) => {
     usage,
     openrouter_metadata: {
       strategy: 'fallback',
-      attempt: 2,
+      attempt: 3,
       endpoints: {
-        total: 2,
+        total: 3,
         available: [{
+          provider: 'Google AI Studio',
+          model: 'google/gemini-3.5-flash-lite',
+          selected: false
+        }, {
           provider: 'Google AI Studio',
           model: 'google/gemini-2.5-flash-lite',
           selected: false
@@ -235,6 +239,7 @@ const server = createServer(async (request, response) => {
         }]
       },
       attempts: [
+        { provider: 'Google AI Studio', status: 502 },
         { provider: 'Google AI Studio', status: 502 },
         { provider: 'OpenAI', status: 200 }
       ]
@@ -737,7 +742,7 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerAttempt,
-      2,
+      3,
       'successful call lost its router attempt count'
     );
     assertEqual(
@@ -762,14 +767,14 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'google/gemini-2.5-flash-lite',
+      'google/gemini-3.5-flash-lite',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
       JSON.stringify(
         providerReceipt?.responseDiagnostics?.routerAttemptStatuses
       ),
-      JSON.stringify([502, 200]),
+      JSON.stringify([502, 502, 200]),
       'successful call lost bounded fallback statuses'
     );
   }
@@ -1106,6 +1111,7 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.models),
     JSON.stringify([
+      'google/gemini-3.5-flash-lite',
       'google/gemini-2.5-flash-lite',
       'openai/gpt-5.6-luna',
       'xiaomi/mimo-v2.5'
@@ -1243,7 +1249,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'google/gemini-2.5-flash-lite',
+          'google/gemini-3.5-flash-lite',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

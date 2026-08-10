@@ -46,7 +46,7 @@ function productionCitation(url, title, content) {
   };
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 229_400;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 360_000;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
 const PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256 =
   '295bb8bdfd9320c27530d225a401ac3dec07d915e987775413dc127f2feea033';
@@ -4164,13 +4164,27 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 192
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'google/gemini-2.5-flash-lite',
+        model: 'google/gemini-3.5-flash-lite',
         models: [
+          'google/gemini-3.5-flash-lite',
           'google/gemini-2.5-flash-lite',
           'openai/gpt-5.6-luna',
           'xiaomi/mimo-v2.5'
         ],
         modelRoutes: [
+          {
+            id: 'google/gemini-3.5-flash-lite',
+            family: 'google',
+            minimumContextTokens: 1_048_576,
+            minimumOutputTokens: 16_000,
+            maximumPromptPrice: 0.3,
+            maximumCompletionPrice: 2.5,
+            requiredParameters: [
+              'max_tokens',
+              'response_format',
+              'structured_outputs'
+            ]
+          },
           {
             id: 'google/gemini-2.5-flash-lite',
             family: 'google',
@@ -4242,6 +4256,11 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         },
         framingTokenReserve: 1_024,
         generator: {
+          providerPriceCaps: {
+            prompt: 0.3,
+            completion: 2.5,
+            request: 0
+          },
           pluginIds: ['web', 'response-healing'],
           requestMaxBytes: 36 * 1_024,
           promptTokenCeiling: 1_050_000,
@@ -4251,6 +4270,11 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
         },
         critic: {
+          providerPriceCaps: {
+            prompt: 0.2,
+            completion: 0.9,
+            request: 0
+          },
           pluginIds: ['response-healing'],
           requestMaxBytes: 64 * 1_024,
           promptTokenCeiling: 65_536 + 1_024,
@@ -4267,14 +4291,14 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
   const recomputedPlannerCallSpendCeilingMicros =
     Math.ceil(
       callEnvelope.generator.promptTokenCeiling *
-        callEnvelope.providerPriceCaps.prompt
+        callEnvelope.generator.providerPriceCaps.prompt
     ) +
     Math.ceil(
       callEnvelope.generator.outputTokenCeiling *
-        callEnvelope.providerPriceCaps.completion
+        callEnvelope.generator.providerPriceCaps.completion
     ) +
     Math.ceil(
-      callEnvelope.providerPriceCaps.request *
+      callEnvelope.generator.providerPriceCaps.request *
         1_000_000
     ) +
     callEnvelope.generator.fixedToolFeeMicros;
@@ -4285,11 +4309,11 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
   const recomputedCriticCallSpendCeilingMicros =
     Math.ceil(
       callEnvelope.critic.promptTokenCeiling *
-        callEnvelope.providerPriceCaps.prompt
+        callEnvelope.critic.providerPriceCaps.prompt
     ) +
     Math.ceil(
       callEnvelope.critic.outputTokenCeiling *
-        callEnvelope.providerPriceCaps.completion
+        callEnvelope.critic.providerPriceCaps.completion
     ) + callEnvelope.critic.fixedToolFeeMicros;
   if (recomputedCriticCallSpendCeilingMicros !==
       callEnvelope.critic.callSpendCeilingMicros) {
