@@ -727,6 +727,12 @@ const DISCOVERY_PAID_DEMAND_ACQUISITION =
   'Review-first official paid-demand page';
 const DISCOVERY_COMPENSATED_JOB_PAID_OFFER =
   'A current compensated role matching verified professional skills';
+const DISCOVERY_COMPENSATED_JOB_CONVERSION_DESTINATION =
+  'The exact public application page for the researched compensated role';
+const DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION =
+  'The profile owner accepts the researched compensated role';
+const DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL =
+  'The accepted role records the exact researched job posting';
 const DISCOVERY_PLAN_ACQUISITION_MECHANISMS = new Set([
   DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION,
   DISCOVERY_PAID_DEMAND_ACQUISITION
@@ -2173,6 +2179,8 @@ function opportunityDiscoveryPlannerResponseFormat(
   allowedMarketValues = [],
   requiredSellerFocus = ''
 ) {
+  const compensatedJobOnly = allowedMotionKinds.length === 1 &&
+    allowedMotionKinds[0] === 'compensated_job';
   const approvedObservationEvidenceRefs = compactStrings(
     asArray(evidenceCatalog).map((item) => firstText(asObject(item).id))
   ).filter((ref) => /^observation:/i.test(ref));
@@ -2635,9 +2643,26 @@ function opportunityDiscoveryPlannerResponseFormat(
                 },
                 jobTitle: targetTokenFreeText(100),
                 skills: targetTokenFreeStringArray(6),
-                conversionDestination: commercialSemanticText(180),
-                paidConversion: commercialSemanticText(140),
-                attributionSignal: commercialSemanticText(180),
+                conversionDestination: compensatedJobOnly
+                  ? {
+                      type: 'string',
+                      enum: [
+                        DISCOVERY_COMPENSATED_JOB_CONVERSION_DESTINATION
+                      ]
+                    }
+                  : commercialSemanticText(180),
+                paidConversion: compensatedJobOnly
+                  ? {
+                      type: 'string',
+                      enum: [DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION]
+                    }
+                  : commercialSemanticText(140),
+                attributionSignal: compensatedJobOnly
+                  ? {
+                      type: 'string',
+                      enum: [DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL]
+                    }
+                  : commercialSemanticText(180),
                 contingentFinalists: {
                   type: 'object',
                   properties: {
@@ -3166,8 +3191,10 @@ function normalizeOpportunityDiscoveryPlan(
       ? { ...routeInput, ...typedRoute }
       : routeInput;
     const rawPaidOffer = asObject(routedPlan.paidOffer);
+    const compensatedJob = firstText(routedPlan.motionKind) ===
+      'compensated_job';
     const normalizedPaidOffer = deriveFreshPlannerAuthority
-      ? firstText(routedPlan.motionKind) === 'compensated_job'
+      ? compensatedJob
         ? firstText(
             rawPaidOffer.compensatedJob,
             typeof routedPlan.paidOffer === 'string'
@@ -3283,22 +3310,28 @@ function normalizeOpportunityDiscoveryPlan(
         ? firstText(routedPlan.acquisitionMechanism)
         : truncate(firstText(routedPlan.acquisitionMechanism), 220),
       conversionDestination: deriveFreshPlannerAuthority
-        ? opportunityDiscoveryFreshSchemaText(
-            routedPlan.conversionDestination,
-            180
-          )
+        ? compensatedJob
+          ? DISCOVERY_COMPENSATED_JOB_CONVERSION_DESTINATION
+          : opportunityDiscoveryFreshSchemaText(
+              routedPlan.conversionDestination,
+              180
+            )
         : truncate(firstText(routedPlan.conversionDestination), 220),
       paidConversion: deriveFreshPlannerAuthority
-        ? opportunityDiscoveryFreshSchemaText(
-            routedPlan.paidConversion,
-            140
-          )
+        ? compensatedJob
+          ? DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION
+          : opportunityDiscoveryFreshSchemaText(
+              routedPlan.paidConversion,
+              140
+            )
         : truncate(firstText(routedPlan.paidConversion), 180),
       attributionSignal: deriveFreshPlannerAuthority
-        ? opportunityDiscoveryFreshSchemaText(
-            routedPlan.attributionSignal,
-            180
-          )
+        ? compensatedJob
+          ? DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL
+          : opportunityDiscoveryFreshSchemaText(
+              routedPlan.attributionSignal,
+              180
+            )
         : truncate(firstText(routedPlan.attributionSignal), 220),
       rationale: deriveFreshPlannerAuthority
         ? ''

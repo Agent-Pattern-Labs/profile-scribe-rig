@@ -1499,6 +1499,16 @@ async function verifyTypedCommercialMotionSelection(
   }
 
   const compensatedMotions = cases[1].plans(programmerEvidenceRef);
+  compensatedMotions[1] = structuredClone(compensatedMotions[0]);
+  compensatedMotions[1].id = 'active_platform_role';
+  compensatedMotions[1].priority = 2;
+  compensatedMotions[1].jobTitle = 'Platform engineer';
+  compensatedMotions[1].skills = ['Go', 'Cloud infrastructure'];
+  for (const motion of compensatedMotions) {
+    motion.conversionDestination = '';
+    motion.paidConversion = '';
+    motion.attributionSignal = '';
+  }
   compensatedMotions[0].query =
     'Go consultancy RFP services available from suppliers';
   compensatedMotions[0].searchMode = 'local_organization';
@@ -1506,10 +1516,26 @@ async function verifyTypedCommercialMotionSelection(
   compensatedMotions[0].acquisitionMode = 'partner_channel';
   compensatedMotions[1].professionalRoleQueryContract =
     'professional_role_query_v999';
+  let compensatedOnlySchemaFields = {};
+  const compensatedOnlyJob = structuredClone(programmerJob);
+  compensatedOnlyJob.payload.commercialDiscoveryCapabilities = {
+    braveWebSearch: false,
+    pdlPersonSearch: false,
+    pdlJobPostingSearch: true
+  };
   const compensated = await run({
-    job: programmerJob,
+    job: compensatedOnlyJob,
     plans: compensatedMotions,
-    generationId: 'generation-typed-compensated-job'
+    generationId: 'generation-typed-compensated-job',
+    inspectRequest: (request) => {
+      const properties = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties || {};
+      compensatedOnlySchemaFields = {
+        conversionDestination: properties.conversionDestination,
+        paidConversion: properties.paidConversion,
+        attributionSignal: properties.attributionSignal
+      };
+    }
   });
   const compensatedJob = compensated.plans.find((item) =>
     item.motionKind === 'compensated_job'
@@ -1527,6 +1553,32 @@ async function verifyTypedCommercialMotionSelection(
       compensatedJob?.commercialRole !== 'paid_demand' ||
       compensatedJob?.acquisitionMode !== 'permissioned_outreach' ||
       compensatedJob?.professionalRoleQueryContract ||
+      compensatedJob?.conversionDestination !==
+        'The exact public application page for the researched compensated role' ||
+      compensatedJob?.paidConversion !==
+        'The profile owner accepts the researched compensated role' ||
+      compensatedJob?.attributionSignal !==
+        'The accepted role records the exact researched job posting' ||
+      JSON.stringify(compensatedOnlySchemaFields) !== JSON.stringify({
+        conversionDestination: {
+          type: 'string',
+          enum: [
+            'The exact public application page for the researched compensated role'
+          ]
+        },
+        paidConversion: {
+          type: 'string',
+          enum: [
+            'The profile owner accepts the researched compensated role'
+          ]
+        },
+        attributionSignal: {
+          type: 'string',
+          enum: [
+            'The accepted role records the exact researched job posting'
+          ]
+        }
+      }) ||
       compensatedJob?.query !==
         'current compensated job hiring Go backend engineer Go PostgreSQL United States' ||
       /consultancy|supplier|rfp services available/i.test(
