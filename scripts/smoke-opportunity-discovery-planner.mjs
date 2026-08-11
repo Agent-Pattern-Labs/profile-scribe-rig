@@ -46,8 +46,9 @@ function productionCitation(url, title, content) {
   };
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 528_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 71_040;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
+const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
 const PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256 =
   '295bb8bdfd9320c27530d225a401ac3dec07d915e987775413dc127f2feea033';
@@ -461,11 +462,8 @@ for (const scenario of cases) {
         requestSeen.responseFormat?.json_schema?.schema?.properties?.status
           ?.enum
       ) !== JSON.stringify(['planned']) ||
-      requestSeen.plugins?.[0]?.id !== 'web' ||
-      requestSeen.plugins?.[0]?.engine !== 'exa' ||
-      requestSeen.plugins?.[0]?.max_results !== 5 ||
-      requestSeen.plugins?.[1]?.id !== 'response-healing' ||
-      requestSeen.plugins?.length !== 2 ||
+      requestSeen.plugins?.[0]?.id !== 'response-healing' ||
+      requestSeen.plugins?.length !== 1 ||
       requestSeen.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       !requestSeen.system?.includes(
         'Obey outputContract and hardRules exactly'
@@ -497,25 +495,21 @@ for (const scenario of cases) {
       ) ||
       result.usage.calls !== 1 ||
       result.usage.successfulCalls !== 1 ||
-      result.webSearchReceipt?.resultCount !== 1 ||
-      !result.webSearchReceipt?.annotations?.[0]?.content?.includes(
-        'Current public professional organization'
-      ) ||
-      /(?:@|tel:|212[ .-]?555|intake)/i.test(
-        `${result.webSearchReceipt?.annotations?.[0]?.title || ''} ${result.webSearchReceipt?.annotations?.[0]?.content || ''}`
-      ) ||
+      result.webSearchReceipt?.attempted !== false ||
+      result.webSearchReceipt?.resultCount !== 0 ||
+      result.webSearchReceipt?.annotations?.length !== 0 ||
       result.webSearchReceipt?.requestHash !==
         result.preflight?.requestBodySha256 ||
-      result.webSearchReceipt?.injectedContextTokenReserve !==
-        DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE ||
-      result.webSearchReceipt?.costIncludedInLLMReceipt !== true ||
+      result.webSearchReceipt?.injectedContextTokenReserve !== 0 ||
+      result.webSearchReceipt?.costIncludedInLLMReceipt !== false ||
       result.preflight?.promptTokenCeiling !==
-        DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE ||
+        result.preflight?.serializedPromptTokenCeiling ||
       result.preflight?.outputTokenCeiling !==
         DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       result.preflight?.fixedRequestFeeCeilingMicros !== 0 ||
-      result.preflight?.fixedToolFeeMicros !== 5_000 ||
-      result.preflight?.callSpendCeilingMicros !==
+      result.preflight?.fixedToolFeeMicros !== 0 ||
+      !(result.preflight?.callSpendCeilingMicros > 0) ||
+      result.preflight?.callSpendCeilingMicros >
         DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS ||
       !(result.preflight?.responseBodyByteCount > 0) ||
       result.preflight?.responseBodyByteCount >
@@ -4325,12 +4319,11 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             completion: 3,
             request: 0
           },
-          pluginIds: ['web', 'response-healing'],
+          pluginIds: ['response-healing'],
           requestMaxBytes: 44 * 1_024,
-          promptTokenCeiling:
-            DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE,
+          promptTokenCeiling: DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING,
           outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
-          fixedToolFeeMicros: 5_000,
+          fixedToolFeeMicros: 0,
           callSpendCeilingMicros:
             DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
         },
@@ -6516,10 +6509,9 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       !prompt.evidenceCatalog?.some((item) =>
         item.id === sellerFocusEvidence.id
       ) ||
-      requestSeen?.plugins?.[0]?.engine !== 'exa' ||
-      requestSeen?.plugins?.[1]?.id !== 'response-healing' ||
-      requestSeen?.plugins?.length !== 2 ||
-      result.preflight?.fixedToolFeeMicros !== 5_000 ||
+      requestSeen?.plugins?.[0]?.id !== 'response-healing' ||
+      requestSeen?.plugins?.length !== 1 ||
+      result.preflight?.fixedToolFeeMicros !== 0 ||
       !prompt.hardRules?.some((rule) =>
         /Audience\/directory\/category pages can inform buyer context but cannot redefine the seller/i.test(
           rule
@@ -7890,9 +7882,10 @@ async function verifyPrivateContactBearingURLsFailClosed() {
       safePlan.webSearchReceipt?.provider !==
         'openrouter_exa_web_search' ||
       safePlan.webSearchReceipt?.operation !== 'forced_exa_web_search' ||
-      safePlan.webSearchReceipt?.costIncludedInLLMReceipt !== true ||
-      safePlan.webSearchReceipt?.annotations?.length !== 1 ||
-      safePlan.webSearchReceipt?.annotations?.[0]?.url !== safeURL ||
+      safePlan.webSearchReceipt?.attempted !== false ||
+      safePlan.webSearchReceipt?.costIncludedInLLMReceipt !== false ||
+      safePlan.webSearchReceipt?.resultCount !== 0 ||
+      safePlan.webSearchReceipt?.annotations?.length !== 0 ||
       safePlan.sideEffectsPerformed !== 0) {
     throw new Error(
       `private-contact URL safe control did not plan: ${JSON.stringify(safePlan)}`
@@ -8254,7 +8247,10 @@ async function verifyTwoStageTargetBinding() {
         'openrouter_exa_web_search' ||
       discoveryPlan.webSearchReceipt?.operation !==
         'forced_exa_web_search' ||
-      discoveryPlan.webSearchReceipt?.costIncludedInLLMReceipt !== true) {
+      discoveryPlan.webSearchReceipt?.attempted !== false ||
+      discoveryPlan.webSearchReceipt?.costIncludedInLLMReceipt !== false ||
+      discoveryPlan.webSearchReceipt?.resultCount !== 0 ||
+      discoveryPlan.webSearchReceipt?.annotations?.length !== 0) {
     throw new Error(
       `two-stage planner setup failed: ${JSON.stringify(discoveryPlan)}`
     );
@@ -10106,20 +10102,6 @@ async function verifyTwoStageTargetBinding() {
   };
   delete noTargetDiscovery.plan.rejectedReason;
   const noTargetPlanReceipt = noTargetDiscovery.plan.webSearchReceipt;
-  noTargetPlanReceipt.annotations = [
-    ...noTargetPlanReceipt.annotations,
-    productionCitation(
-      'https://queens-newborn.example/services',
-      'Queens newborn services',
-      'A current public organization page mentioning newborn services in Queens without a source-bound decision maker.'
-    ),
-    productionCitation(
-      'https://borough-family.example/resources',
-      'Borough family resources',
-      'A current public family-resource page that did not bind to the planned professional referral target.'
-    )
-  ];
-  noTargetPlanReceipt.resultCount = 3;
   const noTargetPDLProfessionalAttempt = {
     ...braveAttempt,
     id: 'attempt-two-stage-pdl-professional-zero-results',
@@ -10131,30 +10113,31 @@ async function verifyTwoStageTargetBinding() {
     creditsUsed: 0,
     resultCount: 0
   };
-  const noTargetPDLDecisionMakerAttempt = {
-    ...pdlAttempt,
+  const noTargetSecondPDLProfessionalAttempt = {
+    ...noTargetPDLProfessionalAttempt,
+    id: 'attempt-two-stage-pdl-professional-zero-results-2',
+    queryHash: '9'.repeat(64),
     status: 'not_found',
     actualSpendMicros: 0,
     creditsUsed: 0,
     resultCount: 0
   };
   const noTargetAttempts = [
-    structuredClone(foldedAttempt),
     noTargetPDLProfessionalAttempt,
-    noTargetPDLDecisionMakerAttempt
+    noTargetSecondPDLProfessionalAttempt
   ];
   noTargetDiscovery.attempts = noTargetAttempts;
   noTargetDiscovery.providersAttempted = [
-    'openrouter_exa_web_search',
     'people_data_labs_person_search'
   ];
-  noTargetDiscovery.creditsUsed = 1;
+  noTargetDiscovery.providerCalls = 2;
+  noTargetDiscovery.paidProviderCalls = 2;
+  noTargetDiscovery.creditsUsed = 0;
   noTargetPayload.commercialDiscoveryEvidence.queryHash =
     commercialDiscoveryAttemptLedgerHash(noTargetAttempts);
   noTargetPayload.commercialDiscoveryEvidence.status = 'not_found';
   noTargetPayload.commercialDiscoveryEvidence.resultCount = 0;
   noTargetPayload.commercialDiscoveryEvidence.rejectedReasons = {
-    citation_not_source_bound: 3,
     provider_zero_results: 2
   };
   noTargetPayload.commercialDiscoveryEvidence.evidence = [];
@@ -10251,8 +10234,6 @@ async function verifyTwoStageTargetBinding() {
       noTarget.trace?.commercialDiscovery?.resultCount !== 0 ||
       noTarget.trace?.commercialDiscovery?.valid !== true ||
       noTarget.trace?.commercialDiscovery?.rejectedReasons
-        ?.citation_not_source_bound !== 3 ||
-      noTarget.trace?.commercialDiscovery?.rejectedReasons
         ?.provider_zero_results !== 2 ||
       noTarget.searchSpace?.contingentFinalists?.cause !==
         'exact_target_not_found') {
@@ -10265,7 +10246,7 @@ async function verifyTwoStageTargetBinding() {
       noTargetPayload.commercialDiscoveryEvidence
     );
   if (noTargetCapabilityProbe.valid !== true ||
-      noTargetCapabilityProbe.attemptCount !== 3 ||
+      noTargetCapabilityProbe.attemptCount !== 2 ||
       noTargetCapabilityProbe.cause !== 'exact_target_not_found' ||
       noTargetCapabilityProbe.criticCalls !== 0 ||
       noTargetCapabilityProbe.sideEffectsPerformed !== 0) {
@@ -10285,11 +10266,15 @@ async function verifyTwoStageTargetBinding() {
       fixture.commercialDiscoveryEvidence.plan.plans[0]
         .professionalRoleQueryContract = 'professional_role_query_v999';
     }],
-    ['two-citation receipt', (fixture) => {
+    ['unauthorized citation receipt', (fixture) => {
       const receipt = fixture.commercialDiscoveryEvidence.plan
         .webSearchReceipt;
-      receipt.annotations = receipt.annotations.slice(0, 2);
-      receipt.resultCount = 2;
+      receipt.annotations = [productionCitation(
+        'https://unauthorized.example/target',
+        'Unauthorized folded target',
+        'This annotation must never acquire authority in a current plan.'
+      )];
+      receipt.resultCount = 1;
     }],
     ['Brave canonical attempt', (fixture) => {
       fixture.commercialDiscoveryEvidence.attempts[1].provider =
@@ -10313,7 +10298,23 @@ async function verifyTwoStageTargetBinding() {
     }
   }
 
-  const receipt = discoveryPlan.webSearchReceipt;
+  const receipt = {
+    ...discoveryPlan.webSearchReceipt,
+    injectedContextTokenReserve: 950_000,
+    attempted: true,
+    resultCount: 1,
+    estimatedSpendMicros: 5_000,
+    costIncludedInLLMReceipt: true,
+    includedSpendMicros: 5_000,
+    creditsUsed: 1,
+    annotations: [productionCitation(
+      'https://riverside-pediatrics.example/newborn-care',
+      'Riverside Pediatrics newborn care',
+      'Riverside Pediatrics is a current pediatric practice serving newborns in Queens.'
+    )]
+  };
+  const historicalFoldedPlan = structuredClone(oneMotionDiscoveryPlan);
+  historicalFoldedPlan.webSearchReceipt = structuredClone(receipt);
   const foldedEvidenceRef =
     'external_discovery:555555555555555555555555';
   const successfulFoldedAttempt = {
@@ -10339,7 +10340,7 @@ async function verifyTwoStageTargetBinding() {
     patientTargetingExcluded: true,
     sideEffectsPerformed: 0,
     attempts: [successfulFoldedAttempt],
-    plan: oneMotionDiscoveryPlan,
+    plan: historicalFoldedPlan,
     evidence: [{
       motionId: selectedMotion.id,
       evidenceRef: foldedEvidenceRef,
@@ -10374,6 +10375,7 @@ async function verifyTwoStageTargetBinding() {
   const foldedDecisionMakerChain = structuredClone(
     downstreamPayload.commercialDiscoveryEvidence
   );
+  foldedDecisionMakerChain.plan = structuredClone(historicalFoldedPlan);
   foldedDecisionMakerChain.attempts = [
     successfulFoldedAttempt,
     pdlAttempt

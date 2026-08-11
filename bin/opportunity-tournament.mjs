@@ -292,6 +292,8 @@ const MAX_PROMPT_EVIDENCE_LABEL_CHARS = 160;
 const MAX_PROMPT_EVIDENCE_SUMMARY_CHARS = 320;
 const MAX_PROMPT_EVIDENCE_URL_CHARS = 240;
 const MAX_PROVIDER_REQUEST_BODY_BYTES = 44 * 1_024;
+const OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING =
+  MAX_PROVIDER_REQUEST_BODY_BYTES + OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
 const MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES = 64 * 1_024;
 const DISCOVERY_PLANNER_REQUEST_BODY_SOFT_HEADROOM_BYTES = 512;
 // A 30-day opportunity's expected gross income is authored in micro-USD.
@@ -544,22 +546,21 @@ const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
 // The parsed cap below also dominates the strict grammar's computed worst-case
 // Unicode/evidence envelope instead of relying on representative samples.
 const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 528_000;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 71_040;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
 const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 28_544;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
-    OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE *
+    OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING *
       MAX_DISCOVERY_PLANNER_PROVIDER_PRICE.prompt
   ) +
   Math.ceil(
     MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS *
       MAX_DISCOVERY_PLANNER_PROVIDER_PRICE.completion
   ) +
-  Math.ceil(MAX_DISCOVERY_PLANNER_PROVIDER_PRICE.request * 1_000_000) +
-  OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS;
+  Math.ceil(MAX_DISCOVERY_PLANNER_PROVIDER_PRICE.request * 1_000_000);
 if (computedDiscoveryPlannerCallSpendCeilingMicros !==
     MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS) {
   throw new Error('discovery planner call-spend envelope drifted');
@@ -1354,16 +1355,12 @@ export function opportunityCommercialDiscoveryCapabilities() {
         providerPriceCaps: {
           ...MAX_DISCOVERY_PLANNER_PROVIDER_PRICE
         },
-        pluginIds: [
-          'web',
-          OPENROUTER_RESPONSE_HEALING_PLUGIN
-        ],
+        pluginIds: [OPENROUTER_RESPONSE_HEALING_PLUGIN],
         requestMaxBytes: MAX_PROVIDER_REQUEST_BODY_BYTES,
         promptTokenCeiling:
-          OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
+          OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING,
         outputTokenCeiling: MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS,
-        fixedToolFeeMicros:
-          OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
+        fixedToolFeeMicros: 0,
         callSpendCeilingMicros:
           MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
       },
@@ -1879,17 +1876,9 @@ export async function runOpportunityDiscoveryPlanner({
         requiredSellerFocus,
         provisionalOfferExperiment
       ),
-      plugins: [{
-        id: 'web',
-        engine: OPPORTUNITY_DISCOVERY_WEB_SEARCH_ENGINE,
-        max_results: OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS
-      }, {
-        id: OPENROUTER_RESPONSE_HEALING_PLUGIN
-      }],
-      additionalPromptTokenReserve:
-        OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
-      fixedToolFeeMicros:
-        OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
+      plugins: [{ id: OPENROUTER_RESPONSE_HEALING_PLUGIN }],
+      additionalPromptTokenReserve: 0,
+      fixedToolFeeMicros: 0,
       timeoutMs: 120_000,
     };
     preflight = providerCallSpendPreflight(request, budget);
@@ -2039,7 +2028,7 @@ export async function runOpportunityDiscoveryPlanner({
   const webSearchReceipt = normalizeOpportunityDiscoveryWebSearchReceipt({
     annotations: completion?.annotations,
     requestHash: preflight.requestBodySha256,
-    attempted: true,
+    attempted: false,
     observedAt: validDate(now).toISOString()
   });
   normalized.webSearchReceipt = webSearchReceipt;
@@ -7382,7 +7371,8 @@ function discoveryProfessionalAnchorToken(value) {
 
 function normalizeOpportunityDiscoveryWebSearchReceipt(value) {
   const raw = asObject(value);
-  const annotationsInput = asArray(raw.annotations);
+  const attempted = raw.attempted === true;
+  const annotationsInput = attempted ? asArray(raw.annotations) : [];
   const annotations = [];
   const seenURLs = new Set();
   for (const annotationValue of annotationsInput.slice(
@@ -7438,18 +7428,20 @@ function normalizeOpportunityDiscoveryWebSearchReceipt(value) {
     maxResults: OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS,
     fixedFeeMicros:
       OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
-    injectedContextTokenReserve:
-      OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE,
-    attempted: raw.attempted === true,
+    injectedContextTokenReserve: attempted
+      ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE
+      : 0,
+    attempted,
     resultCount: annotations.length,
-    estimatedSpendMicros:
-      OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS,
-    actualSpendMicros: 0,
-    costIncludedInLLMReceipt: true,
-    includedSpendMicros: raw.attempted === true
+    estimatedSpendMicros: attempted
       ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS
       : 0,
-    creditsUsed: raw.attempted === true ? 1 : 0,
+    actualSpendMicros: 0,
+    costIncludedInLLMReceipt: attempted,
+    includedSpendMicros: attempted
+      ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS
+      : 0,
+    creditsUsed: attempted ? 1 : 0,
     observedAt: validISOString(raw.observedAt),
     annotations
   };
@@ -7457,6 +7449,7 @@ function normalizeOpportunityDiscoveryWebSearchReceipt(value) {
 
 function opportunityDiscoveryWebSearchReceiptIssue(value) {
   const receipt = asObject(value);
+  const attempted = receipt.attempted === true;
   if (receipt.contractVersion !==
         OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTRACT ||
       receipt.provider !== OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER ||
@@ -7466,19 +7459,22 @@ function opportunityDiscoveryWebSearchReceiptIssue(value) {
       receipt.maxResults !== OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS ||
       receipt.fixedFeeMicros !==
         OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS ||
-      receipt.injectedContextTokenReserve !==
-        OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE ||
-      receipt.attempted !== true ||
-      receipt.estimatedSpendMicros !==
-        OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS ||
+      receipt.injectedContextTokenReserve !== (attempted
+        ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE
+        : 0) ||
+      receipt.estimatedSpendMicros !== (attempted
+        ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS
+        : 0) ||
       receipt.actualSpendMicros !== 0 ||
-      receipt.costIncludedInLLMReceipt !== true ||
-      receipt.includedSpendMicros !==
-        OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS ||
-      receipt.creditsUsed !== 1 ||
+      receipt.costIncludedInLLMReceipt !== attempted ||
+      receipt.includedSpendMicros !== (attempted
+        ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS
+        : 0) ||
+      receipt.creditsUsed !== (attempted ? 1 : 0) ||
       !validISOString(receipt.observedAt) ||
       receipt.resultCount !== asArray(receipt.annotations).length ||
-      receipt.resultCount > OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS) {
+      receipt.resultCount > OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS ||
+      (!attempted && receipt.resultCount !== 0)) {
     return 'The forced Exa web-search receipt failed its exact accounting or request-binding contract.';
   }
   const ids = new Set();
@@ -7697,16 +7693,15 @@ export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(
       COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT &&
     rawDiscovery.attempted === true &&
     firstText(rawDiscovery.status) === 'not_found' &&
-    rawDiscovery.providerCalls === 3 &&
-    rawDiscovery.paidProviderCalls === 3 &&
-    rawDiscovery.creditsUsed === 1 &&
+    rawDiscovery.providerCalls === 2 &&
+    rawDiscovery.paidProviderCalls === 2 &&
+    rawDiscovery.creditsUsed === 0 &&
     rawDiscovery.resultCount === 0 &&
     rawDiscovery.patientTargetingExcluded === true &&
     rawDiscovery.sideEffectsPerformed === 0 &&
     asArray(rawDiscovery.evidence).length === 0 &&
     asArray(rawDiscovery.candidates).length === 0 &&
-    Object.keys(rawRejections).length === 2 &&
-    rawRejections.citation_not_source_bound === 3 &&
+    Object.keys(rawRejections).length === 1 &&
     rawRejections.provider_zero_results === 2 &&
     firstText(rawPlan.contractVersion) ===
       OPPORTUNITY_DISCOVERY_PLAN_CONTRACT &&
@@ -7730,15 +7725,11 @@ export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(
       OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTRACT &&
     rawWebReceipt.provider === OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER &&
     rawWebReceipt.operation === OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION &&
-    rawWebReceipt.resultCount === 3 &&
-    asArray(rawWebReceipt.annotations).length === 3 &&
-    rawAttempts.length === 3 &&
-    rawAttempts[0]?.provider === OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER &&
-    rawAttempts[0]?.operation === OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION &&
-    rawAttempts[0]?.costIncludedInLLMReceipt === true &&
-    rawAttempts[0]?.status === 'not_found' &&
-    rawAttempts[0]?.resultCount === 0 &&
-    rawAttempts.slice(1).every((attempt) =>
+    rawWebReceipt.attempted === false &&
+    rawWebReceipt.resultCount === 0 &&
+    asArray(rawWebReceipt.annotations).length === 0 &&
+    rawAttempts.length === 2 &&
+    rawAttempts.every((attempt) =>
       asObject(attempt).provider === 'people_data_labs_person_search' &&
       asObject(attempt).costIncludedInLLMReceipt !== true &&
       asObject(attempt).status === 'not_found' &&
@@ -7746,9 +7737,8 @@ export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(
       asObject(attempt).actualSpendMicros === 0 &&
       asObject(attempt).creditsUsed === 0
     ) &&
-    rawProviders.length === 2 &&
-    rawProviders[0] === OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER &&
-    rawProviders[1] === 'people_data_labs_person_search';
+    rawProviders.length === 1 &&
+    rawProviders[0] === 'people_data_labs_person_search';
   if (!exactProductionShape) {
     throw new Error('commercial discovery no-target production fixture mismatch');
   }
@@ -7818,8 +7808,7 @@ export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(
   const experiment = asObject(result.nextExperiment);
   const sideEffects = asObject(asObject(result.gate).sideEffects);
   const valid = discovery.valid === true &&
-    asArray(discovery.attempts).length === 3 &&
-    rejections.citation_not_source_bound === 3 &&
+    asArray(discovery.attempts).length === 2 &&
     rejections.provider_zero_results === 2 &&
     contingent.cause === 'exact_target_not_found' &&
     experiment.kind ===
@@ -7835,9 +7824,8 @@ export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(
   return {
     valid: true,
     discoveryValid: true,
-    attemptCount: 3,
+    attemptCount: 2,
     rejectedReasons: {
-      citation_not_source_bound: 3,
       provider_zero_results: 2
     },
     cause: 'exact_target_not_found',
@@ -9714,6 +9702,7 @@ function persistedOpportunityDiscoveryWebSearchReceiptIssue(
       ? 'Discovery v2 plan omitted its folded web-search receipt.'
       : '';
   }
+  const attempted = normalized.attempted === true;
   const exactFixedShape =
     firstText(raw.contractVersion) ===
       OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTRACT &&
@@ -9725,17 +9714,20 @@ function persistedOpportunityDiscoveryWebSearchReceiptIssue(
     raw.maxResults === OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS &&
     raw.fixedFeeMicros ===
       OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS &&
-    raw.injectedContextTokenReserve ===
-      OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE &&
-    raw.attempted === true &&
+    raw.injectedContextTokenReserve === (attempted
+      ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_CONTEXT_TOKEN_RESERVE
+      : 0) &&
+    raw.attempted === attempted &&
     raw.resultCount === normalized.resultCount &&
-    raw.estimatedSpendMicros ===
-      OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS &&
+    raw.estimatedSpendMicros === (attempted
+      ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS
+      : 0) &&
     raw.actualSpendMicros === 0 &&
-    raw.costIncludedInLLMReceipt === true &&
-    raw.includedSpendMicros ===
-      OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS &&
-    raw.creditsUsed === 1 &&
+    raw.costIncludedInLLMReceipt === attempted &&
+    raw.includedSpendMicros === (attempted
+      ? OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS
+      : 0) &&
+    raw.creditsUsed === (attempted ? 1 : 0) &&
     commercialDiscoverySameInstant(raw.observedAt, normalized.observedAt);
   const rawAnnotations = raw.annotations;
   if (!exactFixedShape || !Array.isArray(rawAnnotations) ||
