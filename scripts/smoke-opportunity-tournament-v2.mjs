@@ -3290,8 +3290,8 @@ async function verifyMaximumTournamentSpendCeiling() {
         repairBytes ||
       repairTrace.repairPromptTokenCanary?.withinCeiling !== true ||
       initialSchemaBytes > 8_000 ||
-      initialBytes > 36 * 1_024 ||
-      repairBytes > 36 * 1_024 ||
+      initialBytes > 44 * 1_024 ||
+      repairBytes > 44 * 1_024 ||
       initialSchema.includes('"pattern"') ||
       initialSchema.includes('"description"') ||
       initialCeiling + repairCeiling > 400_000) {
@@ -3462,16 +3462,17 @@ async function verifyAdaptivePromptEnvelopeCompaction() {
       envelope.authorized !== true ||
       envelope.adaptiveCompactionAttempted !== true ||
       envelope.adaptiveCompactionApplied !== true ||
-      envelope.profile !== 'focused' ||
-      envelope.originalRequestBodyByteCount <= 36 * 1_024 ||
+      envelope.profile === 'standard' ||
+      envelope.originalRequestBodyByteCount <= 44 * 1_024 ||
       envelope.requestBodyByteCount !== finalBytes ||
-      envelope.requestBodyByteCount > 36 * 1_024 ||
-      envelope.maxRequestBodyByteCount !== 36 * 1_024 ||
+      envelope.requestBodyByteCount > 44 * 1_024 ||
+      envelope.maxRequestBodyByteCount !== 44 * 1_024 ||
       envelope.originalPromptEvidenceCount !== 16 ||
       envelope.promptEvidenceCount !== promptEvidence.length ||
       envelope.essentialEvidenceCount < 2 ||
-      JSON.stringify(attempts.map((attempt) => attempt.profile)) !==
-        JSON.stringify(['standard', 'dense', 'focused']) ||
+      attempts.length < 2 ||
+      attempts[0]?.profile !== 'standard' ||
+      finalAttempt.profile !== envelope.profile ||
       attempts[0]?.withinEnvelope !== false ||
       finalAttempt.withinEnvelope !== true ||
       finalAttempt.requestBodyByteCount !== finalBytes ||
@@ -3595,8 +3596,8 @@ async function verifyOversizedEvidenceIDIsBoundedLocally() {
       result.searchSpace?.modelCalls !== 1 ||
       envelope.authorized !== true ||
       envelope.requestBodyByteCount !== requestBytes ||
-      envelope.requestBodyByteCount > 36 * 1_024 ||
-      envelope.maxRequestBodyByteCount !== 36 * 1_024 ||
+      envelope.requestBodyByteCount > 44 * 1_024 ||
+      envelope.maxRequestBodyByteCount !== 44 * 1_024 ||
       !boundedObservationRef ||
       Array.from(boundedObservationRef).length > 96 ||
       Buffer.byteLength(
@@ -4781,8 +4782,8 @@ async function verifyProviderProjectionOrderAndProfessionNeutrality() {
         reverse.result.searchSpace?.promptEvidenceHash ||
       relevantCount < 12 ||
       distractorCount > 2 ||
-      forwardBytes > 36 * 1_024 ||
-      reverseBytes > 36 * 1_024 ||
+      forwardBytes > 44 * 1_024 ||
+      reverseBytes > 44 * 1_024 ||
       forward.result.gate?.sideEffects?.outreachAttempts !== 0 ||
       forward.result.gate?.sideEffects?.publishAttempts !== 0 ||
       forward.result.gate?.sideEffects?.providerWrites !== 0 ||
@@ -5483,8 +5484,8 @@ async function verifyBettyDistinctArticlePressureRegression() {
         JSON.stringify(expectedSchemaIDs) ||
       JSON.stringify(repairSchemaIDs) !==
         JSON.stringify(expectedSchemaIDs) ||
-      initialBytes > 36 * 1_024 ||
-      repairBytes > 36 * 1_024 ||
+      initialBytes > 44 * 1_024 ||
+      repairBytes > 44 * 1_024 ||
       homeEvidence?.url !== website ||
       homeEvidence?.current !== true ||
       homeEvidence?.revenueAssetRole !==

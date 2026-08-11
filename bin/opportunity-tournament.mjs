@@ -290,7 +290,7 @@ const MAX_PROMPT_CONTEXT_EVIDENCE_ITEMS = 2;
 const MAX_PROMPT_EVIDENCE_LABEL_CHARS = 160;
 const MAX_PROMPT_EVIDENCE_SUMMARY_CHARS = 320;
 const MAX_PROMPT_EVIDENCE_URL_CHARS = 240;
-const MAX_PROVIDER_REQUEST_BODY_BYTES = 36 * 1_024;
+const MAX_PROVIDER_REQUEST_BODY_BYTES = 44 * 1_024;
 const MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES = 64 * 1_024;
 const DISCOVERY_PLANNER_REQUEST_BODY_SOFT_HEADROOM_BYTES = 512;
 // A 30-day opportunity's expected gross income is authored in micro-USD.
@@ -299,7 +299,7 @@ const DISCOVERY_PLANNER_REQUEST_BODY_SOFT_HEADROOM_BYTES = 512;
 // strict-schema acceptance and local causal validation.
 const MAX_EXPECTED_VALUE_MICROS = 1_000_000_000_000;
 const DISCOVERY_PLANNER_TARGET_REQUEST_BODY_BYTES = Math.min(
-  35 * 1_024,
+  43 * 1_024,
   MAX_PROVIDER_REQUEST_BODY_BYTES -
     DISCOVERY_PLANNER_REQUEST_BODY_SOFT_HEADROOM_BYTES
 );
@@ -852,6 +852,11 @@ const REVENUE_TERMINAL_OUTCOME_BY_MECHANISM = Object.freeze({
   platform_payout: 'Platform payout received.',
   compensated_role: 'Compensated offer accepted; salary payment received.'
 });
+const SELLER_REVENUE_MECHANISMS = Object.freeze(
+  Object.keys(REVENUE_TERMINAL_OUTCOME_BY_MECHANISM).filter((mechanism) =>
+    mechanism !== 'compensated_role'
+  )
+);
 const ACQUISITION_MODES = new Set([
   'inbound',
   'warm_referral',
@@ -2303,6 +2308,63 @@ function opportunityDiscoveryPlannerResponseFormat(
     }
     return { $ref: `#/$defs/${definitionName}` };
   };
+  const commercialSemanticTextContaining = (
+    maxLength,
+    requiredPattern
+  ) => ({
+    type: 'string',
+    minLength: 8,
+    maxLength,
+    pattern:
+      `^[A-Za-z](?:${canonicalAuthoredCharacter}| )*` +
+      `(?:${requiredPattern})` +
+      `(?:${canonicalAuthoredCharacter}| )*$`
+  });
+  const commercialSemanticConstraintDefinitions = {
+    paidOutcomeText140: commercialSemanticTextContaining(
+      140,
+      '[Pp]aid|[Pp]ayment|[Pp]urchase|[Ss]ale|[Cc]ontract|' +
+        '[Bb]ooking|[Ss]ubscription|[Cc]ommission|[Ss]alary|' +
+        '[Rr]evenue|[Pp]ayout|[Rr]eimbursement'
+    ),
+    paidOutcomeText180: commercialSemanticTextContaining(
+      180,
+      '[Pp]aid|[Pp]ayment|[Pp]urchase|[Ss]ale|[Cc]ontract|' +
+        '[Bb]ooking|[Ss]ubscription|[Cc]ommission|[Ss]alary|' +
+        '[Rr]evenue|[Pp]ayout|[Rr]eimbursement'
+    ),
+    conversionDestinationText180: commercialSemanticTextContaining(
+      180,
+      '[Bb]ooking|[Cc]heckout|[Pp]ricing|[Pp]roposal|' +
+        '[Cc]ontract|[Pp]ilot|[Ss]ervice|[Aa]pplication|' +
+        '[Ss]ubscription|[Pp]urchase|[Oo]rder'
+    ),
+    attributionSignalText180: commercialSemanticTextContaining(
+      180,
+      '[Ss]ource|[Rr]eferral|(?:UTM|utm)|[Cc]ampaign|' +
+        '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]'
+    ),
+    attributionSignalText220: commercialSemanticTextContaining(
+      220,
+      '[Ss]ource|[Rr]eferral|(?:UTM|utm)|[Cc]ampaign|' +
+        '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]'
+    )
+  };
+  const commercialSemanticConstraint = (name) => {
+    if (!Object.prototype.hasOwnProperty.call(
+      commercialSemanticConstraintDefinitions,
+      name
+    )) {
+      throw new Error(`missing commercial semantic constraint ${name}`);
+    }
+    return { $ref: `#/$defs/${name}` };
+  };
+  const paidOutcomeText = (maxLength) =>
+    commercialSemanticConstraint(`paidOutcomeText${maxLength}`);
+  const conversionDestinationTextSchema = (maxLength) =>
+    commercialSemanticConstraint(`conversionDestinationText${maxLength}`);
+  const attributionSignalTextSchema = (maxLength) =>
+    commercialSemanticConstraint(`attributionSignalText${maxLength}`);
   const regexLiteral = (value) => firstText(value).replace(
     /[.*+?^${}()|[\]\\]/g,
     '\\$&'
@@ -2431,6 +2493,7 @@ function opportunityDiscoveryPlannerResponseFormat(
   const contingentDefs = {
     ...canonicalTextDefinitions,
     ...commercialSemanticTextDefinitions,
+    ...commercialSemanticConstraintDefinitions,
     evidenceRef: contingentSchema.$defs.evidenceRef,
     evidenceRefs: contingentSchema.$defs.evidenceRefs,
     compactEvidenceRefs: contingentSchema.$defs.compactEvidenceRefs,
@@ -2451,6 +2514,23 @@ function opportunityDiscoveryPlannerResponseFormat(
       maxItems: 2
     },
     revenueMechanism,
+    revenueMechanismChoice: {
+      type: 'object',
+      properties: {
+        seller: {
+          type: 'string',
+          enum: [...SELLER_REVENUE_MECHANISMS]
+        },
+        compensatedJob: {
+          type: 'string',
+          enum: ['compensated_role']
+        }
+      },
+      required: ['seller', 'compensatedJob'],
+      additionalProperties: false,
+      description:
+        'Author both revenue-mechanism alternatives; code selects seller for buyer/referral routes and compensatedJob only for compensated_job.'
+    },
     attributionMethod,
     scores: boundedScores,
     offerItem: boundedItemDefinition('offerItem'),
@@ -2592,12 +2672,12 @@ function opportunityDiscoveryPlannerResponseFormat(
       ...revenuePath,
       properties: {
         ...authoredRevenuePathProperties,
-        rm: { $ref: '#/$defs/revenueMechanism' },
+        rm: { $ref: '#/$defs/revenueMechanismChoice' },
         l: commercialSemanticText(140),
-        io: commercialSemanticText(180),
+        io: paidOutcomeText(180),
         atm: { $ref: '#/$defs/attributionMethod' },
-        ats: commercialSemanticText(220),
-        cd: commercialSemanticText(180),
+        ats: attributionSignalTextSchema(220),
+        cd: conversionDestinationTextSchema(180),
         st: commercialSemanticText(180),
         k: { $ref: '#/$defs/causalWitness' },
         sb: commercialSemanticText(180, true),
@@ -2614,7 +2694,7 @@ function opportunityDiscoveryPlannerResponseFormat(
               ...destinationGrounding,
               properties: {
                 ...asObject(destinationGrounding.properties),
-                l: commercialSemanticText(180)
+                l: conversionDestinationTextSchema(180)
               }
             }
           }
@@ -2725,19 +2805,19 @@ function opportunityDiscoveryPlannerResponseFormat(
                         DISCOVERY_COMPENSATED_JOB_CONVERSION_DESTINATION
                       ]
                     }
-                  : commercialSemanticText(180),
+                  : conversionDestinationTextSchema(180),
                 paidConversion: compensatedJobOnly
                   ? {
                       type: 'string',
                       enum: [DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION]
                     }
-                  : commercialSemanticText(140),
+                  : paidOutcomeText(140),
                 attributionSignal: compensatedJobOnly
                   ? {
                       type: 'string',
                       enum: [DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL]
                     }
-                  : commercialSemanticText(180),
+                  : attributionSignalTextSchema(180),
                 contingentFinalists: {
                   type: 'object',
                   properties: {
@@ -2819,7 +2899,7 @@ function compactOpportunityDiscoveryOutputContract(
     item:
       '{l,e}; b/c/a={rp,by,pd,e}: complete role alternatives, code selects commercialRole; t={l,e,q}; exact evidence IDs',
     revenuePath:
-      '{l,e,rm,io,atm,ats,cd,st,k:{n,u},g:{b,o,a,d:{l,e},c,t},sb,vm}; code derives v/a/c/o and the complete causal witness; compensated_job forces rm=compensated_role; g binds evidence',
+      '{l,e,rm:{seller,compensatedJob},io,atm,ats,cd,st,k:{n,u},g:{b,o,a,d:{l,e},c,t},sb,vm}; code selects seller mechanism for buyer/referral routes and compensatedJob only for compensated_job, then derives v/a/c/o and the complete causal witness; g binds evidence',
     evidence:
       `base+tactic e has observation:* and all child refs; returned e arrays use only approved plan refs and never ${CONTINGENT_TARGET_EVIDENCE_REF}; code binds that sentinel after typed-role validation`,
     offerAuthority: provisionalOfferExperiment
@@ -2842,7 +2922,7 @@ function compactOpportunityDiscoveryHardRules(
     provisionalOfferExperiment
       ? 'a:2/tactic; each a has rp/by/pd/e. For rp/by, use only the schema-enumerated review-first proposed-offer validation actions. They recommend a bounded human-reviewed test and authorize no outreach. pd remains a compensated-demand action. Selected actions: prefer 4 distinct; >=2 across both tactics must be distinct+viable.'
       : 'a:2/tactic; each a has rp/by/pd/e. rp=partner referral/introduction -> current paid offer -> paid booking/payment; by=ask target to book/buy/sign current paid offer; pd=paid application/proposal response. Author all three complete actions; code selects commercialRole only. Selected rp/by/pd: prefer 4 distinct; >=2 across both tactics must be distinct+viable. Unselected fields do not count. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
-    `Code derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. compensated_job forces rm=compensated_role. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
+    `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. Fresh paid demand requires a structured PDL employer_job_posting; public snippets/RFP/RFQ/tender/procurement prose has no live-demand authority. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional compensated job.',
@@ -3308,7 +3388,10 @@ function normalizeOpportunityDiscoveryPlan(
         : routedPlan,
       knownEvidence,
       deriveFreshPlannerAuthority
-        ? options.authoritativeSellerEvidenceRefs
+        ? [
+            ...compactStrings(options.authoritativeSellerEvidenceRefs),
+            PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+          ]
         : []
     );
     const searchFields = normalizeOpportunityDiscoverySearchFields(
@@ -3765,6 +3848,13 @@ function normalizeContingentFinalistBundle(
   clone = materializePlannerContingentFinalistBundle(clone, planValue);
   if (Object.keys(asObject(clone)).length === 0) return {};
   clone = canonicalizeContingentTargetEvidence(clone, planValue);
+  if (compactPlannerBundle && allowPlannerProjection === true) {
+    clone = canonicalizeContingentProposalGrounding(
+      clone,
+      planValue,
+      knownEvidence
+    );
+  }
   const plan = asObject(planValue);
   const planEvidenceRefs = new Set(
     compactStrings(plan.evidenceRefs).filter((ref) =>
@@ -3804,6 +3894,53 @@ function normalizeContingentFinalistBundle(
   return clone;
 }
 
+function canonicalizeContingentProposalGrounding(
+  value,
+  planValue,
+  knownEvidence
+) {
+  const bundle = asObject(value);
+  const plan = asObject(planValue);
+  if (!/^Proposed paid\b/.test(firstText(plan.paidOffer)) ||
+      firstText(plan.motionKind) === 'compensated_job') {
+    return bundle;
+  }
+  const sellerRefs = compactStrings(plan.evidenceRefs).filter((ref) =>
+    /^profile:focus:\d+$/i.test(ref) && knownEvidence.has(ref)
+  ).slice(0, 1);
+  const attributionRef = compactStrings(plan.evidenceRefs).find((ref) =>
+    ref === PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID &&
+      knownEvidence.has(ref)
+  );
+  if (sellerRefs.length !== 1 || !attributionRef) return bundle;
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = asObject(bundle[familyKey]);
+    const dimensions = asObject(family.d);
+    for (const offerValue of asArray(dimensions.o)) {
+      const offer = asObject(offerValue);
+      offer.l = firstText(plan.paidOffer);
+      offer.e = [...sellerRefs];
+    }
+    for (const revenueValue of asArray(dimensions.r)) {
+      const revenue = asObject(revenueValue);
+      const grounding = asObject(revenue.g);
+      grounding.o = [...sellerRefs];
+      const destination = asObject(grounding.d);
+      destination.e = [...sellerRefs];
+      grounding.d = destination;
+      grounding.c = [...sellerRefs];
+      grounding.t = [attributionRef];
+      revenue.g = grounding;
+      revenue.e = compactStrings([
+        ...asArray(revenue.e),
+        ...sellerRefs,
+        attributionRef
+      ]);
+    }
+  }
+  return bundle;
+}
+
 /**
  * Fresh call-1 authors the economic mechanism, attribution method, and stop
  * sample only. Every duplicated contract/witness field and the settled
@@ -3824,14 +3961,32 @@ function canonicalizeContingentRevenueStructure(value, planValue) {
     const dimensions = asObject(family.d);
     for (const revenueValue of asArray(dimensions.r)) {
       const revenue = asObject(revenueValue);
+      const authoredMechanisms = asObject(revenue.rm);
       const mechanism = compensatedRole
-        ? 'compensated_role'
-        : contractEnum(firstText(revenue.rm));
+        ? contractEnum(firstText(
+            authoredMechanisms.compensatedJob,
+            typeof revenue.rm === 'string' ? revenue.rm : ''
+          ))
+        : contractEnum(firstText(
+            authoredMechanisms.seller,
+            typeof revenue.rm === 'string' ? revenue.rm : ''
+          ));
       const attributionMethod = contractEnum(firstText(revenue.atm));
       revenue.v = REVENUE_PATH_CONTRACT_VERSION;
       revenue.rm = mechanism;
       revenue.a = firstText(plan.acquisitionMode);
       revenue.c = CONTINGENT_CONVERSION_ACTION_PROJECTION;
+      revenue.io = firstText(plan.paidConversion, revenue.io);
+      revenue.ats = firstText(plan.attributionSignal, revenue.ats);
+      revenue.cd = firstText(plan.conversionDestination, revenue.cd);
+      const grounding = asObject(revenue.g);
+      const destination = asObject(grounding.d);
+      destination.l = firstText(
+        plan.conversionDestination,
+        destination.l
+      );
+      grounding.d = destination;
+      revenue.g = grounding;
       revenue.o = firstText(
         REVENUE_TERMINAL_OUTCOME_BY_MECHANISM[mechanism]
       );
@@ -16474,6 +16629,9 @@ function deterministicCommercialHypothesisGate(
   );
   const provisionalValidationAction =
     hypothesis.provisionalOfferExperiment === true;
+  const provisionalSemantic = provisionalOfferExperimentSemantic(
+    revenuePath
+  );
   const gate = {
     activeRevenueAction:
       provisionalValidationAction || (
@@ -16494,9 +16652,14 @@ function deterministicCommercialHypothesisGate(
       semantic.conversionDestination &&
       comparable(channel) !== comparable(destination),
     incrementalRevenueOutcome:
-      semantic.incrementalIncome &&
-      semantic.observableRevenue &&
-      semantic.numericStop,
+      provisionalValidationAction
+        ? provisionalSemantic.incrementalIncome &&
+          provisionalSemantic.observableRevenue &&
+          provisionalSemantic.attributionSignal &&
+          provisionalSemantic.numericStop
+        : semantic.incrementalIncome &&
+          semantic.observableRevenue &&
+          semantic.numericStop,
     commercialConstraintsSatisfied: constraintGate.valid
   };
   return {
@@ -21663,19 +21826,25 @@ function validateRevenuePath(
     options: optionsValue
   });
   const provisionalValidationAction = provisionalGrounding.valid;
-  if (!paidOfferText(offer)) {
+  const provisionalSemantic = provisionalOfferExperimentSemantic(
+    revenuePath
+  );
+  if (!paidOfferText(offer) && !provisionalValidationAction) {
     reasons.add('missing_paid_offer');
   }
-  if (!semantic.incrementalIncome) {
+  if (!semantic.incrementalIncome &&
+      !(provisionalValidationAction && provisionalSemantic.incrementalIncome)) {
     reasons.add('missing_incremental_income');
   }
   if (!semantic.conversionAction && !provisionalValidationAction) {
     reasons.add('missing_paid_conversion');
   }
-  if (!semantic.observableRevenue) {
+  if (!semantic.observableRevenue &&
+      !(provisionalValidationAction && provisionalSemantic.observableRevenue)) {
     reasons.add('missing_observable_revenue');
   }
-  if (!semantic.attributionSignal) {
+  if (!semantic.attributionSignal &&
+      !(provisionalValidationAction && provisionalSemantic.attributionSignal)) {
     reasons.add('missing_attribution_signal');
   }
   if (revenuePath.contractVersion === REVENUE_PATH_CONTRACT_VERSION) {
@@ -21738,6 +21907,9 @@ function validateRevenuePath(
   }
   if (isV2) {
     const proposalOnlyReasons = new Set([
+      'buyer_evidence_mismatch',
+      'unsupported_buyer_evidence',
+      'paid_offer_evidence_mismatch',
       'unsupported_paid_offer_evidence',
       'noncurrent_or_negative_paid_offer_evidence',
       'invalid_conversion_destination',
@@ -21783,7 +21955,12 @@ function validateRevenuePath(
       !prohibitedAcquisitionText(
         `${semanticChannel} ${semanticConversionAction}`
       ),
-    incrementalRevenueOutcome: semantic.incrementalIncome
+    incrementalRevenueOutcome: provisionalValidationAction
+      ? provisionalSemantic.incrementalIncome &&
+        provisionalSemantic.observableRevenue &&
+        provisionalSemantic.attributionSignal &&
+        provisionalSemantic.numericStop
+      : semantic.incrementalIncome
   };
   return {
     valid: reasons.size === 0,
@@ -21792,6 +21969,32 @@ function validateRevenuePath(
       ...publicRevenuePath,
       activeRevenueAction
     }
+  };
+}
+
+function provisionalOfferExperimentSemantic(revenuePathValue) {
+  const revenuePath = asObject(revenuePathValue);
+  const paidText = compactStrings([
+    revenuePath.incrementalIncomeOutcome,
+    revenuePath.observableRevenueOutcome
+  ]).join(' ');
+  const attribution = firstText(revenuePath.attributionSignal);
+  return {
+    incrementalIncome:
+      /\b(?:paid|payment|income|revenue|sale|contract|booking|subscription|commission|salary|payout|reimbursement)\b/i.test(
+        paidText
+      ),
+    observableRevenue:
+      /\b(?:paid|payment|receipt|invoice|sale|contract|booking|subscription|commission|salary|payout|reimbursement)\b/i.test(
+        paidText
+      ),
+    attributionSignal:
+      /\b(?:source|referral|utm|campaign|origin|channel|code|crm)\b/i.test(
+        attribution
+      ) && /\b(?:record|field|receipt|invoice|contract|order|booking|transaction|payment)\b/i.test(
+        attribution
+      ),
+    numericStop: revenuePathSemanticChecks(revenuePath).numericStop
   };
 }
 

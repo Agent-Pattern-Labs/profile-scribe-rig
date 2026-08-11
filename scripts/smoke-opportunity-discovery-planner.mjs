@@ -864,7 +864,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /derives r\.v\/r\.a\/r\.c\/r\.o.*positional tactic keys.*k\.v\/i\/c\/o\/p\/t\/d\/s.*compensated_job forces rm=compensated_role/i.test(
+        /selects r\.rm\.seller.*r\.rm\.compensatedJob.*derives r\.v\/r\.a\/r\.c\/r\.o.*positional tactic keys.*k\.v\/i\/c\/o\/p\/t\/d\/s/i.test(
           rule
         )
       ) ||
@@ -906,7 +906,7 @@ for (const scenario of cases) {
       /claims no email\/phone\/form\/proposal route/i.test(
         requestSeen.system || ''
       ) ||
-      !/code derives v\/a\/c\/o and the complete causal witness.*compensated_job forces rm=compensated_role/is.test(
+      !/code selects seller mechanism.*compensatedJob only for compensated_job.*derives v\/a\/c\/o and the complete causal witness/is.test(
         plannerPrompt.outputContract?.revenuePath || ''
       )) {
     throw new Error(
@@ -1295,7 +1295,7 @@ if (smallestCompactResponseReduction < 0.1 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${36 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${35 * 1024 - 512} 512-byte-headroom floor; joint-worst critic request ${largestCommercialCriticRequestBytes} bytes / <=${65_536 - 512} (${65_536 - largestCommercialCriticRequestBytes} bytes headroom); semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${44 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${43 * 1024} 512-byte-headroom floor; joint-worst critic request ${largestCommercialCriticRequestBytes} bytes / <=${65_536 - 512} (${65_536 - largestCommercialCriticRequestBytes} bytes headroom); semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
 );
 
 async function verifyApprovedObservationPreflight() {
@@ -2487,7 +2487,7 @@ async function verifyOmittedChildEvidenceCanonicalization(
       ' remains review-only and source-bound without outreach or publishing ' +
       'while the adaptive schema selects its finite evidence authority.'
   );
-  const childFixtures = Array.from({ length: 13 }, (_, index) => {
+  const childFixtures = Array.from({ length: 18 }, (_, index) => {
     const suffix = String(index + 1).padStart(2, '0');
     return {
       source: {
@@ -4318,7 +4318,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             request: 0
           },
           pluginIds: ['web', 'response-healing'],
-          requestMaxBytes: 36 * 1_024,
+          requestMaxBytes: 44 * 1_024,
           promptTokenCeiling:
             DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE,
           outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
@@ -5920,7 +5920,7 @@ async function verifyNaturalBookingAttribution(job, evidenceRef) {
     );
     const revenue = motion.contingentFinalists.pathBase.r[0];
     revenue.atm = 'booking_record';
-    revenue.ats = attributionSignal;
+    motion.attributionSignal = attributionSignal;
     const result = await plannerResultForMotion({
       job,
       motion,
@@ -5944,7 +5944,7 @@ async function verifyNaturalBookingAttribution(job, evidenceRef) {
     );
     const revenue = motion.contingentFinalists.pathBase.r[0];
     revenue.atm = 'booking_record';
-    revenue.ats = attributionSignal;
+    motion.attributionSignal = attributionSignal;
     const result = await plannerResultForMotion({
       job,
       motion,
@@ -5972,8 +5972,8 @@ async function verifyCausalPathDiagnosticsAreFieldSpecific(
     motion.contingentFinalists
   );
   const revenue = motion.contingentFinalists.pathBase.r[0];
-  revenue.io = 'No incremental income is expected.';
-  revenue.cd = 'No conversion destination is available.';
+  motion.paidConversion = 'No incremental income is expected.';
+  motion.conversionDestination = 'No conversion destination is available.';
   revenue.vm = 0;
   const result = await plannerResultForMotion({
     job,
@@ -6926,6 +6926,19 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
       motion.commercialRole,
       sellerRef
     );
+    // Reproduce the production failure class: the model supplied a
+    // schema-valid seller alternative but grounded its proposed offer,
+    // destination, conversion, and attribution in a generic observation.
+    // Fresh normalization must project those structural roles from the
+    // authoritative seller/system refs before any provider or critic work.
+    for (const revenue of motion.contingentFinalists.pathBase.r) {
+      revenue.rm.seller = 'paid_pilot';
+      revenue.rm.compensatedJob = 'compensated_role';
+      revenue.g.o = [evidenceRef];
+      revenue.g.d.e = [evidenceRef];
+      revenue.g.c = [evidenceRef];
+      revenue.g.t = [evidenceRef];
+    }
     return motion;
   });
   let requestSeen;
@@ -6980,6 +6993,10 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
   const prompt = JSON.parse(requestSeen?.user || '{}');
   const motionKinds = requestSeen?.responseFormat?.json_schema?.schema
     ?.properties?.plans?.items?.properties?.motionKind?.enum || [];
+  const provisionalRevenuePaths = result.plans.flatMap((motion) => [
+    motion.contingentFinalists?.familyA?.d?.r?.[0],
+    motion.contingentFinalists?.familyB?.d?.r?.[0]
+  ]).filter(Boolean);
   if (result.status !== 'planned' ||
       result.plans.length !== 2 ||
       result.plans.some((motion) =>
@@ -6991,6 +7008,15 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
       motionKinds.includes('compensated_job') ||
       !motionKinds.includes('direct_buyer_person') ||
       !motionKinds.includes('referral_person') ||
+      provisionalRevenuePaths.some((revenue) =>
+        revenue.rm === 'compensated_role' ||
+        JSON.stringify(revenue.g?.o) !== JSON.stringify([sellerRef]) ||
+        JSON.stringify(revenue.g?.d?.e) !== JSON.stringify([sellerRef]) ||
+        JSON.stringify(revenue.g?.c) !== JSON.stringify([sellerRef]) ||
+        JSON.stringify(revenue.g?.t) !== JSON.stringify([
+          PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+        ])
+      ) ||
       schemaErrors.length !== 0 ||
       result.usage?.calls !== 1) {
     throw new Error(
@@ -12108,7 +12134,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
         ?.targetRequestBodyByteCount ||
       result.preflight?.providerPromptEnvelope
         ?.actualSoftHeadroomByteCount < 512 ||
-      result.preflight?.maxRequestBodyByteCount !== 36 * 1_024) {
+      result.preflight?.maxRequestBodyByteCount !== 44 * 1_024) {
     throw new Error(
       `production-shaped planner request lacks bounded headroom: ${JSON.stringify({ requestBytes, evidenceCount: JSON.parse(requestSeen?.user || '{}').evidenceCatalog?.length, preflight: result.preflight, status: result.status, reason: result.reason })}`
     );
@@ -12174,8 +12200,8 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
       overflowResult.status !== 'planned' ||
       overflowEnvelope.adaptiveCompactionAttempted !== true ||
       overflowEnvelope.adaptiveCompactionApplied !== true ||
-      overflowEnvelope.originalRequestBodyByteCount <= 36 * 1_024 ||
-      overflowEnvelope.requestBodyByteCount > 36 * 1_024 ||
+      overflowEnvelope.originalRequestBodyByteCount <= 44 * 1_024 ||
+      overflowEnvelope.requestBodyByteCount > 44 * 1_024 ||
       overflowEnvelope.profile === 'standard' ||
       !(overflowUser.objective?.evidenceRefs || []).every((ref) =>
         visibleOverflowRefs.has(ref)
@@ -12464,8 +12490,8 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   if (maxCardinalityCalls !== 1 ||
       maxCardinalityResult.status !== 'planned' ||
       maxEnvelope.profile !== 'essential' ||
-      maxEnvelope.originalRequestBodyByteCount <= 36 * 1_024 ||
-      maxEnvelope.requestBodyByteCount > 36 * 1_024 ||
+      maxEnvelope.originalRequestBodyByteCount <= 44 * 1_024 ||
+      maxEnvelope.requestBodyByteCount > 44 * 1_024 ||
       maxAttempts.length !== 4 ||
       maxAttempts.some((attempt) =>
         attempt.authoritativeEvidenceReservationValid !== true ||
@@ -13599,7 +13625,8 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     skills: [padAstral(rawJobMotion.skills[0], 80)],
     conversionDestination: rawJobMotion.conversionDestination,
     paidConversion: rawJobMotion.paidConversion,
-    attributionSignal: rawJobMotion.attributionSignal,
+    attributionSignal:
+      'Application source record stores the signed paid offer',
     contingentFinalists: jobBundle
   };
   const validate = new Ajv({ allErrors: true, strict: false }).compile(
@@ -13621,8 +13648,6 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     second.jobTitle,
     second.skills[0],
     first.contingentFinalists.pathBase.r[0].l,
-    first.contingentFinalists.pathBase.r[0].io,
-    first.contingentFinalists.pathBase.r[0].ats,
     first.contingentFinalists.pathBase.r[0].cd,
     first.contingentFinalists.pathBase.r[0].st,
     first.contingentFinalists.pathBase.r[0].sb,
@@ -14162,10 +14187,17 @@ function compactContingentFinalists(value) {
   });
   const compactRevenue = (revenueValue) => {
     const revenue = structuredClone(revenueValue);
+    const authoredMechanism = revenue.rm;
     delete revenue.v;
     delete revenue.a;
     delete revenue.c;
     delete revenue.o;
+    revenue.rm = {
+      seller: authoredMechanism === 'compensated_role'
+        ? 'paid_pilot'
+        : authoredMechanism,
+      compensatedJob: 'compensated_role'
+    };
     revenue.l = tokenFree(
       revenue.l,
       'Current attributable paid outcome'
@@ -14315,6 +14347,9 @@ function canonicalMaterializedPlannerPlans(values) {
       const originalRevenue = source.d.r[0];
       source.d.r[0] = {
         ...compactRevenue,
+        rm: motion.motionKind === 'compensated_job'
+          ? compactRevenue.rm.compensatedJob
+          : compactRevenue.rm.seller,
         v: originalRevenue.v,
         a: motion.acquisitionMode,
         c: source.d.a[0].l,
