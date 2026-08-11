@@ -5908,36 +5908,14 @@ async function verifyRevenueStopUnits(job, evidenceRef) {
 }
 
 async function verifyNaturalBookingAttribution(job, evidenceRef) {
-  const validSignals = [
+  const authoredSignals = [
     'Referral source recorded on the booking with the tournament action id.',
     'Campaign source field stored on the appointment record.',
-    'Referral origin recorded with the consultation.'
-  ];
-  for (const [index, attributionSignal] of validSignals.entries()) {
-    const motion = cases[0].plans(evidenceRef)[0];
-    motion.contingentFinalists = compactContingentFinalists(
-      motion.contingentFinalists
-    );
-    const revenue = motion.contingentFinalists.pathBase.r[0];
-    revenue.atm = 'booking_record';
-    motion.attributionSignal = attributionSignal;
-    const result = await plannerResultForMotion({
-      job,
-      motion,
-      generationId: `generation-natural-booking-attribution-${index + 1}`
-    });
-    if (result.status !== 'planned' || result.plans.length !== 2) {
-      throw new Error(
-        `natural booking attribution was rejected (${attributionSignal}): ${JSON.stringify(result)}`
-      );
-    }
-  }
-
-  const invalidSignals = [
+    'Referral origin recorded with the consultation.',
     'No attribution is recorded for the booking.',
     'The booking has an unknown source.'
   ];
-  for (const [index, attributionSignal] of invalidSignals.entries()) {
+  for (const [index, attributionSignal] of authoredSignals.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
     motion.contingentFinalists = compactContingentFinalists(
       motion.contingentFinalists
@@ -5948,16 +5926,30 @@ async function verifyNaturalBookingAttribution(job, evidenceRef) {
     const result = await plannerResultForMotion({
       job,
       motion,
-      generationId: `generation-invalid-booking-attribution-${index + 1}`
+      generationId: `generation-canonical-system-attribution-${index + 1}`
     });
     if (result.status !== 'planned' ||
-        !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
-          .includes('[attribution_signal]') ||
-        result.plans.length !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
+        result.plans.length !== 2 ||
+        result.planSelection?.rejectedPlanCount !== 0 ||
+        result.plans.some((plan) =>
+          plan.attributionSignal !==
+            (plan.motionKind === 'compensated_job'
+              ? 'The accepted role records the exact researched job posting'
+              : 'ProfileScribe source field records the tournament action') ||
+          [
+            plan.contingentFinalists?.familyA?.d?.r?.[0],
+            plan.contingentFinalists?.familyB?.d?.r?.[0]
+          ].some((path) =>
+            path?.atm !== 'crm_source' ||
+            path?.ats !==
+              (plan.motionKind === 'compensated_job'
+                ? 'The accepted role records the exact researched job posting'
+                : 'ProfileScribe source field records the tournament action')
+          )
+        ) ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
-        `incomplete booking attribution passed (${attributionSignal}): ${JSON.stringify(result)}`
+        `model-authored attribution escaped canonical system authority (${attributionSignal}): ${JSON.stringify(result)}`
       );
     }
   }
@@ -6917,6 +6909,8 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     motion.targetRoleSubrole = index === 0 ? 'executive' : 'partnerships';
     motion.paidOffer =
       'Proposed paid ProfileScribe professional profile service';
+    motion.attributionSignal =
+      'ProfileScribe source field records the tournament action';
     motion.evidenceRefs = [...new Set([
       ...motion.evidenceRefs,
       sellerRef
@@ -6934,6 +6928,9 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     for (const revenue of motion.contingentFinalists.pathBase.r) {
       revenue.rm.seller = 'paid_pilot';
       revenue.rm.compensatedJob = 'compensated_role';
+      revenue.atm = 'crm_source';
+      revenue.ats =
+        'ProfileScribe source field records the tournament action';
       revenue.g.o = [evidenceRef];
       revenue.g.d.e = [evidenceRef];
       revenue.g.c = [evidenceRef];
@@ -6945,7 +6942,10 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
   let schemaErrors = [];
   const provisionalResponseForRequest = (
     request,
-    { omitDuplicateCausalFields = false } = {}
+    {
+      omitDuplicateCausalFields = false,
+      reproduceUnsupportedAttribution = false
+    } = {}
   ) => {
     const planProperties = request.responseFormat.json_schema.schema
       .properties.plans.items.properties;
@@ -6974,6 +6974,15 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
         ])
       ))
     };
+    if (reproduceUnsupportedAttribution) {
+      for (const plan of response.plans) {
+        plan.attributionSignal = 'Ccampaign';
+        for (const revenue of plan.contingentFinalists.pathBase.r) {
+          revenue.atm = 'referral_code';
+          revenue.ats = 'Ccampaign';
+        }
+      }
+    }
     return response;
   };
   const result = await runOpportunityDiscoveryPlanner({
@@ -7049,7 +7058,8 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     completeJSON: async (request) => {
       recoveredPlannerCalls += 1;
       const response = provisionalResponseForRequest(request, {
-        omitDuplicateCausalFields: true
+        omitDuplicateCausalFields: true,
+        reproduceUnsupportedAttribution: true
       });
       return {
         data: response,
@@ -7072,7 +7082,16 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
       recoveredResult.plans.some((motion) =>
         !motion.conversionDestination ||
         !motion.paidConversion ||
-        !motion.attributionSignal
+        motion.attributionSignal !==
+          'ProfileScribe source field records the tournament action' ||
+        [
+          motion.contingentFinalists?.familyA?.d?.r?.[0],
+          motion.contingentFinalists?.familyB?.d?.r?.[0]
+        ].some((revenue) =>
+          revenue?.atm !== 'crm_source' ||
+          revenue?.ats !==
+            'ProfileScribe source field records the tournament action'
+        )
       )) {
     throw new Error(
       `nested causal fields did not recover the production planner contract: ${JSON.stringify(recoveredResult)}`
@@ -13186,6 +13205,14 @@ function verifyFreshPlannerStrictSchemaTotality({
   }
   const projectMotion = (motionValue) => {
     const motion = structuredClone(motionValue);
+    const contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    for (const revenue of contingentFinalists.pathBase.r) {
+      revenue.atm = 'crm_source';
+      revenue.ats =
+        'ProfileScribe source field records the tournament action';
+    }
     return {
       motionKind: motion.motionKind,
       paidOffer: {
@@ -13204,10 +13231,9 @@ function verifyFreshPlannerStrictSchemaTotality({
         : ['Verified professional skill'],
       conversionDestination: motion.conversionDestination,
       paidConversion: motion.paidConversion,
-      attributionSignal: motion.attributionSignal,
-      contingentFinalists: compactContingentFinalists(
-        motion.contingentFinalists
-      )
+      attributionSignal:
+        'ProfileScribe source field records the tournament action',
+      contingentFinalists
     };
   };
   const baseline = {
@@ -13361,7 +13387,6 @@ function verifyFreshPlannerStrictSchemaTotality({
     ['skills', ['plans', 0, 'skills', 0], 80],
     ['conversionDestination', ['plans', 0, 'conversionDestination'], 180],
     ['paidConversion', ['plans', 0, 'paidConversion'], 140],
-    ['attributionSignal', ['plans', 0, 'attributionSignal'], 180],
     ['revenue label', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'l'], 140],
     ['incremental outcome', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'io'], 180],
     ['attribution signal', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'ats'], 220],
@@ -13666,6 +13691,11 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   const jobBundle = compactContingentFinalists(
     rawJobMotion.contingentFinalists
   );
+  for (const revenue of jobBundle.pathBase.r) {
+    revenue.atm = 'crm_source';
+    revenue.ats =
+      'ProfileScribe source field records the tournament action';
+  }
   response.plans[1] = {
     motionKind: 'compensated_job',
     paidOffer: {
@@ -13681,7 +13711,7 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     conversionDestination: rawJobMotion.conversionDestination,
     paidConversion: rawJobMotion.paidConversion,
     attributionSignal:
-      'Application source record stores the signed paid offer',
+      'ProfileScribe source field records the tournament action',
     contingentFinalists: jobBundle
   };
   const validate = new Ajv({ allErrors: true, strict: false }).compile(
@@ -14370,6 +14400,14 @@ function compactFreshPlannerPlans(values) {
       freshPlan.contingentFinalists = compactContingentFinalists(
         freshPlan.contingentFinalists
       );
+    }
+    freshPlan.attributionSignal =
+      'ProfileScribe source field records the tournament action';
+    for (const revenue of
+      freshPlan.contingentFinalists?.pathBase?.r || []) {
+      revenue.atm = 'crm_source';
+      revenue.ats =
+        'ProfileScribe source field records the tournament action';
     }
     return freshPlan;
   });

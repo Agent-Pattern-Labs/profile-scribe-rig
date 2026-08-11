@@ -773,6 +773,9 @@ const DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION =
   'The profile owner accepts the researched compensated role';
 const DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL =
   'The accepted role records the exact researched job posting';
+const DISCOVERY_SELLER_ATTRIBUTION_METHOD = 'crm_source';
+const DISCOVERY_SELLER_ATTRIBUTION_SIGNAL =
+  'ProfileScribe source field records the tournament action';
 const DISCOVERY_PLAN_ACQUISITION_MECHANISMS = new Set([
   DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION,
   DISCOVERY_PAID_DEMAND_ACQUISITION
@@ -2447,7 +2450,10 @@ function opportunityDiscoveryPlannerResponseFormat(
   const revenueGroundingProperties = asObject(revenueGrounding.properties);
   const destinationGrounding = asObject(revenueGroundingProperties.d);
   const revenueMechanism = asObject(revenuePathProperties.rm);
-  const attributionMethod = asObject(revenuePathProperties.atm);
+  const attributionMethod = {
+    type: 'string',
+    enum: [DISCOVERY_SELLER_ATTRIBUTION_METHOD]
+  };
   const causalWitness = {
     type: 'object',
     properties: {
@@ -2817,7 +2823,10 @@ function opportunityDiscoveryPlannerResponseFormat(
                       type: 'string',
                       enum: [DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL]
                     }
-                  : attributionSignalTextSchema(180),
+                  : {
+                      type: 'string',
+                      enum: [DISCOVERY_SELLER_ATTRIBUTION_SIGNAL]
+                    },
                 contingentFinalists: {
                   type: 'object',
                   properties: {
@@ -3475,11 +3484,7 @@ function normalizeOpportunityDiscoveryPlan(
     const canonicalAttributionSignal = deriveFreshPlannerAuthority
       ? compensatedJob
         ? DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL
-        : firstFreshCausalText(
-            180,
-            routedPlan.attributionSignal,
-            compactRevenuePath.ats
-          )
+        : DISCOVERY_SELLER_ATTRIBUTION_SIGNAL
       : truncate(firstText(routedPlan.attributionSignal), 220);
     const planWithCanonicalAuthority = {
       ...planWithCanonicalEvidence,
@@ -4005,12 +4010,15 @@ function canonicalizeContingentRevenueStructure(value, planValue) {
             authoredMechanisms.seller,
             typeof revenue.rm === 'string' ? revenue.rm : ''
           ));
-      const attributionMethod = contractEnum(firstText(revenue.atm));
+      const attributionMethod = compensatedRole
+        ? contractEnum(firstText(revenue.atm))
+        : DISCOVERY_SELLER_ATTRIBUTION_METHOD;
       revenue.v = REVENUE_PATH_CONTRACT_VERSION;
       revenue.rm = mechanism;
       revenue.a = firstText(plan.acquisitionMode);
       revenue.c = CONTINGENT_CONVERSION_ACTION_PROJECTION;
       revenue.io = firstText(plan.paidConversion, revenue.io);
+      revenue.atm = attributionMethod;
       revenue.ats = firstText(plan.attributionSignal, revenue.ats);
       revenue.cd = firstText(plan.conversionDestination, revenue.cd);
       const grounding = asObject(revenue.g);
