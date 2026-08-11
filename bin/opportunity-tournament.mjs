@@ -5621,12 +5621,22 @@ function selectValidOpportunityDiscoveryPlans({
       commercialContext,
       marketEvidenceCatalog
     );
+    const rawCausalIssue = opportunityDiscoveryRawCausalWitnessIssue({
+      ...raw,
+      plans: [rawSafetyPlan]
+    });
+    const rawCausalDiagnostic = rawCausalIssue &&
+      /has no typed causal revenue witness\.$/.test(rawCausalIssue)
+      ? opportunityDiscoveryRevenueShapeDiagnostic(
+          candidate.rawPlan,
+          candidate.plan
+        )
+      : '';
     let issue = rawPrivateIssue
       ? `Discovery plan ${id} requests private-contact data [${rawPrivateIssue}]${rawPrivatePath ? ` at ${rawPrivatePath}` : ''}.`
-      : rawSensitiveIssue || opportunityDiscoveryRawCausalWitnessIssue({
-          ...raw,
-          plans: [rawSafetyPlan]
-        }) || (marketIssue
+      : rawSensitiveIssue || (rawCausalIssue
+          ? `${rawCausalIssue}${rawCausalDiagnostic ? ` ${rawCausalDiagnostic}` : ''}`
+          : '') || (marketIssue
           ? `Discovery plan ${id} ${marketIssue}`
           : '') || opportunityDiscoveryPlanIssue({
           ...envelope,
@@ -5695,6 +5705,33 @@ function selectValidOpportunityDiscoveryPlans({
       rejectedPlans
     }
   };
+}
+
+function opportunityDiscoveryRevenueShapeDiagnostic(
+  rawPlanValue,
+  normalizedPlanValue
+) {
+  const rawBundle = asObject(asObject(rawPlanValue).contingentFinalists);
+  const rawPathBase = asObject(rawBundle.pathBase);
+  const rawRevenueValue = rawPathBase.r;
+  const rawRevenueItems = Array.isArray(rawRevenueValue)
+    ? rawRevenueValue
+    : Object.keys(asObject(rawRevenueValue)).length > 0
+      ? [rawRevenueValue]
+      : [];
+  const rawRevenueKind = Array.isArray(rawRevenueValue)
+    ? 'array'
+    : rawRevenueValue && typeof rawRevenueValue === 'object'
+      ? 'object'
+      : typeof rawRevenueValue;
+  const firstRevenue = asObject(rawRevenueItems[0]);
+  const normalizedBundle = asObject(
+    asObject(normalizedPlanValue).contingentFinalists
+  );
+  const normalizedCounts = ['familyA', 'familyB'].map((familyKey) =>
+    asArray(asObject(asObject(normalizedBundle[familyKey]).d).r).length
+  );
+  return `[revenue_shape raw=${rawRevenueKind}:${rawRevenueItems.length} fields=${Object.keys(firstRevenue).sort().join('|') || 'none'} witness=${Object.keys(asObject(firstRevenue.k)).sort().join('|') || 'none'} normalized=${normalizedCounts.join('|')}]`;
 }
 
 function contingentTargetSlotIssue(planValue) {
