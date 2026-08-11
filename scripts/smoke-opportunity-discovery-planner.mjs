@@ -46,7 +46,7 @@ function productionCitation(url, title, content) {
   };
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 410_600;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 425_000;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
 const PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256 =
@@ -4238,20 +4238,20 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 192
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'meta-llama/llama-4-maverick',
+        model: 'google/gemini-3.5-flash-lite',
         models: [
-          'meta-llama/llama-4-maverick',
+          'google/gemini-3.5-flash-lite',
           'openai/gpt-4.1-mini',
-          'google/gemini-3.5-flash-lite'
+          'meta-llama/llama-4-maverick'
         ],
         modelRoutes: [
           {
-            id: 'meta-llama/llama-4-maverick',
-            family: 'meta',
+            id: 'google/gemini-3.5-flash-lite',
+            family: 'google',
             minimumContextTokens: 1_048_576,
             minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.35,
-            maximumCompletionPrice: 1,
+            maximumPromptPrice: 0.3,
+            maximumCompletionPrice: 2.5,
             requiredParameters: [
               'max_tokens',
               'response_format',
@@ -4272,12 +4272,12 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             ]
           },
           {
-            id: 'google/gemini-3.5-flash-lite',
-            family: 'google',
+            id: 'meta-llama/llama-4-maverick',
+            family: 'meta',
             minimumContextTokens: 1_048_576,
             minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.3,
-            maximumCompletionPrice: 2.5,
+            maximumPromptPrice: 0.35,
+            maximumCompletionPrice: 1,
             requiredParameters: [
               'max_tokens',
               'response_format',
@@ -4314,7 +4314,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         generator: {
           providerPriceCaps: {
             prompt: 0.4,
-            completion: 1.6,
+            completion: 2.5,
             request: 0
           },
           pluginIds: ['web', 'response-healing'],

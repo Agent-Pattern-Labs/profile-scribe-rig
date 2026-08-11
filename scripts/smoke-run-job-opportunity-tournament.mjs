@@ -225,8 +225,8 @@ const server = createServer(async (request, response) => {
       endpoints: {
         total: 2,
         available: [{
-          provider: 'DeepInfra',
-          model: 'meta-llama/llama-4-maverick',
+          provider: 'Google AI Studio',
+          model: 'google/gemini-3.5-flash-lite',
           selected: false
         }, {
           provider: 'OpenAI',
@@ -235,7 +235,7 @@ const server = createServer(async (request, response) => {
         }]
       },
       attempts: [
-        { provider: 'DeepInfra', status: 502 },
+        { provider: 'Google AI Studio', status: 502 },
         { provider: 'OpenAI', status: 200 }
       ]
     }
@@ -762,7 +762,7 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'meta-llama/llama-4-maverick',
+      'google/gemini-3.5-flash-lite',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1106,9 +1106,9 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.models),
     JSON.stringify([
-      'meta-llama/llama-4-maverick',
+      'google/gemini-3.5-flash-lite',
       'openai/gpt-4.1-mini',
-      'google/gemini-3.5-flash-lite'
+      'meta-llama/llama-4-maverick'
     ]),
     'generator lost the bounded model fallback order'
   );
@@ -1239,7 +1239,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'meta-llama/llama-4-maverick',
+          'google/gemini-3.5-flash-lite',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL
