@@ -157,10 +157,10 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'openai/gpt-5.6-luna';
+  'openai/gpt-5.6-luna-pro';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
-  'google/gemini-3.5-flash-lite',
-  'openai/gpt-4.1-mini'
+  'openai/gpt-5.6-luna',
+  'google/gemini-3.5-flash-lite'
 ]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
@@ -173,19 +173,19 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   }),
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
+    family: 'openai',
+    minimumContextTokens: 1_050_000,
+    minimumOutputTokens: 16_000,
+    maximumPromptPrice: 0.5,
+    maximumCompletionPrice: 3
+  }),
+  Object.freeze({
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
     family: 'google',
     minimumContextTokens: 1_048_576,
     minimumOutputTokens: 16_000,
     maximumPromptPrice: 0.3,
     maximumCompletionPrice: 2.5
-  }),
-  Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
-    family: 'openai',
-    minimumContextTokens: 1_047_576,
-    minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.4,
-    maximumCompletionPrice: 1.6
   })
 ]);
 if (1 + OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS.length > 3) {
@@ -5731,7 +5731,13 @@ function opportunityDiscoveryRevenueShapeDiagnostic(
   const normalizedCounts = ['familyA', 'familyB'].map((familyKey) =>
     asArray(asObject(asObject(normalizedBundle[familyKey]).d).r).length
   );
-  return `[revenue_shape raw=${rawRevenueKind}:${rawRevenueItems.length} fields=${Object.keys(firstRevenue).sort().join('|') || 'none'} witness=${Object.keys(asObject(firstRevenue.k)).sort().join('|') || 'none'} normalized=${normalizedCounts.join('|')}]`;
+  const rawFamilyCounts = ['familyA', 'familyB'].map((familyKey) => {
+    const revenue = asObject(asObject(rawBundle[familyKey]).d).r;
+    return Array.isArray(revenue)
+      ? revenue.length
+      : Object.keys(asObject(revenue)).length > 0 ? 1 : 0;
+  });
+  return `[revenue_shape bundle=${Object.keys(rawBundle).sort().join('|') || 'none'} path=${Object.keys(rawPathBase).sort().join('|') || 'none'} raw=${rawRevenueKind}:${rawRevenueItems.length} fields=${Object.keys(firstRevenue).sort().join('|') || 'none'} witness=${Object.keys(asObject(firstRevenue.k)).sort().join('|') || 'none'} families=${rawFamilyCounts.join('|')} normalized=${normalizedCounts.join('|')}]`;
 }
 
 function contingentTargetSlotIssue(planValue) {
@@ -7797,7 +7803,7 @@ export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(
         commercialDiscoveryEvidence
       }
     },
-    model: 'openai/gpt-5.6-luna',
+    model: 'openai/gpt-5.6-luna-pro',
     now: discoveredAt,
     completeJSON: async () => {
       criticCalls += 1;
