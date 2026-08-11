@@ -46,6 +46,17 @@ const server = createServer(async (request, response) => {
       }));
       return;
     }
+    if (scenario === 'provider_invalid_schema') {
+      response.writeHead(400, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({
+        error: {
+          code: 400,
+          message: 'Provider rejected the invalid JSON schema',
+          metadata: {}
+        }
+      }));
+      return;
+    }
     const body = scenario === 'no_body'
       ? ''
       : scenario === 'quality'
@@ -138,6 +149,12 @@ try {
   for (const test of [
     { name: 'no_body', status: 'skipped', usage: true },
     { name: 'provider_failure', status: 'skipped', usage: false, error: 'openrouter_http_500' },
+    {
+      name: 'provider_invalid_schema',
+      status: 'skipped',
+      usage: false,
+      error: 'openrouter_invalid_schema'
+    },
     { name: 'invalid_message', status: 'skipped', usage: true, error: 'openrouter_invalid_response' },
     { name: 'quality', status: 'skipped', usage: true },
     {

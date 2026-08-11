@@ -3365,9 +3365,12 @@ function openRouterProviderError(
       text(details.message) || 'unknown provider error'
     }`
   );
-  const errorType = text(
+  const reportedErrorType = text(
     detailsMetadata.error_type ?? details.error_type
   ).toLowerCase();
+  const errorType = /^[a-z][a-z0-9_]{0,63}$/.test(reportedErrorType)
+    ? reportedErrorType
+    : classifyOpenRouterProviderErrorMessage(details.message);
   const rawErrorCode = (
     typeof detailsMetadata.provider_code === 'number' ||
     typeof detailsMetadata.provider_code === 'string'
@@ -3407,6 +3410,37 @@ function openRouterProviderError(
     safeDiagnostics,
     generationId
   );
+}
+
+function classifyOpenRouterProviderErrorMessage(value) {
+  const message = text(value).toLowerCase();
+  if (!message) return '';
+  if (/json schema|invalid schema|schema (?:is |was )?(?:invalid|unsupported)|schema validation/.test(message)) {
+    return 'invalid_schema';
+  }
+  if (/response[_ -]?format|structured output/.test(message)) {
+    return 'structured_output_invalid';
+  }
+  if (/plugin|web search|tool(?:ing| call| use)?/.test(message)) {
+    return 'unsupported_tooling';
+  }
+  if (/context length|context window|too many (?:input |prompt )?tokens/.test(message)) {
+    return 'context_length_exceeded';
+  }
+  if (/string.{0,24}too long|field.{0,24}too long/.test(message)) {
+    return 'string_too_long';
+  }
+  if (/unsupported parameter|unknown parameter|invalid parameter|unexpected parameter/.test(message)) {
+    return 'invalid_parameter';
+  }
+  if (/content filter|content policy|moderation|safety/.test(message)) {
+    return 'content_policy_violation';
+  }
+  if (/refus(?:al|ed|e)/.test(message)) return 'refusal';
+  if (/bad request|invalid request|malformed request/.test(message)) {
+    return 'invalid_request';
+  }
+  return '';
 }
 
 function openRouterDiagnosticsIndicateTruncation(value) {
