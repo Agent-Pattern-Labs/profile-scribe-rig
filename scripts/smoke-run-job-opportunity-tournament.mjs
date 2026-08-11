@@ -762,7 +762,7 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'openai/gpt-5.6-luna',
+      'google/gemini-3-flash-preview',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1106,8 +1106,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.models),
     JSON.stringify([
-      'openai/gpt-5.6-luna',
       'google/gemini-3-flash-preview',
+      'openai/gpt-5.6-luna',
       'google/gemini-3.5-flash-lite'
     ]),
     'generator lost the bounded model fallback order'
@@ -1239,7 +1239,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'openai/gpt-5.6-luna',
+          'google/gemini-3-flash-preview',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

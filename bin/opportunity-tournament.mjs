@@ -157,27 +157,27 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'openai/gpt-5.6-luna';
+  'google/gemini-3-flash-preview';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
-  'google/gemini-3-flash-preview',
+  'openai/gpt-5.6-luna',
   'google/gemini-3.5-flash-lite'
 ]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'openai',
-    minimumContextTokens: 1_050_000,
-    minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.2,
-    maximumCompletionPrice: 1.2
-  }),
-  Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
     family: 'google',
     minimumContextTokens: 1_048_576,
     minimumOutputTokens: 16_000,
     maximumPromptPrice: 0.5,
     maximumCompletionPrice: 3
+  }),
+  Object.freeze({
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
+    family: 'openai',
+    minimumContextTokens: 1_050_000,
+    minimumOutputTokens: 16_000,
+    maximumPromptPrice: 0.2,
+    maximumCompletionPrice: 1.2
   }),
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
@@ -242,8 +242,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'google-vertex',
     'google-ai-studio'
   ],
-  // OpenRouter first tries the pinned Luna route, then two independently
-  // qualified Google endpoint families
+  // OpenRouter first tries the multi-endpoint Gemini Flash route, then the
+  // independently qualified Luna and Gemini Lite endpoint families
   // within this same authorized request.
   // Strict parameter, privacy, and price filters remain authoritative.
   allow_fallbacks: true,
