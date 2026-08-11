@@ -46,7 +46,7 @@ function productionCitation(url, title, content) {
   };
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 71_040;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 142_080;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
@@ -462,8 +462,7 @@ for (const scenario of cases) {
         requestSeen.responseFormat?.json_schema?.schema?.properties?.status
           ?.enum
       ) !== JSON.stringify(['planned']) ||
-      requestSeen.plugins?.[0]?.id !== 'response-healing' ||
-      requestSeen.plugins?.length !== 1 ||
+      requestSeen.plugins?.length !== 0 ||
       requestSeen.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       !requestSeen.system?.includes(
         'Obey outputContract and hardRules exactly'
@@ -4240,46 +4239,16 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 192
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
-        models: [
-          'google/gemini-3-flash-preview',
-          'openai/gpt-5.6-luna',
-          'google/gemini-3.5-flash-lite'
-        ],
+        model: 'openai/gpt-5.6-terra',
+        models: ['openai/gpt-5.6-terra'],
         modelRoutes: [
           {
-            id: 'google/gemini-3-flash-preview',
-            family: 'google',
-            minimumContextTokens: 1_048_576,
-            minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.5,
-            maximumCompletionPrice: 3,
-            requiredParameters: [
-              'max_tokens',
-              'response_format',
-              'structured_outputs'
-            ]
-          },
-          {
-            id: 'openai/gpt-5.6-luna',
+            id: 'openai/gpt-5.6-terra',
             family: 'openai',
             minimumContextTokens: 1_050_000,
             minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.2,
-            maximumCompletionPrice: 1.2,
-            requiredParameters: [
-              'max_tokens',
-              'response_format',
-              'structured_outputs'
-            ]
-          },
-          {
-            id: 'google/gemini-3.5-flash-lite',
-            family: 'google',
-            minimumContextTokens: 1_048_576,
-            minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.5,
-            maximumCompletionPrice: 3,
+            maximumPromptPrice: 1,
+            maximumCompletionPrice: 6,
             requiredParameters: [
               'max_tokens',
               'response_format',
@@ -4315,11 +4284,11 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         framingTokenReserve: 1_024,
         generator: {
           providerPriceCaps: {
-            prompt: 0.5,
-            completion: 3,
+            prompt: 1,
+            completion: 6,
             request: 0
           },
-          pluginIds: ['response-healing'],
+          pluginIds: [],
           requestMaxBytes: 44 * 1_024,
           promptTokenCeiling: DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING,
           outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
@@ -6509,8 +6478,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       !prompt.evidenceCatalog?.some((item) =>
         item.id === sellerFocusEvidence.id
       ) ||
-      requestSeen?.plugins?.[0]?.id !== 'response-healing' ||
-      requestSeen?.plugins?.length !== 1 ||
+      requestSeen?.plugins?.length !== 0 ||
       result.preflight?.fixedToolFeeMicros !== 0 ||
       !prompt.hardRules?.some((rule) =>
         /Audience\/directory\/category pages can inform buyer context but cannot redefine the seller/i.test(

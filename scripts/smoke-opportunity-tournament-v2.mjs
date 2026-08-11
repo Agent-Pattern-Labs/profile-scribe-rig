@@ -2661,11 +2661,7 @@ async function verifyLengthFinishedStructuredRepair() {
       requests[1]?.maxTokens !== 4000 ||
       requests.some((request) =>
         request.model !== 'test/v2' ||
-        JSON.stringify(request.models) !== JSON.stringify([
-          'test/v2',
-          'openai/gpt-5.6-luna',
-          'google/gemini-3.5-flash-lite'
-        ]) ||
+        JSON.stringify(request.models) !== JSON.stringify(['test/v2']) ||
         request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !==
           '["deepinfra","openai","parasail","google-vertex","google-ai-studio"]' ||
