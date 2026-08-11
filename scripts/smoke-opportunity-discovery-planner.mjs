@@ -45,8 +45,8 @@ function productionCitation(url, title, content) {
     contentHash
   };
 }
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 8_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 397_800;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 410_600;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
 const PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256 =
@@ -4248,7 +4248,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'meta-llama/llama-4-maverick',
             family: 'meta',
             minimumContextTokens: 1_048_576,
-            minimumOutputTokens: 8_000,
+            minimumOutputTokens: 16_000,
             maximumPromptPrice: 0.35,
             maximumCompletionPrice: 1,
             requiredParameters: [
@@ -4261,7 +4261,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'openai/gpt-4.1-mini',
             family: 'openai',
             minimumContextTokens: 1_047_576,
-            minimumOutputTokens: 8_000,
+            minimumOutputTokens: 16_000,
             maximumPromptPrice: 0.4,
             maximumCompletionPrice: 1.6,
             requiredParameters: [
@@ -4274,7 +4274,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'google/gemini-3.5-flash-lite',
             family: 'google',
             minimumContextTokens: 1_048_576,
-            minimumOutputTokens: 8_000,
+            minimumOutputTokens: 16_000,
             maximumPromptPrice: 0.3,
             maximumCompletionPrice: 2.5,
             requiredParameters: [
@@ -6284,7 +6284,7 @@ async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
 }
 
 async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
-  const liveTruncatedCompletionTokens = 8_000;
+  const liveTruncatedCompletionTokens = 16_000;
   let calls = 0;
   let requestSeen;
   const result = await runOpportunityDiscoveryPlanner({
@@ -6303,7 +6303,7 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
       error.openRouterUsage = {
         prompt_tokens: 9_700,
         completion_tokens: liveTruncatedCompletionTokens,
-        total_tokens: 17_700,
+        total_tokens: 25_700,
         cost: 0.02168
       };
       error.openRouterDiagnostics = {

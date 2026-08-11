@@ -130,7 +130,7 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
     family: 'meta',
     minimumContextTokens: 1_048_576,
-    minimumOutputTokens: 8_000,
+    minimumOutputTokens: 16_000,
     maximumPromptPrice: 0.35,
     maximumCompletionPrice: 1
   }),
@@ -138,7 +138,7 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
     family: 'openai',
     minimumContextTokens: 1_047_576,
-    minimumOutputTokens: 8_000,
+    minimumOutputTokens: 16_000,
     maximumPromptPrice: 0.4,
     maximumCompletionPrice: 1.6
   }),
@@ -146,7 +146,7 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
     family: 'google',
     minimumContextTokens: 1_048_576,
-    minimumOutputTokens: 8_000,
+    minimumOutputTokens: 16_000,
     maximumPromptPrice: 0.3,
     maximumCompletionPrice: 2.5
   })
@@ -498,12 +498,15 @@ const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
 // The provider may pretty-print strict structured output. Keep enough token
 // headroom for that transport representation while the independently parsed,
-// minified plan remains capped by MAX_DISCOVERY_PLANNER_RESPONSE_BYTES. A
-// production two-motion trace exhausted 9,000 tokens at 45,055 raw bytes; the
-// parsed cap below now also dominates the strict grammar's computed worst-case
+// minified plan remains capped by MAX_DISCOVERY_PLANNER_RESPONSE_BYTES.
+// Production two-motion traces exhausted 8,000 and 9,000 tokens before
+// completing otherwise-valid strict JSON. The 16,000-token transport ceiling
+// remains subordinate to the parsed byte cap and the independently computed
+// spend ceiling; length termination still fails closed without response repair.
+// The parsed cap below also dominates the strict grammar's computed worst-case
 // Unicode/evidence envelope instead of relying on representative samples.
-const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 8_000;
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 397_800;
+const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 410_600;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
