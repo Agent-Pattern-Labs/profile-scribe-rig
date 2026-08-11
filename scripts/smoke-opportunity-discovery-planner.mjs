@@ -66,6 +66,60 @@ function verifyBoundedLocalJSONRepair() {
   })) {
     throw new Error(`bounded local JSON repair changed valid data: ${JSON.stringify(repaired)}`);
   }
+  const singletonArrayRepaired = repairAndValidateOpenRouterJSONMessage(
+    '[{"plans":["buyer","referral"],"status":"planned",}]',
+    responseFormat
+  );
+  if (JSON.stringify(singletonArrayRepaired) !== JSON.stringify(repaired)) {
+    throw new Error(
+      `singleton object array was not safely unwrapped: ${JSON.stringify(singletonArrayRepaired)}`
+    );
+  }
+  const planPairResponseFormat = {
+    type: 'json_schema',
+    json_schema: {
+      name: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+      strict: true,
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['contractVersion', 'status', 'reason', 'plans'],
+        properties: {
+          contractVersion: {
+            type: 'string',
+            enum: [OPPORTUNITY_DISCOVERY_PLAN_CONTRACT]
+          },
+          status: { type: 'string', enum: ['planned'] },
+          reason: { type: 'string', enum: [''] },
+          plans: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 2,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['label'],
+              properties: { label: { type: 'string', minLength: 1 } }
+            }
+          }
+        }
+      }
+    }
+  };
+  const projectedPlanPair = repairAndValidateOpenRouterJSONMessage(
+    '{"label":"buyer"}\n{"label":"referral"}',
+    planPairResponseFormat
+  );
+  if (projectedPlanPair.contractVersion !==
+        OPPORTUNITY_DISCOVERY_PLAN_CONTRACT ||
+      projectedPlanPair.status !== 'planned' ||
+      projectedPlanPair.reason !== '' ||
+      JSON.stringify(projectedPlanPair.plans) !==
+        JSON.stringify([{ label: 'buyer' }, { label: 'referral' }])) {
+    throw new Error(
+      `exact two-plan root projection drifted: ${JSON.stringify(projectedPlanPair)}`
+    );
+  }
   for (const [label, raw] of [
     ['schema-invalid', '{"plans":["buyer"],"status":"planned",}'],
     ['oversized', `{"plans":["${'x'.repeat(196_609)}","referral"],"status":"planned",}`]

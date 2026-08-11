@@ -1465,7 +1465,12 @@ export function repairAndValidateOpenRouterJSONMessage(
     throw new Error('OpenRouter JSON message is outside the repair envelope');
   }
   const repaired = jsonrepair(extracted);
-  const data = JSON.parse(repaired);
+  let data = JSON.parse(repaired);
+  if (Array.isArray(data) && data.length === 1 &&
+      data[0] && typeof data[0] === 'object' &&
+      !Array.isArray(data[0])) {
+    data = data[0];
+  }
   const schema = asObject(asObject(responseFormat).json_schema).schema;
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
     throw new Error('OpenRouter JSON repair requires an exact local schema');
@@ -1477,6 +1482,19 @@ export function repairAndValidateOpenRouterJSONMessage(
   if (!validate) {
     validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
     localStructuredOutputValidators.set(schemaHash, validate);
+  }
+  if (Array.isArray(data) && data.length === MAX_DISCOVERY_PLANNER_PLANS &&
+      data.every((item) => item && typeof item === 'object' &&
+        !Array.isArray(item)) &&
+      firstText(asObject(responseFormat).json_schema?.name) ===
+        OPPORTUNITY_DISCOVERY_PLAN_CONTRACT) {
+    const projectedRoot = {
+      contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+      status: 'planned',
+      reason: '',
+      plans: data
+    };
+    if (validate(projectedRoot)) data = projectedRoot;
   }
   if (!validate(data)) {
     const error = new Error(
@@ -1495,6 +1513,10 @@ export function repairAndValidateOpenRouterJSONMessage(
           ? { missingProperty: String(issue.params.missingProperty) }
           : {})
       }));
+    error.localJSONRepairRootShape = {
+      kind: data === null ? 'null' : Array.isArray(data) ? 'array' : typeof data,
+      ...(Array.isArray(data) ? { arrayLength: data.length } : {})
+    };
     throw error;
   }
   return data;
@@ -24268,6 +24290,10 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       normalizeLocalJSONRepairSchemaIssues(
         diagnostics.localJSONRepairSchemaIssues
       ),
+    localJSONRepairRootShape:
+      normalizeLocalJSONRepairRootShape(
+        diagnostics.localJSONRepairRootShape
+      ),
     providerErrorType: /^[a-z][a-z0-9_]{0,63}$/.test(
       providerErrorType
     )
@@ -24338,6 +24364,21 @@ function normalizeLocalJSONRepairSchemaIssues(value) {
     });
   }).filter(Boolean);
   return issues.length > 0 ? issues : undefined;
+}
+
+function normalizeLocalJSONRepairRootShape(value) {
+  const shape = asObject(value);
+  const kind = firstText(shape.kind);
+  if (!['array', 'object', 'string', 'number', 'boolean', 'null'].includes(
+    kind
+  )) return undefined;
+  const arrayLength = nonNegativeInteger(shape.arrayLength);
+  return compact({
+    kind,
+    arrayLength: kind === 'array' && arrayLength <= 64
+      ? arrayLength
+      : undefined
+  });
 }
 
 function aggregateUsage(entries, budget) {
