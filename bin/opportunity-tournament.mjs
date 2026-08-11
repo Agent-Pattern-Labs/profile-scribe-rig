@@ -7337,8 +7337,43 @@ const SCORE_ALIASES = {
  * judging, diversity selection, and winner explanation deterministically.
  */
 export async function runOpportunityTournament(args) {
-  const rawResult = await runOpportunityTournamentCore(args);
+  const rawResult = causeMatchCommercialCriticProviderRecovery(
+    await runOpportunityTournamentCore(args)
+  );
   return finalizeOpportunityTournamentResult(rawResult, args);
+}
+
+// A failed critic receipt is execution evidence, not a response-shape
+// judgment. Keep this final boundary defense even though runCommercialCritic
+// already emits the matching cause: future refactors must not allow a generic
+// shape fallback to overwrite a provider failure after paid discovery.
+function causeMatchCommercialCriticProviderRecovery(rawValue) {
+  const raw = asObject(rawValue);
+  const search = asObject(raw.searchSpace);
+  const critic = asObject(search.commercialCritic);
+  const receipt = asObject(asObject(raw.llm).commercialCritic);
+  const usage = asObject(raw.usage);
+  const calls = nonNegativeInteger(usage.calls) || 0;
+  const successfulCalls = nonNegativeInteger(usage.successfulCalls) || 0;
+  if (firstText(raw.status) !== 'skipped' ||
+      firstText(asObject(raw.gate).decision) !==
+        'commercial_critic_failed' ||
+      critic.enforced !== true ||
+      critic.attempted !== true ||
+      critic.valid === true ||
+      firstText(critic.cause) !== 'critic_provider_failure' ||
+      firstText(receipt.status) !== 'failed' ||
+      calls < 1 || successfulCalls >= calls) {
+    return raw;
+  }
+  const recovery = strategyGenerationRecoveryExperiment({
+    objective: raw.objective,
+    evidenceHash: firstText(raw.evidenceHash),
+    missingEvidence: ['commercial_critic_provider_recovery']
+  });
+  return recovery
+    ? { ...raw, nextExperiment: recovery }
+    : raw;
 }
 
 export async function validateOpportunityCommercialDiscoveryNoTargetEnvelope(

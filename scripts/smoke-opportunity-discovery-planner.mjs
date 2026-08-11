@@ -7160,6 +7160,72 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
       `provisional offer did not become a safe validation experiment: ${JSON.stringify({ criticCalls, experiment, downstream })}`
     );
   }
+
+  let failedCriticCalls = 0;
+  const failedCritic = await runOpportunityTournament({
+    job: {
+      id: 'job-provisional-offer-critic-provider-failure',
+      kind: 'opportunity_tournament',
+      payload: {
+        ...job.payload,
+        algorithmVersion: 'cheap_tournament_v6',
+        budget: {
+          currency: 'USD',
+          maxSpendMicros: 1_000_000,
+          maxLLMSpendMicros: 160_000,
+          maxLLMCalls: 1,
+          maxOutputTokens: 1_200,
+          maxHypotheses: 10_000,
+          maxFinalists: 8,
+          hardStop: true
+        },
+        commercialDiscoveryEvidence
+      }
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      failedCriticCalls += 1;
+      if (request.responseFormat?.json_schema?.name !==
+          'opportunity_tournament_critic_v1') {
+        throw new Error('provider-failure fixture dispatched a non-critic call');
+      }
+      const error = new Error('OpenRouter HTTP 503');
+      error.openRouterFailureCode = 'openrouter_http_503';
+      error.openRouterDiagnostics = {
+        httpStatus: 503,
+        providerErrorCode: 'upstream_unavailable',
+        providerErrorType: 'upstream_error'
+      };
+      throw error;
+    }
+  });
+  const failedRecovery = failedCritic.nextExperiment || {};
+  const failedReceipt = failedCritic.llm?.commercialCritic || {};
+  if (failedCriticCalls !== 1 ||
+      failedCritic.status !== 'skipped' ||
+      failedCritic.gate?.decision !== 'commercial_critic_failed' ||
+      failedCritic.searchSpace?.commercialCritic?.cause !==
+        'critic_provider_failure' ||
+      failedCritic.searchSpace?.commercialCritic?.attempted !== true ||
+      failedCritic.usage?.calls !== 1 ||
+      failedCritic.usage?.successfulCalls !== 0 ||
+      failedRecovery.kind !==
+        'strategy_generation_critic_provider_recovery' ||
+      JSON.stringify(failedRecovery.missingEvidence) !==
+        JSON.stringify(['commercial_critic_provider_recovery']) ||
+      failedReceipt.status !== 'failed' ||
+      failedReceipt.error !== 'openrouter_http_503' ||
+      failedReceipt.responseDiagnostics?.httpStatus !== 503 ||
+      failedCritic.result?.resultType !== 'technical_recovery' ||
+      failedCritic.result?.executionAuthorization !== 'none' ||
+      failedCritic.gate?.sideEffects?.outreachAttempts !== 0 ||
+      failedCritic.gate?.sideEffects?.publishAttempts !== 0 ||
+      failedCritic.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `critic provider failure was not cause-matched safely: ${JSON.stringify({ failedCriticCalls, failedRecovery, failedReceipt, failedCritic })}`
+    );
+  }
 }
 
 async function verifySemanticDriftFailsClosed(job, evidenceRef) {
