@@ -133,11 +133,11 @@ const server = createServer(async (request, response) => {
           total: 2,
           available: [{
             provider: 'OpenAI',
-            model: 'openai/gpt-5.6-terra',
+            model: 'openai/gpt-5.6-terra-pro',
             selected: false
           }, {
             provider: 'Azure',
-            model: 'openai/gpt-5.6-terra',
+            model: 'openai/gpt-5.6-terra-pro',
             selected: false
           }]
         },
@@ -154,7 +154,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({
       id: 'gen-run-job-embedded-502',
-      model: 'openai/gpt-5.6-terra',
+      model: 'openai/gpt-5.6-terra-pro',
       error: {
         code: 502,
         message: 'raw-embedded-provider-secret-sentinel',
@@ -176,7 +176,7 @@ const server = createServer(async (request, response) => {
           total: 3,
           available: [{
             provider: 'OpenAI',
-            model: 'openai/gpt-5.6-terra',
+            model: 'openai/gpt-5.6-terra-pro',
             selected: true
           }]
         },
@@ -212,7 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
-    model: 'openai/gpt-5.6-terra',
+    model: 'openai/gpt-5.6-terra-pro',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -226,7 +226,7 @@ const server = createServer(async (request, response) => {
         total: 1,
         available: [{
           provider: 'OpenAI',
-          model: 'openai/gpt-5.6-terra',
+          model: 'openai/gpt-5.6-terra-pro',
           selected: true
         }]
       },
@@ -747,17 +747,17 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-terra-pro',
       'successful call lost its selected model'
     );
     assertEqual(
       providerReceipt?.model,
-      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-terra-pro',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-terra-pro',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1100,7 +1100,7 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(call.envelope.model, undefined, 'generator must use the ordered OpenRouter models contract');
   assertEqual(
     JSON.stringify(call.envelope.models),
-    JSON.stringify(['openai/gpt-5.6-terra']),
+    JSON.stringify(['openai/gpt-5.6-terra-pro']),
     'generator lost the bounded model fallback order'
   );
   assertEqual(
@@ -1230,7 +1230,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'openai/gpt-5.6-terra',
+          'openai/gpt-5.6-terra-pro',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

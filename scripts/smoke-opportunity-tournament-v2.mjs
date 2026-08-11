@@ -2669,8 +2669,8 @@ async function verifyLengthFinishedStructuredRepair() {
           '["deepinfra","openai","parasail","google-vertex","google-ai-studio"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
-        request.provider?.max_price?.prompt !== 0.4 ||
-        request.provider?.max_price?.completion !== 1.6
+        request.provider?.max_price?.prompt !== 2.5 ||
+        request.provider?.max_price?.completion !== 15
       ) ||
       repairSchema?.properties?.familyA?.$ref !== '#/$defs/family' ||
       repairSchema?.properties?.familyB?.$ref !== '#/$defs/family' ||
@@ -2857,7 +2857,7 @@ async function verifyProviderSpendBudgetRecovery() {
         // Authorizes the initial current-route call, but not a repair once the
         // full conservative first-call ceiling is reserved for invalid cost
         // accounting (the request-fee ceiling remains zero).
-        maxLLMSpendMicros: 30_000
+        maxLLMSpendMicros: 200_000
       },
       onRequest: () => {
         unreportedCalls += 1;
