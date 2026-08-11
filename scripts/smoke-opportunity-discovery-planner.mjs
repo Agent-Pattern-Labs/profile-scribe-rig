@@ -350,7 +350,7 @@ for (const scenario of cases) {
   let requestSeen = null;
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -1091,7 +1091,7 @@ async function runPlannerResponseEnvelopeCase(byteCount) {
   );
   return runOpportunityDiscoveryPlanner({
     job: envelopeJob,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: response,
@@ -1150,7 +1150,7 @@ if (overflowResponse.status !== 'blocked' ||
 
 const zeroMotionEscape = await runOpportunityDiscoveryPlanner({
   job: envelopeJob,
-  model: 'openai/gpt-5.6-luna-pro',
+  model: 'openai/gpt-5.6-terra',
   now,
   completeJSON: async () => ({
     data: {
@@ -1195,7 +1195,7 @@ unsafeCompanionPlan.contingentFinalists = compactContingentFinalists(
 );
 const unsafeResult = await runOpportunityDiscoveryPlanner({
   job: unsafeJob,
-  model: 'openai/gpt-5.6-luna-pro',
+  model: 'openai/gpt-5.6-terra',
   now,
   completeJSON: async (request) => {
     const exactMarket =
@@ -1305,7 +1305,7 @@ async function verifyApprovedObservationPreflight() {
   let calls = 0;
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       calls += 1;
@@ -1357,7 +1357,7 @@ async function verifyMaximumFamilyEvidenceContainment() {
   let visibleObservationRefsSeen = [];
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -1454,7 +1454,7 @@ async function verifyTypedCommercialMotionSelection(
   const run = async ({ job, plans, generationId, inspectRequest }) =>
     runOpportunityDiscoveryPlanner({
       job: structuredClone(job),
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
@@ -1834,7 +1834,7 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
   const run = async (marketJob, plans, generationId, inspectRequest) =>
     runOpportunityDiscoveryPlanner({
       job: structuredClone(marketJob),
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
@@ -2588,7 +2588,7 @@ async function verifyOmittedChildEvidenceCanonicalization(
       : cases[0].plans(primaryEvidenceRef)[0];
     const result = await runOpportunityDiscoveryPlanner({
       job,
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async (request) => {
         const visibleRefs = new Set(
@@ -2644,7 +2644,7 @@ async function verifyOmittedChildEvidenceCanonicalization(
     }
     const result = await runOpportunityDiscoveryPlanner({
       job,
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => completionFor(
         candidate,
@@ -2759,7 +2759,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     );
     const result = await runOpportunityDiscoveryPlanner({
       job: structuredClone(baseJob),
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => completionFor(
         candidate,
@@ -2827,7 +2827,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     .pathBase.r[0].g.o.push(targetRef);
   const mixedPaidOfferResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => completionFor(
       mixedPaidOfferContamination,
@@ -2886,7 +2886,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   }
   const mixedFollowUpResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => completionFor(
       mixedFollowUpContamination,
@@ -2941,7 +2941,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       assertedState;
     const assertedFollowUpResult = await runOpportunityDiscoveryPlanner({
       job: structuredClone(baseJob),
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => completionFor(
         assertedFollowUpState,
@@ -2975,7 +2975,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     'If no reply after 5 days, one review-first follow-up';
   const neutralFollowUpResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => completionFor(
       neutralFollowUp,
@@ -3029,7 +3029,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     );
     const result = await runOpportunityDiscoveryPlanner({
       job: structuredClone(baseJob),
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => completionFor(
         candidate,
@@ -3073,7 +3073,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       container[dimension][0].e = [targetRef];
       const result = await runOpportunityDiscoveryPlanner({
         job: structuredClone(baseJob),
-        model: 'openai/gpt-5.6-luna-pro',
+        model: 'openai/gpt-5.6-terra',
         now,
         completeJSON: async () => completionFor(
           candidate,
@@ -3104,7 +3104,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   );
   const missingObservationResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => completionFor(
       missingObservation,
@@ -3136,7 +3136,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   );
   const forgedResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => completionFor(
       forged,
@@ -3190,7 +3190,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
   ) =>
     runOpportunityDiscoveryPlanner({
       job,
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => ({
         data: {
@@ -3434,7 +3434,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
   };
   const allowedNumericEvidenceRef = await runOpportunityDiscoveryPlanner({
     job: numericEvidenceJob,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -4246,15 +4246,15 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 192
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'openai/gpt-5.6-luna-pro',
+        model: 'openai/gpt-5.6-terra',
         models: [
+          'openai/gpt-5.6-terra',
           'openai/gpt-5.6-luna-pro',
-          'openai/gpt-5.6-luna',
           'google/gemini-3.5-flash-lite'
         ],
         modelRoutes: [
           {
-            id: 'openai/gpt-5.6-luna-pro',
+            id: 'openai/gpt-5.6-terra',
             family: 'openai',
             minimumContextTokens: 1_050_000,
             minimumOutputTokens: 16_000,
@@ -4267,7 +4267,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             ]
           },
           {
-            id: 'openai/gpt-5.6-luna',
+            id: 'openai/gpt-5.6-luna-pro',
             family: 'openai',
             minimumContextTokens: 1_050_000,
             minimumOutputTokens: 16_000,
@@ -4420,7 +4420,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
   const run = async (motion, generationId, inspectRequest) =>
     runOpportunityDiscoveryPlanner({
       job: structuredClone(job),
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
@@ -4732,7 +4732,7 @@ async function verifyLegacyDiscoveryRoleAndAdapterInvariants(
   const run = async (motion, generationId) =>
     runOpportunityDiscoveryPlanner({
       job: structuredClone(job),
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => ({
         data: {
@@ -5365,7 +5365,7 @@ async function verifyLegacyDiscoveryRoleAndAdapterInvariants(
 async function verifyOneMotionUsesTwoTacticFallback(job, evidenceRef) {
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -5417,7 +5417,7 @@ async function verifySingleOperationalVariantCanBePruned(
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to configure scheduling.';
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -5480,7 +5480,7 @@ async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
   }
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -6116,7 +6116,7 @@ async function plannerResultForMotion({ job, motion, generationId }) {
   );
   return runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -6219,7 +6219,7 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
   }
   const projected = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -6277,7 +6277,7 @@ async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
   firstThree[2].priority = 3;
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -6314,7 +6314,7 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
   let requestSeen;
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       calls += 1;
@@ -6484,7 +6484,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   motions[0].paidOffer = 'Paid newborn lactation home visit';
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -6554,7 +6554,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   let projectedRequest;
   const projectedProfileResult = await runOpportunityDiscoveryPlanner({
     job: projectedProfileJob,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       projectedRequest = request;
@@ -6628,7 +6628,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   let lateSellerRequest;
   const lateSellerResult = await runOpportunityDiscoveryPlanner({
     job: lateSellerFocusJob,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       lateSellerRequest = request;
@@ -6707,7 +6707,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   let colonSellerRequest;
   const colonSellerResult = await runOpportunityDiscoveryPlanner({
     job: colonSellerJob,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       colonSellerRequest = request;
@@ -6764,7 +6764,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   const mismatchedWorkerContractResult =
     await runOpportunityDiscoveryPlanner({
       job: mismatchedWorkerContractJob,
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => {
         mismatchedWorkerProviderCalls += 1;
@@ -6794,7 +6794,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   );
   const mismatchedSellerResult = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -6841,7 +6841,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   });
   const targetTokenResult = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -7019,7 +7019,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
   };
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -7085,7 +7085,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
   let recoveredPlannerCalls = 0;
   const recoveredResult = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       recoveredPlannerCalls += 1;
@@ -7240,7 +7240,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
         commercialDiscoveryEvidence
       }
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       criticCalls += 1;
@@ -7314,7 +7314,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
         commercialDiscoveryEvidence
       }
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       failedCriticCalls += 1;
@@ -7705,7 +7705,7 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
     }
     const result = await runOpportunityDiscoveryPlanner({
       job,
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => ({
         data: {
@@ -7826,7 +7826,7 @@ async function verifyPrivateContactBearingURLsFailClosed() {
   const runPlanner = (annotations, generationId) =>
     runOpportunityDiscoveryPlanner({
       job: planner,
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => ({
         data: {
@@ -8074,7 +8074,7 @@ async function verifyPrivateContactBearingURLsFailClosed() {
           commercialDiscoveryEvidence: bindingValue
         }
       },
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => {
         criticCalls += 1;
@@ -8217,7 +8217,7 @@ async function verifyTwoStageTargetBinding() {
     );
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -8500,7 +8500,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: downstreamPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       requests.push(request);
@@ -9041,7 +9041,7 @@ async function verifyTwoStageTargetBinding() {
         kind: 'opportunity_tournament',
         payload: variantPayload
       },
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async (request) => {
         try {
@@ -9290,7 +9290,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: overlimitAstralPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       overlimitAstralCalls += 1;
@@ -9395,7 +9395,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: fullwidthOwnerPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       fullwidthOwnerCalls += 1;
@@ -9425,7 +9425,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: identityBoundaryPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       identityBoundaryCalls += 1;
@@ -9465,7 +9465,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: privateEmailRoutePayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       privateEmailRouteCalls += 1;
@@ -9505,7 +9505,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: invalidStructuralEmailPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       invalidStructuralEmailCalls += 1;
@@ -9538,7 +9538,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: unmarkedFoundPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       unmarkedFoundCriticCalls += 1;
@@ -9574,7 +9574,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: prunedVariantPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       prunedVariantRequests.push(request);
@@ -9644,7 +9644,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: repeatedOptionalPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       repeatedOptionalRequests.push(request);
@@ -9696,7 +9696,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: collapsedFallbackPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       collapsedFallbackCriticCalls += 1;
@@ -9730,7 +9730,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: conflictingModePayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       conflictingModeCalls += 1;
@@ -9853,7 +9853,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: multiMotionPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       multiMotionRequests.push(request);
@@ -9967,7 +9967,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: bindingFailurePayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       bindingFailureCalls += 1;
@@ -9992,7 +9992,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: organizationSlotMismatchPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       organizationSlotMismatchCalls += 1;
@@ -10016,7 +10016,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: crossMotionPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       crossMotionCalls += 1;
@@ -10062,7 +10062,7 @@ async function verifyTwoStageTargetBinding() {
         kind: 'opportunity_tournament',
         payload
       },
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => {
         calls += 1;
@@ -10231,7 +10231,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: noTargetPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       noTargetCalls += 1;
@@ -10488,7 +10488,7 @@ async function verifyTwoStageTargetBinding() {
         commercialDiscoveryEvidence: foldedCitationEvidence
       }
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       foldedCitationCalls += 1;
@@ -10598,7 +10598,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: incompleteFamiliesPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       incompleteFamilyCalls += 1;
@@ -10630,7 +10630,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: referralRouteMismatchPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       referralRouteMismatchCalls += 1;
@@ -10708,7 +10708,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
   );
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -10879,7 +10879,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       kind: 'opportunity_tournament',
       payload: downstreamPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       requests.push(request);
@@ -11024,7 +11024,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       kind: 'opportunity_tournament',
       payload: publicMessagePayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       publicMessageCalls += 1;
@@ -11071,7 +11071,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       kind: 'opportunity_tournament',
       payload: incompletePayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       incompleteCalls += 1;
@@ -11208,7 +11208,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
         kind: 'opportunity_tournament',
         payload
       },
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async () => {
         calls += 1;
@@ -11331,7 +11331,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
         kind: 'opportunity_tournament',
         payload
       },
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async (request) => {
         calls += 1;
@@ -11375,7 +11375,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       kind: 'opportunity_tournament',
       payload: paidProposalPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       paidProposalCalls += 1;
@@ -11465,7 +11465,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
     'https://jobs.acme.example/software-engineer';
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => ({
       data: {
@@ -11673,7 +11673,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       kind: 'opportunity_tournament',
       payload: unverifiedLiveDemandPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       unverifiedLiveDemandCalls += 1;
@@ -11695,7 +11695,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       kind: 'opportunity_tournament',
       payload: downstreamPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       requests.push(request);
@@ -11868,7 +11868,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       kind: 'opportunity_tournament',
       payload: rogueCallerPayload
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       rogueCallerCriticCalls += 1;
@@ -11932,7 +11932,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
         kind: 'opportunity_tournament',
         payload: variantPayload
       },
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       now,
       completeJSON: async (request) => {
         criticCalls += 1;
@@ -12109,7 +12109,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       kind: 'opportunity_tournament',
       payload: structuredClone(downstreamPayload)
     },
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       oneAcceptedCriticCalls += 1;
@@ -12204,7 +12204,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   let requestSeen;
   const result = await runOpportunityDiscoveryPlanner({
     job: productionJob,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -12266,7 +12266,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   let overflowCalls = 0;
   const overflowResult = await runOpportunityDiscoveryPlanner({
     job: overflowJob,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       overflowCalls += 1;
@@ -12528,7 +12528,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   let maxCardinalityCalls = 0;
   const maxCardinalityResult = await runOpportunityDiscoveryPlanner({
     job: maxCardinalityJob,
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async (request) => {
       maxCardinalityCalls += 1;
@@ -13784,7 +13784,7 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   let calls = 0;
   const result = await runOpportunityDiscoveryPlanner({
     job: structuredClone(jobValue),
-    model: 'openai/gpt-5.6-luna-pro',
+    model: 'openai/gpt-5.6-terra',
     now,
     completeJSON: async () => {
       calls += 1;

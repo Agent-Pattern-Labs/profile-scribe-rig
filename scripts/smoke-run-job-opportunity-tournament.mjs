@@ -133,11 +133,11 @@ const server = createServer(async (request, response) => {
           total: 2,
           available: [{
             provider: 'OpenAI',
-            model: 'openai/gpt-5.6-luna-pro',
+            model: 'openai/gpt-5.6-terra',
             selected: false
           }, {
             provider: 'Azure',
-            model: 'openai/gpt-5.6-luna-pro',
+            model: 'openai/gpt-5.6-terra',
             selected: false
           }]
         },
@@ -154,7 +154,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({
       id: 'gen-run-job-embedded-502',
-      model: 'openai/gpt-5.6-luna-pro',
+      model: 'openai/gpt-5.6-terra',
       error: {
         code: 502,
         message: 'raw-embedded-provider-secret-sentinel',
@@ -176,7 +176,7 @@ const server = createServer(async (request, response) => {
           total: 3,
           available: [{
             provider: 'OpenAI',
-            model: 'openai/gpt-5.6-luna-pro',
+            model: 'openai/gpt-5.6-terra',
             selected: true
           }]
         },
@@ -226,7 +226,7 @@ const server = createServer(async (request, response) => {
         total: 2,
         available: [{
           provider: 'OpenAI',
-          model: 'openai/gpt-5.6-luna-pro',
+          model: 'openai/gpt-5.6-terra',
           selected: false
         }, {
           provider: 'Google AI Studio',
@@ -762,7 +762,7 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'openai/gpt-5.6-luna-pro',
+      'openai/gpt-5.6-terra',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1106,8 +1106,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.models),
     JSON.stringify([
+      'openai/gpt-5.6-terra',
       'openai/gpt-5.6-luna-pro',
-      'openai/gpt-5.6-luna',
       'google/gemini-3.5-flash-lite'
     ]),
     'generator lost the bounded model fallback order'
@@ -1239,7 +1239,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'openai/gpt-5.6-luna-pro',
+          'openai/gpt-5.6-terra',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL
