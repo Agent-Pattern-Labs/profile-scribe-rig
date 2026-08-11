@@ -111,6 +111,43 @@ const CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE = Object.freeze({
     'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
   ])
 });
+const CONTINGENT_PROVISIONAL_OFFER_ACTIONS_BY_COMMERCIAL_ROLE = Object.freeze({
+  referral_partner: Object.freeze([
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to validate the proposed paid offer',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to evaluate the proposed paid offer',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to test the proposed paid offer',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to assess the proposed paid offer'
+  ]),
+  buyer: Object.freeze([
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one proposed paid consultation pilot',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to evaluate one proposed paid service pilot',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to assess one proposed paid service proposal',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one proposed paid service contract'
+  ]),
+  paid_demand: CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE.paid_demand
+});
+
+function contingentPlannerActionsForCommercialRole(
+  commercialRole,
+  provisionalOfferExperiment = false
+) {
+  const catalog = provisionalOfferExperiment
+    ? CONTINGENT_PROVISIONAL_OFFER_ACTIONS_BY_COMMERCIAL_ROLE
+    : CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE;
+  return catalog[firstText(commercialRole)] || [];
+}
+
+function provisionalOfferValidationAction(value, commercialRole = '') {
+  const label = firstText(value);
+  if (!label) return false;
+  const roles = commercialRole
+    ? [firstText(commercialRole)]
+    : ['referral_partner', 'buyer'];
+  return roles.some((role) =>
+    asArray(CONTINGENT_PROVISIONAL_OFFER_ACTIONS_BY_COMMERCIAL_ROLE[role])
+      .includes(label)
+  );
+}
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER =
   'openrouter_exa_web_search';
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_OPERATION =
@@ -1520,16 +1557,21 @@ export async function runOpportunityDiscoveryPlanner({
       requiredSellerFocus,
       now
     );
-  // A referral or direct-buyer search is useful only when approved evidence
-  // already proves what the profile owner can currently sell. When that
-  // proof is absent, do not spend a person-search credit on an acquisition
-  // path whose paid offer and conversion destination will necessarily fail
-  // the later revenue gate. A current compensated role remains a valid
-  // incremental-income route because the employer-authored job record itself
-  // supplies the paid offer, destination, and conversion evidence.
+  const sellerCanSupportProvisionalOfferExperiment = Boolean(
+    requiredSellerFocus && requiredSellerEvidenceRefs.length === 1
+  );
+  const provisionalOfferExperiment =
+    !sellerHasCurrentPaidOfferEvidence &&
+    sellerCanSupportProvisionalOfferExperiment;
+  // A verified current focus may ground what the owner can plausibly sell
+  // without proving that a priced, purchasable offer already exists. In that
+  // case person discovery remains useful, but every downstream finalist is
+  // proposal-only and can terminate only as a review-first validation
+  // experiment. It can never pass the immediate-revenue winner gate.
   allowedMotionKinds = allowedMotionKinds.filter((motionKind) =>
     motionKind === 'compensated_job' ||
-      sellerHasCurrentPaidOfferEvidence
+      sellerHasCurrentPaidOfferEvidence ||
+      sellerCanSupportProvisionalOfferExperiment
   );
   const sellerContractIssue = commercialSellerContractIssue({
     workerSellerContract,
@@ -1787,15 +1829,22 @@ export async function runOpportunityDiscoveryPlanner({
       sellerContract: requiredSellerFocus
         ? {
             requiredPrimaryFocus: requiredSellerFocus,
-            requiredEvidenceRefs: requiredSellerEvidenceRefs
+            requiredEvidenceRefs: requiredSellerEvidenceRefs,
+            offerEvidenceStatus: provisionalOfferExperiment
+              ? 'proposed_from_verified_capability'
+              : 'verified_current_paid_offer'
           }
         : {},
       evidenceCatalog: promptEvidenceCatalog,
       commercialEvidenceGraph: promptCommercialEvidenceGraph,
       task:
         'Plan the two strongest economically distinct outside-world searches most likely to reveal one exact, review-first path to payment within 30 days; rank by attributable payment probability, then time-to-cash and one-to-many or recurring leverage.',
-      outputContract: compactOpportunityDiscoveryOutputContract(),
-      hardRules: compactOpportunityDiscoveryHardRules(),
+      outputContract: compactOpportunityDiscoveryOutputContract(
+        provisionalOfferExperiment
+      ),
+      hardRules: compactOpportunityDiscoveryHardRules(
+        provisionalOfferExperiment
+      ),
       constraints: [
         RESEARCH_ONLY_CONSTRAINT,
         'Forced Exa returns <=5 sanitized URL citations; app adapters may make only separately budgeted bounded provider reads.'
@@ -1818,7 +1867,8 @@ export async function runOpportunityDiscoveryPlanner({
         promptEvidenceCatalog,
         allowedMotionKinds,
         [authoritativePlannerMarket],
-        requiredSellerFocus
+        requiredSellerFocus,
+        provisionalOfferExperiment
       ),
       plugins: [{
         id: 'web',
@@ -2180,7 +2230,8 @@ function opportunityDiscoveryPlannerResponseFormat(
     route.motionKind
   ),
   allowedMarketValues = [],
-  requiredSellerFocus = ''
+  requiredSellerFocus = '',
+  provisionalOfferExperiment = false
 ) {
   const compensatedJobOnly = allowedMotionKinds.length === 1 &&
     allowedMotionKinds[0] === 'compensated_job';
@@ -2260,10 +2311,12 @@ function opportunityDiscoveryPlannerResponseFormat(
     ? {
         type: 'string',
         maxLength: 140,
-        pattern:
-          `^(?:${canonicalAuthoredText} )?` +
-          `${regexLiteral(requiredSellerFocus)}` +
-          `(?: ${canonicalAuthoredText})?$`
+        pattern: provisionalOfferExperiment
+          ? `^Proposed paid ${regexLiteral(requiredSellerFocus)}` +
+            `(?: ${canonicalAuthoredText})?$`
+          : `^(?:${canonicalAuthoredText} )?` +
+            `${regexLiteral(requiredSellerFocus)}` +
+            `(?: ${canonicalAuthoredText})?$`
       }
     : targetTokenFreeText(140);
   const paidOfferAlternatives = {
@@ -2406,17 +2459,27 @@ function opportunityDiscoveryPlannerResponseFormat(
       properties: {
         rp: {
           type: 'string',
-          enum: [
-            'Qualified buyer for the current paid offer',
-            'Prospective buyer eligible for the current paid offer'
-          ]
+          enum: provisionalOfferExperiment
+            ? [
+                'Qualified buyer for the proposed paid offer',
+                'Prospective buyer for the proposed paid offer'
+              ]
+            : [
+                'Qualified buyer for the current paid offer',
+                'Prospective buyer eligible for the current paid offer'
+              ]
         },
         by: {
           type: 'string',
-          enum: [
-            '{{TARGET_NAME}}: validated commercial buyer',
-            '{{TARGET_NAME}}: prospective buyer of the current paid offer'
-          ]
+          enum: provisionalOfferExperiment
+            ? [
+                '{{TARGET_NAME}}: prospective buyer for the proposed paid offer',
+                '{{TARGET_NAME}}: candidate buyer for the proposed paid offer'
+              ]
+            : [
+                '{{TARGET_NAME}}: validated commercial buyer',
+                '{{TARGET_NAME}}: prospective buyer of the current paid offer'
+              ]
         },
         pd: {
           type: 'string',
@@ -2472,19 +2535,28 @@ function opportunityDiscoveryPlannerResponseFormat(
       properties: {
         rp: {
           type: 'string',
-          enum: [...CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE.referral_partner],
+          enum: [...contingentPlannerActionsForCommercialRole(
+            'referral_partner',
+            provisionalOfferExperiment
+          )],
           description:
             'Referral action: target introduces or recommends a qualified buyer to book or buy the paid offer.'
         },
         by: {
           type: 'string',
-          enum: [...CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE.buyer],
+          enum: [...contingentPlannerActionsForCommercialRole(
+            'buyer',
+            provisionalOfferExperiment
+          )],
           description:
             'Buyer action: target books, buys, signs, or subscribes to the current paid offer.'
         },
         pd: {
           type: 'string',
-          enum: [...CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE.paid_demand],
+          enum: [...contingentPlannerActionsForCommercialRole(
+            'paid_demand',
+            provisionalOfferExperiment
+          )],
           description:
             'Demand action: paid application, bid, proposal, or response via the official demand page.'
         },
@@ -2713,7 +2785,9 @@ function opportunityDiscoveryPlannerResponseFormat(
   };
 }
 
-function compactOpportunityDiscoveryOutputContract() {
+function compactOpportunityDiscoveryOutputContract(
+  provisionalOfferExperiment = false
+) {
   return {
     plan:
       'Return exactly 2 ranked, economically distinct plans; fill every required field.',
@@ -2747,18 +2821,27 @@ function compactOpportunityDiscoveryOutputContract() {
     revenuePath:
       '{l,e,rm,io,atm,ats,cd,st,k:{n,u},g:{b,o,a,d:{l,e},c,t},sb,vm}; code derives v/a/c/o and the complete causal witness; compensated_job forces rm=compensated_role; g binds evidence',
     evidence:
-      `base+tactic e has observation:* and all child refs; returned e arrays use only approved plan refs and never ${CONTINGENT_TARGET_EVIDENCE_REF}; code binds that sentinel after typed-role validation`
+      `base+tactic e has observation:* and all child refs; returned e arrays use only approved plan refs and never ${CONTINGENT_TARGET_EVIDENCE_REF}; code binds that sentinel after typed-role validation`,
+    offerAuthority: provisionalOfferExperiment
+      ? 'The seller capability is verified but its paid offer is not. Author one explicitly Proposed paid offer from that capability; it is a hypothesis for a review-first validation experiment, never a current offer fact or immediate winner.'
+      : 'The seller paid offer is current and evidence-grounded.'
   };
 }
 
-function compactOpportunityDiscoveryHardRules() {
+function compactOpportunityDiscoveryHardRules(
+  provisionalOfferExperiment = false
+) {
   return [
     'Exactly 2 distinct motions: each pathBase+2 causal tactics. Unknown outside identities require the declared target slot and bounded read-only discovery; never return 0 plans or treat a missing exact target as missing supply evidence.',
-    'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names. Author paidOffer.seller with that exact focus and paidOffer.compensatedJob with the exact schema enum; code selects seller for buyer/referral routes and compensatedJob only for compensated_job. Buyer/referral routes are unavailable unless approved evidence proves a current paid seller offer. Code exact-filters evidence refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
+    provisionalOfferExperiment
+      ? 'sellerContract.requiredPrimaryFocus is the verified seller capability whose revenue the objective names, but offerEvidenceStatus says no current paid offer is proven. Author paidOffer.seller in the exact schema-required Proposed paid form and bind its offer/destination/conversion claims only to sellerContract.requiredEvidenceRefs as proposal basis. Do not call it current, available, priced, purchasable, or verified. The result can only become a review-first validation experiment.'
+      : 'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names. Author paidOffer.seller with that exact focus and paidOffer.compensatedJob with the exact schema enum; code selects seller for buyer/referral routes and compensatedJob only for compensated_job. Code exact-filters evidence refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
     `top-level buyer is the payer/end-buyer archetype and contains no target token. Contingent b.l has {{TARGET_NAME}} once for buyer/paid_demand and zero times for referral_partner; action/channel use typed target tokens. Never return ${CONTINGENT_TARGET_EVIDENCE_REF} in an e array; code allocates the target slot and binds that sentinel after typed-role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
-    'a:2/tactic; each a has rp/by/pd/e. rp=partner referral/introduction -> current paid offer -> paid booking/payment; by=ask target to book/buy/sign current paid offer; pd=paid application/proposal response. Author all three complete actions; code selects commercialRole only. Selected rp/by/pd: prefer 4 distinct; >=2 across both tactics must be distinct+viable. Unselected fields do not count. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
+    provisionalOfferExperiment
+      ? 'a:2/tactic; each a has rp/by/pd/e. For rp/by, use only the schema-enumerated review-first proposed-offer validation actions. They recommend a bounded human-reviewed test and authorize no outreach. pd remains a compensated-demand action. Selected actions: prefer 4 distinct; >=2 across both tactics must be distinct+viable.'
+      : 'a:2/tactic; each a has rp/by/pd/e. rp=partner referral/introduction -> current paid offer -> paid booking/payment; by=ask target to book/buy/sign current paid offer; pd=paid application/proposal response. Author all three complete actions; code selects commercialRole only. Selected rp/by/pd: prefer 4 distinct; >=2 across both tactics must be distinct+viable. Unselected fields do not count. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `Code derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. compensated_job forces rm=compensated_role. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
@@ -2977,14 +3060,21 @@ function typedDiscoveryMotionRoute(planValue) {
   };
 }
 
-function opportunityDiscoveryBuyerForMotionKind(motionKindValue) {
+function opportunityDiscoveryBuyerForMotionKind(
+  motionKindValue,
+  provisionalOfferExperiment = false
+) {
   switch (firstText(motionKindValue)) {
   case 'referral_person':
   case 'referral_org_decision_maker':
-    return 'A qualified buyer for the current paid offer';
+    return provisionalOfferExperiment
+      ? 'A qualified buyer for the proposed paid offer'
+      : 'A qualified buyer for the current paid offer';
   case 'direct_buyer_person':
   case 'direct_buyer_org_decision_maker':
-    return 'The validated outside target buying the current paid offer';
+    return provisionalOfferExperiment
+      ? 'The validated outside target evaluating the proposed paid offer'
+      : 'The validated outside target buying the current paid offer';
   case 'compensated_job':
     return 'The validated employer buying compensated professional work';
   default:
@@ -3293,7 +3383,10 @@ function normalizeOpportunityDiscoveryPlan(
       commercialRole: firstText(routedPlan.commercialRole),
       acquisitionMode: firstText(routedPlan.acquisitionMode),
       buyer: deriveFreshPlannerAuthority
-        ? opportunityDiscoveryBuyerForMotionKind(routedPlan.motionKind)
+        ? opportunityDiscoveryBuyerForMotionKind(
+            routedPlan.motionKind,
+            /^Proposed paid\b/.test(normalizedPaidOffer)
+          )
         : truncate(firstText(routedPlan.buyer), 180),
       counterparty: deriveFreshPlannerAuthority
         ? opportunityDiscoveryCounterpartyForMotionKind(
@@ -4079,9 +4172,10 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
     };
   });
   const approvedActionLabels =
-    CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE[
-      firstText(asObject(planValue).commercialRole)
-    ] || [];
+    contingentPlannerActionsForCommercialRole(
+      firstText(asObject(planValue).commercialRole),
+      /^Proposed paid\b/.test(firstText(asObject(planValue).paidOffer))
+    );
   const authoredActionLabels = [tacticA, tacticB].flatMap((tactic) =>
     asArray(tactic.a).map((item) => firstText(asObject(item)[roleField]))
   );
@@ -5957,6 +6051,10 @@ function contingentPrimaryRevenueActionRoleIssue(value, planValue) {
   if (negatedPrimaryRevenueAction(text)) {
     return 'primary_action_negated';
   }
+  if (/^Proposed paid\b/.test(firstText(plan.paidOffer)) &&
+      provisionalOfferValidationAction(value, plan.commercialRole)) {
+    return '';
+  }
   if (plan.commercialRole === 'paid_demand') {
     const response = /\b(?:apply|bid|respond|submit)\b/.test(text) &&
       /\b(?:application|bid|proposal|request for proposal|response|rfp|solicitation)\b/.test(
@@ -6185,15 +6283,23 @@ function revenuePathSemanticChecks(revenueValue, planValue) {
   const roleIssue = Object.keys(plan).length > 0
     ? contingentPrimaryRevenueActionRoleIssue(conversionAction, plan)
     : '';
+  const provisionalValidationAction =
+    /^Proposed paid\b/.test(firstText(plan.paidOffer)) &&
+    provisionalOfferValidationAction(
+      conversionAction,
+      plan.commercialRole
+    );
   const typedConversionAction = witness.conversionAction &&
     Boolean(conversionAction) &&
-    !passiveOrObservationalPrimaryAction(conversionAction) &&
-    !operationOnlyAction(conversionAction) &&
-    !negatedPrimaryRevenueAction(conversionAction) &&
-    !nonRevenueArtifactOrQuestionAction(conversionAction) &&
-    revenueAdvancingAction(conversionAction) &&
-    !roleIssue &&
-    !experimentActionClaimsCompletedExternalExecution(conversionAction);
+    (provisionalValidationAction || (
+      !passiveOrObservationalPrimaryAction(conversionAction) &&
+      !operationOnlyAction(conversionAction) &&
+      !negatedPrimaryRevenueAction(conversionAction) &&
+      !nonRevenueArtifactOrQuestionAction(conversionAction) &&
+      revenueAdvancingAction(conversionAction) &&
+      !roleIssue &&
+      !experimentActionClaimsCompletedExternalExecution(conversionAction)
+    ));
   const legacyConversionAction = Boolean(conversionAction) &&
     !passiveOrObservationalPrimaryAction(conversionAction) &&
     !operationOnlyAction(conversionAction) &&
@@ -7477,6 +7583,31 @@ async function runOpportunityTournamentCore({
     unvalidatedCommercialContext,
     evidenceCatalog
   );
+  const coreWorkerSellerContract = normalizeCommercialSellerContract(
+    payload.commercialSellerContract
+  );
+  const coreDerivedSellerFocus = opportunityDiscoveryRequiredSellerFocus(
+    objective,
+    commercialContext
+  );
+  const coreRequiredSellerFocus = coreWorkerSellerContract.provided
+    ? firstText(coreWorkerSellerContract.requiredPrimaryFocus)
+    : coreDerivedSellerFocus;
+  const coreSellerEvidenceRefs = coreWorkerSellerContract
+    .requiredEvidenceRefs.length > 0
+    ? coreWorkerSellerContract.requiredEvidenceRefs
+    : sellerFocusEvidenceRefs(evidenceCatalog, coreRequiredSellerFocus);
+  const provisionalOfferExperiment = Boolean(
+    firstText(commercialDiscovery.plan?.contractVersion) ===
+      OPPORTUNITY_DISCOVERY_PLAN_CONTRACT &&
+    coreRequiredSellerFocus &&
+    coreSellerEvidenceRefs.length === 1 &&
+    !opportunityDiscoverySellerHasCurrentPaidOfferEvidence(
+      evidenceCatalog,
+      coreRequiredSellerFocus,
+      now
+    )
+  );
   let promptEvidenceCatalog = compactPromptEvidenceCatalog(
     evidenceCatalog,
     objective,
@@ -8541,6 +8672,9 @@ async function runOpportunityTournamentCore({
     ),
     budget,
     timestamp,
+    provisionalOfferExperiment,
+    provisionalSellerFocus: coreRequiredSellerFocus,
+    provisionalSellerEvidenceRefs: coreSellerEvidenceRefs,
     reserveDistinctCausalFamilyPair:
       requireDistinctCommercialCriticPair
   });
@@ -11567,6 +11701,7 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
       buyerRefs.length > 0 &&
       buyerRefs.some((ref) => asObject(graphNodes.get(ref)).approved === true),
     currentPaidOffer:
+      winnerHypothesis?.provisionalOfferExperiment !== true &&
       paidOfferText(firstText(winnerHypothesis?.offer)) &&
       verifiedRole(offerRefs, 'paid_offer'),
     namedAcquisitionMechanism:
@@ -11663,19 +11798,35 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
           ) === OPPORTUNITY_DISCOVERY_PLAN_CONTRACT
       }
     );
-    const fallbackExperiment = revenueEvidenceExperiment({
-      objective,
-      evidenceCatalog,
-      evidenceHash: firstText(raw.evidenceHash, stableHash(evidenceCatalog)),
-      missingEvidence: criticTechnicalFailure
-        ? ['commercial_critic_contract_recovery']
-        : requiredPositive
-            .filter((field) => gate[field] !== true)
-            .concat(criticAccepted ? [] : ['critic_rejected_commercial_motion']),
-      referenceTime: validDate(args.now || new Date()).toISOString(),
-      commercialContext,
-      commercialEvidenceGraph: raw.commercialEvidenceGraph
-    });
+    const fallbackExperiment =
+      !criticTechnicalFailure &&
+      winnerHypothesis?.provisionalOfferExperiment === true &&
+      criticAccepted
+        ? provisionalOfferValidationExperiment({
+            winner: winnerHypothesis,
+            evidenceHash: firstText(
+              raw.evidenceHash,
+              stableHash(evidenceCatalog)
+            )
+          })
+        : revenueEvidenceExperiment({
+            objective,
+            evidenceCatalog,
+            evidenceHash: firstText(
+              raw.evidenceHash,
+              stableHash(evidenceCatalog)
+            ),
+            missingEvidence: criticTechnicalFailure
+              ? ['commercial_critic_contract_recovery']
+              : requiredPositive
+                  .filter((field) => gate[field] !== true)
+                  .concat(criticAccepted
+                    ? []
+                    : ['critic_rejected_commercial_motion']),
+            referenceTime: validDate(args.now || new Date()).toISOString(),
+            commercialContext,
+            commercialEvidenceGraph: raw.commercialEvidenceGraph
+          });
     coherent = {
       ...raw,
       status: 'skipped',
@@ -11749,6 +11900,62 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
           : 'none',
       permissionRequired: 'explicit_user_approval',
       incrementalRevenueGate: resultGate
+    }
+  };
+}
+
+function provisionalOfferValidationExperiment({
+  winner: winnerValue,
+  evidenceHash
+}) {
+  const winner = asObject(winnerValue);
+  const revenuePath = asObject(winner.revenuePath);
+  const offer = firstText(winner.offer);
+  const buyer = firstText(winner.buyerSegment);
+  const action = firstText(winner.action);
+  const destination = firstText(revenuePath.conversionDestination);
+  const paidConversion = firstText(
+    revenuePath.observableRevenueOutcome
+  );
+  const attribution = firstText(revenuePath.attributionSignal);
+  const stopCondition = firstText(revenuePath.stopCondition);
+  const knownFact = firstText(
+    winner.proofPoint,
+    asObject(winner.provenance).strategyFamilyLabel,
+    offer
+  );
+  return {
+    contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
+    id: `experiment-${stableHash({
+      kind: 'provisional_offer_validation',
+      evidenceHash,
+      finalistId: winner.id
+    }).slice(0, 24)}`,
+    kind: 'revenue_path_grounding',
+    title: truncate(`Validate ${offer}`, 240),
+    knownFact: truncate(knownFact, 320),
+    buyer: truncate(buyer, 240),
+    paidOffer: truncate(offer, 240),
+    acquisitionMechanism: truncate(firstText(winner.channel), 240),
+    conversionDestination: truncate(destination, 240),
+    paidConversion: truncate(paidConversion, 240),
+    attributionSignal: truncate(attribution, 320),
+    action: truncate(action, 700),
+    missingEvidence: [
+      'a user-confirmed current paid offer and price',
+      'a live conversion destination for that offer',
+      'an attributable paid outcome from the proposed buyer path'
+    ],
+    paidOutcome: truncate(paidConversion, 360),
+    successSignal: truncate(paidConversion, 360),
+    stopCondition: truncate(stopCondition, 360),
+    asset: null,
+    evidenceRefs: compactStrings(winner.evidenceRefs).slice(0, 14),
+    requiresReview: true,
+    rerunPolicy: {
+      maxReruns: 1,
+      trigger:
+        'Rerun only after the user confirms or edits the proposed paid offer, price, conversion destination, or records the bounded test outcome.'
     }
   };
 }
@@ -12275,6 +12482,9 @@ export function expandAndJudge({
   weights,
   budget,
   timestamp,
+  provisionalOfferExperiment = false,
+  provisionalSellerFocus = '',
+  provisionalSellerEvidenceRefs = [],
   criticAcceptedFamilyIDs = null,
   reserveDistinctCausalFamilyPair = false
 }) {
@@ -12347,7 +12557,10 @@ export function expandAndJudge({
       timestamp,
       {
         projectSelectedConversionAction:
-          seedSet.seedContract === SEED_CONTRACT_VERSION
+          seedSet.seedContract === SEED_CONTRACT_VERSION,
+        provisionalOfferExperiment,
+        provisionalSellerFocus,
+        provisionalSellerEvidenceRefs
       }
     );
     if (!revenueValidation.valid) {
@@ -12409,6 +12622,8 @@ export function expandAndJudge({
       judgeReason: hypothesisJudgeReason(tuple, score),
       estimatedSpendMicros: estimatedSpendMicros > 0 ? Math.round(estimatedSpendMicros) : undefined,
       expectedValueMicros: Math.round(expectedValueMicros),
+      provisionalOfferExperiment:
+        provisionalOfferExperiment === true || undefined,
       _tuple: tuple,
       _strategyFamily: compatibleFamilies[0],
       provenance: strategyProvenance(
@@ -15689,6 +15904,8 @@ function commercialCriticFinalists(finalistsValue, optionsValue = {}) {
         estimatedSpendMicros:
           nonNegativeInteger(hypothesis.estimatedSpendMicros) || 0,
         deterministicScore: asObject(hypothesis.score),
+        provisionalOfferExperiment:
+          hypothesis.provisionalOfferExperiment === true,
         evidenceRefs: compactStrings(hypothesis.evidenceRefs),
         ...(includeEvidenceBindings
           ? {
@@ -15760,6 +15977,8 @@ function commercialCriticEvidenceBindings({
       ...extraValue
     });
   };
+  const provisionalOfferExperiment =
+    hypothesis.provisionalOfferExperiment === true;
   const targetPublicUrl = safePublicHTTPSURL(target?.publicUrl);
   const safeTargetPublicUrl = targetPublicUrl &&
       !commercialDiscoveryContainsPrivateContact(targetPublicUrl)
@@ -15790,9 +16009,14 @@ function commercialCriticEvidenceBindings({
       grounding.buyerEvidenceRefs
     ),
     roleBinding(
-      'paid_offer',
+      provisionalOfferExperiment
+        ? 'proposed_paid_offer'
+        : 'paid_offer',
       hypothesis.offer,
-      grounding.paidOfferEvidenceRefs
+      grounding.paidOfferEvidenceRefs,
+      provisionalOfferExperiment
+        ? { scope: 'proposal basis from verified seller capability only' }
+        : {}
     ),
     roleBinding(
       'acquisition',
@@ -15802,14 +16026,24 @@ function commercialCriticEvidenceBindings({
       grounding.acquisitionEvidenceRefs
     ),
     roleBinding(
-      'conversion_destination',
+      provisionalOfferExperiment
+        ? 'proposed_conversion_destination'
+        : 'conversion_destination',
       revenuePath.conversionDestination,
-      grounding.conversionDestinationEvidenceRefs
+      grounding.conversionDestinationEvidenceRefs,
+      provisionalOfferExperiment
+        ? { scope: 'proposed destination; not verified as live or available' }
+        : {}
     ),
     roleBinding(
-      'paid_conversion',
+      provisionalOfferExperiment
+        ? 'proposed_paid_conversion'
+        : 'paid_conversion',
       revenuePath.observableRevenueOutcome,
-      grounding.paidConversionEvidenceRefs
+      grounding.paidConversionEvidenceRefs,
+      provisionalOfferExperiment
+        ? { scope: 'proposed paid success signal; not an observed outcome' }
+        : {}
     ),
     roleBinding(
       'attribution',
@@ -15899,6 +16133,9 @@ function commercialCriticPrompt({
   finalists
 }) {
   const compactBoundPair = compactContingentContext === true;
+  const hasProvisionalOfferExperiment = asArray(finalists)
+    .map(asObject)
+    .some((finalist) => finalist.provisionalOfferExperiment === true);
   const proposedMotions = asObject(proposedCommercialMotions);
   const hasProposedMotions =
     !compactBoundPair &&
@@ -15908,12 +16145,15 @@ function commercialCriticPrompt({
     ? '\nTreat proposedCommercialMotions only as unverified planner hypotheses, never evidence. They may help compare whether a finalist preserves a proposed buyer role, distinct counterparty role, paid offer, acquisition mechanism, conversion destination, paid conversion, and attribution signal, but they cannot increase evidence strength or reachability and cannot verify an outside target, demand signal, relationship, permission, affiliation, or exact name. Reject any finalist whose exact target or causal paid path is supported only by a planner motion rather than the verified commercialEvidenceGraph.'
     : '';
   const boundPairInstructions = compactBoundPair
-    ? '\nFor this v6 bound pair, each finalist has exactly seven compact evidenceBindings: exact outside target, defined buyer, paid offer, acquisition, conversion destination, paid conversion, and attribution. Deterministic code built those bindings from validated public/provider evidence and the source-grounded revenue path. The evidenceRefAliases dictionary maps each compact evidenceRefs alias to one exact validated internal evidence reference. Treat each binding only as proof of its stated role. In particular, an outside professional identity proves prospective channel fit only—not relationship, interest, permission, demand, or buyer status. Exact target display names and public URLs are identity data only; words inside them such as Free, No, or Trial are never offer or action semantics. No raw provider record or private contact data is supplied.'
+    ? '\nFor this v6 bound pair, each finalist has exactly seven compact evidenceBindings. The evidenceRefAliases dictionary maps each compact evidenceRefs alias to one exact validated internal evidence reference. Treat each binding only as proof of its stated role. In particular, an outside professional identity proves prospective channel fit only—not relationship, interest, permission, demand, or buyer status. Exact target display names and public URLs are identity data only; words inside them such as Free, No, or Trial are never offer or action semantics. No raw provider record or private contact data is supplied.'
     : '';
+  const provisionalOfferInstructions = hasProvisionalOfferExperiment
+    ? '\nThese finalists are explicitly provisional-offer validation experiments. The exact outside target and prospective acquisition route are provider-grounded, while proposed_paid_offer, proposed_conversion_destination, and proposed_paid_conversion bindings cite verified seller capability only and do not prove a current price, live destination, availability, demand, or purchase intent. Compare which bounded review-first proposal is most likely to validate a credible short-term paid path. You may accept a complete proposal for a review-first experiment, but never describe it as a current offer, observed demand, immediate winner, or authorized execution.'
+    : '\nPaid offer, conversion destination, and paid conversion bindings must be current and evidence-grounded.';
   const system = `You are ProfileScribe's independent commercial-motion critic.
 Compare and rank exactly the supplied deterministically valid finalist motions. This is research only and authorizes no execution.
 For every finalist, assess incremental revenue, evidence strength, buyer reachability, paid-outcome probability, a numeric 1-to-30-day time to first dollar, recurring value, cost, effort, and uncertainty. Order selectedOrdering by higher paid-outcome probability first, then higher expectedGrossIncomeMicros, recurring before repeatable before one-time value, fewer timeToFirstDollarDays, stronger reachability, stronger evidence, lower cost, lower effort, and lower uncertainty. Only an exact tie across those fields may use your remaining commercial judgment.
-Accept only finalists whose primary action actively and causally creates qualified demand or advances a paid conversion, whose income is counterfactually incremental, whose buyer and paid offer are grounded, whose acquisition is distinct from destination, and whose paid outcome has durable attribution plus a numeric stop.
+Accept only finalists whose primary action actively and causally creates qualified demand or advances a paid conversion, whose income is counterfactually incremental, whose acquisition is distinct from destination, and whose paid outcome has durable attribution plus a numeric stop. For ordinary finalists the buyer and paid offer must be current and grounded; for explicitly provisional-offer finalists, require a grounded exact target and acquisition route plus a clearly proposed offer, destination, conversion, and bounded validation action.${provisionalOfferInstructions}
 The deterministic pre-filter has already excluded passive and operational motions. If one appears anyway, reject it; never reward monitoring, measuring, profile work, content work, or administration.
 Treat commercialContext only as permission/channel capability. A connected channel never proves buyer demand, fit, or reachability.${boundPairInstructions}${proposedMotionInstructions}
 Return one complete comparison per supplied finalist plus an exact selected ordering. Do not rewrite the strategies and do not return outreach or publishing copy. Return only strict JSON.`;
@@ -16186,8 +16426,11 @@ function deterministicCommercialHypothesisGate(
     },
     commercialEvidenceGraphValue
   );
+  const provisionalValidationAction =
+    hypothesis.provisionalOfferExperiment === true;
   const gate = {
     activeRevenueAction:
+      provisionalValidationAction || (
       !passiveOrObservationalPrimaryAction(semanticAction) &&
       !passiveOrObservationalPrimaryAction(semanticConversionAction) &&
       !experimentActionClaimsCompletedExternalExecution(semanticAction) &&
@@ -16196,7 +16439,7 @@ function deterministicCommercialHypothesisGate(
       ) &&
       !operationOnlyAction(semanticAction) &&
       revenueAdvancingAction(semanticAction) &&
-      semantic.conversionAction,
+      semantic.conversionAction),
     causalAcquisitionPath:
       ACQUISITION_MODES.has(firstText(revenuePath.acquisitionMode)) &&
       !prohibitedAcquisitionText(
@@ -21367,13 +21610,20 @@ function validateRevenuePath(
     revenuePath.supportingBottleneck
   );
   const semantic = revenuePathSemanticChecks(semanticRevenuePath);
+  const provisionalGrounding = provisionalOfferGroundingAuthority({
+    tuple,
+    revenuePath,
+    evidenceByID,
+    options: optionsValue
+  });
+  const provisionalValidationAction = provisionalGrounding.valid;
   if (!paidOfferText(offer)) {
     reasons.add('missing_paid_offer');
   }
   if (!semantic.incrementalIncome) {
     reasons.add('missing_incremental_income');
   }
-  if (!semantic.conversionAction) {
+  if (!semantic.conversionAction && !provisionalValidationAction) {
     reasons.add('missing_paid_conversion');
   }
   if (!semantic.observableRevenue) {
@@ -21405,7 +21655,8 @@ function validateRevenuePath(
     reasons.add('invalid_acquisition_mode');
   }
 
-  if (revenuePath.contractVersion === REVENUE_PATH_CONTRACT_VERSION &&
+  if (!provisionalValidationAction &&
+      revenuePath.contractVersion === REVENUE_PATH_CONTRACT_VERSION &&
       (passiveOrObservationalPrimaryAction(semanticSelectedAction) ||
        passiveOrObservationalPrimaryAction(semanticConversionAction))) {
     reasons.add('passive_or_observational_primary_action');
@@ -21440,12 +21691,22 @@ function validateRevenuePath(
     reasons.add('revenue_evidence_mismatch');
   }
   if (isV2) {
+    const proposalOnlyReasons = new Set([
+      'unsupported_paid_offer_evidence',
+      'noncurrent_or_negative_paid_offer_evidence',
+      'invalid_conversion_destination',
+      'unsupported_paid_conversion_evidence',
+      'noncurrent_or_negative_paid_conversion_evidence'
+    ]);
     for (const reason of revenuePathGroundingReasons(
       tuple,
       revenuePath,
       evidenceByID,
       referenceTime
     )) {
+      if (provisionalGrounding.valid && proposalOnlyReasons.has(reason)) {
+        continue;
+      }
       reasons.add(reason);
     }
   }
@@ -21458,7 +21719,8 @@ function validateRevenuePath(
     contractVersion: ACTIVE_REVENUE_ACTION_CONTRACT,
     primaryAction: action,
     conversionAction,
-    active: !passiveOrObservationalPrimaryAction(semanticSelectedAction) &&
+    active: provisionalValidationAction || (
+      !passiveOrObservationalPrimaryAction(semanticSelectedAction) &&
       !passiveOrObservationalPrimaryAction(semanticConversionAction) &&
       !experimentActionClaimsCompletedExternalExecution(
         semanticSelectedAction
@@ -21469,7 +21731,7 @@ function validateRevenuePath(
       !operationOnlyAction(semanticSelectedAction) &&
       !operationOnlyAction(semanticConversionAction) &&
       revenueAdvancingAction(semanticSelectedAction) &&
-      semantic.conversionAction,
+      semantic.conversionAction),
     causalAcquisitionPath:
       ACQUISITION_MODES.has(revenuePath.acquisitionMode) &&
       !prohibitedAcquisitionText(
@@ -21484,6 +21746,66 @@ function validateRevenuePath(
       ...publicRevenuePath,
       activeRevenueAction
     }
+  };
+}
+
+function provisionalOfferGroundingAuthority({
+  tuple: tupleValue,
+  revenuePath: revenuePathValue,
+  evidenceByID,
+  options: optionsValue
+}) {
+  const options = asObject(optionsValue);
+  if (options.provisionalOfferExperiment !== true) {
+    return { valid: false };
+  }
+  const tuple = asObject(tupleValue);
+  const revenuePath = asObject(revenuePathValue);
+  const grounding = asObject(revenuePath._grounding);
+  const sellerFocus = firstText(options.provisionalSellerFocus);
+  const sellerRefs = compactStrings(
+    options.provisionalSellerEvidenceRefs
+  );
+  const offer = firstText(asObject(tuple.offers).label);
+  const action = contingentAuthoredSemanticText(
+    asObject(tuple.actions),
+    firstText(asObject(tuple.actions).label)
+  );
+  const requiredProposalGroups = [
+    grounding.paidOfferEvidenceRefs,
+    grounding.conversionDestinationEvidenceRefs,
+    grounding.paidConversionEvidenceRefs
+  ].map(compactStrings);
+  const sellerSet = new Set(sellerRefs);
+  const sellerEvidenceValid = sellerRefs.length === 1 && sellerRefs.every(
+    (ref) => {
+      const evidence = asObject(evidenceByID.get(ref));
+      return Boolean(
+        evidenceByID.has(ref) &&
+        (firstText(evidence.type) === 'current_focus' ||
+          /^profile:focus:\d+$/i.test(ref)) &&
+        (!firstText(evidence.status) ||
+          comparable(evidence.status) === 'active') &&
+        comparable(evidence.priority) === 'primary' &&
+        evidenceTextSupportsSellerFocus(evidence, sellerFocus)
+      );
+    }
+  );
+  const exactProposalBasis = requiredProposalGroups.every((refs) =>
+    refs.length > 0 && refs.every((ref) => sellerSet.has(ref))
+  ) && compactStrings(asObject(tuple.offers).evidenceRefs).some((ref) =>
+    sellerSet.has(ref)
+  );
+  return {
+    valid: Boolean(
+      sellerFocus &&
+      sellerEvidenceValid &&
+      exactProposalBasis &&
+      /^Proposed paid\b/.test(offer) &&
+      opportunityDiscoveryUnicodeIdentityContains(offer, sellerFocus) &&
+      /\bproposed paid\b/i.test(action) &&
+      revenuePath.revenueMechanism !== 'compensated_role'
+    )
   };
 }
 
@@ -21915,11 +22237,13 @@ function operationOnlyAction(value) {
 }
 
 function viablePrimaryRevenueAction(value) {
-  return !passiveOrObservationalPrimaryAction(value) &&
+  return provisionalOfferValidationAction(value) || (
+    !passiveOrObservationalPrimaryAction(value) &&
     !operationOnlyAction(value) &&
     !negatedPrimaryRevenueAction(value) &&
     revenueAdvancingAction(value) &&
-    !experimentActionClaimsCompletedExternalExecution(value);
+    !experimentActionClaimsCompletedExternalExecution(value)
+  );
 }
 
 function negatedPrimaryRevenueAction(value) {

@@ -1280,6 +1280,7 @@ await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyMaximumFamilyEvidenceContainment();
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
+await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
 verifyCausalPairReservationSurvivesCrowding();
 await verifyTwoStageTargetBinding();
 await verifyProviderAttestedBuyerReviewRoute();
@@ -6558,7 +6559,8 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       projectedProfileResult.plans.length !== 2 ||
       JSON.stringify(projectedPrompt.sellerContract) !== JSON.stringify({
         requiredPrimaryFocus: 'ProfileScribe',
-        requiredEvidenceRefs: ['profile:focus:1']
+        requiredEvidenceRefs: ['profile:focus:1'],
+        offerEvidenceStatus: 'verified_current_paid_offer'
       }) ||
       !projectedPrompt.evidenceCatalog?.some((item) =>
         item.id === 'profile:focus:1' &&
@@ -6842,6 +6844,320 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       )) {
     throw new Error(
       `removed top-level buyer authority leaked into execution: ${JSON.stringify(targetTokenResult)}`
+    );
+  }
+}
+
+async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
+  const scenario = cases[3];
+  const job = plannerJob(scenario);
+  job.payload.objective.outcome =
+    'Create one verifiable attributable incremental-income outcome for ProfileScribe';
+  job.payload.commercialContext.profile.currentFocus = [{
+    name: 'ProfileScribe',
+    description:
+      'Agent-managed professional profiles and source-backed updates.',
+    status: 'active',
+    priority: 'primary',
+    evidenceRef: 'profile:focus:1'
+  }];
+  job.payload.commercialSellerContract = {
+    requiredPrimaryFocus: 'ProfileScribe',
+    requiredEvidenceRefs: ['profile:focus:1']
+  };
+  job.payload.commercialDiscoveryCapabilities = {
+    braveWebSearch: false,
+    pdlPersonSearch: true,
+    pdlJobPostingSearch: false
+  };
+  job.payload.evidenceSnapshot.profile.currentFocus = [{
+    id: 'focus-profilescribe',
+    name: 'ProfileScribe',
+    description:
+      'Agent-managed professional profiles and source-backed updates.',
+    status: 'active',
+    priority: 'primary',
+    evidence: ['The owner confirmed ProfileScribe is the primary focus.']
+  }];
+  job.payload.evidenceSnapshot.sources = [{
+    id: 'profilescribe-owner-site',
+    label: 'ProfileScribe',
+    url: 'https://profilescribe.com',
+    status: 'approved',
+    profileControlled: true
+  }];
+  job.payload.evidenceSnapshot.sourceEvidence = [{
+    id: 'profilescribe-capability-observation',
+    observationId: 'profilescribe-capability-observation',
+    sourceId: 'profilescribe-owner-site',
+    label: 'ProfileScribe professional profile platform',
+    summary:
+      'ProfileScribe maintains agent-managed professional profiles and source-backed professional updates.',
+    url: 'https://profilescribe.com/',
+    observedAt: now.toISOString(),
+    status: 'approved'
+  }];
+
+  const evidenceRef = 'observation:profilescribe-capability-observation';
+  const sellerRef = 'profile:focus:1';
+  const directPersonTemplate = scenario.plans(evidenceRef)[1];
+  const rawPlans = [
+    directPersonTemplate,
+    structuredClone(directPersonTemplate)
+  ].map((motion, index) => {
+    motion.id = `profilescribe_provisional_${index + 1}`;
+    motion.searchMode = 'professional_counterparty';
+    motion.motionKind = index === 0
+      ? 'direct_buyer_person'
+      : 'referral_person';
+    motion.commercialRole = index === 0 ? 'buyer' : 'referral_partner';
+    motion.acquisitionMode = index === 0
+      ? 'permissioned_outreach'
+      : 'partner_channel';
+    motion.targetRoleSubrole = index === 0 ? 'executive' : 'partnerships';
+    motion.paidOffer =
+      'Proposed paid ProfileScribe professional profile service';
+    motion.evidenceRefs = [...new Set([
+      ...motion.evidenceRefs,
+      sellerRef
+    ])];
+    motion.contingentFinalists = compactProvisionalContingentFinalists(
+      motion.contingentFinalists,
+      motion.commercialRole,
+      sellerRef
+    );
+    return motion;
+  });
+  let requestSeen;
+  let schemaErrors = [];
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      requestSeen = request;
+      const planProperties = request.responseFormat.json_schema.schema
+        .properties.plans.items.properties;
+      const response = {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: '',
+        plans: rawPlans.map((motion) => Object.fromEntries(
+          Object.keys(planProperties).map((key) => [
+            key,
+            key === 'paidOffer'
+              ? {
+                  seller: motion.paidOffer,
+                  compensatedJob:
+                    'A current compensated role matching verified professional skills'
+                }
+              : key === 'jobTitle'
+                ? 'ProfileScribe product consultant'
+                : motion[key]
+          ])
+        ))
+      };
+      const validate = new Ajv({ allErrors: true, strict: false }).compile(
+        request.responseFormat.json_schema.schema
+      );
+      if (!validate(response)) {
+        schemaErrors = validate.errors || [];
+      }
+      return {
+        data: response,
+        usage,
+        generationId: 'generation-provisional-offer',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: Buffer.byteLength(JSON.stringify(response)),
+          contentSha256: 'e'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const prompt = JSON.parse(requestSeen?.user || '{}');
+  const motionKinds = requestSeen?.responseFormat?.json_schema?.schema
+    ?.properties?.plans?.items?.properties?.motionKind?.enum || [];
+  if (result.status !== 'planned' ||
+      result.plans.length !== 2 ||
+      result.plans.some((motion) =>
+        !/^Proposed paid ProfileScribe\b/.test(motion.paidOffer)
+      ) ||
+      prompt.sellerContract?.offerEvidenceStatus !==
+        'proposed_from_verified_capability' ||
+      prompt.sellerContract?.requiredPrimaryFocus !== 'ProfileScribe' ||
+      motionKinds.includes('compensated_job') ||
+      !motionKinds.includes('direct_buyer_person') ||
+      !motionKinds.includes('referral_person') ||
+      schemaErrors.length !== 0 ||
+      result.usage?.calls !== 1) {
+    throw new Error(
+      `verified capability did not produce bounded provisional discovery: ${JSON.stringify({ schemaErrors, prompt, motionKinds, result })}`
+    );
+  }
+
+  const selectedMotion = result.plans[0];
+  const attempt = {
+    id: 'attempt-provisional-profile-target',
+    provider: 'people_data_labs_person_search',
+    operation: 'planned_professional_search',
+    queryHash: 'c'.repeat(64),
+    status: 'succeeded',
+    estimatedSpendMicros: 280_000,
+    actualSpendMicros: 280_000,
+    creditsUsed: 1,
+    resultCount: 1,
+    reservedAt: '2026-08-01T12:00:00Z',
+    updatedAt: '2026-08-01T12:00:01Z',
+    completedAt: '2026-08-01T12:00:01Z'
+  };
+  const targetEvidenceRef =
+    'external_discovery:1234567890abcdef12345678';
+  const targetCandidateId =
+    'candidate:external:abcdef1234567890abcdef12';
+  const targetURL =
+    'https://linkedin.com/in/alex-rivera-partnerships';
+  const targetRoles = [
+    'acquisition',
+    'channel_fit',
+    'defined_buyer'
+  ];
+  const commercialDiscoveryEvidence = {
+    contractVersion: COMMERCIAL_DISCOVERY_EVIDENCE_CONTRACT,
+    attempted: true,
+    status: 'found',
+    motion: selectedMotion.id,
+    buyerArchetype: selectedMotion.buyer,
+    queryHash: commercialDiscoveryAttemptLedgerHash([attempt]),
+    market: selectedMotion.market,
+    providersAttempted: ['people_data_labs_person_search'],
+    providerCalls: 1,
+    paidProviderCalls: 1,
+    creditsUsed: 1,
+    resultCount: 1,
+    patientTargetingExcluded: true,
+    sideEffectsPerformed: 0,
+    attempts: [attempt],
+    plan: persistedSingleMotionPlan(result, selectedMotion),
+    evidence: [{
+      motionId: selectedMotion.id,
+      evidenceRef: targetEvidenceRef,
+      kind: 'verified_external_professional_target',
+      label: 'Alex Rivera Executive Operations Director at Northstar Software',
+      summary:
+        'People Data Labs returned this current public professional identity for a review-first partner-fit check only.',
+      url: targetURL,
+      provider: 'people_data_labs_person_search',
+      provenance: 'people_data_labs_professional_record',
+      roles: targetRoles,
+      verified: true,
+      observedAt: '2026-08-01T12:00:01Z'
+    }],
+    candidates: [{
+      motionId: selectedMotion.id,
+      id: targetCandidateId,
+      kind: 'person',
+      displayLabel: 'Alex Rivera',
+      organization: 'Northstar Software',
+      role: 'Executive Operations Director',
+      commercialRole: 'buyer',
+      market: selectedMotion.market,
+      publicUrl: targetURL,
+      provider: 'people_data_labs_person_search',
+      evidenceRefs: [targetEvidenceRef],
+      contactPaths: [{
+        kind: 'public_professional_url',
+        available: true,
+        verified: true,
+        reference: targetURL
+      }],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }],
+    discoveredAt: '2026-08-01T12:00:01Z'
+  };
+  const normalizedDiscovery = normalizeCommercialDiscoveryEvidence(
+    commercialDiscoveryEvidence,
+    now
+  );
+  if (normalizedDiscovery.valid !== true) {
+    throw new Error(
+      `provisional target evidence is invalid: ${JSON.stringify(normalizedDiscovery)}`
+    );
+  }
+  let criticCalls = 0;
+  const downstream = await runOpportunityTournament({
+    job: {
+      id: 'job-provisional-offer-validation',
+      kind: 'opportunity_tournament',
+      payload: {
+        ...job.payload,
+        algorithmVersion: 'cheap_tournament_v6',
+        budget: {
+          currency: 'USD',
+          maxSpendMicros: 1_000_000,
+          maxLLMSpendMicros: 160_000,
+          maxLLMCalls: 1,
+          maxOutputTokens: 1_200,
+          maxHypotheses: 10_000,
+          maxFinalists: 8,
+          hardStop: true
+        },
+        commercialDiscoveryEvidence
+      }
+    },
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      criticCalls += 1;
+      if (request.responseFormat?.json_schema?.name !==
+          'opportunity_tournament_critic_v1') {
+        throw new Error('provisional path dispatched a generator or repair');
+      }
+      const task = JSON.parse(request.user || '{}');
+      const finalists = task.finalists || [];
+      const roles = new Set(finalists.flatMap((finalist) =>
+        (finalist.evidenceBindings || []).map((binding) => binding.role)
+      ));
+      if (finalists.length !== 2 ||
+          finalists.some((finalist) =>
+            finalist.provisionalOfferExperiment !== true
+          ) ||
+          !roles.has('proposed_paid_offer') ||
+          !roles.has('proposed_conversion_destination') ||
+          !roles.has('proposed_paid_conversion') ||
+          roles.has('paid_offer')) {
+        throw new Error(
+          `critic lost provisional authority: ${JSON.stringify(task)}`
+        );
+      }
+      return acceptedCriticCompletion(
+        finalists,
+        'generation-provisional-offer-critic'
+      );
+    }
+  });
+  const experiment = downstream.nextExperiment || downstream.result
+    ?.nextExperiment;
+  if (criticCalls !== 1 ||
+      downstream.status !== 'skipped' ||
+      downstream.result?.resultType !== 'revenue_evidence_gap' ||
+      downstream.result?.incrementalRevenueGate?.currentPaidOffer !== false ||
+      downstream.result?.incrementalRevenueGate?.passed === true ||
+      experiment?.kind !== 'revenue_path_grounding' ||
+      !/^Proposed paid ProfileScribe\b/.test(experiment?.paidOffer || '') ||
+      !experiment?.buyer?.includes('Alex Rivera') ||
+      !experiment?.action?.includes('Alex Rivera') ||
+      !experiment?.action?.includes('proposed paid') ||
+      experiment?.requiresReview !== true ||
+      experiment?.rerunPolicy?.maxReruns !== 1 ||
+      downstream.gate?.sideEffects?.outreachAttempts !== 0 ||
+      downstream.gate?.sideEffects?.publishAttempts !== 0 ||
+      downstream.gate?.sideEffects?.providerWrites !== 0) {
+    throw new Error(
+      `provisional offer did not become a safe validation experiment: ${JSON.stringify({ criticCalls, experiment, downstream })}`
     );
   }
 }
@@ -13805,6 +14121,76 @@ function compactContingentFinalists(value) {
     tacticB: tactic(familyB),
     w: materialized.w
   };
+}
+
+function compactProvisionalContingentFinalists(
+  value,
+  commercialRole,
+  sellerRef
+) {
+  const compact = compactContingentFinalists(value);
+  const referralBuyers = [
+    'Qualified buyer for the proposed paid offer',
+    'Prospective buyer for the proposed paid offer'
+  ];
+  const directBuyers = [
+    '{{TARGET_NAME}}: prospective buyer for the proposed paid offer',
+    '{{TARGET_NAME}}: candidate buyer for the proposed paid offer'
+  ];
+  const referralActions = [
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to validate the proposed paid offer',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to evaluate the proposed paid offer',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to test the proposed paid offer',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to assess the proposed paid offer'
+  ];
+  const directActions = [
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one proposed paid consultation pilot',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to evaluate one proposed paid service pilot',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to assess one proposed paid service proposal',
+    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one proposed paid service contract'
+  ];
+  const buyers = commercialRole === 'referral_partner'
+    ? referralBuyers
+    : directBuyers;
+  compact.pathBase.b = compact.pathBase.b.map((item, index) => ({
+    ...item,
+    rp: referralBuyers[index % referralBuyers.length],
+    by: directBuyers[index % directBuyers.length]
+  }));
+  compact.pathBase.o = compact.pathBase.o.map((item) => ({
+    ...item,
+    l: 'Proposed paid ProfileScribe professional profile service',
+    e: [sellerRef]
+  }));
+  compact.pathBase.r = compact.pathBase.r.map((revenue) => ({
+    ...revenue,
+    l: 'Proposed attributable paid ProfileScribe outcome',
+    io: 'One attributable payment for the proposed ProfileScribe service.',
+    cd: 'Proposed ProfileScribe pricing and checkout page',
+    g: {
+      ...revenue.g,
+      o: [sellerRef],
+      d: {
+        l: 'Proposed ProfileScribe pricing and checkout page',
+        e: [sellerRef]
+      },
+      c: [sellerRef]
+    }
+  }));
+  for (const [tacticIndex, tacticKey] of ['tacticA', 'tacticB'].entries()) {
+    compact[tacticKey].a = compact[tacticKey].a.map((item, index) => {
+      const variant = tacticIndex * 2 + index;
+      return {
+        ...item,
+        rp: referralActions[variant],
+        by: directActions[variant]
+      };
+    });
+  }
+  if (!buyers.length) {
+    throw new Error('provisional buyer fixture has no role alternatives');
+  }
+  return compact;
 }
 
 function compactFreshPlannerPlans(values) {
