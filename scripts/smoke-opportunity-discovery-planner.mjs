@@ -4246,20 +4246,20 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 192
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'google/gemini-3.5-flash-lite',
+        model: 'openai/gpt-5.6-luna',
         models: [
-          'google/gemini-3.5-flash-lite',
+          'openai/gpt-5.6-luna',
           'google/gemini-3-flash-preview',
-          'openai/gpt-5.6-luna'
+          'google/gemini-3.5-flash-lite'
         ],
         modelRoutes: [
           {
-            id: 'google/gemini-3.5-flash-lite',
-            family: 'google',
-            minimumContextTokens: 1_048_576,
+            id: 'openai/gpt-5.6-luna',
+            family: 'openai',
+            minimumContextTokens: 1_050_000,
             minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.5,
-            maximumCompletionPrice: 3,
+            maximumPromptPrice: 0.2,
+            maximumCompletionPrice: 1.2,
             requiredParameters: [
               'max_tokens',
               'response_format',
@@ -4280,12 +4280,12 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             ]
           },
           {
-            id: 'openai/gpt-5.6-luna',
-            family: 'openai',
-            minimumContextTokens: 1_050_000,
+            id: 'google/gemini-3.5-flash-lite',
+            family: 'google',
+            minimumContextTokens: 1_048_576,
             minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.2,
-            maximumCompletionPrice: 1.2,
+            maximumPromptPrice: 0.5,
+            maximumCompletionPrice: 3,
             requiredParameters: [
               'max_tokens',
               'response_format',
