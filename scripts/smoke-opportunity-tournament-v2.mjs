@@ -320,6 +320,7 @@ await verifyDiscoveryPlanStaysUnverifiedDownstream();
 await verifyLegacyReferralPartnerKeepsBuyerDistinctButCannotAuthorize();
 await verifyUnplannedLegacyPaidDemandCannotAuthorizeApplicationRoute();
 await verifyUnsafeGeneratedExperimentRejected();
+await verifyLateApprovalBoundaryGeneratedExperimentRejected();
 await verifyCompletedExternalExecutionRejected();
 await verifyInsufficientGroundedFinalistCause();
 await verifyCriticReorderingControlsWinner();
@@ -2538,6 +2539,29 @@ async function verifyUnsafeGeneratedExperimentRejected() {
   }
 }
 
+async function verifyLateApprovalBoundaryGeneratedExperimentRejected() {
+  const domain = { ...domains.find((item) => item.name === 'healthcare') };
+  const ref = 'observation:obs-healthcare';
+  const response = strictV2Response(domain, ref);
+  response.evidenceExperiment.x =
+    `Send one promotion to ${domain.buyer} through organic search for ${domain.offer} at ${domain.destination}; count ${domain.outcome}, store ${domain.attribution}, and review first before execution for 14 days or 25 qualified visits.`;
+  const result = await runDomainWithResponse(
+    domain,
+    response,
+    'late-approval-boundary-generated-experiment'
+  );
+  const experiment = result.nextExperiment || {};
+  if (result.status !== 'skipped' ||
+      experiment.title === response.evidenceExperiment.l ||
+      !completeBusinessExperimentFields(experiment) ||
+      !/^Review first:/u.test(experiment.action || '') ||
+      /\bSend one promotion\b/u.test(experiment.action || '')) {
+    throw new Error(
+      `late approval boundary escaped into a revenue experiment: ${JSON.stringify(result)}`
+    );
+  }
+}
+
 async function verifyInvalidSeedContractsRejected() {
   const domain = { ...domains.find((item) => item.name === 'saas') };
   for (const [label, contract] of [
@@ -2662,7 +2686,8 @@ async function verifyLengthFinishedStructuredRepair() {
         '#/$defs/scores' ||
       repairSchema?.properties?.candidates?.maxItems !== 8 ||
       !('w' in (repairSchema?.properties || {})) ||
-      JSON.stringify(repairSchema).includes('"pattern"') ||
+      repairSchema?.$defs?.evidenceExperiment?.properties?.x?.pattern !==
+        '^Review first: .+' ||
       JSON.stringify(repairSchema).includes('"description"') ||
       'previousResponse' in repairInput ||
       repairUser.includes('PRIOR_RESPONSE_CANARY_') ||
@@ -3292,7 +3317,8 @@ async function verifyMaximumTournamentSpendCeiling() {
       initialSchemaBytes > 8_000 ||
       initialBytes > 44 * 1_024 ||
       repairBytes > 44 * 1_024 ||
-      initialSchema.includes('"pattern"') ||
+      (initialSchema.match(/"pattern"/g) || []).length !== 1 ||
+      !initialSchema.includes('"pattern":"^Review first: .+"') ||
       initialSchema.includes('"description"') ||
       initialCeiling + repairCeiling > 400_000) {
     throw new Error(

@@ -15282,7 +15282,7 @@ For every revenue path, explicitly bind the buyer, paid offer, acquisition mecha
 Return exactly two complete top-level family bundles named familyA and familyB. Family A is the strongest grounded path; family B is the strongest coherent alternative. They may use distinct tactics within the same business motion when the evidence does not support two different motions.
 Prefer an inbound paid-conversion path for familyA when approved evidence can ground it. Use warm referral, partner channel, existing-customer, or permissioned-outreach paths when inbound is ungrounded or semantically weaker; never invent inbound demand or an inbound asset.
 Within each family bundle, return exactly two grounded variants for paid offer, buyer segment, channel, action, timing trigger, proof point, and follow-up, plus exactly one family-specific revenue path. Never return global dimension arrays or cross-family compatibility tags.
-Also return one evidenceExperiment as a fallback for human review. It must name a known fact or owned asset from the evidence, one buyer, one paid offer, one singular acquisition mechanism that is not the conversion destination, one paid conversion, one durable attribution signal, and a numeric time and sample stop. Write its title, action, and success signal for the profile owner, never as internal source-approval or observation-processing instructions. The experiment is only a recommendation; do not claim it was launched.
+Also return one evidenceExperiment as a fallback for human review. It must name a known fact or owned asset from the evidence, one buyer, one paid offer, one singular acquisition mechanism that is not the conversion destination, one paid conversion, one durable attribution signal, and a numeric time and sample stop. Its action must begin exactly with "Review first:" so the approval boundary precedes every external-action verb. Write its title, action, and success signal for the profile owner, never as internal source-approval or observation-processing instructions. The experiment is only a recommendation; do not claim it was launched.
 When any current_owner_paid_conversion_asset exists, the evidenceExperiment must cite the strongest relevant one and must test the missing acquisition or attribution evidence around that existing offer. Never ask the owner to attach, approve, create, or document another paid-offer page in that case.
 Return no email, direct message, post, pitch, sales script, or other outreach copy.
 Reject spray-and-pray, bulk outreach, scraping, automated form submission, or high-volume behavior.
@@ -15794,7 +15794,10 @@ function tournamentStructuredResponseFormat(
       d: { type: 'string' },
       c: { type: 'string' },
       t: { type: 'string' },
-      x: { type: 'string' },
+      x: {
+        type: 'string',
+        pattern: '^Review first: .+'
+      },
       s: { type: 'string' },
       days: { type: 'integer' },
       n: { type: 'integer' },
@@ -19817,7 +19820,7 @@ function normalizeGeneratedEvidenceExperiment(
     userCopy
   ) ||
       experimentActionClaimsCompletedExternalExecution(action) ||
-      !/\breview(?: first|-first)?\b/i.test(action)) {
+      !experimentActionHasLeadingApprovalBoundary(action)) {
     return null;
   }
   const citedText = compactStrings(
@@ -19973,6 +19976,10 @@ function experimentActionClaimsCompletedExternalExecution(value) {
     /\b(?:was|were|has been|have been)\s+(?:sent|emailed|called|messaged|shared|published|posted|advertised|launched|submitted|executed)\b/i.test(
       text
     );
+}
+
+function experimentActionHasLeadingApprovalBoundary(value) {
+  return /^Review first: \S/u.test(firstText(value));
 }
 
 function currentApprovedExperimentEvidence(
@@ -20306,8 +20313,8 @@ function ownedAssetEvidenceExperimentPlan(assetValue, optionsValue = {}) {
         `${outcome.record}'s source/origin field after one acquisition path is grounded`,
       action: truncate(
         candidateChannel
-          ? `No immediate acquisition channel is grounded. Review first: for the candidate ${candidateChannel} channel, approve exactly 1 current existing-audience, qualified-demand, referral, partner, or attributed-outcome record that names both a reachable buyer and why that buyer already discovers offers like ${paidOffer} through ${candidateChannel}. Stop after that 1 qualifying record or 14 calendar days. Do not publish, contact anyone, assume channel fit from the connection alone, monitor traffic as the primary action, advertise, submit a form, or execute automatically.`
-          : `No immediate acquisition channel is grounded or permitted. Review first: select exactly 1 candidate discovery channel the user is willing to permit and attach exactly 1 current existing-audience, qualified-demand, referral, partner, or attributed-outcome record that names a reachable buyer and supports buyer/channel fit for ${paidOffer}. Stop after that one channel decision plus one qualifying record or 14 calendar days. Do not assume organic search, contact anyone, publish, advertise, submit a form, or execute automatically.`,
+          ? `Review first: No immediate acquisition channel is grounded. For the candidate ${candidateChannel} channel, approve exactly 1 current existing-audience, qualified-demand, referral, partner, or attributed-outcome record that names both a reachable buyer and why that buyer already discovers offers like ${paidOffer} through ${candidateChannel}. Stop after that 1 qualifying record or 14 calendar days. Do not publish, contact anyone, assume channel fit from the connection alone, monitor traffic as the primary action, advertise, submit a form, or execute automatically.`
+          : `Review first: No immediate acquisition channel is grounded or permitted. Select exactly 1 candidate discovery channel the user is willing to permit and attach exactly 1 current existing-audience, qualified-demand, referral, partner, or attributed-outcome record that names a reachable buyer and supports buyer/channel fit for ${paidOffer}. Stop after that one channel decision plus one qualifying record or 14 calendar days. Do not assume organic search, contact anyone, publish, advertise, submit a form, or execute automatically.`,
         700
       ),
       successSignal: truncate(
