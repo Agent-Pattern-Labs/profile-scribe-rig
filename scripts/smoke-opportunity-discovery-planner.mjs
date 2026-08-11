@@ -12565,6 +12565,19 @@ function assertTechnicalRecovery(result, calls, label) {
       `${label} did not fail closed as technical recovery: ${JSON.stringify({ calls, result })}`
     );
   }
+  const finalistIssue = result.searchSpace?.commercialCritic?.cause;
+  if (experiment.kind === 'strategy_generation_shape_recovery' &&
+      ['insufficient_grounded_finalists',
+        'insufficient_deterministic_finalists'].includes(finalistIssue) &&
+      (result.searchSpace?.structuredRepair?.failure !==
+        'upstream_contingent_finalists_rejected' ||
+       result.searchSpace?.structuredRepair?.finalIssue !== finalistIssue ||
+       result.searchSpace?.structuredRepair?.attempted !== false ||
+       result.searchSpace?.commercialCritic?.attempted !== false)) {
+    throw new Error(
+      `${label} lost its cause-matched rejected-finalist trace: ${JSON.stringify(result)}`
+    );
+  }
 }
 
 function assertCompactCriticPair({

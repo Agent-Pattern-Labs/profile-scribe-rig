@@ -8757,6 +8757,11 @@ async function runOpportunityTournamentCore({
     judgeWeights: expanded.weights
   });
   if (initialHypotheses.length < 2) {
+    if (useContingentFinalists) {
+      structuredRepair.failure =
+        'upstream_contingent_finalists_rejected';
+      structuredRepair.finalIssue = 'insufficient_grounded_finalists';
+    }
     return {
       status: 'skipped',
       summary: useContingentFinalists
@@ -8810,6 +8815,12 @@ async function runOpportunityTournamentCore({
         deterministicFinalistFamilyCount
       };
       initialHypotheses = deterministicFinalists;
+      if (useContingentFinalists) {
+        structuredRepair.failure =
+          'upstream_contingent_finalists_rejected';
+        structuredRepair.finalIssue =
+          'insufficient_deterministic_finalists';
+      }
       return {
         status: 'skipped',
         summary:
@@ -20594,13 +20605,13 @@ function strategyGenerationRecoveryExperiment({
     structured_strategy_family_repair: {
       kind: 'strategy_generation_shape_recovery',
       title:
-        'Retry once for a structurally complete strategy comparison',
+        'Retry once for a complete, source-grounded revenue comparison',
       action:
-        'Preserve the approved evidence snapshot and make no business, outreach, publishing, or provider-side changes. Retry the same objective exactly once only after the strict response route can return two complete comparison families; new market evidence is not required.',
+        'Preserve the approved evidence snapshot and make no business, outreach, publishing, or provider-side changes. Retry the same objective exactly once only after the strict response route can return two complete comparison families that survive deterministic buyer, paid-offer, conversion, attribution, and causal-revenue validation; new market evidence is not required.',
       stopCondition:
-        'Stop after 1 response-shape retry; if two complete comparison families still cannot be returned, surface the AI contract failure and do not spend again automatically.',
+        'Stop after 1 response-contract retry; if two complete source-grounded revenue finalists still cannot be retained, preserve the exact rejection reasons and do not spend again automatically.',
       trigger:
-        'Rerun once only after strict structured-output support for two complete comparison families is verified; new business evidence is not required.'
+        'Rerun once only after strict structured-output and deterministic revenue-validation support for two complete comparison families is verified; new business evidence is not required.'
     },
     commercial_critic_displaced_by_repair: {
       kind: 'strategy_generation_critic_displaced_by_repair',
