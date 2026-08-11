@@ -6943,33 +6943,46 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
   });
   let requestSeen;
   let schemaErrors = [];
+  const provisionalResponseForRequest = (
+    request,
+    { omitDuplicateCausalFields = false } = {}
+  ) => {
+    const planProperties = request.responseFormat.json_schema.schema
+      .properties.plans.items.properties;
+    const response = {
+      contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+      status: 'planned',
+      reason: '',
+      plans: rawPlans.map((motion) => Object.fromEntries(
+        Object.keys(planProperties).filter((key) =>
+          !omitDuplicateCausalFields || ![
+            'conversionDestination',
+            'paidConversion',
+            'attributionSignal'
+          ].includes(key)
+        ).map((key) => [
+          key,
+          key === 'paidOffer'
+            ? {
+                seller: motion.paidOffer,
+                compensatedJob:
+                  'A current compensated role matching verified professional skills'
+              }
+            : key === 'jobTitle'
+              ? 'ProfileScribe product consultant'
+              : motion[key]
+        ])
+      ))
+    };
+    return response;
+  };
   const result = await runOpportunityDiscoveryPlanner({
     job,
     model: 'openai/gpt-5.6-luna',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
-      const planProperties = request.responseFormat.json_schema.schema
-        .properties.plans.items.properties;
-      const response = {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason: '',
-        plans: rawPlans.map((motion) => Object.fromEntries(
-          Object.keys(planProperties).map((key) => [
-            key,
-            key === 'paidOffer'
-              ? {
-                  seller: motion.paidOffer,
-                  compensatedJob:
-                    'A current compensated role matching verified professional skills'
-                }
-              : key === 'jobTitle'
-                ? 'ProfileScribe product consultant'
-                : motion[key]
-          ])
-        ))
-      };
+      const response = provisionalResponseForRequest(request);
       const validate = new Ajv({ allErrors: true, strict: false }).compile(
         request.responseFormat.json_schema.schema
       );
@@ -7024,7 +7037,49 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     );
   }
 
-  const selectedMotion = result.plans[0];
+  // OpenRouter can occasionally pass through a healed JSON object that omits
+  // the duplicated top-level causal fields while preserving their exact
+  // model-authored values in pathBase.r. This is the production incident
+  // shape that previously rejected both motions as missing a destination.
+  let recoveredPlannerCalls = 0;
+  const recoveredResult = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      recoveredPlannerCalls += 1;
+      const response = provisionalResponseForRequest(request, {
+        omitDuplicateCausalFields: true
+      });
+      return {
+        data: response,
+        usage,
+        generationId: 'generation-provisional-offer-nested-recovery',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: Buffer.byteLength(JSON.stringify(response)),
+          contentSha256: 'd'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  if (recoveredPlannerCalls !== 1 ||
+      recoveredResult.status !== 'planned' ||
+      recoveredResult.plans.length !== 2 ||
+      recoveredResult.planSelection?.acceptedPlanCount !== 2 ||
+      recoveredResult.plans.some((motion) =>
+        !motion.conversionDestination ||
+        !motion.paidConversion ||
+        !motion.attributionSignal
+      )) {
+    throw new Error(
+      `nested causal fields did not recover the production planner contract: ${JSON.stringify(recoveredResult)}`
+    );
+  }
+
+  const selectedMotion = recoveredResult.plans[0];
   const attempt = {
     id: 'attempt-provisional-profile-target',
     provider: 'people_data_labs_person_search',
@@ -7066,7 +7121,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     patientTargetingExcluded: true,
     sideEffectsPerformed: 0,
     attempts: [attempt],
-    plan: persistedSingleMotionPlan(result, selectedMotion),
+    plan: persistedSingleMotionPlan(recoveredResult, selectedMotion),
     evidence: [{
       motionId: selectedMotion.id,
       evidenceRef: targetEvidenceRef,

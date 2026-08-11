@@ -3429,10 +3429,65 @@ function normalizeOpportunityDiscoveryPlan(
     const canonicalMarket = deriveFreshPlannerAuthority
       ? authoritativeFreshMarket
       : truncate(firstText(routedPlan.market), 120);
+    const compactPathBase = asObject(
+      asObject(routedPlan.contingentFinalists).pathBase
+    );
+    const compactRevenuePath = asObject(asArray(compactPathBase.r)[0]);
+    const compactRevenueGrounding = asObject(compactRevenuePath.g);
+    const compactDestinationGrounding = asObject(
+      compactRevenueGrounding.d
+    );
+    const firstFreshCausalText = (maxCodepoints, ...values) => {
+      for (const candidate of values) {
+        const normalized = opportunityDiscoveryFreshSchemaText(
+          candidate,
+          maxCodepoints
+        );
+        if (normalized) return normalized;
+      }
+      return '';
+    };
+    // Some OpenRouter routes can return a JSON object that reaches the local
+    // decoder with a missing or normalization-invalid duplicate top-level
+    // causal field even though the same model-authored value is present in
+    // the strict compact revenue path. Treat that validated nested path as the
+    // fallback authority instead of discarding both otherwise-complete plans
+    // before target research. No prose is composed here.
+    const canonicalConversionDestination = deriveFreshPlannerAuthority
+      ? compensatedJob
+        ? DISCOVERY_COMPENSATED_JOB_CONVERSION_DESTINATION
+        : firstFreshCausalText(
+            180,
+            routedPlan.conversionDestination,
+            compactRevenuePath.cd,
+            compactDestinationGrounding.l
+          )
+      : truncate(firstText(routedPlan.conversionDestination), 220);
+    const canonicalPaidConversion = deriveFreshPlannerAuthority
+      ? compensatedJob
+        ? DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION
+        : firstFreshCausalText(
+            140,
+            routedPlan.paidConversion,
+            compactRevenuePath.io
+          )
+      : truncate(firstText(routedPlan.paidConversion), 180);
+    const canonicalAttributionSignal = deriveFreshPlannerAuthority
+      ? compensatedJob
+        ? DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL
+        : firstFreshCausalText(
+            180,
+            routedPlan.attributionSignal,
+            compactRevenuePath.ats
+          )
+      : truncate(firstText(routedPlan.attributionSignal), 220);
     const planWithCanonicalAuthority = {
       ...planWithCanonicalEvidence,
       market: canonicalMarket,
-      targetSlot
+      targetSlot,
+      conversionDestination: canonicalConversionDestination,
+      paidConversion: canonicalPaidConversion,
+      attributionSignal: canonicalAttributionSignal
     };
     const professionalRoleQueryContract =
       deriveFreshPlannerAuthority
@@ -3488,30 +3543,9 @@ function normalizeOpportunityDiscoveryPlan(
       acquisitionMechanism: deriveFreshPlannerAuthority
         ? firstText(routedPlan.acquisitionMechanism)
         : truncate(firstText(routedPlan.acquisitionMechanism), 220),
-      conversionDestination: deriveFreshPlannerAuthority
-        ? compensatedJob
-          ? DISCOVERY_COMPENSATED_JOB_CONVERSION_DESTINATION
-          : opportunityDiscoveryFreshSchemaText(
-              routedPlan.conversionDestination,
-              180
-            )
-        : truncate(firstText(routedPlan.conversionDestination), 220),
-      paidConversion: deriveFreshPlannerAuthority
-        ? compensatedJob
-          ? DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION
-          : opportunityDiscoveryFreshSchemaText(
-              routedPlan.paidConversion,
-              140
-            )
-        : truncate(firstText(routedPlan.paidConversion), 180),
-      attributionSignal: deriveFreshPlannerAuthority
-        ? compensatedJob
-          ? DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL
-          : opportunityDiscoveryFreshSchemaText(
-              routedPlan.attributionSignal,
-              180
-            )
-        : truncate(firstText(routedPlan.attributionSignal), 220),
+      conversionDestination: canonicalConversionDestination,
+      paidConversion: canonicalPaidConversion,
+      attributionSignal: canonicalAttributionSignal,
       rationale: deriveFreshPlannerAuthority
         ? ''
         : truncate(firstText(routedPlan.rationale), 260),
