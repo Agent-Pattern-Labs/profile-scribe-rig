@@ -157,35 +157,26 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'openai/gpt-5.6-terra';
+  'google/gemini-3.5-flash-lite';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
-  'openai/gpt-5.6-luna-pro',
-  'google/gemini-3.5-flash-lite'
+  'openai/gpt-5.6-luna'
 ]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'openai',
-    minimumContextTokens: 1_050_000,
+    family: 'google',
+    minimumContextTokens: 1_048_576,
     minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.5,
-    maximumCompletionPrice: 3
+    maximumPromptPrice: 0.3,
+    maximumCompletionPrice: 2.5
   }),
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
     family: 'openai',
     minimumContextTokens: 1_050_000,
     minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.5,
-    maximumCompletionPrice: 3
-  }),
-  Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
-    family: 'google',
-    minimumContextTokens: 1_048_576,
-    minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.3,
-    maximumCompletionPrice: 2.5
+    maximumPromptPrice: 0.2,
+    maximumCompletionPrice: 1.2
   })
 ]);
 if (1 + OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS.length > 3) {
@@ -222,8 +213,8 @@ const MAX_PROVIDER_PRICE = {
   request: 0
 };
 const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
-  prompt: 0.5,
-  completion: 3,
+  prompt: 0.3,
+  completion: 2.5,
   request: 0
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
@@ -242,8 +233,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'google-vertex',
     'google-ai-studio'
   ],
-  // OpenRouter first tries the pinned Maverick route, then the two independently
-  // qualified non-OpenAI model families within this same authorized request.
+  // OpenRouter first tries the pinned Gemini route, then the independently
+  // qualified OpenAI fallback within this same authorized request.
   // Strict parameter, privacy, and price filters remain authoritative.
   allow_fallbacks: true,
   require_parameters: true,
@@ -543,7 +534,7 @@ const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
 // The parsed cap below also dominates the strict grammar's computed worst-case
 // Unicode/evidence envelope instead of relying on representative samples.
 const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 528_000;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 330_000;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;

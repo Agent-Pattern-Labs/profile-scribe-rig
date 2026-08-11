@@ -46,7 +46,7 @@ function productionCitation(url, title, content) {
   };
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 528_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 330_000;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
 const PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256 =
@@ -4246,39 +4246,12 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 192
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'openai/gpt-5.6-terra',
+        model: 'google/gemini-3.5-flash-lite',
         models: [
-          'openai/gpt-5.6-terra',
-          'openai/gpt-5.6-luna-pro',
-          'google/gemini-3.5-flash-lite'
+          'google/gemini-3.5-flash-lite',
+          'openai/gpt-5.6-luna'
         ],
         modelRoutes: [
-          {
-            id: 'openai/gpt-5.6-terra',
-            family: 'openai',
-            minimumContextTokens: 1_050_000,
-            minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.5,
-            maximumCompletionPrice: 3,
-            requiredParameters: [
-              'max_tokens',
-              'response_format',
-              'structured_outputs'
-            ]
-          },
-          {
-            id: 'openai/gpt-5.6-luna-pro',
-            family: 'openai',
-            minimumContextTokens: 1_050_000,
-            minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.5,
-            maximumCompletionPrice: 3,
-            requiredParameters: [
-              'max_tokens',
-              'response_format',
-              'structured_outputs'
-            ]
-          },
           {
             id: 'google/gemini-3.5-flash-lite',
             family: 'google',
@@ -4286,6 +4259,19 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             minimumOutputTokens: 16_000,
             maximumPromptPrice: 0.3,
             maximumCompletionPrice: 2.5,
+            requiredParameters: [
+              'max_tokens',
+              'response_format',
+              'structured_outputs'
+            ]
+          },
+          {
+            id: 'openai/gpt-5.6-luna',
+            family: 'openai',
+            minimumContextTokens: 1_050_000,
+            minimumOutputTokens: 16_000,
+            maximumPromptPrice: 0.2,
+            maximumCompletionPrice: 1.2,
             requiredParameters: [
               'max_tokens',
               'response_format',
@@ -4321,8 +4307,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         framingTokenReserve: 1_024,
         generator: {
           providerPriceCaps: {
-            prompt: 0.5,
-            completion: 3,
+            prompt: 0.3,
+            completion: 2.5,
             request: 0
           },
           pluginIds: ['web', 'response-healing'],
