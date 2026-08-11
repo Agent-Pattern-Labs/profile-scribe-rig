@@ -13,6 +13,8 @@ import {
   diverseFinalists,
   normalizeCommercialDiscoveryEvidence,
   opportunityCommercialDiscoveryCapabilities,
+  repairAndValidateOpenRouterJSONMessage,
+  serializeOpenRouterJSONRequestBody,
   validateOpportunityCommercialDiscoveryNoTargetEnvelope,
   runOpportunityTournament,
   runOpportunityDiscoveryPlanner
@@ -29,6 +31,56 @@ const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 192 * 1024;
 const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 96 * 1024;
 const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES = 161_488;
 const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 20 * 1024;
+
+verifyBoundedLocalJSONRepair();
+
+function verifyBoundedLocalJSONRepair() {
+  const responseFormat = {
+    type: 'json_schema',
+    json_schema: {
+      name: 'local_repair_smoke',
+      strict: true,
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['plans', 'status'],
+        properties: {
+          plans: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 2,
+            items: { type: 'string', minLength: 1 }
+          },
+          status: { type: 'string', enum: ['planned'] }
+        }
+      }
+    }
+  };
+  const repaired = repairAndValidateOpenRouterJSONMessage(
+    '```json\n{"plans":["buyer","referral",],"status":"planned",}\n```',
+    responseFormat
+  );
+  if (JSON.stringify(repaired) !== JSON.stringify({
+    plans: ['buyer', 'referral'],
+    status: 'planned'
+  })) {
+    throw new Error(`bounded local JSON repair changed valid data: ${JSON.stringify(repaired)}`);
+  }
+  for (const [label, raw] of [
+    ['schema-invalid', '{"plans":["buyer"],"status":"planned",}'],
+    ['oversized', `{"plans":["${'x'.repeat(196_609)}","referral"],"status":"planned",}`]
+  ]) {
+    let rejected = false;
+    try {
+      repairAndValidateOpenRouterJSONMessage(raw, responseFormat);
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) {
+      throw new Error(`${label} local JSON repair did not fail closed`);
+    }
+  }
+}
 
 function productionCitation(url, title, content) {
   const contentHash = createHash('sha256').update(content).digest('hex');
@@ -463,6 +515,10 @@ for (const scenario of cases) {
           ?.enum
       ) !== JSON.stringify(['planned']) ||
       requestSeen.plugins?.length !== 0 ||
+      requestSeen.allowLocalJSONRepair !== true ||
+      serializeOpenRouterJSONRequestBody(requestSeen).includes(
+        'allowLocalJSONRepair'
+      ) ||
       requestSeen.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       !requestSeen.system?.includes(
         'Obey outputContract and hardRules exactly'

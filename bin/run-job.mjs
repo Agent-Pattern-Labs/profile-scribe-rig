@@ -12,6 +12,7 @@ import {
   OPPORTUNITY_TOURNAMENT_RESULT_CONTRACT,
   REVENUE_GATE_VERSION,
   REVENUE_PATH_CONTRACT_VERSION,
+  repairAndValidateOpenRouterJSONMessage,
   runOpportunityDiscoveryPlanner,
   runOpportunityTournament,
   serializeOpenRouterJSONRequestBody
@@ -3099,6 +3100,7 @@ async function callOpenRouterJSON({
   provider,
   responseFormat,
   plugins,
+  allowLocalJSONRepair,
   temperature,
   timeoutMs
 }) {
@@ -3226,7 +3228,7 @@ async function callOpenRouterJSON({
         }
       };
     });
-  const diagnostics = {
+  let diagnostics = {
     ...openRouterResponseDiagnostics(choice, rawContent),
     ...openRouterRouterDiagnostics(
       envelope?.openrouter_metadata,
@@ -3272,12 +3274,32 @@ async function callOpenRouterJSON({
   try {
     data = parseJSON(extractJSONObject(content), 'OpenRouter JSON message');
   } catch (error) {
-    throw attachOpenRouterResponseMetadata(
-      error,
-      usage,
-      diagnostics,
-      envelope?.id
-    );
+    if (allowLocalJSONRepair === true) {
+      try {
+        data = repairAndValidateOpenRouterJSONMessage(
+          content,
+          responseFormat
+        );
+        diagnostics = {
+          ...diagnostics,
+          localJSONRepairApplied: true
+        };
+      } catch {
+        throw attachOpenRouterResponseMetadata(
+          error,
+          usage,
+          diagnostics,
+          envelope?.id
+        );
+      }
+    } else {
+      throw attachOpenRouterResponseMetadata(
+        error,
+        usage,
+        diagnostics,
+        envelope?.id
+      );
+    }
   }
   return {
     data,

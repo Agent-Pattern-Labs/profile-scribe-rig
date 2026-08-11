@@ -1,5 +1,7 @@
 import { createHash } from 'crypto';
 import { isIP } from 'net';
+import Ajv from 'ajv';
+import { jsonrepair } from 'jsonrepair';
 
 export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v6';
 const LEGACY_OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSIONS = new Set([
@@ -1449,6 +1451,57 @@ export function serializeOpenRouterJSONRequestBody(request) {
   return JSON.stringify(buildOpenRouterJSONRequestBody(request));
 }
 
+const MAX_LOCAL_JSON_REPAIR_INPUT_BYTES = 196_608;
+const localStructuredOutputValidators = new Map();
+
+export function repairAndValidateOpenRouterJSONMessage(
+  raw,
+  responseFormat
+) {
+  const extracted = extractOpportunityDiscoveryJSONObject(raw);
+  if (!extracted ||
+      Buffer.byteLength(extracted, 'utf8') >
+        MAX_LOCAL_JSON_REPAIR_INPUT_BYTES) {
+    throw new Error('OpenRouter JSON message is outside the repair envelope');
+  }
+  const repaired = jsonrepair(extracted);
+  const data = JSON.parse(repaired);
+  const schema = asObject(asObject(responseFormat).json_schema).schema;
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    throw new Error('OpenRouter JSON repair requires an exact local schema');
+  }
+  const schemaHash = createHash('sha256')
+    .update(JSON.stringify(schema))
+    .digest('hex');
+  let validate = localStructuredOutputValidators.get(schemaHash);
+  if (!validate) {
+    validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
+    localStructuredOutputValidators.set(schemaHash, validate);
+  }
+  if (!validate(data)) {
+    throw new Error(
+      'Repaired OpenRouter JSON message failed exact schema validation'
+    );
+  }
+  return data;
+}
+
+function extractOpportunityDiscoveryJSONObject(raw) {
+  let value = firstText(raw);
+  if (value.startsWith('```')) {
+    value = value
+      .replace(/^```(?:json)?/i, '')
+      .replace(/```$/i, '')
+      .trim();
+  }
+  const start = value.indexOf('{');
+  const end = value.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    return value.slice(start, end + 1);
+  }
+  return value;
+}
+
 /**
  * Plans profession-neutral commercial motions while performing the one
  * bounded, read-only search folded into call 1. The model may infer motions and
@@ -1858,6 +1911,11 @@ export async function runOpportunityDiscoveryPlanner({
         provisionalOfferExperiment
       ),
       plugins: [],
+      // Terra occasionally returns a complete strict-schema object with a
+      // recoverable JSON punctuation/escaping defect. The transport may repair
+      // syntax locally only when the repaired value passes this exact response
+      // schema; all planner semantic and evidence gates still run afterward.
+      allowLocalJSONRepair: true,
       additionalPromptTokenReserve: 0,
       fixedToolFeeMicros: 0,
       timeoutMs: 120_000,
@@ -24184,6 +24242,8 @@ function normalizeOpenRouterResponseDiagnostics(value) {
     contentSha256: /^[a-f0-9]{64}$/.test(contentSha256)
       ? contentSha256
       : undefined,
+    localJSONRepairApplied:
+      diagnostics.localJSONRepairApplied === true ? true : undefined,
     providerErrorType: /^[a-z][a-z0-9_]{0,63}$/.test(
       providerErrorType
     )
