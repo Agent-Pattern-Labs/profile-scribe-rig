@@ -5606,6 +5606,9 @@ function selectValidOpportunityDiscoveryPlans({
       ...candidate.plan
     };
     const rawPrivateIssue = discoveryPlanPrivateContactIssue(rawSafetyPlan);
+    const rawPrivatePath = rawPrivateIssue === 'private_contact_value'
+      ? discoveryPlanPrivateContactPath(rawSafetyPlan)
+      : '';
     const rawSensitiveIssue = discoveryPlanSensitiveTargetIssue(
       rawSafetyPlan
     );
@@ -5615,7 +5618,7 @@ function selectValidOpportunityDiscoveryPlans({
       marketEvidenceCatalog
     );
     let issue = rawPrivateIssue
-      ? `Discovery plan ${id} requests private-contact data [${rawPrivateIssue}].`
+      ? `Discovery plan ${id} requests private-contact data [${rawPrivateIssue}]${rawPrivatePath ? ` at ${rawPrivatePath}` : ''}.`
       : rawSensitiveIssue || opportunityDiscoveryRawCausalWitnessIssue({
           ...raw,
           plans: [rawSafetyPlan]
@@ -6863,6 +6866,37 @@ function discoveryPlanPrivateContactIssue(planValue) {
     return 'private_contact_route:acquisition';
   }
   return '';
+}
+
+function discoveryPlanPrivateContactPath(planValue) {
+  const plan = asObject(planValue);
+  for (const entry of discoveryPlanTextEntries(plan)) {
+    if (commercialDiscoveryContainsPrivateContact(entry.value, {
+      allowBareCodePackage:
+        discoveryPlanPathAllowsBareCodePackage(entry.path)
+    })) {
+      return entry.path.join('.') || '<root>';
+    }
+  }
+  const visit = (value, path = []) => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item, path);
+        if (found) return found;
+      }
+      return '';
+    }
+    for (const [key, item] of Object.entries(asObject(value))) {
+      const nextPath = [...path, key];
+      if (/^(?:work_email|mobile_phone|phone_numbers?)$/i.test(key)) {
+        return nextPath.join('.');
+      }
+      const found = visit(item, nextPath);
+      if (found) return found;
+    }
+    return '';
+  };
+  return visit(plan);
 }
 
 function discoveryPlanTextEntries(value, output = [], path = []) {

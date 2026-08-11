@@ -4102,6 +4102,13 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       continue;
     }
     const rejection = result.planSelection?.rejectedPlans?.[0]?.reason || '';
+    if (adversary.label ===
+          'literal email is forbidden even in descriptive prose' &&
+        !/\[private_contact_value\] at rationale\./i.test(rejection)) {
+      throw new Error(
+        `private-contact rejection lost its safe field path: ${rejection}`
+      );
+    }
     if (result.status !== 'planned' ||
         !adversary.reason.test(rejection) ||
         /person@example\.com|917-555-0123|9175550123|44 20 7123 4567|\(917\)538-1564|917\/538\/1564/i.test(
