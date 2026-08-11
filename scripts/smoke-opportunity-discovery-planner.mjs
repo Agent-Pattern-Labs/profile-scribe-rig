@@ -46,7 +46,7 @@ function productionCitation(url, title, content) {
   };
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 425_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 528_000;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
 const PROFESSIONAL_ROLE_QUERY_TAXONOMY_MAPPING_SHA256 =
@@ -4258,8 +4258,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             family: 'openai',
             minimumContextTokens: 1_050_000,
             minimumOutputTokens: 16_000,
-            maximumPromptPrice: 0.2,
-            maximumCompletionPrice: 0.9,
+            maximumPromptPrice: 0.5,
+            maximumCompletionPrice: 3,
             requiredParameters: [
               'max_tokens',
               'response_format',
@@ -4321,8 +4321,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         framingTokenReserve: 1_024,
         generator: {
           providerPriceCaps: {
-            prompt: 0.4,
-            completion: 2.5,
+            prompt: 0.5,
+            completion: 3,
             request: 0
           },
           pluginIds: ['web', 'response-healing'],
