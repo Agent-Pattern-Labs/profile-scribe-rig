@@ -6057,6 +6057,28 @@ async function verifyTypedCausalWitnessContract(job, evidenceRef) {
     );
   }
 
+  const collapsedSingleton = cases[0].plans(evidenceRef)[0];
+  collapsedSingleton.contingentFinalists = compactContingentFinalists(
+    collapsedSingleton.contingentFinalists
+  );
+  collapsedSingleton.contingentFinalists.pathBase.r =
+    collapsedSingleton.contingentFinalists.pathBase.r[0];
+  const restoredSingleton = await plannerResultForMotion({
+    job,
+    motion: collapsedSingleton,
+    generationId: 'generation-collapsed-singleton-revenue-path'
+  });
+  if (restoredSingleton.status !== 'planned' ||
+      restoredSingleton.plans.length !== 2 ||
+      !restoredSingleton.plans.every((item) =>
+        item.contingentFinalists?.familyA?.d?.r?.length === 1 &&
+        item.contingentFinalists?.familyB?.d?.r?.length === 1
+      )) {
+    throw new Error(
+      `exact-one revenue wrapper was not restored losslessly: ${JSON.stringify(restoredSingleton)}`
+    );
+  }
+
   const missing = cases[0].plans(evidenceRef)[0];
   missing.contingentFinalists = compactContingentFinalists(
     missing.contingentFinalists

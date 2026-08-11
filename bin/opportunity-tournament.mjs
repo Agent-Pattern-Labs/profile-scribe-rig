@@ -4373,6 +4373,15 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
       firstText(asObject(planValue).commercialRole),
       /^Proposed paid\b/.test(firstText(asObject(planValue).paidOffer))
     );
+  // Some OpenRouter structured-output routes preserve the complete, valid
+  // singleton revenue object but collapse its exact-one array wrapper. The
+  // revenue path is still wholly model-authored; restoring only that uniquely
+  // implied container does not invent or repair any causal field.
+  const sharedRevenuePaths = Array.isArray(pathBase.r)
+    ? pathBase.r
+    : Object.keys(asObject(pathBase.r)).length > 0
+      ? [pathBase.r]
+      : [];
   const authoredActionLabels = [tacticA, tacticB].flatMap((tactic) =>
     asArray(tactic.a).map((item) => firstText(asObject(item)[roleField]))
   );
@@ -4388,7 +4397,7 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
     ]),
     s: copy(asObject(tactic.s)),
     d: {
-      r: copy(asArray(pathBase.r)),
+      r: copy(sharedRevenuePaths),
       o: copy(asArray(pathBase.o)),
       b: roleItems(pathBase.b),
       c: roleItems(tactic.c),
