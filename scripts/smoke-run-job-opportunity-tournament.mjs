@@ -1107,6 +1107,7 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
     JSON.stringify(call.envelope.models),
     JSON.stringify([
       'google/gemini-3.5-flash-lite',
+      'google/gemini-3-flash-preview',
       'openai/gpt-5.6-luna'
     ]),
     'generator lost the bounded model fallback order'
