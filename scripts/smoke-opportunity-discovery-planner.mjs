@@ -4078,6 +4078,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       'private contact request',
       'two sensitive clauses cannot share one service relation',
       'patient lead-list server search',
+      'contact-directory search',
       'direct pregnant-people role',
       'sensitive population as search subject',
       'non-referral patient query'
@@ -13774,7 +13775,6 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     first.contingentFinalists.pathBase.t[0].l,
     first.contingentFinalists.pathBase.t[0].q,
     first.contingentFinalists.pathBase.p[0].l,
-    first.contingentFinalists.tacticA.l,
     first.contingentFinalists.tacticA.c[0].rp,
     second.contingentFinalists.tacticA.c[0].pd,
     first.contingentFinalists.tacticA.a[0].rp,
@@ -13809,6 +13809,10 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   if (calls !== 1 || result.status !== 'planned' ||
       result.plans.length !== 2 ||
       expectedRoundTrips.some((value) => !serialized.includes(value)) ||
+      result.plans.some((planValue) =>
+        planValue.contingentFinalists?.familyA?.l !== 'Commercial path A' ||
+        planValue.contingentFinalists?.familyB?.l !== 'Commercial path B'
+      ) ||
       /\\ud[89ab][0-9a-f]{2}|\\ud[cdef][0-9a-f]{2}/i.test(serialized) ||
       result.preflight?.responseBodyByteCount >
         MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {

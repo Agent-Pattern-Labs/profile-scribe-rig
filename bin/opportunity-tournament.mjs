@@ -4390,7 +4390,11 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
     ? approvedActionLabels
     : [];
   const family = (tactic, tacticIndex) => ({
-    l: tactic.l,
+    // Family labels are internal provenance identifiers, not commercial
+    // substance. Project them locally so arbitrary model-authored display
+    // text cannot leak private-contact syntax or invalidate an otherwise
+    // complete causal path after the paid planner call.
+    l: tacticIndex === 0 ? 'Commercial path A' : 'Commercial path B',
     e: compactStrings([
       ...asArray(pathBase.e),
       ...asArray(tactic.e)
