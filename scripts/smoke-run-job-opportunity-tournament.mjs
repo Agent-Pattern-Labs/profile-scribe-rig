@@ -212,7 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
-    model: 'openai/gpt-4.1-mini',
+    model: 'google/gemini-3.5-flash-lite',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -225,18 +225,18 @@ const server = createServer(async (request, response) => {
       endpoints: {
         total: 2,
         available: [{
-          provider: 'Google AI Studio',
-          model: 'google/gemini-3.5-flash-lite',
+          provider: 'OpenAI',
+          model: 'openai/gpt-5.6-luna',
           selected: false
         }, {
-          provider: 'OpenAI',
-          model: 'openai/gpt-4.1-mini',
+          provider: 'Google AI Studio',
+          model: 'google/gemini-3.5-flash-lite',
           selected: true
         }]
       },
       attempts: [
-        { provider: 'Google AI Studio', status: 502 },
-        { provider: 'OpenAI', status: 200 }
+        { provider: 'OpenAI', status: 502 },
+        { provider: 'Google AI Studio', status: 200 }
       ]
     }
   }));
@@ -747,22 +747,22 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedProvider,
-      'OpenAI',
+      'Google AI Studio',
       'successful call lost its selected fallback vendor'
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'openai/gpt-4.1-mini',
+      'google/gemini-3.5-flash-lite',
       'successful call lost its selected fallback model'
     );
     assertEqual(
       providerReceipt?.model,
-      'openai/gpt-4.1-mini',
+      'google/gemini-3.5-flash-lite',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'google/gemini-3.5-flash-lite',
+      'openai/gpt-5.6-luna',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1106,9 +1106,9 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     JSON.stringify(call.envelope.models),
     JSON.stringify([
+      'openai/gpt-5.6-luna',
       'google/gemini-3.5-flash-lite',
-      'openai/gpt-4.1-mini',
-      'meta-llama/llama-4-maverick'
+      'openai/gpt-4.1-mini'
     ]),
     'generator lost the bounded model fallback order'
   );
@@ -1239,7 +1239,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'google/gemini-3.5-flash-lite',
+          'openai/gpt-5.6-luna',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

@@ -157,14 +157,22 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'google/gemini-3.5-flash-lite';
+  'openai/gpt-5.6-luna';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
-  'openai/gpt-4.1-mini',
-  'meta-llama/llama-4-maverick'
+  'google/gemini-3.5-flash-lite',
+  'openai/gpt-4.1-mini'
 ]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
+    family: 'openai',
+    minimumContextTokens: 1_050_000,
+    minimumOutputTokens: 16_000,
+    maximumPromptPrice: 0.2,
+    maximumCompletionPrice: 0.9
+  }),
+  Object.freeze({
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
     family: 'google',
     minimumContextTokens: 1_048_576,
     minimumOutputTokens: 16_000,
@@ -172,20 +180,12 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     maximumCompletionPrice: 2.5
   }),
   Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
     family: 'openai',
     minimumContextTokens: 1_047_576,
     minimumOutputTokens: 16_000,
     maximumPromptPrice: 0.4,
     maximumCompletionPrice: 1.6
-  }),
-  Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[1],
-    family: 'meta',
-    minimumContextTokens: 1_048_576,
-    minimumOutputTokens: 16_000,
-    maximumPromptPrice: 0.35,
-    maximumCompletionPrice: 1
   })
 ]);
 if (1 + OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS.length > 3) {

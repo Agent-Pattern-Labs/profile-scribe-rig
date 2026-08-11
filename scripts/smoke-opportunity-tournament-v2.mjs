@@ -2663,8 +2663,8 @@ async function verifyLengthFinishedStructuredRepair() {
         request.model !== 'test/v2' ||
         JSON.stringify(request.models) !== JSON.stringify([
           'test/v2',
-          'openai/gpt-4.1-mini',
-          'meta-llama/llama-4-maverick'
+          'google/gemini-3.5-flash-lite',
+          'openai/gpt-4.1-mini'
         ]) ||
         request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !==
