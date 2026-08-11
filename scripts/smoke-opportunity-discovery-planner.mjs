@@ -73,8 +73,19 @@ function verifyBoundedLocalJSONRepair() {
     let rejected = false;
     try {
       repairAndValidateOpenRouterJSONMessage(raw, responseFormat);
-    } catch {
+    } catch (error) {
       rejected = true;
+      if (label === 'schema-invalid' &&
+          JSON.stringify(error.localJSONRepairSchemaIssues) !==
+            JSON.stringify([{
+              keyword: 'minItems',
+              instancePath: '/plans',
+              schemaPath: '#/properties/plans/minItems'
+            }])) {
+        throw new Error(
+          `schema-invalid repair lost bounded issue diagnostics: ${JSON.stringify(error.localJSONRepairSchemaIssues)}`
+        );
+      }
     }
     if (!rejected) {
       throw new Error(`${label} local JSON repair did not fail closed`);

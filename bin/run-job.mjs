@@ -3288,7 +3288,9 @@ async function callOpenRouterJSON({
         diagnostics = {
           ...diagnostics,
           localJSONRepairFailure:
-            localJSONRepairFailureCode(repairError)
+            localJSONRepairFailureCode(repairError),
+          localJSONRepairSchemaIssues:
+            localJSONRepairSchemaIssues(repairError)
         };
         throw attachOpenRouterResponseMetadata(
           error,
@@ -3323,6 +3325,12 @@ function localJSONRepairFailureCode(error) {
   }
   if (message.includes('failed exact schema validation')) return 'schema';
   return 'syntax';
+}
+
+function localJSONRepairSchemaIssues(error) {
+  if (!Array.isArray(error?.localJSONRepairSchemaIssues)) return undefined;
+  const issues = error.localJSONRepairSchemaIssues.slice(0, 8);
+  return issues.length > 0 ? issues : undefined;
 }
 
 function openRouterResponseDiagnostics(choice, rawContent) {

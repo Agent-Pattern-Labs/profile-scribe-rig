@@ -1479,9 +1479,23 @@ export function repairAndValidateOpenRouterJSONMessage(
     localStructuredOutputValidators.set(schemaHash, validate);
   }
   if (!validate(data)) {
-    throw new Error(
+    const error = new Error(
       'Repaired OpenRouter JSON message failed exact schema validation'
     );
+    error.localJSONRepairSchemaIssues = (validate.errors || [])
+      .slice(0, 8)
+      .map((issue) => ({
+        keyword: String(issue?.keyword || '').slice(0, 32),
+        instancePath: String(issue?.instancePath || '/').slice(0, 240),
+        schemaPath: String(issue?.schemaPath || '').slice(0, 240),
+        ...(issue?.keyword === 'required' &&
+            /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(
+              String(issue?.params?.missingProperty || '')
+            )
+          ? { missingProperty: String(issue.params.missingProperty) }
+          : {})
+      }));
+    throw error;
   }
   return data;
 }
@@ -24250,6 +24264,10 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       )
         ? firstText(diagnostics.localJSONRepairFailure)
         : undefined,
+    localJSONRepairSchemaIssues:
+      normalizeLocalJSONRepairSchemaIssues(
+        diagnostics.localJSONRepairSchemaIssues
+      ),
     providerErrorType: /^[a-z][a-z0-9_]{0,63}$/.test(
       providerErrorType
     )
@@ -24292,6 +24310,34 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       ? firstText(diagnostics.routerSelectedModel).toLowerCase()
       : undefined
   });
+}
+
+function normalizeLocalJSONRepairSchemaIssues(value) {
+  if (!Array.isArray(value)) return undefined;
+  const issues = value.slice(0, 8).map((raw) => {
+    const issue = asObject(raw);
+    const keyword = firstText(issue.keyword);
+    const instancePath = firstText(issue.instancePath) || '/';
+    const schemaPath = firstText(issue.schemaPath);
+    const missingProperty = firstText(issue.missingProperty);
+    if (!/^[a-z][a-zA-Z0-9]{0,31}$/.test(keyword) ||
+        instancePath.length > 240 ||
+        schemaPath.length > 240 ||
+        !/^[/#$A-Za-z0-9_.~\-]+$/.test(instancePath) ||
+        !/^[/#$A-Za-z0-9_.~\-]+$/.test(schemaPath)) {
+      return undefined;
+    }
+    return compact({
+      keyword,
+      instancePath,
+      schemaPath,
+      missingProperty:
+        /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(missingProperty)
+          ? missingProperty
+          : undefined
+    });
+  }).filter(Boolean);
+  return issues.length > 0 ? issues : undefined;
 }
 
 function aggregateUsage(entries, budget) {
