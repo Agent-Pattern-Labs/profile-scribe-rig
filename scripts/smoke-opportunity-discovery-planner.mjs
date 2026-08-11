@@ -1263,7 +1263,7 @@ await verifyOmittedTargetEvidenceProtocolCanonicalization(
   unsafeJob,
   unsafeRef
 );
-await verifyOneMotionFailsClosed(unsafeJob, unsafeRef);
+await verifyOneMotionUsesTwoTacticFallback(unsafeJob, unsafeRef);
 await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
 await verifyQualifiedPartnerReferralActionsPass(unsafeJob, unsafeRef);
 await verifyCompactConversionActionProjection(unsafeJob, unsafeRef);
@@ -5354,7 +5354,7 @@ async function verifyLegacyDiscoveryRoleAndAdapterInvariants(
   }
 }
 
-async function verifyOneMotionFailsClosed(job, evidenceRef) {
+async function verifyOneMotionUsesTwoTacticFallback(job, evidenceRef) {
   const result = await runOpportunityDiscoveryPlanner({
     job,
     model: 'openai/gpt-5.6-luna',
@@ -5364,7 +5364,9 @@ async function verifyOneMotionFailsClosed(job, evidenceRef) {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
         reason: 'One grounded motion contains two distinct causal tactics.',
-        plans: [cases[0].plans(evidenceRef)[0]]
+        plans: compactFreshPlannerPlans([
+          cases[0].plans(evidenceRef)[0]
+        ])
       },
       usage,
       generationId: 'generation-one-motion-two-families',
@@ -5384,14 +5386,14 @@ async function verifyOneMotionFailsClosed(job, evidenceRef) {
       }]
     })
   });
-  if (result.status !== 'blocked' ||
-      !/exactly two grounded, economically distinct commercial motions/i.test(
-        result.reason
-      ) ||
-      result.plans.length !== 0 ||
+  if (result.status !== 'planned' ||
+      result.plans.length !== 1 ||
+      result.planSelection?.returnedPlanCount !== 1 ||
+      result.planSelection?.acceptedPlanCount !== 1 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
-      `one-motion planner output did not fail closed: ${JSON.stringify(result)}`
+      `one-motion two-tactic fallback was not retained: ${JSON.stringify(result)}`
     );
   }
 }
@@ -6287,7 +6289,7 @@ async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
     })
   });
   if (result.status !== 'blocked' ||
-      !/exactly two grounded, economically distinct commercial motions/i.test(
+      !/requires one or two grounded commercial motions/i.test(
         result.reason
       ) ||
       result.plans.length !== 0 ||

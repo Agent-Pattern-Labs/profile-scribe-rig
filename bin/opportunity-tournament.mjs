@@ -5009,8 +5009,9 @@ function opportunityDiscoveryRawPlanCardinalityIssue(value) {
   }
   const status = firstText(raw.status);
   if (status === 'planned' &&
-      raw.plans.length !== MAX_DISCOVERY_PLANNER_PLANS) {
-    return 'Discovery planning requires exactly two grounded, economically distinct commercial motions with two causal families each.';
+      (raw.plans.length < 1 ||
+        raw.plans.length > MAX_DISCOVERY_PLANNER_PLANS)) {
+    return 'Discovery planning requires one or two grounded commercial motions, each with two causal families; the sole-motion path remains eligible only for the independent two-tactic critic fallback.';
   }
   if (status === 'insufficient_verified_supply' &&
       raw.plans.length === 0) {
