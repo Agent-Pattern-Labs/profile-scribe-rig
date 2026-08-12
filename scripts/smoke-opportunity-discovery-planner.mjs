@@ -4522,8 +4522,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           request: 0
         },
         providerRouting: {
-          order: ['fireworks', 'deepinfra', 'cloudflare'],
-          only: ['fireworks', 'deepinfra', 'cloudflare'],
+          order: ['fireworks', 'cloudflare'],
+          only: ['fireworks', 'cloudflare'],
           allow_fallbacks: true,
           require_parameters: true,
           data_collection: 'deny',

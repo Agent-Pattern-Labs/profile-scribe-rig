@@ -219,12 +219,14 @@ const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  order: ['fireworks', 'deepinfra', 'cloudflare'],
-  only: ['fireworks', 'deepinfra', 'cloudflare'],
-  // DeepSeek Flash is available from three independently hosted native
+  order: ['fireworks', 'cloudflare'],
+  only: ['fireworks', 'cloudflare'],
+  // DeepSeek Flash is available from two qualified independently hosted native
   // structured-output endpoints. Every admitted route has compiled the exact
   // bounded planner schema; strict parameter, privacy, and price filters remain
-  // authoritative.
+  // authoritative. DeepInfra is deliberately excluded: production calls there
+  // repeatedly exhausted the 64k output ceiling without completing the strict
+  // planner object.
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'

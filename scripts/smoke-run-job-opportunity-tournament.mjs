@@ -1120,12 +1120,12 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   );
   assertEqual(
     JSON.stringify(call.envelope.provider?.order),
-    JSON.stringify(['fireworks', 'deepinfra', 'cloudflare']),
+    JSON.stringify(['fireworks', 'cloudflare']),
     'generator lost the ordered multi-vendor provider route'
   );
   assertEqual(
       JSON.stringify(call.envelope.provider?.only),
-      JSON.stringify(['fireworks', 'deepinfra', 'cloudflare']),
+      JSON.stringify(['fireworks', 'cloudflare']),
     'generator allowed an unreviewed fallback vendor'
   );
   assertEqual(

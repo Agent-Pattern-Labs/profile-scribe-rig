@@ -2722,9 +2722,9 @@ async function verifyLengthFinishedStructuredRepair() {
         JSON.stringify(request.models) !== JSON.stringify(['test/v2']) ||
         request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !==
-          '["fireworks","deepinfra","cloudflare"]' ||
+          '["fireworks","cloudflare"]' ||
         JSON.stringify(request.provider?.only) !==
-          '["fireworks","deepinfra","cloudflare"]' ||
+          '["fireworks","cloudflare"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
         request.provider?.max_price?.prompt !== 2 ||
