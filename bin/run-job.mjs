@@ -2912,10 +2912,7 @@ async function callOpenRouterAgentJSON({
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
   model = text(model) || openRouterModel();
-  const resolvedTimeoutMs = numberOr(
-    timeoutMs,
-    numberOr(process.env.PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS, 120_000)
-  );
+  const resolvedTimeoutMs = openRouterTimeoutMs(timeoutMs);
   const client = new OpenRouter({
     apiKey,
     httpReferer: 'https://profilescribe.com',
@@ -3122,12 +3119,10 @@ async function callOpenRouterJSON({
   });
 
   const controller = new AbortController();
-  const resolvedTimeoutMs = numberOr(
-    timeoutMs,
-    numberOr(process.env.PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS, 120_000)
-  );
+  const resolvedTimeoutMs = openRouterTimeoutMs(timeoutMs);
   const timer = setTimeout(() => controller.abort(), resolvedTimeoutMs);
   let response;
+  let body = '';
   try {
     response = await fetch(openRouterChatCompletionsURL(), {
       method: 'POST',
@@ -3141,6 +3136,7 @@ async function callOpenRouterJSON({
       body: requestBody,
       signal: controller.signal
     });
+    body = await response.text();
   } catch (error) {
     if (error?.name === 'AbortError') {
       const timeoutError = new Error(
@@ -3154,7 +3150,6 @@ async function callOpenRouterJSON({
     clearTimeout(timer);
   }
 
-  const body = await response.text();
   if (!response.ok) {
     let envelope = {};
     try {
@@ -4662,6 +4657,17 @@ function truncate(value, limit) {
 function numberOr(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function openRouterTimeoutMs(requestedTimeoutMs) {
+  const configuredTimeoutMs = numberOr(
+    process.env.PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS,
+    120_000
+  );
+  return Math.min(
+    numberOr(requestedTimeoutMs, configuredTimeoutMs),
+    configuredTimeoutMs
+  );
 }
 
 function positiveInteger(value) {

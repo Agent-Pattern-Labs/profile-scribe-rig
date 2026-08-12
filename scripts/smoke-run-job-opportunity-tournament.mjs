@@ -112,6 +112,16 @@ const server = createServer(async (request, response) => {
     routerMetadataHeader: request.headers['x-openrouter-metadata']
   });
 
+  if (input.objective?.id === 'objective-run-job-slow-response-body') {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.flushHeaders();
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
+    if (!response.destroyed) {
+      response.end('raw-slow-body-secret-sentinel');
+    }
+    return;
+  }
+
   if (input.objective?.id === 'objective-run-job-provider-502') {
     response.writeHead(502, {
       'Content-Type': 'application/json',
@@ -323,6 +333,23 @@ try {
   verifyProvider502Failure(
     providerFailure,
     providerCalls.slice(providerFailureCallOffset)
+  );
+
+  const slowResponseBodyJob = tournamentJob(
+    'slow-response-body',
+    'objective-run-job-slow-response-body'
+  );
+  const slowResponseBodyFile = writeJob(
+    'slow-response-body',
+    slowResponseBodyJob
+  );
+  const slowResponseBodyCallOffset = providerCalls.length;
+  const slowResponseBody = await runJob(slowResponseBodyFile, port, {
+    env: { PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS: '50' }
+  });
+  verifySlowResponseBodyTimeout(
+    slowResponseBody,
+    providerCalls.slice(slowResponseBodyCallOffset)
   );
 
   const embeddedFailureJob = tournamentJob(
@@ -1049,6 +1076,46 @@ function verifyProvider502Failure(receipt, calls) {
   verifyNoExecution(metadata);
 }
 
+function verifySlowResponseBodyTimeout(receipt, calls) {
+  const metadata = receipt.metadata || {};
+  const providerReceipt = metadata.llm?.strategyGeneratorJudge || {};
+  assertEqual(
+    receipt.status,
+    'skipped',
+    'slow response body did not stop safely'
+  );
+  assertEqual(
+    calls.length,
+    1,
+    'slow response body caused an application redispatch'
+  );
+  assertEqual(
+    metadata.usage?.calls,
+    1,
+    'slow response body lost its call count'
+  );
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    0,
+    'slow response body was counted as a successful call'
+  );
+  assertEqual(
+    providerReceipt.status,
+    'failed',
+    'slow response body was accepted'
+  );
+  assertEqual(
+    providerReceipt.error,
+    'openrouter_timeout',
+    'slow response body lost its cause-matched timeout'
+  );
+  assert(
+    !JSON.stringify(receipt).includes('raw-slow-body-secret-sentinel'),
+    'slow response body leaked the raw provider body'
+  );
+  verifyNoExecution(metadata);
+}
+
 function verifyEmbeddedProviderFailure(receipt, calls) {
   const metadata = receipt.metadata || {};
   const providerReceipt = metadata.llm?.strategyGeneratorJudge || {};
@@ -1240,7 +1307,8 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL
           ? { PROFILESCRIBE_MCP_URL: options.mcpURL }
-          : {})
+          : {}),
+        ...(options.env || {})
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });
