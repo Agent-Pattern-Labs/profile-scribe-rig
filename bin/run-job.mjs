@@ -3292,7 +3292,9 @@ async function callOpenRouterJSON({
           localJSONRepairSchemaIssues:
             localJSONRepairSchemaIssues(repairError),
           localJSONRepairRootShape:
-            localJSONRepairRootShape(repairError)
+            localJSONRepairRootShape(repairError),
+          localJSONRepairRootElementShapes:
+            localJSONRepairRootElementShapes(repairError)
         };
         throw attachOpenRouterResponseMetadata(
           error,
@@ -3340,6 +3342,11 @@ function localJSONRepairRootShape(error) {
   return shape && typeof shape === 'object' && !Array.isArray(shape)
     ? shape
     : undefined;
+}
+
+function localJSONRepairRootElementShapes(error) {
+  const shapes = error?.localJSONRepairRootElementShapes;
+  return Array.isArray(shapes) ? shapes.slice(0, 4) : undefined;
 }
 
 function openRouterResponseDiagnostics(choice, rawContent) {

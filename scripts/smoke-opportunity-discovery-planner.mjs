@@ -136,6 +136,7 @@ function verifyBoundedLocalJSONRepair() {
     );
   }
   let projectedPlanIssue;
+  let projectedPlanShapes;
   try {
     repairAndValidateOpenRouterJSONMessage(
       '{"label":"buyer"}\n{}',
@@ -143,6 +144,15 @@ function verifyBoundedLocalJSONRepair() {
     );
   } catch (error) {
     projectedPlanIssue = error.localJSONRepairSchemaIssues?.[0];
+    projectedPlanShapes = error.localJSONRepairRootElementShapes;
+  }
+  if (JSON.stringify(projectedPlanShapes) !== JSON.stringify([
+    'root:;plan:;bundle:;keys:1;unknown:1',
+    'root:;plan:;bundle:;keys:0;unknown:0'
+  ])) {
+    throw new Error(
+      `two-plan projection lost safe element shapes: ${JSON.stringify(projectedPlanShapes)}`
+    );
   }
   if (JSON.stringify(projectedPlanIssue) !== JSON.stringify({
     keyword: 'required',

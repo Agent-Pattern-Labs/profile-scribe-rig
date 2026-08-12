@@ -1529,6 +1529,9 @@ export function repairAndValidateOpenRouterJSONMessage(
       kind: data === null ? 'null' : Array.isArray(data) ? 'array' : typeof data,
       ...(Array.isArray(data) ? { arrayLength: data.length } : {})
     };
+    error.localJSONRepairRootElementShapes = Array.isArray(data)
+      ? data.slice(0, 4).map((item) => localJSONRepairElementShape(item))
+      : undefined;
     throw error;
   }
   return data;
@@ -24306,6 +24309,10 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       normalizeLocalJSONRepairRootShape(
         diagnostics.localJSONRepairRootShape
       ),
+    localJSONRepairRootElementShapes:
+      normalizeLocalJSONRepairRootElementShapes(
+        diagnostics.localJSONRepairRootElementShapes
+      ),
     providerErrorType: /^[a-z][a-z0-9_]{0,63}$/.test(
       providerErrorType
     )
@@ -24391,6 +24398,38 @@ function normalizeLocalJSONRepairRootShape(value) {
       ? arrayLength
       : undefined
   });
+}
+
+function localJSONRepairElementShape(value) {
+  const item = asObject(value);
+  const keys = Object.keys(item);
+  const knownGroups = {
+    root: ['contractVersion', 'status', 'reason', 'plans'],
+    plan: [
+      'motionKind', 'paidOffer', 'market', 'targetRoleSubrole',
+      'organizationTerms', 'jobTitle', 'skills', 'conversionDestination',
+      'paidConversion', 'attributionSignal', 'contingentFinalists'
+    ],
+    bundle: ['seedContract', 'pathBase', 'tacticA', 'tacticB', 'w']
+  };
+  const known = new Set(Object.values(knownGroups).flat());
+  const parts = Object.entries(knownGroups).map(([group, names]) =>
+    `${group}:${names.filter((name) => keys.includes(name)).join(',')}`
+  );
+  parts.push(`keys:${keys.length}`);
+  parts.push(`unknown:${keys.filter((key) => !known.has(key)).length}`);
+  return parts.join(';');
+}
+
+function normalizeLocalJSONRepairRootElementShapes(value) {
+  if (!Array.isArray(value)) return undefined;
+  const shapes = value.slice(0, 4)
+    .map((shape) => firstText(shape))
+    .filter((shape) =>
+      shape.length > 0 && shape.length <= 512 &&
+      /^[A-Za-z0-9_,:;]*$/.test(shape)
+    );
+  return shapes.length > 0 ? shapes : undefined;
 }
 
 function aggregateUsage(entries, budget) {
