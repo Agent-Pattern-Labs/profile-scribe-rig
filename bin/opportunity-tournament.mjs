@@ -93,6 +93,45 @@ const CONTINGENT_PLANNER_ACTION_FIELD_BY_COMMERCIAL_ROLE = Object.freeze({
   buyer: 'by',
   paid_demand: 'pd'
 });
+const CONTINGENT_PLANNER_BUYERS_BY_COMMERCIAL_ROLE = Object.freeze({
+  referral_partner: Object.freeze([
+    'Qualified buyer for the current paid offer',
+    'Prospective buyer eligible for the current paid offer'
+  ]),
+  buyer: Object.freeze([
+    '{{TARGET_NAME}}: validated commercial buyer',
+    '{{TARGET_NAME}}: prospective buyer of the current paid offer'
+  ]),
+  paid_demand: Object.freeze([
+    '{{TARGET_NAME}}: employer with current compensated demand',
+    '{{TARGET_NAME}}: buyer issuing a current paid engagement'
+  ])
+});
+const CONTINGENT_PROVISIONAL_BUYERS_BY_COMMERCIAL_ROLE = Object.freeze({
+  referral_partner: Object.freeze([
+    'Qualified buyer for the proposed paid offer',
+    'Prospective buyer for the proposed paid offer'
+  ]),
+  buyer: Object.freeze([
+    '{{TARGET_NAME}}: prospective buyer for the proposed paid offer',
+    '{{TARGET_NAME}}: candidate buyer for the proposed paid offer'
+  ]),
+  paid_demand: CONTINGENT_PLANNER_BUYERS_BY_COMMERCIAL_ROLE.paid_demand
+});
+const CONTINGENT_PLANNER_CHANNELS_BY_COMMERCIAL_ROLE = Object.freeze({
+  referral_partner: Object.freeze([
+    'Review-first public professional profile {{TARGET_URL}} for referral fit verification',
+    'Review-first public professional profile {{TARGET_URL}} for partner-channel verification'
+  ]),
+  buyer: Object.freeze([
+    'Review-first public professional profile {{TARGET_URL}} for buyer fit verification',
+    'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification'
+  ]),
+  paid_demand: Object.freeze([
+    'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification',
+    'Review-first official paid-demand page {{TARGET_URL}} for paid-engagement verification'
+  ])
+});
 const CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE = Object.freeze({
   referral_partner: Object.freeze([
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer',
@@ -139,6 +178,22 @@ function contingentPlannerActionsForCommercialRole(
   return catalog[firstText(commercialRole)] || [];
 }
 
+function contingentPlannerBuyerLabelsForCommercialRole(
+  commercialRole,
+  provisionalOfferExperiment = false
+) {
+  const catalog = provisionalOfferExperiment
+    ? CONTINGENT_PROVISIONAL_BUYERS_BY_COMMERCIAL_ROLE
+    : CONTINGENT_PLANNER_BUYERS_BY_COMMERCIAL_ROLE;
+  return catalog[firstText(commercialRole)] || [];
+}
+
+function contingentPlannerChannelLabelsForCommercialRole(commercialRole) {
+  return CONTINGENT_PLANNER_CHANNELS_BY_COMMERCIAL_ROLE[
+    firstText(commercialRole)
+  ] || [];
+}
+
 function provisionalOfferValidationAction(value, commercialRole = '') {
   const label = firstText(value);
   if (!label) return false;
@@ -166,7 +221,7 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
     family: 'deepseek',
     minimumContextTokens: 1_000_000,
-    minimumOutputTokens: 64_000,
+    minimumOutputTokens: 10_000,
     maximumPromptPrice: 2,
     maximumCompletionPrice: 6
   })
@@ -222,9 +277,12 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // Preserve OpenRouter's default health/price load balancing and automatic
   // fallbacks across every endpoint that natively supports the strict request.
   // Quarantine only endpoints with durable production evidence of failing this
-  // exact contract: Cloudflare returned empty HTTP-200 bodies, while DeepInfra
-  // and Inceptron exhausted the 64k output ceiling without completing JSON.
-  ignore: ['cloudflare', 'deepinfra', 'inceptron/fp4'],
+  // exact contract: Cloudflare returned empty HTTP-200 bodies, DeepInfra and
+  // Inceptron exhausted the former oversized output ceiling, and Io Net kept
+  // an actively streaming strict response open through the local 300-second
+  // hard deadline. OpenRouter still owns ordering, balancing, and fallback
+  // across every other compatible endpoint.
+  ignore: ['cloudflare', 'deepinfra', 'inceptron/fp4', 'io-net'],
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
@@ -530,19 +588,13 @@ const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
 // second and final model stage to finish its bounded schema.
 const MAX_CRITIC_OUTPUT_TOKENS = 6_000;
 const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
-// The provider may pretty-print strict structured output. Keep enough token
-// headroom for that transport representation while the independently parsed,
-// minified plan remains capped by MAX_DISCOVERY_PLANNER_RESPONSE_BYTES.
-// Production two-motion traces exhausted 8,000 and 9,000 tokens before
-// completing otherwise-valid strict JSON. DeepSeek then exhausted 32,000
-// tokens even with reasoning disabled after emitting 48,694 bytes, while the
-// valid representative two-motion fixture is about 68 KiB. The 64,000-token
-// transport ceiling remains
-// subordinate to the parsed byte cap and independently computed spend ceiling;
-// length termination still fails closed without response repair.
-// The parsed cap below also dominates the strict grammar's computed worst-case
-// Unicode/evidence envelope instead of relying on representative samples.
-const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 64_000;
+// Call 1 now emits only the selected route fields for each of two motions and
+// shares pathBase across its two tactic deltas. The strict grammar has an
+// independently proved <=32 KiB serialized upper bound; 10,000 output tokens
+// leave transport-format headroom while fitting inside the 300-second total
+// deadline even at the observed slow-route throughput. Length termination
+// remains incomplete and fails closed.
+const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 10_000;
 // Stream the large strict-schema generator response so a healthy model can
 // continue past the former 120-second buffered-response deadline. Silence is
 // bounded independently from total execution time, and the total leaves five
@@ -551,7 +603,7 @@ const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 64_000;
 const MAX_DISCOVERY_PLANNER_STREAM_START_TIMEOUT_MS = 180_000;
 const MAX_DISCOVERY_PLANNER_STREAM_IDLE_TIMEOUT_MS = 60_000;
 const MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS = 300_000;
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 476_160;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 152_160;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE;
@@ -592,8 +644,8 @@ const MAX_DISCOVERY_PLANNER_PLANS = 2;
 // every grounding array. Canonicalize oversized identifiers before schema
 // construction so the aggregate response ceiling is independent of caller
 // ID length while raw IDs remain usable as local aliases.
-const MAX_DISCOVERY_PLANNER_EVIDENCE_REF_CODEPOINTS = 96;
-const MAX_DISCOVERY_PLANNER_EVIDENCE_REF_UTF8_BYTES = 192;
+const MAX_DISCOVERY_PLANNER_EVIDENCE_REF_CODEPOINTS = 64;
+const MAX_DISCOVERY_PLANNER_EVIDENCE_REF_UTF8_BYTES = 64;
 const MAX_DISCOVERY_PLANNER_SELLER_FOCUS_CODEPOINTS = 140;
 const MAX_DISCOVERY_PLANNER_SELLER_FOCUS_UTF8_BYTES =
   MAX_DISCOVERY_PLANNER_SELLER_FOCUS_CODEPOINTS * 4;
@@ -602,22 +654,25 @@ const MAX_DISCOVERY_PLANNER_SELLER_FOCUS_UTF8_BYTES =
 // invisible formatting that JS and Go trim/render/canonicalize differently.
 const OPPORTUNITY_DISCOVERY_UNSUPPORTED_SCALAR_RE =
   /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b\u200e-\u200f\u202a-\u202e\u2060-\u206f\ud800-\udfff\ufeff\ufffd\ufff9-\ufffb]/u;
-// Conservative aggregate bound for the fresh two-plan grammar:
-// - <=24,500 schema-authorized text code points at <=4 UTF-8 bytes each;
-// - <=160 evidence-ref occurrences at <=192 UTF-8 bytes each;
-// - <=32 KiB for fixed keys, punctuation, enums, and canonical numbers.
-// The response cap deliberately stays above that computed 161,488-byte
-// maximum while remaining a small, independently enforced parsed envelope.
-const MAX_DISCOVERY_PLANNER_SCHEMA_TEXT_CODEPOINTS = 24_500;
-const MAX_DISCOVERY_PLANNER_SCHEMA_EVIDENCE_REF_OCCURRENCES = 160;
-const MAX_DISCOVERY_PLANNER_SCHEMA_FIXED_BYTES = 32 * 1_024;
+// Conservative aggregate bound for the fresh selected-role two-plan grammar.
+// The smoke proof walks every required schema branch, multiplies every array
+// maximum, prices every authored code point as four UTF-8 bytes, and prices
+// every canonical evidence reference at its full encoded-byte ceiling.
+const MAX_DISCOVERY_PLANNER_SCHEMA_TEXT_CODEPOINTS = 5_200;
+const MAX_DISCOVERY_PLANNER_SCHEMA_EVIDENCE_REF_OCCURRENCES = 112;
+const MAX_DISCOVERY_PLANNER_SCHEMA_FIXED_BYTES = 4_800;
 const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES =
   MAX_DISCOVERY_PLANNER_SCHEMA_TEXT_CODEPOINTS * 4 +
   MAX_DISCOVERY_PLANNER_SCHEMA_EVIDENCE_REF_OCCURRENCES *
     MAX_DISCOVERY_PLANNER_EVIDENCE_REF_UTF8_BYTES +
   MAX_DISCOVERY_PLANNER_SCHEMA_FIXED_BYTES;
-const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 192 * 1_024;
-const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 96 * 1_024;
+const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 32 * 1_024;
+const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 24 * 1_024;
+// Existing durable v2 receipts contain the locally materialized two-family
+// shape, which is intentionally larger than the compact provider wire shape.
+// Keep their established read envelope while applying the 24 KiB limit only
+// to fresh compact planner output.
+const MAX_DURABLE_DISCOVERY_CONTINGENT_BUNDLE_BYTES = 96 * 1_024;
 if (MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES >
       MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
     MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES >
@@ -1584,7 +1639,7 @@ export function repairAndValidateOpenRouterJSONMessage(
     error.localJSONRepairSchemaIssues = (
       projectedRootSchemaIssues || validate.errors || []
     )
-      .slice(0, 8)
+      .slice(0, 64)
       .map((issue) => ({
         keyword: String(issue?.keyword || '').slice(0, 32),
         instancePath: String(issue?.instancePath || '/').slice(0, 240),
@@ -2046,6 +2101,7 @@ export async function runOpportunityDiscoveryPlanner({
         MAX_DISCOVERY_PLANNER_STREAM_IDLE_TIMEOUT_MS,
       streamTotalTimeoutMs:
         MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS,
+      streamMaxContentBytes: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
       additionalPromptTokenReserve: 0,
       fixedToolFeeMicros: 0,
     };
@@ -2399,8 +2455,6 @@ function opportunityDiscoveryPlannerResponseFormat(
   requiredSellerFocus = '',
   provisionalOfferExperiment = false
 ) {
-  const compensatedJobOnly = allowedMotionKinds.length === 1 &&
-    allowedMotionKinds[0] === 'compensated_job';
   const approvedObservationEvidenceRefs = compactStrings(
     asArray(evidenceCatalog).map((item) => firstText(asObject(item).id))
   ).filter((ref) => /^observation:/i.test(ref));
@@ -2425,8 +2479,12 @@ function opportunityDiscoveryPlannerResponseFormat(
       : `^${canonicalAuthoredText}$`
   });
   const canonicalTextDefinitions = {
+    canonicalText48: canonicalTextDefinition(48),
+    canonicalText64: canonicalTextDefinition(64),
     canonicalText80: canonicalTextDefinition(80),
+    canonicalText96: canonicalTextDefinition(96),
     canonicalText100: canonicalTextDefinition(100),
+    canonicalText120: canonicalTextDefinition(120),
     canonicalText140: canonicalTextDefinition(140),
     canonicalText180: canonicalTextDefinition(180),
     canonicalText220: canonicalTextDefinition(220),
@@ -2444,11 +2502,16 @@ function opportunityDiscoveryPlannerResponseFormat(
       : `^${canonicalCommercialSemanticText}$`
   });
   const commercialSemanticTextDefinitions = {
+    commercialSemanticText96: commercialSemanticTextDefinition(96),
+    commercialSemanticText100: commercialSemanticTextDefinition(100),
+    commercialSemanticText120: commercialSemanticTextDefinition(120),
     commercialSemanticText140: commercialSemanticTextDefinition(140),
     commercialSemanticText180: commercialSemanticTextDefinition(180),
     commercialSemanticText220: commercialSemanticTextDefinition(220),
     commercialOptionalSemanticText180:
-      commercialSemanticTextDefinition(180, true)
+      commercialSemanticTextDefinition(180, true),
+    commercialOptionalSemanticText100:
+      commercialSemanticTextDefinition(100, true)
   };
   const targetTokenFreeText = (maxLength, allowEmpty = false) => {
     const definitionName = allowEmpty
@@ -2487,6 +2550,12 @@ function opportunityDiscoveryPlannerResponseFormat(
       `(?:${canonicalAuthoredCharacter}| )*$`
   });
   const commercialSemanticConstraintDefinitions = {
+    paidOutcomeText120: commercialSemanticTextContaining(
+      120,
+      '[Pp]aid|[Pp]ayment|[Pp]urchase|[Ss]ale|[Cc]ontract|' +
+        '[Bb]ooking|[Ss]ubscription|[Cc]ommission|[Ss]alary|' +
+        '[Rr]evenue|[Pp]ayout|[Rr]eimbursement'
+    ),
     paidOutcomeText140: commercialSemanticTextContaining(
       140,
       '[Pp]aid|[Pp]ayment|[Pp]urchase|[Ss]ale|[Cc]ontract|' +
@@ -2505,8 +2574,19 @@ function opportunityDiscoveryPlannerResponseFormat(
         '[Cc]ontract|[Pp]ilot|[Ss]ervice|[Aa]pplication|' +
         '[Ss]ubscription|[Pp]urchase|[Oo]rder'
     ),
+    conversionDestinationText120: commercialSemanticTextContaining(
+      120,
+      '[Bb]ooking|[Cc]heckout|[Pp]ricing|[Pp]roposal|' +
+        '[Cc]ontract|[Pp]ilot|[Ss]ervice|[Aa]pplication|' +
+        '[Ss]ubscription|[Pp]urchase|[Oo]rder'
+    ),
     attributionSignalText180: commercialSemanticTextContaining(
       180,
+      '[Ss]ource|[Rr]eferral|(?:UTM|utm)|[Cc]ampaign|' +
+        '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]'
+    ),
+    attributionSignalText140: commercialSemanticTextContaining(
+      140,
       '[Ss]ource|[Rr]eferral|(?:UTM|utm)|[Cc]ampaign|' +
         '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]'
     ),
@@ -2535,31 +2615,23 @@ function opportunityDiscoveryPlannerResponseFormat(
     /[.*+?^${}()|[\]\\]/g,
     '\\$&'
   );
-  const paidOfferText = requiredSellerFocus
-    ? {
-        type: 'string',
-        maxLength: 140,
-        pattern: provisionalOfferExperiment
-          ? `^Proposed paid ${regexLiteral(requiredSellerFocus)}` +
-            `(?: ${canonicalAuthoredText})?$`
-          : `^(?:${canonicalAuthoredText} )?` +
-            `${regexLiteral(requiredSellerFocus)}` +
-            `(?: ${canonicalAuthoredText})?$`
-      }
-    : targetTokenFreeText(140);
-  const paidOfferAlternatives = {
-    type: 'object',
-    properties: {
-      seller: paidOfferText,
-      compensatedJob: {
-        type: 'string',
-        enum: [DISCOVERY_COMPENSATED_JOB_PAID_OFFER]
-      }
-    },
-    required: ['seller', 'compensatedJob'],
-    additionalProperties: false,
-    description:
-      'Author both closed paid-offer alternatives; code selects seller for buyer/referral routes and compensatedJob for compensated_job.'
+  const sellerPaidOfferPattern = requiredSellerFocus
+    ? provisionalOfferExperiment
+      ? `Proposed paid ${regexLiteral(requiredSellerFocus)}` +
+        `(?: ${canonicalAuthoredText})?`
+      : `(?:${canonicalAuthoredText} )?` +
+        `${regexLiteral(requiredSellerFocus)}` +
+        `(?: ${canonicalAuthoredText})?`
+    : canonicalAuthoredText;
+  // The model emits only the paid offer selected by motionKind. A single
+  // regex union keeps mixed seller/job routes native-structured-output safe;
+  // the local motion gate below prevents a route from selecting its sibling's
+  // branch.
+  const selectedPaidOffer = {
+    type: 'string',
+    maxLength: 140,
+    pattern: `^(?:${sellerPaidOfferPattern}|` +
+      `${regexLiteral(DISCOVERY_COMPENSATED_JOB_PAID_OFFER)})$`
   };
   const targetTokenFreeStringArray = (maxItems, maxLength = 80) => ({
     type: 'array',
@@ -2581,9 +2653,6 @@ function opportunityDiscoveryPlannerResponseFormat(
   );
   const contingentDimensionProperties = asObject(
     contingentDimensions.properties
-  );
-  const contingentActionItem = asObject(
-    contingentSchema.$defs.actionItem
   );
   const boundedItemDefinition = (key, labelMaxLength = 140) => {
     const definition = asObject(contingentSchema.$defs[key]);
@@ -2674,156 +2743,114 @@ function opportunityDiscoveryPlannerResponseFormat(
       type: 'array',
       items: { $ref: '#/$defs/observationEvidenceRef' },
       minItems: 1,
-      maxItems: 12
+      maxItems: 2
     },
     compactObservationEvidenceRefs: {
       type: 'array',
       items: { $ref: '#/$defs/observationEvidenceRef' },
       minItems: 1,
-      maxItems: 2
+      maxItems: 1
+    },
+    singleEvidenceRefs: {
+      type: 'array',
+      items: { $ref: '#/$defs/evidenceRef' },
+      minItems: 1,
+      maxItems: 1
     },
     revenueMechanism,
-    revenueMechanismChoice: {
-      type: 'object',
-      properties: {
-        seller: {
-          type: 'string',
-          enum: [...SELLER_REVENUE_MECHANISMS]
-        },
-        compensatedJob: {
-          type: 'string',
-          enum: ['compensated_role']
-        }
-      },
-      required: ['seller', 'compensatedJob'],
-      additionalProperties: false,
+    selectedRevenueMechanism: {
+      type: 'string',
+      enum: [...SELLER_REVENUE_MECHANISMS, 'compensated_role'],
       description:
-        'Author both revenue-mechanism alternatives; code selects seller for buyer/referral routes and compensatedJob only for compensated_job.'
+        'Emit only the mechanism selected by motionKind; local route validation rejects a crossed role.'
     },
     attributionMethod,
     scores: boundedScores,
-    offerItem: boundedItemDefinition('offerItem'),
+    offerItem: {
+      ...boundedItemDefinition('offerItem', 96),
+      properties: {
+        ...asObject(boundedItemDefinition('offerItem', 96).properties),
+        e: { $ref: '#/$defs/singleEvidenceRefs' }
+      }
+    },
     buyerItem: {
       type: 'object',
       properties: {
-        rp: {
+        l: {
           type: 'string',
-          enum: provisionalOfferExperiment
-            ? [
-                'Qualified buyer for the proposed paid offer',
-                'Prospective buyer for the proposed paid offer'
-              ]
-            : [
-                'Qualified buyer for the current paid offer',
-                'Prospective buyer eligible for the current paid offer'
-              ]
+          enum: [...new Set([
+            ...Object.keys(CONTINGENT_PLANNER_BUYERS_BY_COMMERCIAL_ROLE)
+              .flatMap((role) =>
+                contingentPlannerBuyerLabelsForCommercialRole(
+                  role,
+                  provisionalOfferExperiment
+                )
+              )
+          ])]
         },
-        by: {
-          type: 'string',
-          enum: provisionalOfferExperiment
-            ? [
-                '{{TARGET_NAME}}: prospective buyer for the proposed paid offer',
-                '{{TARGET_NAME}}: candidate buyer for the proposed paid offer'
-              ]
-            : [
-                '{{TARGET_NAME}}: validated commercial buyer',
-                '{{TARGET_NAME}}: prospective buyer of the current paid offer'
-              ]
-        },
-        pd: {
-          type: 'string',
-          enum: [
-            '{{TARGET_NAME}}: employer with current compensated demand',
-            '{{TARGET_NAME}}: buyer issuing a current paid engagement'
-          ]
-        },
-        e: asObject(
-          asObject(contingentSchema.$defs.buyerItem).properties
-        ).e
+        e: { $ref: '#/$defs/singleEvidenceRefs' }
       },
-      required: ['rp', 'by', 'pd', 'e'],
+      required: ['l', 'e'],
       additionalProperties: false,
       description:
-        'Three buyer-label alternatives; code selects exactly commercialRole. Only buyer and paid-demand labels contain TARGET_NAME.'
+        'One selected buyer label; code verifies exact membership in motionKind commercialRole.'
     },
     channelItem: {
       type: 'object',
       properties: {
-        rp: {
+        l: {
           type: 'string',
-          enum: [
-            'Review-first public professional profile {{TARGET_URL}} for referral fit verification',
-            'Review-first public professional profile {{TARGET_URL}} for partner-channel verification'
-          ]
+          enum: [...new Set(
+            Object.values(CONTINGENT_PLANNER_CHANNELS_BY_COMMERCIAL_ROLE)
+              .flat()
+          )]
         },
-        by: {
-          type: 'string',
-          enum: [
-            'Review-first public professional profile {{TARGET_URL}} for buyer fit verification',
-            'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification'
-          ]
-        },
-        pd: {
-          type: 'string',
-          enum: [
-            'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification',
-            'Review-first official paid-demand page {{TARGET_URL}} for paid-engagement verification'
-          ]
-        },
-        e: asObject(
-          asObject(contingentSchema.$defs.channelItem).properties
-        ).e
+        e: { $ref: '#/$defs/compactObservationEvidenceRefs' }
       },
-      required: ['rp', 'by', 'pd', 'e'],
+      required: ['l', 'e'],
       additionalProperties: false,
       description:
-        'Three review-only route alternatives; code selects exactly commercialRole. No private contact medium, message, connection, form, or execution claim.'
+        'One selected review-only route; code verifies exact membership in motionKind commercialRole.'
     },
     actionItem: {
       type: 'object',
       properties: {
-        rp: {
+        l: {
           type: 'string',
-          enum: [...contingentPlannerActionsForCommercialRole(
-            'referral_partner',
-            provisionalOfferExperiment
-          )],
-          description:
-            'Referral action: target introduces or recommends a qualified buyer to book or buy the paid offer.'
+          enum: [...new Set([
+            ...contingentPlannerActionsForCommercialRole(
+              'referral_partner', provisionalOfferExperiment
+            ),
+            ...contingentPlannerActionsForCommercialRole(
+              'buyer', provisionalOfferExperiment
+            ),
+            ...contingentPlannerActionsForCommercialRole(
+              'paid_demand', provisionalOfferExperiment
+            )
+          ])]
         },
-        by: {
-          type: 'string',
-          enum: [...contingentPlannerActionsForCommercialRole(
-            'buyer',
-            provisionalOfferExperiment
-          )],
-          description:
-            'Buyer action: target books, buys, signs, or subscribes to the current paid offer.'
-        },
-        pd: {
-          type: 'string',
-          enum: [...contingentPlannerActionsForCommercialRole(
-            'paid_demand',
-            provisionalOfferExperiment
-          )],
-          description:
-            'Demand action: paid application, bid, proposal, or response via the official demand page.'
-        },
-        e: asObject(asObject(contingentActionItem.properties).e)
+        e: { $ref: '#/$defs/compactObservationEvidenceRefs' }
       },
-      required: ['rp', 'by', 'pd', 'e'],
+      required: ['l', 'e'],
       additionalProperties: false,
       description:
-        'Three closed role alternatives; code selects exactly commercialRole and never composes action prose.'
+        'One selected closed action; code verifies exact membership in motionKind commercialRole and never composes action prose.'
     },
     timingItem: {
-      ...boundedItemDefinition('timingItem'),
+      ...boundedItemDefinition('timingItem', 100),
       properties: {
-        ...asObject(boundedItemDefinition('timingItem').properties),
+        ...asObject(boundedItemDefinition('timingItem', 100).properties),
+        q: targetTokenFreeText(100),
         e: { $ref: '#/$defs/compactObservationEvidenceRefs' }
       }
     },
-    proofItem: boundedItemDefinition('proofItem'),
+    proofItem: {
+      ...boundedItemDefinition('proofItem', 100),
+      properties: {
+        ...asObject(boundedItemDefinition('proofItem', 100).properties),
+        e: { $ref: '#/$defs/compactObservationEvidenceRefs' }
+      }
+    },
     followUpItem: {
       ...contingentFollowUpItem,
       properties: {
@@ -2841,15 +2868,16 @@ function opportunityDiscoveryPlannerResponseFormat(
       ...revenuePath,
       properties: {
         ...authoredRevenuePathProperties,
-        rm: { $ref: '#/$defs/revenueMechanismChoice' },
-        l: commercialSemanticText(140),
-        io: paidOutcomeText(180),
+        e: { $ref: '#/$defs/compactEvidenceRefs' },
+        rm: { $ref: '#/$defs/selectedRevenueMechanism' },
+        l: commercialSemanticText(96),
+        io: paidOutcomeText(120),
         atm: { $ref: '#/$defs/attributionMethod' },
-        ats: attributionSignalTextSchema(220),
-        cd: conversionDestinationTextSchema(180),
-        st: commercialSemanticText(180),
+        ats: attributionSignalTextSchema(140),
+        cd: conversionDestinationTextSchema(120),
+        st: commercialSemanticText(120),
         k: { $ref: '#/$defs/causalWitness' },
-        sb: commercialSemanticText(180, true),
+        sb: commercialSemanticText(100, true),
         vm: {
           type: 'integer',
           minimum: 1,
@@ -2859,13 +2887,19 @@ function opportunityDiscoveryPlannerResponseFormat(
           ...revenueGrounding,
           properties: {
             ...revenueGroundingProperties,
+            b: { $ref: '#/$defs/singleEvidenceRefs' },
+            o: { $ref: '#/$defs/singleEvidenceRefs' },
+            a: { $ref: '#/$defs/singleEvidenceRefs' },
             d: {
               ...destinationGrounding,
               properties: {
                 ...asObject(destinationGrounding.properties),
-                l: conversionDestinationTextSchema(180)
+                l: conversionDestinationTextSchema(120),
+                e: { $ref: '#/$defs/singleEvidenceRefs' }
               }
-            }
+            },
+            c: { $ref: '#/$defs/singleEvidenceRefs' },
+            t: { $ref: '#/$defs/singleEvidenceRefs' }
           }
         }
       },
@@ -2880,29 +2914,24 @@ function opportunityDiscoveryPlannerResponseFormat(
     pathBase: {
       type: 'object',
       properties: {
-        e: { $ref: '#/$defs/observationEvidenceRefs' },
         r: contingentDimensionProperties.r,
         o: contingentDimensionProperties.o,
         b: contingentDimensionProperties.b,
         t: contingentDimensionProperties.t,
         p: contingentDimensionProperties.p
       },
-      required: ['e', 'r', 'o', 'b', 't', 'p'],
+      required: ['r', 'o', 'b', 't', 'p'],
       additionalProperties: false
     },
     tactic: {
       type: 'object',
       properties: {
-        l: commercialSemanticText(140),
-        e: { $ref: '#/$defs/compactObservationEvidenceRefs' },
         s: asObject(contingentFamily.properties).s,
         c: contingentDimensionProperties.c,
         a: contingentDimensionProperties.a,
         f: contingentDimensionProperties.f
       },
       required: [
-        'l',
-        'e',
         's',
         'c',
         'a',
@@ -2944,7 +2973,7 @@ function opportunityDiscoveryPlannerResponseFormat(
                   type: 'string',
                   enum: [...allowedMotionKinds]
                 },
-                paidOffer: paidOfferAlternatives,
+                paidOffer: selectedPaidOffer,
                 market: {
                   type: 'string',
                   enum: [...allowedMarketValues],
@@ -2960,36 +2989,12 @@ function opportunityDiscoveryPlannerResponseFormat(
                     'Select one exact canonical PDL job-title subrole. Code drops it for non-person routes and derives its canonical role for person routes.'
                 },
                 organizationTerms: {
-                  ...targetTokenFreeStringArray(6),
-                  minItems: 1,
+                  ...targetTokenFreeStringArray(4, 48),
                   description:
                     'Bounded organization context for local organization discovery; code drops it for direct person and paid-demand routes.'
                 },
-                jobTitle: targetTokenFreeText(100),
-                skills: targetTokenFreeStringArray(6),
-                conversionDestination: compensatedJobOnly
-                  ? {
-                      type: 'string',
-                      enum: [
-                        DISCOVERY_COMPENSATED_JOB_CONVERSION_DESTINATION
-                      ]
-                    }
-                  : conversionDestinationTextSchema(180),
-                paidConversion: compensatedJobOnly
-                  ? {
-                      type: 'string',
-                      enum: [DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION]
-                    }
-                  : paidOutcomeText(140),
-                attributionSignal: compensatedJobOnly
-                  ? {
-                      type: 'string',
-                      enum: [DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL]
-                    }
-                  : {
-                      type: 'string',
-                      enum: [DISCOVERY_SELLER_ATTRIBUTION_SIGNAL]
-                    },
+                jobTitle: targetTokenFreeText(80),
+                skills: targetTokenFreeStringArray(4, 48),
                 contingentFinalists: {
                   type: 'object',
                   properties: {
@@ -3020,9 +3025,6 @@ function opportunityDiscoveryPlannerResponseFormat(
                 'organizationTerms',
                 'jobTitle',
                 'skills',
-                'conversionDestination',
-                'paidConversion',
-                'attributionSignal',
                 'contingentFinalists'
               ],
               additionalProperties: false
@@ -3065,13 +3067,13 @@ function compactOpportunityDiscoveryOutputContract(
       ]
     },
     finalists:
-      `{seedContract:${SEED_CONTRACT_VERSION},pathBase,tacticA,tacticB,w}; pathBase={e,r,o,b,t,p}; tactic={l,e,s,c,a,f}; code derives m and positional tacticKey`,
+      `{seedContract:${SEED_CONTRACT_VERSION},pathBase,tacticA,tacticB,w}; pathBase={r,o,b,t,p}; tactic={s,c,a,f}; code rebuilds family evidence containment from children and derives m, family labels, and positional tacticKey`,
     dimensions:
       `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}; b.l has ${CONTINGENT_TARGET_NAME_TOKEN} once for buyer/paid_demand and zero times for referral_partner`,
     item:
-      '{l,e}; b/c/a={rp,by,pd,e}: complete role alternatives, code selects commercialRole; t={l,e,q}; exact evidence IDs',
+      '{l,e}; b/c/a each contain only one selected closed role label; local motionKind validation rejects crossed-role labels; t={l,e,q}; exact evidence IDs',
     revenuePath:
-      '{l,e,rm:{seller,compensatedJob},io,atm,ats,cd,st,k:{n,u},g:{b,o,a,d:{l,e},c,t},sb,vm}; code selects seller mechanism for buyer/referral routes and compensatedJob only for compensated_job, then derives v/a/c/o and the complete causal witness; g binds evidence',
+      '{l,e,rm,io,atm,ats,cd,st,k:{n,u},g:{b,o,a,d:{l,e},c,t},sb,vm}; rm is the one selected mechanism; local motionKind validation permits compensated_role only for compensated_job and seller mechanisms otherwise, then derives v/a/c/o and the complete causal witness; g binds evidence',
     evidence:
       `base+tactic e has observation:* and all child refs; returned e arrays use only approved plan refs and never ${CONTINGENT_TARGET_EVIDENCE_REF}; code binds that sentinel after typed-role validation`,
     offerAuthority: provisionalOfferExperiment
@@ -3087,14 +3089,14 @@ function compactOpportunityDiscoveryHardRules(
     'Exactly 2 distinct motions: each pathBase+2 causal tactics. Unknown outside identities require the declared target slot and bounded read-only discovery; never return 0 plans or treat a missing exact target as missing supply evidence.',
     provisionalOfferExperiment
       ? 'sellerContract.requiredPrimaryFocus is the verified seller capability whose revenue the objective names, but offerEvidenceStatus says no current paid offer is proven. Author paidOffer.seller in the exact schema-required Proposed paid form and bind its offer/destination/conversion claims only to sellerContract.requiredEvidenceRefs as proposal basis. Do not call it current, available, priced, purchasable, or verified. The result can only become a review-first validation experiment.'
-      : 'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names. Author paidOffer.seller with that exact focus and paidOffer.compensatedJob with the exact schema enum; code selects seller for buyer/referral routes and compensatedJob only for compensated_job. Code exact-filters evidence refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
+      : 'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names. Author only the paidOffer selected by motionKind: the seller focus for buyer/referral routes or the exact compensated-job enum for compensated_job. Local route validation rejects a crossed selection. Code exact-filters evidence refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
     `top-level buyer is the payer/end-buyer archetype and contains no target token. Contingent b.l has {{TARGET_NAME}} once for buyer/paid_demand and zero times for referral_partner; action/channel use typed target tokens. Never return ${CONTINGENT_TARGET_EVIDENCE_REF} in an e array; code allocates the target slot and binds that sentinel after typed-role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     provisionalOfferExperiment
-      ? 'a:2/tactic; each a has rp/by/pd/e. For rp/by, use only the schema-enumerated review-first proposed-offer validation actions. They recommend a bounded human-reviewed test and authorize no outreach. pd remains a compensated-demand action. Selected actions: prefer 4 distinct; >=2 across both tactics must be distinct+viable.'
-      : 'a:2/tactic; each a has rp/by/pd/e. rp=partner referral/introduction -> current paid offer -> paid booking/payment; by=ask target to book/buy/sign current paid offer; pd=paid application/proposal response. Author all three complete actions; code selects commercialRole only. Selected rp/by/pd: prefer 4 distinct; >=2 across both tactics must be distinct+viable. Unselected fields do not count. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
-    `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
+      ? 'a:2/tactic; each a has one selected l/e. For buyer/referral routes, use only schema-enumerated review-first proposed-offer validation actions. They recommend a bounded human-reviewed test and authorize no outreach. Paid demand remains a compensated-demand action. Prefer 4 distinct selected actions; >=2 across both tactics must be distinct+viable.'
+      : 'a:2/tactic; each a has one selected l/e. Referral actions introduce a qualified buyer to the current paid offer and paid booking/payment; buyer actions ask the target to book/buy/sign; paid-demand actions submit a paid application/proposal response. Local motionKind validation rejects crossed-role labels. Prefer 4 distinct selected actions; >=2 across both tactics must be distinct+viable. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
+    `Code validates the one selected r.rm against motionKind, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. Fresh paid demand requires a structured PDL employer_job_posting; public snippets/RFP/RFQ/tender/procurement prose has no live-demand authority. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional compensated job.',
@@ -4036,8 +4038,12 @@ function normalizeContingentFinalistBundle(
   } catch {
     return {};
   }
+  const maximumBundleBytes = compactPlannerBundle &&
+      allowPlannerProjection === true
+    ? MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES
+    : MAX_DURABLE_DISCOVERY_CONTINGENT_BUNDLE_BYTES;
   if (!serialized || Buffer.byteLength(serialized, 'utf8') >
-      MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES) {
+      maximumBundleBytes) {
     return {};
   }
   let clone;
@@ -4047,6 +4053,10 @@ function normalizeContingentFinalistBundle(
     return {};
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
+  if (compactPlannerBundle && allowPlannerProjection === true &&
+      compactPlannerSelectedRoleIssue(clone, planValue)) {
+    return {};
+  }
   clone = materializePlannerContingentFinalistBundle(clone, planValue);
   if (Object.keys(asObject(clone)).length === 0) return {};
   clone = canonicalizeContingentTargetEvidence(clone, planValue);
@@ -4094,6 +4104,58 @@ function normalizeContingentFinalistBundle(
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   return clone;
+}
+
+function compactPlannerSelectedRoleIssue(value, planValue) {
+  const raw = asObject(value);
+  const plan = asObject(planValue);
+  const commercialRole = firstText(plan.commercialRole);
+  const provisionalOfferExperiment = /^Proposed paid\b/.test(
+    firstText(plan.paidOffer)
+  );
+  const allowedBuyerLabels = new Set(
+    contingentPlannerBuyerLabelsForCommercialRole(
+      commercialRole,
+      provisionalOfferExperiment
+    )
+  );
+  const allowedChannelLabels = new Set(
+    contingentPlannerChannelLabelsForCommercialRole(commercialRole)
+  );
+  const allowedActionLabels = new Set(
+    contingentPlannerActionsForCommercialRole(
+      commercialRole,
+      provisionalOfferExperiment
+    )
+  );
+  const labelsAreSelected = (itemsValue, allowed) => {
+    const items = asArray(itemsValue);
+    return items.length === INITIAL_FAMILY_VARIANT_COUNT &&
+      items.every((item) => allowed.has(firstText(asObject(item).l)));
+  };
+  const pathBase = asObject(raw.pathBase);
+  const tactics = [asObject(raw.tacticA), asObject(raw.tacticB)];
+  if (!labelsAreSelected(pathBase.b, allowedBuyerLabels)) {
+    return 'selected_buyer_role';
+  }
+  if (tactics.some((tactic) =>
+    !labelsAreSelected(tactic.c, allowedChannelLabels)
+  )) {
+    return 'selected_channel_role';
+  }
+  if (tactics.some((tactic) =>
+    !labelsAreSelected(tactic.a, allowedActionLabels)
+  )) {
+    return 'selected_action_role';
+  }
+  const revenueMechanism = firstText(asObject(asArray(pathBase.r)[0]).rm);
+  return firstText(plan.motionKind) === 'compensated_job'
+    ? revenueMechanism === 'compensated_role'
+      ? ''
+      : 'selected_revenue_mechanism'
+    : SELLER_REVENUE_MECHANISMS.includes(revenueMechanism)
+      ? ''
+      : 'selected_revenue_mechanism';
 }
 
 function canonicalizeContingentProposalGrounding(
@@ -4525,9 +4587,7 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
     return {
       l: typeof labels[index] === 'string'
         ? labels[index]
-        : typeof item[roleField] === 'string'
-        ? item[roleField]
-        : firstText(item.l),
+        : firstText(item.l, item[roleField]),
       e: copy(asArray(item.e))
     };
   });
@@ -4546,7 +4606,10 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
       ? [pathBase.r]
       : [];
   const authoredActionLabels = [tacticA, tacticB].flatMap((tactic) =>
-    asArray(tactic.a).map((item) => firstText(asObject(item)[roleField]))
+    asArray(tactic.a).map((item) => firstText(
+      asObject(item).l,
+      asObject(item)[roleField]
+    ))
   );
   const selectedActionLabels = authoredActionLabels.length === 4 &&
     authoredActionLabels.every((label) => approvedActionLabels.includes(label))
@@ -4558,10 +4621,11 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
     // text cannot leak private-contact syntax or invalidate an otherwise
     // complete causal path after the paid planner call.
     l: tacticIndex === 0 ? 'Commercial path A' : 'Commercial path B',
-    e: compactStrings([
-      ...asArray(pathBase.e),
-      ...asArray(tactic.e)
-    ]),
+    // The wire contract omits aggregate evidence indexes. The normalizer
+    // rebuilds each family index from its exact child evidence after typed
+    // target canonicalization, so no authored grounding is lost or borrowed
+    // across tactics.
+    e: [],
     s: copy(asObject(tactic.s)),
     d: {
       r: copy(sharedRevenuePaths),
@@ -5067,6 +5131,16 @@ function opportunityDiscoveryPlanIssue(
           requiredSellerFocus
         )) {
       return `Discovery plan ${item.id} paidOffer must remain bound to the objective's primary seller focus "${truncate(requiredSellerFocus, 120)}".`;
+    }
+    if (requireTypedRoute && item.motionKind === 'compensated_job' &&
+        firstText(item.paidOffer) !==
+          DISCOVERY_COMPENSATED_JOB_PAID_OFFER) {
+      return `Discovery plan ${item.id} paidOffer must use the exact compensated-role contract.`;
+    }
+    if (requireTypedRoute && item.motionKind !== 'compensated_job' &&
+        firstText(item.paidOffer) ===
+          DISCOVERY_COMPENSATED_JOB_PAID_OFFER) {
+      return `Discovery plan ${item.id} seller route cannot use the compensated-role paidOffer contract.`;
     }
     const requiredSellerEvidenceRefs = new Set(
       compactStrings(sellerEvidenceRefsValue)
@@ -24489,7 +24563,7 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       diagnostics.routerCandidateCount
     ),
     routerAttemptStatuses: asArray(diagnostics.routerAttemptStatuses)
-      .slice(0, 8)
+      .slice(0, 64)
       .map((status) => Number(status))
       .filter((status) => Number.isInteger(status) &&
         status >= 100 && status <= 599),
@@ -24551,7 +24625,7 @@ function normalizeOpenRouterResponseDiagnostics(value) {
 }
 
 function normalizeOpenRouterRouterAttempts(value) {
-  return asArray(value).slice(0, 8).map((raw) => {
+  return asArray(value).slice(0, 64).map((raw) => {
     const attempt = asObject(raw);
     const provider = firstText(attempt.provider);
     const model = firstText(attempt.model).toLowerCase();
@@ -24803,7 +24877,11 @@ function normalizeEvidenceID(rawID, type, sourceID) {
   const namespace = normalized.match(
     /^(source|observation|fact|profile|timeline|evidence|external_discovery):/i
   )?.[1]?.toLowerCase() || 'evidence';
-  return `${namespace}:${stableHash(normalized).slice(0, 48)}`;
+  const hashLength = Math.max(
+    24,
+    MAX_DISCOVERY_PLANNER_EVIDENCE_REF_UTF8_BYTES - namespace.length - 1
+  );
+  return `${namespace}:${stableHash(normalized).slice(0, hashLength)}`;
 }
 
 function normalizeSeedID(rawID, dimension, label) {

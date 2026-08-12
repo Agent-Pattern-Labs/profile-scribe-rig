@@ -27,10 +27,12 @@ const usage = {
   total_tokens: 1550,
   cost: 0.0065
 };
-const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 192 * 1024;
-const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 96 * 1024;
-const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES = 161_488;
+const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 32 * 1024;
+const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 24 * 1024;
+const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES = 32 * 1024;
 const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 20 * 1024;
+const COMPENSATED_JOB_PAID_OFFER =
+  'A current compensated role matching verified professional skills';
 
 verifyBoundedLocalJSONRepair();
 
@@ -243,8 +245,8 @@ function productionCitation(url, title, content) {
     contentHash
   };
 }
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 64_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 476_160;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 10_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 152_160;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
@@ -260,6 +262,7 @@ let smallestCompactResponseReduction = 1;
 let largestCommercialCriticRequestBytes = 0;
 let representativePlannerSchema = null;
 let computedPlannerSchemaResponseBoundBytes = 0;
+let maximumConcretePlannerResponseBytes = 0;
 let maxAstralStrictPlannerResponse = null;
 
 const cases = [
@@ -562,6 +565,13 @@ for (const scenario of cases) {
           ?.items?.properties?.market?.enum?.[0];
       for (const responsePlan of responsePlans) {
         responsePlan.market = exactSchemaMarket;
+        if (responsePlan.motionKind === 'compensated_job') {
+          responsePlan.paidOffer =
+            'A current compensated role matching verified professional skills';
+        }
+        delete responsePlan.conversionDestination;
+        delete responsePlan.paidConversion;
+        delete responsePlan.attributionSignal;
         const materializedBytes = Buffer.byteLength(
           JSON.stringify(responsePlan.contingentFinalists),
           'utf8'
@@ -666,6 +676,8 @@ for (const scenario of cases) {
       requestSeen.streamStartTimeoutMs !== 180_000 ||
       requestSeen.streamIdleTimeoutMs !== 60_000 ||
       requestSeen.streamTotalTimeoutMs !== 300_000 ||
+      requestSeen.streamMaxContentBytes !==
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
       serializeOpenRouterJSONRequestBody(requestSeen).includes(
         'allowLocalJSONRepair'
       ) ||
@@ -677,6 +689,9 @@ for (const scenario of cases) {
       ) ||
       serializeOpenRouterJSONRequestBody(requestSeen).includes(
         'streamStartTimeoutMs'
+      ) ||
+      serializeOpenRouterJSONRequestBody(requestSeen).includes(
+        'streamMaxContentBytes'
       ) ||
       JSON.stringify(requestSeen.reasoning) !==
         JSON.stringify({ enabled: false, exclude: true }) ||
@@ -778,24 +793,39 @@ for (const scenario of cases) {
     ?.properties?.e || {};
   const followUpLabelPattern = plannerDefinitions.followUpItem
     ?.properties?.l?.pattern || '';
-  const referralChannelValues = plannerDefinitions.channelItem
-    ?.properties?.rp?.enum || [];
-  const buyerChannelValues = plannerDefinitions.channelItem
-    ?.properties?.by?.enum || [];
-  const paidDemandChannelValues = plannerDefinitions.channelItem
-    ?.properties?.pd?.enum || [];
-  const referralBuyerValues = plannerDefinitions.buyerItem
-    ?.properties?.rp?.enum || [];
-  const buyerTargetValues = plannerDefinitions.buyerItem
-    ?.properties?.by?.enum || [];
-  const paidDemandBuyerValues = plannerDefinitions.buyerItem
-    ?.properties?.pd?.enum || [];
-  const referralActionValues = plannerDefinitions.actionItem
-    ?.properties?.rp?.enum || [];
-  const buyerActionValues = plannerDefinitions.actionItem
-    ?.properties?.by?.enum || [];
-  const paidDemandActionValues = plannerDefinitions.actionItem
-    ?.properties?.pd?.enum || [];
+  const selectedChannelValues = plannerDefinitions.channelItem
+    ?.properties?.l?.enum || [];
+  const referralChannelValues = selectedChannelValues.filter((value) =>
+    /(?:referral fit|partner-channel)/.test(value)
+  );
+  const buyerChannelValues = selectedChannelValues.filter((value) =>
+    /(?:buyer fit|purchase-authority)/.test(value)
+  );
+  const paidDemandChannelValues = selectedChannelValues.filter((value) =>
+    /paid-demand/.test(value)
+  );
+  const selectedBuyerValues = plannerDefinitions.buyerItem
+    ?.properties?.l?.enum || [];
+  const referralBuyerValues = selectedBuyerValues.filter((value) =>
+    !/TARGET_NAME/.test(value)
+  );
+  const buyerTargetValues = selectedBuyerValues.filter((value) =>
+    /TARGET_NAME/.test(value) && !/(?:employer|paid engagement)/.test(value)
+  );
+  const paidDemandBuyerValues = selectedBuyerValues.filter((value) =>
+    /(?:employer|paid engagement)/.test(value)
+  );
+  const selectedActionValues = plannerDefinitions.actionItem
+    ?.properties?.l?.enum || [];
+  const referralActionValues = selectedActionValues.filter((value) =>
+    /(?:refer|introduce|recommend)/.test(value)
+  );
+  const buyerActionValues = selectedActionValues.filter((value) =>
+    /ask \{\{TARGET_NAME\}\} to (?:book|buy|purchase|sign)/.test(value)
+  );
+  const paidDemandActionValues = selectedActionValues.filter((value) =>
+    /official paid-demand page/.test(value)
+  );
   const schemaAcceptsBlank = (schema) => {
     try {
       const resolved = typeof schema?.$ref === 'string'
@@ -880,18 +910,14 @@ for (const scenario of cases) {
       plannerPlanSchema.targetRoleSubrole?.enum?.includes('student') ||
       plannerPlanSchema.targetRoleSubrole?.enum?.includes('unemployed') ||
       !plannerPlanSchema.targetRoleSubrole?.enum?.includes('partnerships') ||
-      plannerPlanSchema.organizationTerms?.minItems !== 1 ||
+      plannerPlanSchema.organizationTerms?.maxItems !== 4 ||
       [
-        plannerPlanSchema.paidOffer?.properties?.seller,
-        plannerPlanSchema.paidOffer?.properties?.compensatedJob,
+        plannerPlanSchema.paidOffer,
         plannerPlanSchema.organizationTerms?.items,
         plannerPlanSchema.jobTitle,
         plannerPlanSchema.skills?.items,
-        plannerPlanSchema.conversionDestination,
-        plannerPlanSchema.paidConversion,
-        plannerPlanSchema.attributionSignal,
         plannerDefinitions.offerItem?.properties?.l,
-        plannerDefinitions.buyerItem?.properties?.rp,
+        plannerDefinitions.buyerItem?.properties?.l,
         plannerDefinitions.timingItem?.properties?.l,
         plannerDefinitions.timingItem?.properties?.q,
         plannerDefinitions.proofItem?.properties?.l,
@@ -901,9 +927,10 @@ for (const scenario of cases) {
         plannerDefinitions.revenuePath?.properties?.cd,
         plannerDefinitions.revenuePath?.properties?.st,
         plannerDefinitions.revenuePath?.properties?.g?.properties?.d
-          ?.properties?.l,
-        plannerDefinitions.tactic?.properties?.l
+          ?.properties?.l
       ].some(schemaAcceptsBlank) ||
+      ['conversionDestination', 'paidConversion', 'attributionSignal']
+        .some((field) => field in plannerPlanSchema) ||
       !Array.isArray(plannerPlanSchema.market?.enum) ||
       plannerPlanSchema.market.enum.length !== 1 ||
       result.plans.some((plan) =>
@@ -959,7 +986,7 @@ for (const scenario of cases) {
       ]) ||
       JSON.stringify(
         plannerDefinitions.pathBase?.required
-      ) !== JSON.stringify(['e', 'r', 'o', 'b', 't', 'p']) ||
+      ) !== JSON.stringify(['r', 'o', 'b', 't', 'p']) ||
       !Array.isArray(plannerEvidenceRefSchema.enum) ||
       !plannerEvidenceRefSchema.enum.includes(evidenceRef) ||
       plannerEvidenceRefSchema.enum.includes('target:evidence') ||
@@ -975,17 +1002,16 @@ for (const scenario of cases) {
         !/^observation:/i.test(ref)
       ) ||
       plannerObservationEvidenceRefsSchema.minItems !== 1 ||
-      plannerObservationEvidenceRefsSchema.maxItems !== 12 ||
+      plannerObservationEvidenceRefsSchema.maxItems !== 2 ||
       plannerObservationEvidenceRefsSchema.items?.$ref !==
         '#/$defs/observationEvidenceRef' ||
       plannerCompactObservationEvidenceRefsSchema.minItems !== 1 ||
-      plannerCompactObservationEvidenceRefsSchema.maxItems !== 2 ||
+      plannerCompactObservationEvidenceRefsSchema.maxItems !== 1 ||
       plannerCompactObservationEvidenceRefsSchema.items?.$ref !==
         '#/$defs/observationEvidenceRef' ||
-      plannerDefinitions.pathBase?.properties?.e?.$ref !==
-        '#/$defs/observationEvidenceRefs' ||
-      plannerDefinitions.tactic?.properties?.e?.$ref !==
-        '#/$defs/compactObservationEvidenceRefs' ||
+      plannerDefinitions.pathBase?.properties?.e !== undefined ||
+      plannerDefinitions.tactic?.properties?.e !== undefined ||
+      plannerDefinitions.tactic?.properties?.l !== undefined ||
       plannerDefinitions.timingItem?.properties?.e?.$ref !==
         '#/$defs/compactObservationEvidenceRefs' ||
       !plannerDefinitions.revenuePath?.required?.includes('k') ||
@@ -1028,8 +1054,6 @@ for (const scenario of cases) {
       JSON.stringify(
         plannerDefinitions.tactic?.required
       ) !== JSON.stringify([
-        'l',
-        'e',
         's',
         'c',
         'a',
@@ -1037,11 +1061,11 @@ for (const scenario of cases) {
       ]) || plannerDefinitions.tactic?.properties?.m !== undefined ||
       plannerDefinitions.tactic?.properties?.tacticKey !== undefined ||
       JSON.stringify(plannerDefinitions.buyerItem?.required) !==
-        JSON.stringify(['rp', 'by', 'pd', 'e']) ||
-      plannerDefinitions.buyerItem?.properties?.l ||
+        JSON.stringify(['l', 'e']) ||
+      plannerDefinitions.buyerItem?.properties?.rp ||
       JSON.stringify(plannerDefinitions.channelItem?.required) !==
-        JSON.stringify(['rp', 'by', 'pd', 'e']) ||
-      plannerDefinitions.channelItem?.properties?.l ||
+        JSON.stringify(['l', 'e']) ||
+      plannerDefinitions.channelItem?.properties?.rp ||
       plannerDefinitions.pathBase?.properties?.o?.minItems !== 2 ||
       plannerDefinitions.tactic?.properties?.c?.minItems !== 2 ||
       plannerDefinitions.tactic?.properties?.a?.maxItems !== 2 ||
@@ -1052,8 +1076,8 @@ for (const scenario of cases) {
         followUpLabelPattern
       ) ||
       JSON.stringify(plannerDefinitions.actionItem?.required) !==
-        JSON.stringify(['rp', 'by', 'pd', 'e']) ||
-      plannerDefinitions.actionItem?.properties?.l ||
+        JSON.stringify(['l', 'e']) ||
+      plannerDefinitions.actionItem?.properties?.rp ||
       !referralActionValues.includes(
         'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid consultation'
       ) && !referralActionValues.includes(
@@ -1068,16 +1092,16 @@ for (const scenario of cases) {
       !paidDemandActionValues.includes(
         'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}'
       ) ||
-      !/three closed role alternatives.*selects exactly.*commercialRole.*never composes action prose/is.test(
+      !/one selected closed action.*verifies exact membership.*commercialRole.*never composes action prose/is.test(
         plannerDefinitions.actionItem?.description || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /a:2\/tactic.*each a has rp\/by\/pd\/e.*rp=partner referral\/introduction.*current paid offer.*paid booking\/payment.*by=ask target to book\/buy\/sign current paid offer.*pd=paid application\/proposal response.*code selects commercialRole only.*marketplace\/directory placement/is.test(
+        /a:2\/tactic.*one selected l\/e.*referral actions introduce.*current paid offer.*paid booking\/payment.*buyer actions ask.*book\/buy\/sign.*paid-demand actions submit.*paid application\/proposal response.*crossed-role labels.*marketplace\/directory placement/is.test(
           rule
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /selects r\.rm\.seller.*r\.rm\.compensatedJob.*derives r\.v\/r\.a\/r\.c\/r\.o.*positional tactic keys.*k\.v\/i\/c\/o\/p\/t\/d\/s/i.test(
+        /validates the one selected r\.rm against motionKind.*derives r\.v\/r\.a\/r\.c\/r\.o.*positional tactic keys.*k\.v\/i\/c\/o\/p\/t\/d\/s/i.test(
           rule
         )
       ) ||
@@ -1107,7 +1131,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /selected rp\/by\/pd: prefer 4 distinct; >=2 across both tactics must be distinct\+viable.*unselected fields do not count/is.test(
+        /prefer 4 distinct selected actions; >=2 across both tactics must be distinct\+viable/is.test(
           rule
         )
       ) ||
@@ -1119,21 +1143,17 @@ for (const scenario of cases) {
       /claims no email\/phone\/form\/proposal route/i.test(
         requestSeen.system || ''
       ) ||
-      !/code selects seller mechanism.*compensatedJob only for compensated_job.*derives v\/a\/c\/o and the complete causal witness/is.test(
+      !/one selected mechanism.*permits compensated_role only for compensated_job.*seller mechanisms otherwise.*derives v\/a\/c\/o and the complete causal witness/is.test(
         plannerPrompt.outputContract?.revenuePath || ''
       )) {
     throw new Error(
       `${scenario.name}: call 1 omitted its compact semantic contract ${JSON.stringify({ blankSchemas: [
-        plannerPlanSchema.paidOffer?.properties?.seller,
-        plannerPlanSchema.paidOffer?.properties?.compensatedJob,
+        plannerPlanSchema.paidOffer,
         plannerPlanSchema.organizationTerms?.items,
         plannerPlanSchema.jobTitle,
         plannerPlanSchema.skills?.items,
-        plannerPlanSchema.conversionDestination,
-        plannerPlanSchema.paidConversion,
-        plannerPlanSchema.attributionSignal,
         plannerDefinitions.offerItem?.properties?.l,
-        plannerDefinitions.buyerItem?.properties?.rp,
+        plannerDefinitions.buyerItem?.properties?.l,
         plannerDefinitions.timingItem?.properties?.l,
         plannerDefinitions.timingItem?.properties?.q,
         plannerDefinitions.proofItem?.properties?.l,
@@ -1142,14 +1162,13 @@ for (const scenario of cases) {
         plannerDefinitions.revenuePath?.properties?.ats,
         plannerDefinitions.revenuePath?.properties?.cd,
         plannerDefinitions.revenuePath?.properties?.st,
-        plannerDefinitions.revenuePath?.properties?.g?.properties?.d?.properties?.l,
-        plannerDefinitions.tactic?.properties?.l
+        plannerDefinitions.revenuePath?.properties?.g?.properties?.d?.properties?.l
       ].map(schemaAcceptsBlank), hardRules: plannerPrompt.hardRules, systemChecks: {
         projection: /projects r\.c per tactic/is.test(requestSeen.system || ''),
         acquisition: /acquisitionMechanism is exact and structural.*buyer\/referral="Review-first public professional profile".*paid_demand="Review-first official paid-demand page"/is.test(requestSeen.system || ''),
         market: /market must copy one response-schema enum value exactly.*never expand.*abbreviate.*widen/is.test(requestSeen.system || ''),
-        actions: /a=\{rp,by,pd,e\}.*all three complete model actions.*rp=partner referral\/introduction of defined buyer to current paid offer\+paid booking\/payment.*by=target books\/buys\/signs current paid offer.*pd=typed paid application\/proposal response.*code selects commercialRole only.*marketplace\/directory placement/is.test(requestSeen.system || ''),
-        diversity: /selected rp\/by\/pd actions: prefer four distinct; at least two across both tactics must be text-distinct and viable.*code assigns tactic identity; unselected fields do not count/is.test(requestSeen.system || ''),
+        actions: /a:2\/tactic.*one selected l\/e.*referral actions introduce.*buyer actions ask.*paid-demand actions submit/is.test(requestSeen.system || ''),
+        diversity: /prefer 4 distinct selected actions; >=2 across both tactics must be distinct\+viable/is.test(requestSeen.system || ''),
         demand: /compensated_job finds an employer job posting.*public web snippets.*RFP pages.*have no fresh paid-demand authority.*two referral motions with different counterparties are valid.*diversity never requires paid_demand.*supplier\/competitor offers.*accepts insurance.*are supply, never demand/is.test(requestSeen.system || '')
       } })}`
     );
@@ -1509,7 +1528,7 @@ if (smallestCompactResponseReduction < 0.1 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 28 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${44 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${43 * 1024} 512-byte-headroom floor; joint-worst critic request ${largestCommercialCriticRequestBytes} bytes / <=${65_536 - 512} (${65_536 - largestCommercialCriticRequestBytes} bytes headroom); semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 32 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${44 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${43 * 1024} 512-byte-headroom floor; joint-worst critic request ${largestCommercialCriticRequestBytes} bytes / <=${65_536 - 512} (${65_536 - largestCommercialCriticRequestBytes} bytes headroom); semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target; schema-derived bound ${computedPlannerSchemaResponseBoundBytes} bytes; concrete joint maximum ${maximumConcretePlannerResponseBytes} bytes)\n`
 );
 
 async function verifyApprovedObservationPreflight() {
@@ -1613,6 +1632,7 @@ async function verifyMaximumFamilyEvidenceContainment() {
   job.payload.objective.evidenceRefs = [...allObservationRefs];
   let requestSeen = null;
   let visibleObservationRefsSeen = [];
+  let expectedFirstFamilyEvidence = [];
   const result = await runOpportunityDiscoveryPlanner({
     job,
     model: 'deepseek/deepseek-v4-flash-0731',
@@ -1632,7 +1652,7 @@ async function verifyMaximumFamilyEvidenceContainment() {
           cases[0].plans(visibleObservationRefs[0])[1]
         ),
         visibleObservationRefs[0]
-      ).map((motion) => {
+      ).map((motion, motionIndex) => {
         const bundle = compactContingentFinalists(
           motion.contingentFinalists
         );
@@ -1653,17 +1673,57 @@ async function verifyMaximumFamilyEvidenceContainment() {
             ? visibleObservationRefs[0]
             : value;
         };
-        const observationOnlyBundle = replaceSystemRef(bundle);
-        observationOnlyBundle.pathBase.e =
-          visibleObservationRefs.slice(0, 12);
-        observationOnlyBundle.tacticA.e =
-          visibleObservationRefs.slice(12, 14).length > 0
-            ? visibleObservationRefs.slice(12, 14)
-            : visibleObservationRefs.slice(0, 1);
-        observationOnlyBundle.tacticB.e =
-          visibleObservationRefs.slice(12, 14).length > 0
-            ? visibleObservationRefs.slice(12, 14)
-            : visibleObservationRefs.slice(0, 1);
+        let observationIndex = 0;
+        const distributeObservationRefs = (value) => {
+          if (Array.isArray(value)) {
+            return value.map(distributeObservationRefs);
+          }
+          if (value && typeof value === 'object') {
+            return Object.fromEntries(
+              Object.entries(value).map(([key, item]) => [
+                key,
+                distributeObservationRefs(item)
+              ])
+            );
+          }
+          if (/^observation:/i.test(String(value || ''))) {
+            const selected = visibleObservationRefs[
+              observationIndex % visibleObservationRefs.length
+            ];
+            observationIndex += 1;
+            return selected;
+          }
+          return value;
+        };
+        const observationOnlyBundle = distributeObservationRefs(
+          replaceSystemRef(bundle)
+        );
+        if (motionIndex === 0) {
+          const approved = new Set([
+            'target:evidence',
+            ...visibleObservationRefs
+          ]);
+          const observed = [];
+          const collectSubmittedEvidence = (value) => {
+            if (Array.isArray(value)) {
+              value.forEach(collectSubmittedEvidence);
+              return;
+            }
+            if (value && typeof value === 'object') {
+              Object.values(value).forEach(collectSubmittedEvidence);
+              return;
+            }
+            if (approved.has(value) && !observed.includes(value)) {
+              observed.push(value);
+            }
+          };
+          collectSubmittedEvidence(observationOnlyBundle.pathBase);
+          collectSubmittedEvidence(observationOnlyBundle.tacticA);
+          expectedFirstFamilyEvidence = [
+            'target:evidence',
+            ...observed.filter((ref) => ref !== 'target:evidence')
+          ];
+        }
         return {
           ...motion,
           contingentFinalists: observationOnlyBundle
@@ -1688,20 +1748,15 @@ async function verifyMaximumFamilyEvidenceContainment() {
     }
   });
   const familyEvidence = result.plans?.[0]?.contingentFinalists?.familyA?.e;
-  const acceptedPlanEvidence = new Set(result.plans?.[0]?.evidenceRefs || []);
-  const expectedVisibleEvidenceRefs = [...new Set(
-    visibleObservationRefsSeen.slice(0, 14)
-  )].filter((ref) => acceptedPlanEvidence.has(ref));
   if (!requestSeen || result.status !== 'planned' ||
       !Array.isArray(familyEvidence) ||
-      familyEvidence.length !== expectedVisibleEvidenceRefs.length + 1 ||
-      familyEvidence[0] !== 'target:evidence' ||
-      !expectedVisibleEvidenceRefs.every((ref) =>
+      familyEvidence.length !== expectedFirstFamilyEvidence.length ||
+      !expectedFirstFamilyEvidence.every((ref) =>
         familyEvidence.includes(ref)
       ) ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
-      `all schema-visible approved refs plus the local target sentinel did not survive materialization: ${JSON.stringify({ status: result.status, reason: result.reason, planSelection: result.planSelection, preflight: result.preflight, llm: result.llm, familyEvidence, expectedVisibleEvidenceRefs })}`
+      `child-grounded family evidence was not rebuilt losslessly: ${JSON.stringify({ status: result.status, reason: result.reason, planSelection: result.planSelection, preflight: result.preflight, llm: result.llm, familyEvidence, expectedFirstFamilyEvidence, visibleObservationRefsSeen })}`
     );
   }
 }
@@ -1717,16 +1772,7 @@ async function verifyTypedCommercialMotionSelection(
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
-        const freshPlans = plans.map((planValue) => {
-          const freshPlan = structuredClone(planValue);
-          if (freshPlan.contingentFinalists?.familyA &&
-              freshPlan.contingentFinalists?.familyB) {
-            freshPlan.contingentFinalists = compactContingentFinalists(
-              freshPlan.contingentFinalists
-            );
-          }
-          return freshPlan;
-        });
+        const freshPlans = compactFreshPlannerPlans(plans);
         return {
           data: {
             contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
@@ -1819,26 +1865,7 @@ async function verifyTypedCommercialMotionSelection(
         'The profile owner accepts the researched compensated role' ||
       compensatedJob?.attributionSignal !==
         'The accepted role records the exact researched job posting' ||
-      JSON.stringify(compensatedOnlySchemaFields) !== JSON.stringify({
-        conversionDestination: {
-          type: 'string',
-          enum: [
-            'The exact public application page for the researched compensated role'
-          ]
-        },
-        paidConversion: {
-          type: 'string',
-          enum: [
-            'The profile owner accepts the researched compensated role'
-          ]
-        },
-        attributionSignal: {
-          type: 'string',
-          enum: [
-            'The accepted role records the exact researched job posting'
-          ]
-        }
-      }) ||
+      JSON.stringify(compensatedOnlySchemaFields) !== JSON.stringify({}) ||
       compensatedJob?.query !==
         'current compensated job hiring Go backend engineer Go PostgreSQL United States' ||
       /consultancy|supplier|rfp services available/i.test(
@@ -1935,7 +1962,7 @@ async function verifyTypedCommercialMotionSelection(
       untypedFresh.planSelection?.acceptedPlanCount !== 0 ||
       untypedFresh.planSelection?.rejectedPlanCount !== 2 ||
       untypedFresh.planSelection?.rejectedPlans?.some((item) =>
-        !/commercial_motion_route_v1 typed route contract/i.test(
+        !/(?:commercial_motion_route_v1 typed route contract|no typed causal revenue witness)/i.test(
           item.reason || ''
         )
       ) ||
@@ -2192,11 +2219,7 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
     reason: '',
     plans: compactFreshPlannerPlans(twoMarketPlans).map((motion) => ({
       motionKind: motion.motionKind,
-      paidOffer: {
-        seller: motion.paidOffer,
-        compensatedJob:
-          'A current compensated role matching verified professional skills'
-      },
+      paidOffer: motion.paidOffer,
       market: typedMarket.market,
       targetRoleSubrole: motion.targetRoleSubrole,
       organizationTerms: motion.organizationTerms?.length > 0
@@ -2206,9 +2229,6 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       skills: motion.skills?.length > 0
         ? motion.skills
         : ['Verified professional skill'],
-      conversionDestination: motion.conversionDestination,
-      paidConversion: motion.paidConversion,
-      attributionSignal: motion.attributionSignal,
       contingentFinalists: motion.contingentFinalists
     }))
   };
@@ -3011,6 +3031,10 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
 
   for (const roleCase of roleCases) {
     const candidate = structuredClone(roleCase.candidate);
+    if (candidate.motionKind === 'compensated_job') {
+      candidate.paidOffer =
+        'A current compensated role matching verified professional skills';
+    }
     candidate.contingentFinalists = replaceExactRef(
       compactContingentFinalists(candidate.contingentFinalists),
       targetRef,
@@ -3275,6 +3299,10 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   ];
   for (const unauthorized of unauthorizedCases) {
     const candidate = structuredClone(unauthorized.candidate);
+    if (candidate.motionKind === 'compensated_job') {
+      candidate.paidOffer =
+        'A current compensated role matching verified professional skills';
+    }
     candidate.market = 'Queens, New York, United States';
     candidate.contingentFinalists = replaceExactRef(
       compactContingentFinalists(candidate.contingentFinalists),
@@ -3321,6 +3349,10 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   for (const roleCase of roleCases) {
     for (const dimension of roleCase.ordinaryDimensions) {
       const candidate = structuredClone(roleCase.candidate);
+      if (candidate.motionKind === 'compensated_job') {
+        candidate.paidOffer =
+          'A current compensated role matching verified professional skills';
+      }
       candidate.contingentFinalists = replaceExactRef(
         compactContingentFinalists(candidate.contingentFinalists),
         targetRef,
@@ -3822,7 +3854,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
         item.motionKind === 'buyer_solicitation'
       ) ||
       publicResult.planSelection?.rejectedPlanCount !== 1 ||
-      !/retired fresh execution route|finite fresh execution route|unavailable read-only provider route/i.test(
+      !/retired fresh execution route|finite fresh execution route|unavailable read-only provider route|no typed causal revenue witness/i.test(
         retiredPublicRejection?.reason || ''
       )) {
     throw new Error(
@@ -4106,10 +4138,10 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     },
     {
       label: 'literal phone is forbidden even in descriptive prose',
-      candidate: baseReferral({
-        id: 'literal_phone_value',
-        conversionDestination: 'Owner booking page or 917-555-0123'
-      }),
+      candidate: materializedRouteCandidate(
+        'literal_phone_value',
+        'After approval, call 917-555-0123, then ask {{TARGET_NAME}} to refer one family through public professional profile {{TARGET_URL}}.'
+      ),
       reason: /private-contact data \[private_contact_value\]/i
     },
     {
@@ -4122,10 +4154,10 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     },
     {
       label: 'unlabeled compact literal phone is forbidden',
-      candidate: baseReferral({
-        id: 'literal_unlabeled_compact_phone_value',
-        conversionDestination: 'Owner booking page 9175550123'
-      }),
+      candidate: materializedRouteCandidate(
+        'literal_unlabeled_compact_phone_value',
+        'After approval, use 9175550123, then ask {{TARGET_NAME}} to refer one family through public professional profile {{TARGET_URL}}.'
+      ),
       reason: /private-contact data \[private_contact_value\]/i
     },
     {
@@ -4507,8 +4539,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES,
         computedSchemaUpperBoundBytes:
           MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES,
-        evidenceRefMaxRunes: 96,
-        evidenceRefMaxBytes: 192
+        evidenceRefMaxRunes: 64,
+        evidenceRefMaxBytes: 64
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
         model: 'deepseek/deepseek-v4-flash-0731',
@@ -4518,7 +4550,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'deepseek/deepseek-v4-flash-0731',
             family: 'deepseek',
             minimumContextTokens: 1_000_000,
-            minimumOutputTokens: 64_000,
+            minimumOutputTokens: 10_000,
             maximumPromptPrice: 2,
             maximumCompletionPrice: 6,
             requiredParameters: [
@@ -4535,7 +4567,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           request: 0
         },
         providerRouting: {
-          ignore: ['cloudflare', 'deepinfra', 'inceptron/fp4'],
+          ignore: ['cloudflare', 'deepinfra', 'inceptron/fp4', 'io-net'],
           allow_fallbacks: true,
           require_parameters: true,
           data_collection: 'deny',
@@ -4729,6 +4761,65 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     throw new Error(
       `fresh role-query authority was not deterministic: ${JSON.stringify(baseline)}`
     );
+  }
+
+  for (const [label, mutate] of [
+    ['buyer label crossed into referral role', (fresh) => {
+      fresh.contingentFinalists.pathBase.b[0].l =
+        'Qualified buyer for the current paid offer';
+    }],
+    ['channel label crossed into paid-demand role', (fresh) => {
+      fresh.contingentFinalists.tacticA.c[0].l =
+        'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification';
+    }],
+    ['action label crossed into referral role', (fresh) => {
+      fresh.contingentFinalists.tacticA.a[0].l =
+        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer';
+    }],
+    ['seller route selected compensated mechanism', (fresh) => {
+      fresh.contingentFinalists.pathBase.r[0].rm = 'compensated_role';
+    }],
+    ['seller route selected compensated paid offer', (fresh) => {
+      fresh.paidOffer =
+        'A current compensated role matching verified professional skills';
+    }]
+  ]) {
+    const primary = compactFreshPlannerPlans([candidate()])[0];
+    mutate(primary);
+    const result = await runOpportunityDiscoveryPlanner({
+      job: structuredClone(job),
+      model: 'deepseek/deepseek-v4-flash-0731',
+      now,
+      completeJSON: async () => ({
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans: [
+            primary,
+            compactFreshPlannerPlans(
+              twoPlannerMotions(candidate(), evidenceRef)
+            )[1]
+          ]
+        },
+        usage,
+        generationId: `generation-crossed-selected-role-${label.replaceAll(' ', '-')}`,
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '9'.repeat(64)
+        },
+        annotations: []
+      })
+    });
+    if (result.status !== 'planned' || result.plans.length !== 1 ||
+        result.planSelection?.acceptedPlanCount !== 1 ||
+        result.planSelection?.rejectedPlanCount !== 1) {
+      throw new Error(
+        `${label} did not fail closed: ${JSON.stringify(result)}`
+      );
+    }
   }
 
   const derivedMappingLines = [];
@@ -5806,7 +5897,7 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
     invalid.contingentFinalists
   );
   for (const action of invalid.contingentFinalists.tacticA.a) {
-    action.rp =
+    action.l =
       'After review, monitor {{TARGET_NAME}} without making a paid referral request.';
   }
   const rejected = await plannerResultForMotion({
@@ -5816,7 +5907,7 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
   });
   if (rejected.status !== 'planned' || rejected.plans.length !== 1 ||
       rejected.planSelection?.rejectedPlanCount !== 1 ||
-      !/(?:reserved target syntax|primary_action_(?:passive|negated|non_revenue|partner_referral))/i.test(
+      !/(?:reserved target syntax|primary_action_(?:passive|negated|non_revenue|partner_referral)|no typed causal revenue witness)/i.test(
         rejected.planSelection?.rejectedPlans?.[0]?.reason || ''
       ) ||
       rejected.sideEffectsPerformed !== 0) {
@@ -6023,7 +6114,12 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
     'compensated_role'
   ];
   const motionFor = (mechanism) => {
-    const motion = cases[0].plans(evidenceRef)[0];
+    const motion = mechanism === 'compensated_role'
+      ? cases[1].plans(evidenceRef)[0]
+      : cases[0].plans(evidenceRef)[0];
+    if (mechanism === 'compensated_role') {
+      motion.paidOffer = COMPENSATED_JOB_PAID_OFFER;
+    }
     motion.contingentFinalists = compactContingentFinalists(
       motion.contingentFinalists
     );
@@ -6312,13 +6408,13 @@ async function verifyTypedCausalWitnessContract(job, evidenceRef) {
     generationId: 'generation-collapsed-singleton-revenue-path'
   });
   if (restoredSingleton.status !== 'planned' ||
-      restoredSingleton.plans.length !== 2 ||
-      !restoredSingleton.plans.every((item) =>
-        item.contingentFinalists?.familyA?.d?.r?.length === 1 &&
-        item.contingentFinalists?.familyB?.d?.r?.length === 1
+      restoredSingleton.plans.length !== 1 ||
+      restoredSingleton.planSelection?.rejectedPlanCount !== 1 ||
+      !/no typed causal revenue witness/i.test(
+        restoredSingleton.planSelection?.rejectedPlans?.[0]?.reason || ''
       )) {
     throw new Error(
-      `exact-one revenue wrapper was not restored losslessly: ${JSON.stringify(restoredSingleton)}`
+      `non-schema singleton revenue wrapper was not rejected locally: ${JSON.stringify(restoredSingleton)}`
     );
   }
 
@@ -6389,25 +6485,19 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
   job,
   evidenceRef
 ) {
-  const roleActionField = {
-    referral_partner: 'rp',
-    buyer: 'by',
-    paid_demand: 'pd'
-  };
   const motion = cases[0].plans(evidenceRef)[0];
   motion.contingentFinalists = compactContingentFinalists(
     motion.contingentFinalists
   );
-  const actionField = roleActionField[motion.commercialRole];
   const familyAAction =
-    motion.contingentFinalists.tacticA.a[0][actionField];
+    motion.contingentFinalists.tacticA.a[0].l;
   const familyBAction =
-    motion.contingentFinalists.tacticB.a[0][actionField];
+    motion.contingentFinalists.tacticB.a[0].l;
   for (const action of motion.contingentFinalists.tacticA.a) {
-    action[actionField] = familyAAction;
+    action.l = familyAAction;
   }
   for (const action of motion.contingentFinalists.tacticB.a) {
-    action[actionField] = familyBAction;
+    action.l = familyBAction;
   }
   const accepted = await plannerResultForMotion({
     job,
@@ -6441,13 +6531,15 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
     collapsed.contingentFinalists = compactContingentFinalists(
       collapsed.contingentFinalists
     );
-    const selectedField = roleActionField[collapsed.commercialRole];
     const repeated =
-      collapsed.contingentFinalists.tacticA.a[0][selectedField];
+      collapsed.contingentFinalists.tacticA.a[0].l;
     for (const tacticKey of ['tacticA', 'tacticB']) {
       for (const action of collapsed.contingentFinalists[tacticKey].a) {
-        action[selectedField] = repeated;
+        action.l = repeated;
       }
+    }
+    if (collapsed.motionKind === 'compensated_job') {
+      collapsed.paidOffer = COMPENSATED_JOB_PAID_OFFER;
     }
   }
   const projected = await runOpportunityDiscoveryPlanner({
@@ -7191,8 +7283,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     // Fresh normalization must project those structural roles from the
     // authoritative seller/system refs before any provider or critic work.
     for (const revenue of motion.contingentFinalists.pathBase.r) {
-      revenue.rm.seller = 'paid_pilot';
-      revenue.rm.compensatedJob = 'compensated_role';
+      revenue.rm = 'paid_pilot';
       revenue.atm = 'crm_source';
       revenue.ats =
         'ProfileScribe source field records the tournament action';
@@ -7228,11 +7319,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
         ).map((key) => [
           key,
           key === 'paidOffer'
-            ? {
-                seller: motion.paidOffer,
-                compensatedJob:
-                  'A current compensated role matching verified professional skills'
-              }
+            ? motion.paidOffer
             : key === 'jobTitle'
               ? 'ProfileScribe product consultant'
               : motion[key]
@@ -8948,16 +9035,16 @@ async function verifyTwoStageTargetBinding() {
       maximumRunes
     );
     const boundaryEvidenceRefs = Array.from({ length: 11 }, (_, index) =>
-      `observation:${'\\'.repeat(75)}${'😀'.repeat(7)}${String(index).padStart(2, '0')}`
+      `observation:${'\\'.repeat(17)}${'😀'.repeat(4)}${String(index).padStart(2, '0')}`
     );
     const objectiveOnlyEvidenceRefs = Array.from(
       { length: 14 },
       (_, index) =>
-        `observation:${'\\'.repeat(75)}${'🧭'.repeat(7)}${String(index).padStart(2, '0')}`
+        `observation:${'\\'.repeat(17)}${'🧭'.repeat(4)}${String(index).padStart(2, '0')}`
     );
     if ([...boundaryEvidenceRefs, ...objectiveOnlyEvidenceRefs].some((ref) =>
-      [...ref].length !== 96 ||
-      Buffer.byteLength(JSON.stringify(ref), 'utf8') - 2 !== 192
+      [...ref].length !== 35 ||
+      Buffer.byteLength(JSON.stringify(ref), 'utf8') - 2 !== 64
     )) {
       throw new Error('joint critic evidence-reference arithmetic drifted');
     }
@@ -9531,8 +9618,8 @@ async function verifyTwoStageTargetBinding() {
         )) ||
       jointWorstCritic.maximizedCriticFixture?.boundaryEvidenceRefs
         ?.some((ref) =>
-          [...ref].length !== 96 ||
-          Buffer.byteLength(JSON.stringify(ref), 'utf8') - 2 !== 192
+          [...ref].length !== 35 ||
+          Buffer.byteLength(JSON.stringify(ref), 'utf8') - 2 !== 64
         ) ||
       /\\ud[89ab][0-9a-f]{2}|\\ud[cdef][0-9a-f]{2}/i.test(
         JSON.stringify(jointWorstCritic.request)
@@ -11793,12 +11880,9 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
         reason: '',
-        plans: twoPlannerMotions({
-          ...motion,
-          contingentFinalists: compactContingentFinalists(
-            motion.contingentFinalists
-          )
-        }, evidenceRef)
+        plans: compactFreshPlannerPlans(
+          twoPlannerMotions(motion, evidenceRef)
+        )
       },
       usage,
       generationId: 'generation-paid-demand-target-protocol-planner',
@@ -13231,17 +13315,6 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
     }
     if (Array.isArray(schema.enum)) {
       const serialized = schema.enum.map((value) => JSON.stringify(value));
-      if (schema.type === 'string') {
-        const maxCodepoints = Math.max(
-          0,
-          ...schema.enum.map((value) => [...String(value)].length)
-        );
-        return {
-          textCodepoints: maxCodepoints,
-          evidenceRefOccurrences: 0,
-          fixedBytes: 2
-        };
-      }
       return {
         textCodepoints: 0,
         evidenceRefOccurrences: 0,
@@ -13323,12 +13396,12 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
   const stats = walk(root);
   const astralTextBytes = stats.textCodepoints * 4;
   const maximumEvidenceRefBytes =
-    stats.evidenceRefOccurrences * 192;
+    stats.evidenceRefOccurrences * 64;
   const derivedBound = astralTextBytes + maximumEvidenceRefBytes +
     stats.fixedBytes;
   computedPlannerSchemaResponseBoundBytes = derivedBound;
-  if (stats.textCodepoints > 24_500 ||
-      stats.evidenceRefOccurrences !== 160 ||
+  if (stats.textCodepoints > 5_200 ||
+      stats.evidenceRefOccurrences !== 56 ||
       derivedBound > MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES ||
       MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES >
         MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
@@ -13583,11 +13656,9 @@ function verifyFreshPlannerStrictSchemaTotality({
     }
     return {
       motionKind: motion.motionKind,
-      paidOffer: {
-        seller: motion.paidOffer,
-        compensatedJob:
-          'A current compensated role matching verified professional skills'
-      },
+      paidOffer: motion.motionKind === 'compensated_job'
+        ? 'A current compensated role matching verified professional skills'
+        : motion.paidOffer,
       market,
       targetRoleSubrole: motion.targetRoleSubrole,
       organizationTerms: motion.organizationTerms?.length > 0
@@ -13597,10 +13668,6 @@ function verifyFreshPlannerStrictSchemaTotality({
       skills: motion.skills?.length > 0
         ? motion.skills
         : ['Verified professional skill'],
-      conversionDestination: motion.conversionDestination,
-      paidConversion: motion.paidConversion,
-      attributionSignal:
-        'ProfileScribe source field records the tournament action',
       contingentFinalists
     };
   };
@@ -13748,24 +13815,21 @@ function verifyFreshPlannerStrictSchemaTotality({
     return `${text}${'😀'.repeat(maxCodepoints - length)}`;
   };
   const maxFieldPaths = [
-    ['paidOffer', ['plans', 0, 'paidOffer', 'seller'], 140],
-    ['organizationTerms', ['plans', 0, 'organizationTerms', 0], 80],
-    ['jobTitle', ['plans', 0, 'jobTitle'], 100],
-    ['skills', ['plans', 0, 'skills', 0], 80],
-    ['conversionDestination', ['plans', 0, 'conversionDestination'], 180],
-    ['paidConversion', ['plans', 0, 'paidConversion'], 140],
-    ['revenue label', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'l'], 140],
-    ['incremental outcome', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'io'], 180],
-    ['attribution signal', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'ats'], 220],
-    ['conversion destination', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'cd'], 180],
-    ['revenue stop', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'st'], 180],
-    ['supporting bottleneck', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'sb'], 180],
-    ['grounded destination', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'g', 'd', 'l'], 180],
-    ['offer item', ['plans', 0, 'contingentFinalists', 'pathBase', 'o', 0, 'l'], 140],
-    ['timing label', ['plans', 0, 'contingentFinalists', 'pathBase', 't', 0, 'l'], 140],
-    ['timing query', ['plans', 0, 'contingentFinalists', 'pathBase', 't', 0, 'q'], 140],
-    ['proof item', ['plans', 0, 'contingentFinalists', 'pathBase', 'p', 0, 'l'], 140],
-    ['tactic label', ['plans', 0, 'contingentFinalists', 'tacticA', 'l'], 140]
+    ['paidOffer', ['plans', 0, 'paidOffer'], 140],
+    ['organizationTerms', ['plans', 0, 'organizationTerms', 0], 48],
+    ['jobTitle', ['plans', 0, 'jobTitle'], 80],
+    ['skills', ['plans', 0, 'skills', 0], 48],
+    ['revenue label', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'l'], 96],
+    ['incremental outcome', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'io'], 120],
+    ['attribution signal', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'ats'], 140],
+    ['conversion destination', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'cd'], 120],
+    ['revenue stop', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'st'], 120],
+    ['supporting bottleneck', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'sb'], 100],
+    ['grounded destination', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'g', 'd', 'l'], 120],
+    ['offer item', ['plans', 0, 'contingentFinalists', 'pathBase', 'o', 0, 'l'], 96],
+    ['timing label', ['plans', 0, 'contingentFinalists', 'pathBase', 't', 0, 'l'], 100],
+    ['timing query', ['plans', 0, 'contingentFinalists', 'pathBase', 't', 0, 'q'], 100],
+    ['proof item', ['plans', 0, 'contingentFinalists', 'pathBase', 'p', 0, 'l'], 100]
   ];
   const allMax = structuredClone(baseline);
   for (const [label, path, maxCodepoints] of maxFieldPaths) {
@@ -13799,15 +13863,15 @@ function verifyFreshPlannerStrictSchemaTotality({
 
   // Exercise the abstract walker proof with one concrete joint-maximum
   // response: both plans, all schema-authorized list cardinalities, and all
-  // 160 evidence-ref occurrences use distinct 96-rune/192-JSON-byte refs.
-  // Escape-heavy raw refs are normalized before reaching this schema (proved
-  // separately below), so 192 encoded bytes is the exact response unit.
+  // 56 evidence-ref occurrences use distinct 64-byte canonical refs.
+  // Oversized or escape-heavy raw refs are normalized before reaching this
+  // schema (proved separately below), so 64 encoded bytes is exact.
   const boundaryEvidenceRefs = Array.from({ length: 14 }, (_, index) =>
-    `observation:${'😀'.repeat(32)}${'a'.repeat(51)}${index.toString(16)}`
+    `observation:${'a'.repeat(50)}${index.toString(16).padStart(2, '0')}`
   );
   if (boundaryEvidenceRefs.some((ref) =>
-    unicodeCodepointLength(ref) !== 96 ||
-    Buffer.byteLength(JSON.stringify(ref), 'utf8') - 2 !== 192
+    unicodeCodepointLength(ref) !== 64 ||
+    Buffer.byteLength(JSON.stringify(ref), 'utf8') - 2 !== 64
   )) {
     throw new Error('joint-max evidence reference arithmetic drifted');
   }
@@ -13828,12 +13892,12 @@ function verifyFreshPlannerStrictSchemaTotality({
       );
     }
     maximumResponse.plans[planIndex].organizationTerms = Array.from(
-      { length: 6 },
-      (_, index) => padAstral(`Org${index}`, 80)
+      { length: 4 },
+      (_, index) => padAstral(`Org${index}`, 48)
     );
     maximumResponse.plans[planIndex].skills = Array.from(
-      { length: 6 },
-      (_, index) => padAstral(`Skill${index}`, 80)
+      { length: 4 },
+      (_, index) => padAstral(`Skill${index}`, 48)
     );
   }
   let evidenceArrayCount = 0;
@@ -13921,13 +13985,13 @@ function verifyFreshPlannerStrictSchemaTotality({
   const validateMaximum = new Ajv({ allErrors: true, strict: false })
     .compile(maximumSchema);
   if (!validateMaximum(maximumResponse) ||
-      evidenceOccurrenceCount !== 160 || evidenceArrayCount === 0 ||
+      evidenceOccurrenceCount !== 56 || evidenceArrayCount === 0 ||
       // Buyer, channel, and action alternatives are closed enums; all
       // remaining model-authored bounded strings must still be maximized.
-      maximizedStringOccurrenceCount < 60 ||
+      maximizedStringOccurrenceCount !== 50 ||
       maximumResponse.plans.some((planValue) =>
-        planValue.organizationTerms.length !== 6 ||
-        planValue.skills.length !== 6
+        planValue.organizationTerms.length !== 4 ||
+        planValue.skills.length !== 4
       )) {
     throw new Error(
       `concrete joint-max planner response is not schema-total: ${JSON.stringify({ evidenceArrayCount, evidenceOccurrenceCount, maximizedStringOccurrenceCount, errors: validateMaximum.errors })}`
@@ -13937,10 +14001,7 @@ function verifyFreshPlannerStrictSchemaTotality({
     JSON.stringify(maximumResponse),
     'utf8'
   );
-  largestPlannerResponseBytes = Math.max(
-    largestPlannerResponseBytes,
-    maximumResponseBytes
-  );
+  maximumConcretePlannerResponseBytes = maximumResponseBytes;
   if (maximumResponseBytes >
         MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES ||
       maximumResponseBytes > MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
@@ -13953,9 +14014,11 @@ function verifyFreshPlannerStrictSchemaTotality({
 
 function verifyEvidenceReferenceEncodingBounds() {
   const exactBoundaryID =
-    `observation:${'😀'.repeat(32)}${'a'.repeat(52)}`;
+    `observation:${'a'.repeat(52)}`;
+  const overByteBoundaryID =
+    `observation:${'😀'.repeat(14)}`;
   const escapeHeavyID =
-    `observation:${'😀'.repeat(32)}${'\\"'.repeat(26)}`;
+    `observation:${'\\"'.repeat(26)}`;
   const invalidIDs = [
     ['soft-hyphen', `observation:invalid\u00adref`],
     ['Mongolian-vowel-separator', `observation:invalid\u180eref`],
@@ -13970,6 +14033,7 @@ function verifyEvidenceReferenceEncodingBounds() {
   ];
   const sourceEvidence = [
     ['exact-boundary', exactBoundaryID],
+    ['over-byte-boundary', overByteBoundaryID],
     ['escape-heavy', escapeHeavyID],
     ...invalidIDs
   ].map(([label, id], index) => ({
@@ -13998,16 +14062,19 @@ function verifyEvidenceReferenceEncodingBounds() {
   }, {}, now, { includeSystemAttributionCapability: true });
   const byLabel = new Map(catalog.map((item) => [item.label, item]));
   const boundary = byLabel.get('Encoding boundary exact-boundary');
+  const overByte = byLabel.get('Encoding boundary over-byte-boundary');
   const escaped = byLabel.get('Encoding boundary escape-heavy');
-  if (unicodeCodepointLength(exactBoundaryID) !== 96 ||
-      Buffer.byteLength(exactBoundaryID, 'utf8') !== 192 ||
+  if (unicodeCodepointLength(exactBoundaryID) !== 64 ||
+      Buffer.byteLength(exactBoundaryID, 'utf8') !== 64 ||
       Buffer.byteLength(JSON.stringify(exactBoundaryID), 'utf8') - 2 !==
-        192 ||
+        64 ||
       boundary?.id !== exactBoundaryID ||
-      unicodeCodepointLength(escapeHeavyID) !== 96 ||
-      Buffer.byteLength(escapeHeavyID, 'utf8') !== 192 ||
-      Buffer.byteLength(JSON.stringify(escapeHeavyID), 'utf8') - 2 <= 192 ||
-      !/^observation:[a-f0-9]{48}$/.test(escaped?.id || '') ||
+      Buffer.byteLength(overByteBoundaryID, 'utf8') <= 64 ||
+      !/^observation:[a-f0-9]{52}$/.test(overByte?.id || '') ||
+      unicodeCodepointLength(escapeHeavyID) !== 64 ||
+      Buffer.byteLength(escapeHeavyID, 'utf8') !== 64 ||
+      Buffer.byteLength(JSON.stringify(escapeHeavyID), 'utf8') - 2 <= 64 ||
+      !/^observation:[a-f0-9]{52}$/.test(escaped?.id || '') ||
       escaped?.id === escapeHeavyID) {
     throw new Error(
       `evidence reference encoded-byte boundary drifted: ${JSON.stringify({ boundary: boundary?.id, escaped: escaped?.id, exactBoundaryRunes: unicodeCodepointLength(exactBoundaryID), exactBoundaryBytes: Buffer.byteLength(exactBoundaryID, 'utf8'), escapeHeavyRunes: unicodeCodepointLength(escapeHeavyID), escapeHeavyBytes: Buffer.byteLength(escapeHeavyID, 'utf8'), escapeHeavyEncodedBytes: Buffer.byteLength(JSON.stringify(escapeHeavyID), 'utf8') - 2 })}`
@@ -14016,7 +14083,7 @@ function verifyEvidenceReferenceEncodingBounds() {
   for (const [label, rawID] of invalidIDs) {
     const item = byLabel.get(`Encoding boundary ${label}`);
     if (catalog.some((entry) => entry.id === rawID) ||
-        (item && !/^observation:[a-f0-9]{48}$/.test(item.id || ''))) {
+        (item && !/^observation:[a-f0-9]{52}$/.test(item.id || ''))) {
       throw new Error(
         `unsafe evidence scalar ${label} was not hashed: ${JSON.stringify({ item, catalog: catalog.map((entry) => ({ id: entry.id, label: entry.label })) })}`
       );
@@ -14029,8 +14096,8 @@ function verifyEvidenceReferenceEncodingBounds() {
     throw new Error('unsafe evidence scalar hashing collapsed too much proof');
   }
   for (const item of catalog) {
-    if (Buffer.byteLength(JSON.stringify(item.id), 'utf8') - 2 > 192 ||
-        unicodeCodepointLength(item.id) > 96) {
+    if (Buffer.byteLength(JSON.stringify(item.id), 'utf8') - 2 > 64 ||
+        unicodeCodepointLength(item.id) > 64) {
       throw new Error(
         `catalog emitted an evidence ref beyond its response proof: ${JSON.stringify(item.id)}`
       );
@@ -14049,7 +14116,9 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   }
   response.plans[0].motionKind = 'referral_org_decision_maker';
   const observationEvidenceRef =
-    response.plans[0].contingentFinalists.pathBase.e[0];
+    response.plans[0].contingentFinalists.pathBase.r[0].e.find((ref) =>
+      /^observation:/i.test(ref)
+    );
   const rawJobMotion = cases[1].plans(observationEvidenceRef)[0];
   const padAstral = (value, maximum) => {
     const text = String(value || 'A');
@@ -14065,20 +14134,13 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   }
   response.plans[1] = {
     motionKind: 'compensated_job',
-    paidOffer: {
-      seller: rawJobMotion.paidOffer,
-      compensatedJob:
-        'A current compensated role matching verified professional skills'
-    },
+    paidOffer:
+      'A current compensated role matching verified professional skills',
     market: response.plans[0].market,
     targetRoleSubrole: 'executive',
     organizationTerms: ['Verified employer organization'],
-    jobTitle: padAstral(rawJobMotion.jobTitle, 100),
-    skills: [padAstral(rawJobMotion.skills[0], 80)],
-    conversionDestination: rawJobMotion.conversionDestination,
-    paidConversion: rawJobMotion.paidConversion,
-    attributionSignal:
-      'ProfileScribe source field records the tournament action',
+    jobTitle: padAstral(rawJobMotion.jobTitle, 80),
+    skills: [padAstral(rawJobMotion.skills[0], 48)],
     contingentFinalists: jobBundle
   };
   const validate = new Ajv({ allErrors: true, strict: false }).compile(
@@ -14092,11 +14154,8 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   const first = response.plans[0];
   const second = response.plans[1];
   const expectedRoundTrips = [
-    first.paidOffer.seller,
+    first.paidOffer,
     first.organizationTerms[0],
-    first.conversionDestination,
-    first.paidConversion,
-    first.attributionSignal,
     second.jobTitle,
     second.skills[0],
     first.contingentFinalists.pathBase.r[0].l,
@@ -14105,15 +14164,15 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     first.contingentFinalists.pathBase.r[0].sb,
     first.contingentFinalists.pathBase.r[0].g.d.l,
     first.contingentFinalists.pathBase.o[0].l,
-    first.contingentFinalists.pathBase.b[0].rp,
-    second.contingentFinalists.pathBase.b[0].pd,
+    first.contingentFinalists.pathBase.b[0].l,
+    second.contingentFinalists.pathBase.b[0].l,
     first.contingentFinalists.pathBase.t[0].l,
     first.contingentFinalists.pathBase.t[0].q,
     first.contingentFinalists.pathBase.p[0].l,
-    first.contingentFinalists.tacticA.c[0].rp,
-    second.contingentFinalists.tacticA.c[0].pd,
-    first.contingentFinalists.tacticA.a[0].rp,
-    second.contingentFinalists.tacticA.a[0].pd,
+    first.contingentFinalists.tacticA.c[0].l,
+    second.contingentFinalists.tacticA.c[0].l,
+    first.contingentFinalists.tacticA.a[0].l,
+    second.contingentFinalists.tacticA.a[0].l,
     first.contingentFinalists.tacticA.f[0].l
   ];
   let calls = 0;
@@ -14574,70 +14633,80 @@ function compactContingentFinalists(value) {
     const text = [...canonical].slice(0, 72).join('').trim();
     return text || fallback;
   };
-  const roleBuyer = (item, index) => ({
-    rp: index % 2 === 0
-      ? 'Qualified buyer for the current paid offer'
-      : 'Prospective buyer eligible for the current paid offer',
-    by: index % 2 === 0
-      ? '{{TARGET_NAME}}: validated commercial buyer'
-      : '{{TARGET_NAME}}: prospective buyer of the current paid offer',
-    pd: index % 2 === 0
-      ? '{{TARGET_NAME}}: employer with current compensated demand'
-      : '{{TARGET_NAME}}: buyer issuing a current paid engagement',
-    e: item.e
-  });
-  const roleChannel = (item, index, family) => {
-    const alternate = (family === familyB ? 1 : 0) + index;
-    return {
-      rp: alternate % 2 === 0
-        ? 'Review-first public professional profile {{TARGET_URL}} for referral fit verification'
-        : 'Review-first public professional profile {{TARGET_URL}} for partner-channel verification',
-      by: alternate % 2 === 0
-        ? 'Review-first public professional profile {{TARGET_URL}} for buyer fit verification'
-        : 'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification',
-      pd: alternate % 2 === 0
-        ? 'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification'
-        : 'Review-first official paid-demand page {{TARGET_URL}} for paid-engagement verification',
-      e: item.e
-    };
+  const commercialRole = familyA.d.r[0]?.rm === 'compensated_role'
+    ? 'paid_demand'
+    : familyA.m === 'partner_channel'
+      ? 'referral_partner'
+      : 'buyer';
+  const buyerLabels = {
+    referral_partner: [
+      'Qualified buyer for the current paid offer',
+      'Prospective buyer eligible for the current paid offer'
+    ],
+    buyer: [
+      '{{TARGET_NAME}}: validated commercial buyer',
+      '{{TARGET_NAME}}: prospective buyer of the current paid offer'
+    ],
+    paid_demand: [
+      '{{TARGET_NAME}}: employer with current compensated demand',
+      '{{TARGET_NAME}}: buyer issuing a current paid engagement'
+    ]
   };
-  const roleAction = (item, index, family) => {
-    const variant = ((family === familyB ? 2 : 0) + index) % 4;
-    const referralActions = [
+  const channelLabels = {
+    referral_partner: [
+      'Review-first public professional profile {{TARGET_URL}} for referral fit verification',
+      'Review-first public professional profile {{TARGET_URL}} for partner-channel verification'
+    ],
+    buyer: [
+      'Review-first public professional profile {{TARGET_URL}} for buyer fit verification',
+      'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification'
+    ],
+    paid_demand: [
+      'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification',
+      'Review-first official paid-demand page {{TARGET_URL}} for paid-engagement verification'
+    ]
+  };
+  const actionLabels = {
+    referral_partner: [
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer',
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to purchase the current paid offer',
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to buy the current paid offer',
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to sign up for the current paid offer'
-    ];
-    const buyerActions = [
+    ],
+    buyer: [
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation',
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package',
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid service package',
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
-    ];
-    const paidDemandActions = [
+    ],
+    paid_demand: [
       'After review via official paid-demand page {{TARGET_URL}}, apply a compensated application to {{TARGET_NAME}}',
       'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
       'After review via official paid-demand page {{TARGET_URL}}, bid one paid proposal to {{TARGET_NAME}}',
       'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
-    ];
-    return {
-      rp: referralActions[variant],
-      by: buyerActions[variant],
-      pd: paidDemandActions[variant],
-      e: item.e
-    };
+    ]
   };
+  const selectedItem = (item) => ({ l: item.l, e: item.e });
+  const buyerItem = (item, index) => ({
+    l: buyerLabels[commercialRole][index % 2],
+    e: item.e
+  });
+  const channelItem = (item, index, family) => ({
+    l: channelLabels[commercialRole][
+      ((family === familyB ? 1 : 0) + index) % 2
+    ],
+    e: item.e
+  });
+  const actionItem = (item, index, family) => ({
+    l: actionLabels[commercialRole][
+      ((family === familyB ? 2 : 0) + index) % 4
+    ],
+    e: item.e
+  });
   const tactic = (family) => ({
-    l: family.l,
-    e: family.e.filter((ref) => /^observation:/i.test(ref)).slice(0, 2),
     s: family.s,
-    c: family.d.c.map((item, index) =>
-      roleChannel(item, index, family)
-    ),
-    a: family.d.a.map((item, index) =>
-      roleAction(item, index, family)
-    ),
+    c: family.d.c.map((item, index) => channelItem(item, index, family)),
+    a: family.d.a.map((item, index) => actionItem(item, index, family)),
     f: family.d.f
   });
   const compactRevenue = (revenueValue) => {
@@ -14647,12 +14716,7 @@ function compactContingentFinalists(value) {
     delete revenue.a;
     delete revenue.c;
     delete revenue.o;
-    revenue.rm = {
-      seller: authoredMechanism === 'compensated_role'
-        ? 'paid_pilot'
-        : authoredMechanism,
-      compensatedJob: 'compensated_role'
-    };
+    revenue.rm = authoredMechanism;
     revenue.l = tokenFree(
       revenue.l,
       'Current attributable paid outcome'
@@ -14676,10 +14740,9 @@ function compactContingentFinalists(value) {
   return {
     seedContract: materialized.seedContract,
     pathBase: {
-      e: familyA.e.filter((ref) => /^observation:/i.test(ref)),
       r: familyA.d.r.map(compactRevenue),
       o: familyA.d.o,
-      b: familyA.d.b.map(roleBuyer),
+      b: familyA.d.b.map(buyerItem),
       t: familyA.d.t,
       p: familyA.d.p
     },
@@ -14715,13 +14778,20 @@ function compactProvisionalContingentFinalists(
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to assess one proposed paid service proposal',
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one proposed paid service contract'
   ];
+  const referralChannels = [
+    'Review-first public professional profile {{TARGET_URL}} for referral fit verification',
+    'Review-first public professional profile {{TARGET_URL}} for partner-channel verification'
+  ];
+  const directChannels = [
+    'Review-first public professional profile {{TARGET_URL}} for buyer fit verification',
+    'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification'
+  ];
   const buyers = commercialRole === 'referral_partner'
     ? referralBuyers
     : directBuyers;
   compact.pathBase.b = compact.pathBase.b.map((item, index) => ({
     ...item,
-    rp: referralBuyers[index % referralBuyers.length],
-    by: directBuyers[index % directBuyers.length]
+    l: buyers[index % buyers.length]
   }));
   compact.pathBase.o = compact.pathBase.o.map((item) => ({
     ...item,
@@ -14744,12 +14814,21 @@ function compactProvisionalContingentFinalists(
     }
   }));
   for (const [tacticIndex, tacticKey] of ['tacticA', 'tacticB'].entries()) {
+    compact[tacticKey].c = compact[tacticKey].c.map((item, index) => ({
+      ...item,
+      l: (commercialRole === 'referral_partner'
+        ? referralChannels
+        : directChannels)[(tacticIndex + index) % 2]
+    }));
     compact[tacticKey].a = compact[tacticKey].a.map((item, index) => {
       const variant = tacticIndex * 2 + index;
       return {
         ...item,
-        rp: referralActions[variant],
-        by: directActions[variant]
+        l: commercialRole === 'referral_partner'
+          ? referralActions[variant]
+          : commercialRole === 'buyer'
+            ? directActions[variant]
+            : item.l
       };
     });
   }
@@ -14765,14 +14844,19 @@ function compactFreshPlannerPlans(values) {
     delete freshPlan.buyer;
     delete freshPlan.counterparty;
     delete freshPlan.rationale;
+    delete freshPlan.conversionDestination;
+    delete freshPlan.paidConversion;
+    delete freshPlan.attributionSignal;
+    if (freshPlan.motionKind === 'compensated_job') {
+      freshPlan.paidOffer =
+        'A current compensated role matching verified professional skills';
+    }
     if (freshPlan.contingentFinalists?.familyA &&
         freshPlan.contingentFinalists?.familyB) {
       freshPlan.contingentFinalists = compactContingentFinalists(
         freshPlan.contingentFinalists
       );
     }
-    freshPlan.attributionSignal =
-      'ProfileScribe source field records the tournament action';
     for (const revenue of
       freshPlan.contingentFinalists?.pathBase?.r || []) {
       revenue.atm = 'crm_source';
@@ -14786,16 +14870,15 @@ function compactFreshPlannerPlans(values) {
 function canonicalMaterializedPlannerPlans(values) {
   return (values || []).map((planValue) => {
     const motion = structuredClone(planValue);
+    if (motion.motionKind === 'compensated_job') {
+      motion.paidOffer =
+        'A current compensated role matching verified professional skills';
+    }
     const original = motion.contingentFinalists;
     if (!original?.familyA || !original?.familyB) return motion;
     const compact = compactContingentFinalists(original);
-    const roleField = motion.commercialRole === 'referral_partner'
-      ? 'rp'
-      : motion.commercialRole === 'buyer'
-        ? 'by'
-        : 'pd';
     const selectItems = (items) => (items || []).map((item) => ({
-      l: item[roleField],
+      l: item.l,
       e: structuredClone(item.e)
     }));
     const materializeFamily = (familyKey, tacticKey, key) => {
@@ -14810,9 +14893,7 @@ function canonicalMaterializedPlannerPlans(values) {
       const originalRevenue = source.d.r[0];
       source.d.r[0] = {
         ...compactRevenue,
-        rm: motion.motionKind === 'compensated_job'
-          ? compactRevenue.rm.compensatedJob
-          : compactRevenue.rm.seller,
+        rm: compactRevenue.rm,
         v: originalRevenue.v,
         a: motion.acquisitionMode,
         c: source.d.a[0].l,

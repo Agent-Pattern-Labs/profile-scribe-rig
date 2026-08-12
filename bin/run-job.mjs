@@ -3105,7 +3105,8 @@ async function callOpenRouterJSON({
   stream,
   streamStartTimeoutMs,
   streamIdleTimeoutMs,
-  streamTotalTimeoutMs
+  streamTotalTimeoutMs,
+  streamMaxContentBytes
 }) {
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
@@ -3175,6 +3176,7 @@ async function callOpenRouterJSON({
         {
           idleTimeoutMs: resolvedIdleTimeoutMs,
           totalTimeoutMs: totalRemainingMs,
+          maxContentBytes: positiveInteger(streamMaxContentBytes),
           abortController: controller,
           initialGenerationId:
             response.headers.get('x-generation-id'),
@@ -3674,7 +3676,7 @@ function safeOpenRouterProviderName(value) {
 }
 
 function safeOpenRouterRouterAttempts(value) {
-  return arrayOfObjects(value).slice(0, 8).map((attempt) => {
+  return arrayOfObjects(value).slice(0, 64).map((attempt) => {
     const provider = text(attempt.provider);
     const model = text(attempt.model).toLowerCase();
     const status = Number(attempt.status);
@@ -4673,7 +4675,7 @@ function safeOpenRouterResponseDiagnostics(value) {
       diagnostics.routerAttemptStatuses
     )
       ? diagnostics.routerAttemptStatuses
-        .slice(0, 8)
+        .slice(0, 64)
         .map((status) => Number(status))
         .filter((status) => Number.isInteger(status) &&
           status >= 100 && status <= 599)

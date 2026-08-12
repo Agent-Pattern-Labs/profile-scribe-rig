@@ -17,6 +17,8 @@ await verifyActiveGenerationStillHitsHardDeadline();
 await verifyMidstreamErrorRemainsAnErrorEnvelope();
 await verifyIncompleteTerminalAccountingIsRejected();
 await verifyInvalidSuccessContractsAreRejected();
+await verifyRouteAttemptBoundsAndOutcomes();
+await verifyPlannerContentLimitIsEnforced();
 await verifyTerminalAccountingIsBoundToFinalEvent();
 await verifyHangingCancelCannotDefeatDeadline();
 verifyStreamingRequestIsInsideExactSerializedPreflight();
@@ -487,6 +489,140 @@ async function verifyTerminalAccountingIsBoundToFinalEvent() {
   );
 }
 
+async function verifyRouteAttemptBoundsAndOutcomes() {
+  const selected = {
+    provider: 'Provider 64',
+    model: 'deepseek/deepseek-v4-flash-0731',
+    selected: true
+  };
+  const attempts = Array.from({ length: 64 }, (_, index) => ({
+    provider: `Provider ${index + 1}`,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    status: index === 63 ? 200 : 503
+  }));
+  const successful = scheduledStream([
+    [0, event({
+      id: 'gen-stream-64-attempts',
+      model: 'deepseek/deepseek-v4-flash-0731',
+      provider: selected.provider,
+      choices: [{
+        delta: { content: '{}' },
+        finish_reason: 'stop',
+        native_finish_reason: 'stop'
+      }]
+    })],
+    [0, event({
+      id: 'gen-stream-64-attempts',
+      choices: [],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 2,
+        total_tokens: 12,
+        cost: 0.0001
+      },
+      openrouter_metadata: {
+        strategy: 'default',
+        attempt: 64,
+        endpoints: { total: 64, available: [selected] },
+        attempts
+      }
+    })],
+    [0, 'data: [DONE]\n\n']
+  ]);
+  const result = await readOpenRouterChatCompletionSSE(successful, {
+    idleTimeoutMs: 50,
+    totalTimeoutMs: 150
+  });
+  assertEqual(
+    result.envelope.openrouter_metadata.attempts.length,
+    64,
+    '64-attempt default route trace was rejected'
+  );
+
+  for (const [name, mutated] of [
+    ['too many attempts', [...attempts, { ...attempts[62] }]],
+    ['nonfinal success', attempts.map((item, index) =>
+      index === 5 ? { ...item, status: 200 } : item)]
+  ]) {
+    const stream = scheduledStream([
+      [0, event({
+        id: `gen-stream-${name.replaceAll(' ', '-')}`,
+        model: 'deepseek/deepseek-v4-flash-0731',
+        provider: selected.provider,
+        choices: [{
+          delta: { content: '{}' },
+          finish_reason: 'stop',
+          native_finish_reason: 'stop'
+        }]
+      })],
+      [0, event({
+        id: `gen-stream-${name.replaceAll(' ', '-')}`,
+        choices: [],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 2,
+          total_tokens: 12,
+          cost: 0.0001
+        },
+        openrouter_metadata: {
+          strategy: 'default',
+          attempt: mutated.length,
+          endpoints: { total: mutated.length, available: [selected] },
+          attempts: mutated
+        }
+      })],
+      [0, 'data: [DONE]\n\n']
+    ]);
+    let caught;
+    try {
+      await readOpenRouterChatCompletionSSE(stream, {
+        idleTimeoutMs: 50,
+        totalTimeoutMs: 150
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert(caught, `${name} unexpectedly succeeded`);
+    assertEqual(
+      caught.openRouterFailureCode,
+      'openrouter_invalid_response',
+      `${name} failure code`
+    );
+  }
+}
+
+async function verifyPlannerContentLimitIsEnforced() {
+  const stream = scheduledStream([
+    [0, event({
+      id: 'gen-stream-content-limit',
+      model: 'deepseek/deepseek-v4-flash-0731',
+      provider: 'Limit Provider',
+      choices: [{ delta: { content: '12345' } }]
+    })]
+  ]);
+  let caught;
+  try {
+    await readOpenRouterChatCompletionSSE(stream, {
+      idleTimeoutMs: 50,
+      totalTimeoutMs: 150,
+      maxContentBytes: 4
+    });
+  } catch (error) {
+    caught = error;
+  }
+  assert(caught, 'planner content overflow unexpectedly succeeded');
+  assertEqual(
+    caught.openRouterFailureCode,
+    'openrouter_invalid_response',
+    'planner content overflow failure code'
+  );
+  assertEqual(
+    caught.openRouterStreamState?.contentByteCount,
+    5,
+    'planner content overflow lost safe byte diagnostic'
+  );
+}
+
 async function verifyHangingCancelCannotDefeatDeadline() {
   const stream = new ReadableStream({
     start() {
@@ -610,16 +746,27 @@ async function verifyRunJobUsesStreamingTransport() {
       },
       openrouter_metadata: {
         strategy: 'default',
-        attempt: 1,
+        attempt: 64,
         endpoints: {
-          total: 1,
+          total: 64,
           available: [{
             provider: 'Integration Provider',
             model: 'deepseek/deepseek-v4-flash-0731',
             selected: true
           }]
         },
-        attempts: [{ provider: 'Integration Provider', status: 200 }]
+        attempts: [
+          ...Array.from({ length: 63 }, (_, index) => ({
+            provider: `Fallback Provider ${index + 1}`,
+            model: 'deepseek/deepseek-v4-flash-0731',
+            status: 503
+          })),
+          {
+            provider: 'Integration Provider',
+            model: 'deepseek/deepseek-v4-flash-0731',
+            status: 200
+          }
+        ]
       }
     }));
     response.end('data: [DONE]\n\n');
@@ -663,6 +810,16 @@ async function verifyRunJobUsesStreamingTransport() {
       diagnostics?.routerSelectedProvider,
       'Integration Provider',
       'run-job selected provider'
+    );
+    assertEqual(
+      diagnostics?.routerAttempts?.length,
+      64,
+      'run-job truncated the complete fallback attempt sequence'
+    );
+    assertEqual(
+      diagnostics?.routerAttemptStatuses?.length,
+      64,
+      'run-job truncated the complete fallback status sequence'
     );
     assert(diagnostics?.streaming === true, 'run-job stream diagnostic missing');
     assert(diagnostics?.streamCompleted === true, 'run-job stream completion missing');

@@ -458,7 +458,7 @@ function completeOpenRouterRoute({ metadata, selectedModel, selectedProvider }) 
   const observedModel = safeText(selectedModel).toLowerCase();
   if (selectedEndpointCount !== 1 ||
       !Number.isInteger(attemptNumber) || attemptNumber < 1 ||
-      attemptNumber > 8 ||
+      attemptNumber > 64 ||
       !safeProvider(endpointProvider) || !safeModel(endpointModel) ||
       observedProvider !== endpointProvider || observedModel !== endpointModel) {
     return false;
@@ -468,14 +468,17 @@ function completeOpenRouterRoute({ metadata, selectedModel, selectedProvider }) 
   // A fallback success is not: require every ordered attempt when attempt>1.
   if (!Array.isArray(attempts)) return attemptNumber === 1;
   if (attempts.length !== attemptNumber) return false;
-  for (const rawAttempt of attempts) {
+  for (const [index, rawAttempt] of attempts.entries()) {
     const attempt = plainObject(rawAttempt);
     const provider = safeText(attempt?.provider);
     const model = safeText(attempt?.model).toLowerCase();
     const status = attempt?.status;
+    const final = index === attempts.length - 1;
     if (!safeProvider(provider) ||
         (model && !safeModel(model)) ||
-        !Number.isInteger(status) || status < 100 || status > 599) {
+        !Number.isInteger(status) || status < 100 || status > 599 ||
+        (!final && status >= 200 && status <= 299) ||
+        (final && (status < 200 || status > 299))) {
       return false;
     }
   }
