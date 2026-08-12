@@ -1483,6 +1483,7 @@ export function repairAndValidateOpenRouterJSONMessage(
     validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
     localStructuredOutputValidators.set(schemaHash, validate);
   }
+  let projectedRootSchemaIssues;
   if (Array.isArray(data) && data.length === MAX_DISCOVERY_PLANNER_PLANS &&
       data.every((item) => item && typeof item === 'object' &&
         !Array.isArray(item)) &&
@@ -1494,13 +1495,19 @@ export function repairAndValidateOpenRouterJSONMessage(
       reason: '',
       plans: data
     };
-    if (validate(projectedRoot)) data = projectedRoot;
+    if (validate(projectedRoot)) {
+      data = projectedRoot;
+    } else {
+      projectedRootSchemaIssues = structuredClone(validate.errors || []);
+    }
   }
   if (!validate(data)) {
     const error = new Error(
       'Repaired OpenRouter JSON message failed exact schema validation'
     );
-    error.localJSONRepairSchemaIssues = (validate.errors || [])
+    error.localJSONRepairSchemaIssues = (
+      projectedRootSchemaIssues || validate.errors || []
+    )
       .slice(0, 8)
       .map((issue) => ({
         keyword: String(issue?.keyword || '').slice(0, 32),

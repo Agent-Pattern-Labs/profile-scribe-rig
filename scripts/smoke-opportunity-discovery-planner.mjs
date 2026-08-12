@@ -120,6 +120,25 @@ function verifyBoundedLocalJSONRepair() {
       `exact two-plan root projection drifted: ${JSON.stringify(projectedPlanPair)}`
     );
   }
+  let projectedPlanIssue;
+  try {
+    repairAndValidateOpenRouterJSONMessage(
+      '{"label":"buyer"}\n{}',
+      planPairResponseFormat
+    );
+  } catch (error) {
+    projectedPlanIssue = error.localJSONRepairSchemaIssues?.[0];
+  }
+  if (JSON.stringify(projectedPlanIssue) !== JSON.stringify({
+    keyword: 'required',
+    instancePath: '/plans/1',
+    schemaPath: '#/properties/plans/items/required',
+    missingProperty: 'label'
+  })) {
+    throw new Error(
+      `two-plan projection lost item-level schema diagnostics: ${JSON.stringify(projectedPlanIssue)}`
+    );
+  }
   for (const [label, raw] of [
     ['schema-invalid', '{"plans":["buyer"],"status":"planned",}'],
     ['oversized', `{"plans":["${'x'.repeat(196_609)}","referral"],"status":"planned",}`]
