@@ -159,21 +159,11 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'qwen/qwen3.8-max';
-const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
-  'deepseek/deepseek-v4-flash-0731'
-]);
+  'deepseek/deepseek-v4-flash-0731';
+const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'qwen',
-    minimumContextTokens: 1_000_000,
-    minimumOutputTokens: 32_000,
-    maximumPromptPrice: 2,
-    maximumCompletionPrice: 6
-  }),
-  Object.freeze({
-    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
     family: 'deepseek',
     minimumContextTokens: 1_000_000,
     minimumOutputTokens: 32_000,
@@ -229,25 +219,23 @@ const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  order: ['alibaba', 'fireworks', 'deepinfra', 'cloudflare'],
-  only: ['alibaba', 'fireworks', 'deepinfra', 'cloudflare'],
-  // Prefer Qwen Max on Alibaba, then allow DeepSeek Flash across three
-  // independently hosted native structured-output endpoints. Every admitted
-  // route has compiled the exact bounded planner schema; strict parameter,
-  // privacy, and price filters remain authoritative.
+  order: ['fireworks', 'deepinfra', 'cloudflare'],
+  only: ['fireworks', 'deepinfra', 'cloudflare'],
+  // DeepSeek Flash is available from three independently hosted native
+  // structured-output endpoints. Every admitted route has compiled the exact
+  // bounded planner schema; strict parameter, privacy, and price filters remain
+  // authoritative.
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
 };
-// Both qualified models default to deep reasoning. Qwen 3.8 Max defaults to
-// xhigh and counts those hidden reasoning tokens against max_tokens; a live
-// strict-schema call exhausted all 16k tokens before emitting any JSON. Keep
-// reasoning enabled (Qwen requires it), but pin the smallest supported effort
-// and exclude the private trace so the bounded output budget is available to
-// the validated structured result. OpenRouter maps this to the nearest
-// supported low effort on a fallback route when necessary.
+// DeepSeek defaults to reasoning even though it is optional. Live strict-schema
+// calls exhausted both 16k and 32k token ceilings before completing the JSON.
+// Disable reasoning so the bounded output budget is reserved for the validated
+// structured result; this exact route was verified with zero reasoning tokens
+// across the qualified vendor fallback set.
 const TOURNAMENT_REASONING = Object.freeze({
-  effort: 'minimal',
+  enabled: false,
   exclude: true
 });
 const OPENROUTER_ROUTER_METADATA_LEVEL = 'enabled';
@@ -546,9 +534,9 @@ const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // headroom for that transport representation while the independently parsed,
 // minified plan remains capped by MAX_DISCOVERY_PLANNER_RESPONSE_BYTES.
 // Production two-motion traces exhausted 8,000 and 9,000 tokens before
-// completing otherwise-valid strict JSON. A Qwen trace then exhausted 16,000
-// tokens under its provider-default xhigh reasoning before emitting any JSON.
-// The 32,000-token transport ceiling, paired with minimal reasoning, remains
+// completing otherwise-valid strict JSON. DeepSeek then exhausted 32,000
+// tokens under provider-default reasoning before completing the JSON.
+// The 32,000-token transport ceiling, paired with disabled reasoning, remains
 // subordinate to the parsed byte cap and independently computed spend ceiling;
 // length termination still fails closed without response repair.
 // The parsed cap below also dominates the strict grammar's computed worst-case

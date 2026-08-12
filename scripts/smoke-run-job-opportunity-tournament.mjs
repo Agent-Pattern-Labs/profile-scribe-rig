@@ -133,11 +133,11 @@ const server = createServer(async (request, response) => {
           total: 2,
           available: [{
             provider: 'OpenAI',
-            model: 'qwen/qwen3.8-max',
+            model: 'deepseek/deepseek-v4-flash-0731',
             selected: false
           }, {
             provider: 'Azure',
-            model: 'qwen/qwen3.8-max',
+            model: 'deepseek/deepseek-v4-flash-0731',
             selected: false
           }]
         },
@@ -154,7 +154,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({
       id: 'gen-run-job-embedded-502',
-      model: 'qwen/qwen3.8-max',
+      model: 'deepseek/deepseek-v4-flash-0731',
       error: {
         code: 502,
         message: 'raw-embedded-provider-secret-sentinel',
@@ -176,7 +176,7 @@ const server = createServer(async (request, response) => {
           total: 3,
           available: [{
             provider: 'OpenAI',
-            model: 'qwen/qwen3.8-max',
+            model: 'deepseek/deepseek-v4-flash-0731',
             selected: true
           }]
         },
@@ -212,7 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
-    model: 'qwen/qwen3.8-max',
+    model: 'deepseek/deepseek-v4-flash-0731',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -226,7 +226,7 @@ const server = createServer(async (request, response) => {
         total: 1,
         available: [{
           provider: 'OpenAI',
-          model: 'qwen/qwen3.8-max',
+          model: 'deepseek/deepseek-v4-flash-0731',
           selected: true
         }]
       },
@@ -747,17 +747,17 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'qwen/qwen3.8-max',
+      'deepseek/deepseek-v4-flash-0731',
       'successful call lost its selected model'
     );
     assertEqual(
       providerReceipt?.model,
-      'qwen/qwen3.8-max',
+      'deepseek/deepseek-v4-flash-0731',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'qwen/qwen3.8-max',
+      'deepseek/deepseek-v4-flash-0731',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1100,16 +1100,13 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(call.envelope.model, undefined, 'generator must use the ordered OpenRouter models contract');
   assertEqual(
     JSON.stringify(call.envelope.reasoning),
-    JSON.stringify({ effort: 'minimal', exclude: true }),
-    'generator lost the bounded minimal-reasoning contract'
+    JSON.stringify({ enabled: false, exclude: true }),
+    'generator lost the bounded reasoning-disabled contract'
   );
   assertEqual(
     JSON.stringify(call.envelope.models),
-    JSON.stringify([
-      'qwen/qwen3.8-max',
-      'deepseek/deepseek-v4-flash-0731'
-    ]),
-    'generator lost the bounded model fallback order'
+    JSON.stringify(['deepseek/deepseek-v4-flash-0731']),
+    'generator lost the bounded multi-vendor model route'
   );
   assertEqual(
     call.envelope.provider?.data_collection,
@@ -1123,12 +1120,12 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   );
   assertEqual(
     JSON.stringify(call.envelope.provider?.order),
-    JSON.stringify(['alibaba', 'fireworks', 'deepinfra', 'cloudflare']),
+    JSON.stringify(['fireworks', 'deepinfra', 'cloudflare']),
     'generator lost the ordered multi-vendor provider route'
   );
   assertEqual(
       JSON.stringify(call.envelope.provider?.only),
-      JSON.stringify(['alibaba', 'fireworks', 'deepinfra', 'cloudflare']),
+      JSON.stringify(['fireworks', 'deepinfra', 'cloudflare']),
     'generator allowed an unreviewed fallback vendor'
   );
   assertEqual(
@@ -1226,7 +1223,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'qwen/qwen3.8-max',
+          'deepseek/deepseek-v4-flash-0731',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL
