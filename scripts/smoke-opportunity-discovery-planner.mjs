@@ -243,8 +243,8 @@ function productionCitation(url, title, content) {
     contentHash
   };
 }
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 188_160;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 32_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 284_160;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
@@ -664,6 +664,11 @@ for (const scenario of cases) {
       requestSeen.allowLocalJSONRepair !== true ||
       serializeOpenRouterJSONRequestBody(requestSeen).includes(
         'allowLocalJSONRepair'
+      ) ||
+      JSON.stringify(requestSeen.reasoning) !==
+        JSON.stringify({ effort: 'minimal', exclude: true }) ||
+      !serializeOpenRouterJSONRequestBody(requestSeen).includes(
+        '"reasoning":{"effort":"minimal","exclude":true}'
       ) ||
       requestSeen.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       !requestSeen.system?.includes(
@@ -4503,11 +4508,12 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'qwen/qwen3.8-max',
             family: 'qwen',
             minimumContextTokens: 1_000_000,
-            minimumOutputTokens: 16_000,
+            minimumOutputTokens: 32_000,
             maximumPromptPrice: 2,
             maximumCompletionPrice: 6,
             requiredParameters: [
               'max_tokens',
+              'reasoning',
               'response_format',
               'structured_outputs'
             ]
@@ -4516,11 +4522,12 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'deepseek/deepseek-v4-flash-0731',
             family: 'deepseek',
             minimumContextTokens: 1_000_000,
-            minimumOutputTokens: 16_000,
+            minimumOutputTokens: 32_000,
             maximumPromptPrice: 2,
             maximumCompletionPrice: 6,
             requiredParameters: [
               'max_tokens',
+              'reasoning',
               'response_format',
               'structured_outputs'
             ]
@@ -4546,6 +4553,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             completion: 6,
             request: 0
           },
+          reasoning: { effort: 'minimal', exclude: true },
           pluginIds: [],
           requestMaxBytes: 44 * 1_024,
           promptTokenCeiling: DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING,
@@ -4561,6 +4569,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             completion: 6,
             request: 0
           },
+          reasoning: { effort: 'minimal', exclude: true },
           pluginIds: ['response-healing'],
           requestMaxBytes: 64 * 1_024,
           promptTokenCeiling: 65_536 + 2_048,
@@ -6565,6 +6574,8 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
   const receipt = result.llm?.discoveryPlanner;
   if (calls !== 1 ||
       requestSeen?.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
+      JSON.stringify(requestSeen?.reasoning) !==
+        JSON.stringify({ effort: 'minimal', exclude: true }) ||
       requestSeen?.responseFormat?.json_schema?.schema?.properties
         ?.plans?.maxItems !== 2 ||
       result.status !== 'blocked' ||

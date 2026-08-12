@@ -168,7 +168,7 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
     family: 'qwen',
     minimumContextTokens: 1_000_000,
-    minimumOutputTokens: 16_000,
+    minimumOutputTokens: 32_000,
     maximumPromptPrice: 2,
     maximumCompletionPrice: 6
   }),
@@ -176,7 +176,7 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
     family: 'deepseek',
     minimumContextTokens: 1_000_000,
-    minimumOutputTokens: 16_000,
+    minimumOutputTokens: 32_000,
     maximumPromptPrice: 2,
     maximumCompletionPrice: 6
   })
@@ -194,6 +194,7 @@ function opportunityDiscoveryModelFallbackOrder(model) {
 }
 const OPPORTUNITY_DISCOVERY_REQUIRED_MODEL_PARAMETERS = Object.freeze([
   'max_tokens',
+  'reasoning',
   'response_format',
   'structured_outputs'
 ]);
@@ -238,6 +239,17 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   require_parameters: true,
   data_collection: 'deny'
 };
+// Both qualified models default to deep reasoning. Qwen 3.8 Max defaults to
+// xhigh and counts those hidden reasoning tokens against max_tokens; a live
+// strict-schema call exhausted all 16k tokens before emitting any JSON. Keep
+// reasoning enabled (Qwen requires it), but pin the smallest supported effort
+// and exclude the private trace so the bounded output budget is available to
+// the validated structured result. OpenRouter maps this to the nearest
+// supported low effort on a fallback route when necessary.
+const TOURNAMENT_REASONING = Object.freeze({
+  effort: 'minimal',
+  exclude: true
+});
 const OPENROUTER_ROUTER_METADATA_LEVEL = 'enabled';
 const RESEARCH_ONLY_CONSTRAINT =
   'Research and recommendation only; do not contact, message, publish, purchase ads, or submit forms.';
@@ -534,13 +546,15 @@ const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // headroom for that transport representation while the independently parsed,
 // minified plan remains capped by MAX_DISCOVERY_PLANNER_RESPONSE_BYTES.
 // Production two-motion traces exhausted 8,000 and 9,000 tokens before
-// completing otherwise-valid strict JSON. The 16,000-token transport ceiling
-// remains subordinate to the parsed byte cap and the independently computed
-// spend ceiling; length termination still fails closed without response repair.
+// completing otherwise-valid strict JSON. A Qwen trace then exhausted 16,000
+// tokens under its provider-default xhigh reasoning before emitting any JSON.
+// The 32,000-token transport ceiling, paired with minimal reasoning, remains
+// subordinate to the parsed byte cap and independently computed spend ceiling;
+// length termination still fails closed without response repair.
 // The parsed cap below also dominates the strict grammar's computed worst-case
 // Unicode/evidence envelope instead of relying on representative samples.
-const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 188_160;
+const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 32_000;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 284_160;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE;
@@ -1351,6 +1365,7 @@ export function opportunityCommercialDiscoveryCapabilities() {
         providerPriceCaps: {
           ...MAX_DISCOVERY_PLANNER_PROVIDER_PRICE
         },
+        reasoning: { ...TOURNAMENT_REASONING },
         pluginIds: [],
         requestMaxBytes: MAX_PROVIDER_REQUEST_BODY_BYTES,
         promptTokenCeiling:
@@ -1363,6 +1378,7 @@ export function opportunityCommercialDiscoveryCapabilities() {
       },
       critic: {
         providerPriceCaps: { ...MAX_PROVIDER_PRICE },
+        reasoning: { ...TOURNAMENT_REASONING },
         pluginIds: [OPENROUTER_RESPONSE_HEALING_PLUGIN],
         requestMaxBytes: MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES,
         promptTokenCeiling:
@@ -1423,6 +1439,7 @@ export function buildOpenRouterJSONRequestBody({
   system,
   user,
   maxTokens,
+  reasoning,
   provider,
   responseFormat,
   plugins
@@ -1447,6 +1464,9 @@ export function buildOpenRouterJSONRequestBody({
       requestedMaxTokens > 0
       ? requestedMaxTokens
       : 700,
+    ...(Object.keys(asObject(reasoning)).length > 0
+      ? { reasoning: asObject(reasoning) }
+      : {}),
     ...(Object.keys(asObject(provider)).length > 0
       ? { provider: asObject(provider) }
       : {}),
@@ -1992,6 +2012,7 @@ export async function runOpportunityDiscoveryPlanner({
         MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS,
         Math.max(600, budget.maxOutputTokens)
       ),
+      reasoning: { ...TOURNAMENT_REASONING },
       provider: {
         ...TOURNAMENT_PROVIDER_ROUTING,
         max_price: { ...budget.providerMaxPrice }
@@ -8622,6 +8643,7 @@ async function runOpportunityTournamentCore({
           budget.maxOutputTokens,
           MAX_REPAIR_OUTPUT_TOKENS
         ),
+        reasoning: { ...TOURNAMENT_REASONING },
         responseFormat:
           tournamentStructuredResponseFormat(
             promptEvidenceCatalog,
@@ -13202,7 +13224,7 @@ function normalizeBudget(value) {
     // fails closed as technical recovery because an uncriticized result is
     // never immediate-action eligible.
     maxLLMCalls: clampInteger(raw.maxLLMCalls, 0, 2, 2),
-    maxOutputTokens: clampInteger(raw.maxOutputTokens, 600, 16_000, 8_000),
+    maxOutputTokens: clampInteger(raw.maxOutputTokens, 600, 32_000, 8_000),
     minimumScore: clampNumber(raw.minimumScore, 0.2, 0.9, 0.42),
     hardStop: raw.hardStop !== false
   };
@@ -14375,6 +14397,7 @@ function boundedStrategyGenerationRequest({
       system: prompt.system,
       user: prompt.user,
       maxTokens: budget.maxOutputTokens,
+      reasoning: { ...TOURNAMENT_REASONING },
       responseFormat: tournamentStructuredResponseFormat(
         promptEvidenceCatalog,
         INITIAL_FAMILY_VARIANT_COUNT
@@ -17278,6 +17301,7 @@ async function runCommercialCritic({
       budget.maxOutputTokens,
       MAX_CRITIC_OUTPUT_TOKENS
     ),
+    reasoning: { ...TOURNAMENT_REASONING },
     responseFormat: commercialCriticResponseFormat(finalists),
     plugins: [{ id: OPENROUTER_RESPONSE_HEALING_PLUGIN }],
     provider: {

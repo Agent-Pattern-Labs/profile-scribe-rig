@@ -1099,6 +1099,11 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(call.envelope.temperature, undefined, 'generator must keep the qualified provider request stable');
   assertEqual(call.envelope.model, undefined, 'generator must use the ordered OpenRouter models contract');
   assertEqual(
+    JSON.stringify(call.envelope.reasoning),
+    JSON.stringify({ effort: 'minimal', exclude: true }),
+    'generator lost the bounded minimal-reasoning contract'
+  );
+  assertEqual(
     JSON.stringify(call.envelope.models),
     JSON.stringify([
       'qwen/qwen3.8-max',
