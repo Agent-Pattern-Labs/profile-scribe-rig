@@ -1489,16 +1489,21 @@ export function repairAndValidateOpenRouterJSONMessage(
         !Array.isArray(item)) &&
       firstText(asObject(responseFormat).json_schema?.name) ===
         OPPORTUNITY_DISCOVERY_PLAN_CONTRACT) {
-    const projectedRoot = {
-      contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-      status: 'planned',
-      reason: '',
-      plans: data
-    };
-    if (validate(projectedRoot)) {
-      data = projectedRoot;
+    const exactRootCandidates = data.filter((item) => validate(item));
+    if (exactRootCandidates.length === 1) {
+      data = exactRootCandidates[0];
     } else {
-      projectedRootSchemaIssues = structuredClone(validate.errors || []);
+      const projectedRoot = {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: '',
+        plans: data
+      };
+      if (exactRootCandidates.length === 0 && validate(projectedRoot)) {
+        data = projectedRoot;
+      } else if (exactRootCandidates.length === 0) {
+        projectedRootSchemaIssues = structuredClone(validate.errors || []);
+      }
     }
   }
   if (!validate(data)) {

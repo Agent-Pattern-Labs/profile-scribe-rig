@@ -75,6 +75,21 @@ function verifyBoundedLocalJSONRepair() {
       `singleton object array was not safely unwrapped: ${JSON.stringify(singletonArrayRepaired)}`
     );
   }
+  const exactRootFromFragments = repairAndValidateOpenRouterJSONMessage(
+    '{"plans":["buyer","referral"],"status":"planned"}\n{}',
+    {
+      ...responseFormat,
+      json_schema: {
+        ...responseFormat.json_schema,
+        name: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT
+      }
+    }
+  );
+  if (JSON.stringify(exactRootFromFragments) !== JSON.stringify(repaired)) {
+    throw new Error(
+      `one exact root was not selected from repaired fragments: ${JSON.stringify(exactRootFromFragments)}`
+    );
+  }
   const planPairResponseFormat = {
     type: 'json_schema',
     json_schema: {
