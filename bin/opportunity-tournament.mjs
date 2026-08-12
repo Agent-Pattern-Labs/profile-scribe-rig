@@ -17566,6 +17566,15 @@ function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
         .filter((id, evidenceIndexValue, ids) =>
           ids.indexOf(id) === evidenceIndexValue
         );
+      // The control-plane recorder proves attribution only. It is retained in
+      // the family containment index and projected into the revenue path, but
+      // it cannot substantiate offer, buyer, channel, action, timing, proof,
+      // or follow-up prose even when the model cites it there.
+      if (name !== 'revenuePaths') {
+        evidenceRefs = evidenceRefs.filter((id) =>
+          id !== PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+        );
+      }
       const declaredFamilyIds = compactStrings([
         ...asArray(seed.f),
         ...asArray(seed.familyIds),

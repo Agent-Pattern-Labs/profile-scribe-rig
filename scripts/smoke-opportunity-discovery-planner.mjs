@@ -9899,6 +9899,57 @@ async function verifyTwoStageTargetBinding() {
     );
   }
 
+  const attributionProofPayload = structuredClone(downstreamPayload);
+  const attributionProofMotion =
+    attributionProofPayload.commercialDiscoveryEvidence.plan.plans[0];
+  for (const familyKey of ['familyA', 'familyB']) {
+    const family = attributionProofMotion.contingentFinalists[familyKey];
+    family.d.p = family.d.p.map((proof) => ({
+      ...proof,
+      e: [
+        ...proof.e,
+        PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+      ]
+    }));
+  }
+  const attributionProof = await runOpportunityTournament({
+    job: {
+      id: 'job-system-attribution-proof-projection',
+      kind: 'opportunity_tournament',
+      payload: attributionProofPayload
+    },
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      const task = JSON.parse(request.user || '{}');
+      return acceptedCriticCompletion(
+        task.finalists || [],
+        'generation-system-attribution-proof-projection'
+      );
+    }
+  });
+  if (attributionProof.status !== 'completed' ||
+      attributionProof.hypotheses?.length < 2 ||
+      attributionProof.hypotheses.some((hypothesis) =>
+        Object.entries(hypothesis.provenance?.dimensions || {}).some(
+          ([dimension, provenance]) =>
+            dimension !== 'revenuePath' &&
+            provenance.evidenceRefs?.includes(
+              PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+            )
+        )
+      ) ||
+      attributionProof.hypotheses.some((hypothesis) =>
+        !hypothesis.provenance?.dimensions?.revenuePath?.evidenceRefs
+          ?.includes(
+            PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+          )
+      )) {
+    throw new Error(
+      `system attribution was not projected exclusively into revenue-path provenance: ${JSON.stringify(attributionProof)}`
+    );
+  }
+
   const collapsedFallbackPayload = structuredClone(repeatedOptionalPayload);
   const collapsedFallbackMotion =
     collapsedFallbackPayload.commercialDiscoveryEvidence.plan.plans[0];
