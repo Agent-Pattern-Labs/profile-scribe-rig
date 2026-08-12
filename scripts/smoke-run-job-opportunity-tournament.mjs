@@ -1120,12 +1120,12 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   );
   assertEqual(
     JSON.stringify(call.envelope.provider?.order),
-    JSON.stringify(['fireworks', 'inceptron/fp4', 'open-inference/fp8']),
+    JSON.stringify(['fireworks', 'open-inference/fp8']),
     'generator lost the ordered multi-vendor provider route'
   );
   assertEqual(
       JSON.stringify(call.envelope.provider?.only),
-      JSON.stringify(['fireworks', 'inceptron/fp4', 'open-inference/fp8']),
+      JSON.stringify(['fireworks', 'open-inference/fp8']),
     'generator allowed an unreviewed fallback vendor'
   );
   assertEqual(

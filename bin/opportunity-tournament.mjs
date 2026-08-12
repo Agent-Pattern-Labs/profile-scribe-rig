@@ -219,17 +219,17 @@ const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  order: ['fireworks', 'inceptron/fp4', 'open-inference/fp8'],
-  only: ['fireworks', 'inceptron/fp4', 'open-inference/fp8'],
+  order: ['fireworks', 'open-inference/fp8'],
+  only: ['fireworks', 'open-inference/fp8'],
   // Keep the strict planner on qualified independently hosted native
   // structured-output endpoints with sufficient context and output capacity.
   // Fireworks remains first because it has completed this exact production
-  // contract. Inceptron and OpenInference provide bounded fallbacks when that
-  // route is throttled. Cloudflare is deliberately excluded: it repeatedly
-  // returned HTTP 200 with an empty body and bogus 1/1 token accounting for
-  // this exact request. DeepInfra is also excluded because production calls
-  // there repeatedly exhausted the 64k output ceiling without completing the
-  // strict planner object.
+  // contract. OpenInference is the FP8 fallback when that route is throttled.
+  // Cloudflare is deliberately excluded: it repeatedly returned HTTP 200 with
+  // an empty body and bogus 1/1 token accounting for this exact request.
+  // DeepInfra and Inceptron are also excluded because production calls there
+  // exhausted the 64k output ceiling without completing the strict planner
+  // object.
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
