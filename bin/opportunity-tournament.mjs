@@ -2350,8 +2350,13 @@ function opportunityDiscoveryPlannerResponseFormat(
   const approvedObservationEvidenceRefs = compactStrings(
     asArray(evidenceCatalog).map((item) => firstText(asObject(item).id))
   ).filter((ref) => /^observation:/i.test(ref));
+  // xAI's structured-output regex engine operates on Unicode scalar values
+  // and rejects surrogate escapes as an invalid regex. A conforming provider
+  // response cannot contain an unpaired surrogate scalar; the independent
+  // local authored-text guard still rejects any one introduced by a parser or
+  // forged completion before the plan gains execution authority.
   const canonicalAuthoredCharacter =
-    '[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b\\u200e-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ud800-\\udfff\\ufeff\\ufffd\\ufff9-\\ufffb{}:]';
+    '[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b\\u200e-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufeff\\ufffd\\ufff9-\\ufffb{}:]';
   const canonicalAuthoredToken = `${canonicalAuthoredCharacter}+`;
   const canonicalAuthoredText =
     `${canonicalAuthoredToken}(?: ${canonicalAuthoredToken})*`;

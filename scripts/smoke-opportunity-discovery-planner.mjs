@@ -1452,6 +1452,7 @@ await verifySemanticDriftFailsClosed(unsafeJob, unsafeRef);
 await verifySensitiveTargetFieldPolicy(unsafeJob, unsafeRef);
 await verifyPrivateContactBearingURLsFailClosed();
 await verifyApprovedObservationPreflight();
+await verifyForgedSurrogateCompletionFailsClosed(unsafeJob, unsafeRef);
 await verifyDiscoveryRoleAndAdapterInvariants(unsafeJob, unsafeRef);
 await verifyOmittedChildEvidenceCanonicalization(unsafeJob, unsafeRef);
 await verifyOmittedTargetEvidenceProtocolCanonicalization(
@@ -1515,6 +1516,50 @@ async function verifyApprovedObservationPreflight() {
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `missing approved observation was not rejected before call 1: ${JSON.stringify({ calls, result })}`
+    );
+  }
+}
+
+async function verifyForgedSurrogateCompletionFailsClosed(job, evidenceRef) {
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'x-ai/grok-4.5',
+    now,
+    completeJSON: async (request) => {
+      const market = request.responseFormat?.json_schema?.schema?.properties
+        ?.plans?.items?.properties?.market?.enum?.[0];
+      const plans = cases[0].plans(evidenceRef).slice(0, 2);
+      plans.forEach((motion, index) => {
+        motion.priority = index + 1;
+        motion.market = market;
+        motion.contingentFinalists = compactContingentFinalists(
+          motion.contingentFinalists
+        );
+      });
+      plans[0].contingentFinalists.familyA.l = 'invalid\ud800text';
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage,
+        generationId: 'generation-forged-surrogate',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 1_024,
+          contentSha256: 'f'.repeat(64)
+        }
+      };
+    }
+  });
+  if (result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.usage?.successfulCalls !== 0 ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `forged lone-surrogate completion gained plan authority: ${JSON.stringify(result)}`
     );
   }
 }
@@ -13284,7 +13329,10 @@ function verifyPlannerXAIStructuredOutputSchemaSubset(schemaValue) {
     if (typeof schema.pattern === 'string' &&
         (/\\[1-9]/.test(schema.pattern) ||
           /\\[bBpP](?:\{|$)/.test(schema.pattern) ||
-          /\(\?(?:[=!<]|[imsu-])/.test(schema.pattern))) {
+          /\(\?(?:[=!<]|[imsu-])/.test(schema.pattern) ||
+          /\\u(?:d[89abAB]|d[c-fC-F])[0-9a-fA-F]{2}/.test(
+            schema.pattern
+          ))) {
       unsupported.push(`${path}:unsupported_xai_pattern`);
     }
     if (Number.isFinite(schema.maxLength) && schema.maxLength > 2_048) {
@@ -13488,7 +13536,6 @@ function verifyFreshPlannerStrictSchemaTotality({
     ['invisible plus', 'invalid\u2064text'],
     ['deprecated directional control', 'invalid\u206atext'],
     ['interlinear annotation control', 'invalid\ufff9text'],
-    ['lone surrogate', 'invalid\ud800text'],
     ['replacement character', 'invalid\ufffdtext'],
     ['byte order mark', 'invalid\ufefftext'],
     ['bidi override', 'invalid\u202etext']
