@@ -2664,13 +2664,13 @@ async function verifyLengthFinishedStructuredRepair() {
         JSON.stringify(request.models) !== JSON.stringify(['test/v2']) ||
         request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !==
-          '["google-vertex","google-ai-studio"]' ||
+          '["xai"]' ||
         JSON.stringify(request.provider?.only) !==
-          '["google-vertex","google-ai-studio"]' ||
+          '["xai"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
-        request.provider?.max_price?.prompt !== 1.5 ||
-        request.provider?.max_price?.completion !== 7.5
+        request.provider?.max_price?.prompt !== 2 ||
+        request.provider?.max_price?.completion !== 6
       ) ||
       repairSchema?.properties?.familyA?.$ref !== '#/$defs/family' ||
       repairSchema?.properties?.familyB?.$ref !== '#/$defs/family' ||

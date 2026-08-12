@@ -133,11 +133,11 @@ const server = createServer(async (request, response) => {
           total: 2,
           available: [{
             provider: 'OpenAI',
-            model: 'google/gemini-3.6-flash',
+            model: 'x-ai/grok-4.5',
             selected: false
           }, {
             provider: 'Azure',
-            model: 'google/gemini-3.6-flash',
+            model: 'x-ai/grok-4.5',
             selected: false
           }]
         },
@@ -154,7 +154,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({
       id: 'gen-run-job-embedded-502',
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       error: {
         code: 502,
         message: 'raw-embedded-provider-secret-sentinel',
@@ -176,7 +176,7 @@ const server = createServer(async (request, response) => {
           total: 3,
           available: [{
             provider: 'OpenAI',
-            model: 'google/gemini-3.6-flash',
+            model: 'x-ai/grok-4.5',
             selected: true
           }]
         },
@@ -212,7 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -226,7 +226,7 @@ const server = createServer(async (request, response) => {
         total: 1,
         available: [{
           provider: 'OpenAI',
-          model: 'google/gemini-3.6-flash',
+          model: 'x-ai/grok-4.5',
           selected: true
         }]
       },
@@ -747,17 +747,17 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'google/gemini-3.6-flash',
+      'x-ai/grok-4.5',
       'successful call lost its selected model'
     );
     assertEqual(
       providerReceipt?.model,
-      'google/gemini-3.6-flash',
+      'x-ai/grok-4.5',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'google/gemini-3.6-flash',
+      'x-ai/grok-4.5',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1100,7 +1100,7 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(call.envelope.model, undefined, 'generator must use the ordered OpenRouter models contract');
   assertEqual(
     JSON.stringify(call.envelope.models),
-    JSON.stringify(['google/gemini-3.6-flash']),
+    JSON.stringify(['x-ai/grok-4.5']),
     'generator lost the bounded model fallback order'
   );
   assertEqual(
@@ -1111,16 +1111,16 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     call.envelope.provider?.allow_fallbacks,
     true,
-    'generator disabled compatible cross-vendor fallback'
+    'generator disabled compatible xAI endpoint fallback'
   );
   assertEqual(
-      JSON.stringify(call.envelope.provider?.order),
-      JSON.stringify(['google-vertex', 'google-ai-studio']),
-    'generator lost the ordered Google provider route'
+    JSON.stringify(call.envelope.provider?.order),
+    JSON.stringify(['xai']),
+    'generator lost the ordered xAI provider route'
   );
   assertEqual(
       JSON.stringify(call.envelope.provider?.only),
-      JSON.stringify(['google-vertex', 'google-ai-studio']),
+      JSON.stringify(['xai']),
     'generator allowed an unreviewed fallback vendor'
   );
   assertEqual(
@@ -1218,7 +1218,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'google/gemini-3.6-flash',
+          'x-ai/grok-4.5',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

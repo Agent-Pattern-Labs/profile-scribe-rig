@@ -244,7 +244,7 @@ function productionCitation(url, title, content) {
   };
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 16_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 189_120;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 188_160;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
@@ -549,7 +549,7 @@ for (const scenario of cases) {
   let requestSeen = null;
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -1226,7 +1226,7 @@ for (const scenario of cases) {
 }
 
 verifyGeneratedPlannerSchemaResponseBound(representativePlannerSchema);
-verifyPlannerOpenAIStructuredOutputSchemaSubset(
+verifyPlannerXAIStructuredOutputSchemaSubset(
   representativePlannerSchema
 );
 
@@ -1286,7 +1286,7 @@ async function runPlannerResponseEnvelopeCase(byteCount) {
   );
   return runOpportunityDiscoveryPlanner({
     job: envelopeJob,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: response,
@@ -1345,7 +1345,7 @@ if (overflowResponse.status !== 'blocked' ||
 
 const zeroMotionEscape = await runOpportunityDiscoveryPlanner({
   job: envelopeJob,
-  model: 'google/gemini-3.6-flash',
+  model: 'x-ai/grok-4.5',
   now,
   completeJSON: async () => ({
     data: {
@@ -1390,7 +1390,7 @@ unsafeCompanionPlan.contingentFinalists = compactContingentFinalists(
 );
 const unsafeResult = await runOpportunityDiscoveryPlanner({
   job: unsafeJob,
-  model: 'google/gemini-3.6-flash',
+  model: 'x-ai/grok-4.5',
   now,
   completeJSON: async (request) => {
     const exactMarket =
@@ -1500,7 +1500,7 @@ async function verifyApprovedObservationPreflight() {
   let calls = 0;
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       calls += 1;
@@ -1552,7 +1552,7 @@ async function verifyMaximumFamilyEvidenceContainment() {
   let visibleObservationRefsSeen = [];
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -1625,9 +1625,10 @@ async function verifyMaximumFamilyEvidenceContainment() {
     }
   });
   const familyEvidence = result.plans?.[0]?.contingentFinalists?.familyA?.e;
+  const acceptedPlanEvidence = new Set(result.plans?.[0]?.evidenceRefs || []);
   const expectedVisibleEvidenceRefs = [...new Set(
     visibleObservationRefsSeen.slice(0, 14)
-  )];
+  )].filter((ref) => acceptedPlanEvidence.has(ref));
   if (!requestSeen || result.status !== 'planned' ||
       !Array.isArray(familyEvidence) ||
       familyEvidence.length !== expectedVisibleEvidenceRefs.length + 1 ||
@@ -1649,7 +1650,7 @@ async function verifyTypedCommercialMotionSelection(
   const run = async ({ job, plans, generationId, inspectRequest }) =>
     runOpportunityDiscoveryPlanner({
       job: structuredClone(job),
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
@@ -2029,7 +2030,7 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
   const run = async (marketJob, plans, generationId, inspectRequest) =>
     runOpportunityDiscoveryPlanner({
       job: structuredClone(marketJob),
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
@@ -2783,7 +2784,7 @@ async function verifyOmittedChildEvidenceCanonicalization(
       : cases[0].plans(primaryEvidenceRef)[0];
     const result = await runOpportunityDiscoveryPlanner({
       job,
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async (request) => {
         const visibleRefs = new Set(
@@ -2839,7 +2840,7 @@ async function verifyOmittedChildEvidenceCanonicalization(
     }
     const result = await runOpportunityDiscoveryPlanner({
       job,
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => completionFor(
         candidate,
@@ -2954,7 +2955,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     );
     const result = await runOpportunityDiscoveryPlanner({
       job: structuredClone(baseJob),
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => completionFor(
         candidate,
@@ -3022,7 +3023,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     .pathBase.r[0].g.o.push(targetRef);
   const mixedPaidOfferResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => completionFor(
       mixedPaidOfferContamination,
@@ -3081,7 +3082,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   }
   const mixedFollowUpResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => completionFor(
       mixedFollowUpContamination,
@@ -3136,7 +3137,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       assertedState;
     const assertedFollowUpResult = await runOpportunityDiscoveryPlanner({
       job: structuredClone(baseJob),
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => completionFor(
         assertedFollowUpState,
@@ -3170,7 +3171,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     'If no reply after 5 days, one review-first follow-up';
   const neutralFollowUpResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => completionFor(
       neutralFollowUp,
@@ -3224,7 +3225,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     );
     const result = await runOpportunityDiscoveryPlanner({
       job: structuredClone(baseJob),
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => completionFor(
         candidate,
@@ -3268,7 +3269,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       container[dimension][0].e = [targetRef];
       const result = await runOpportunityDiscoveryPlanner({
         job: structuredClone(baseJob),
-        model: 'google/gemini-3.6-flash',
+        model: 'x-ai/grok-4.5',
         now,
         completeJSON: async () => completionFor(
           candidate,
@@ -3299,7 +3300,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   );
   const missingObservationResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => completionFor(
       missingObservation,
@@ -3331,7 +3332,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   );
   const forgedResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(baseJob),
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => completionFor(
       forged,
@@ -3385,7 +3386,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
   ) =>
     runOpportunityDiscoveryPlanner({
       job,
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => ({
         data: {
@@ -3629,7 +3630,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
   };
   const allowedNumericEvidenceRef = await runOpportunityDiscoveryPlanner({
     job: numericEvidenceJob,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -4447,16 +4448,16 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 192
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'google/gemini-3.6-flash',
-        models: ['google/gemini-3.6-flash'],
+        model: 'x-ai/grok-4.5',
+        models: ['x-ai/grok-4.5'],
         modelRoutes: [
           {
-            id: 'google/gemini-3.6-flash',
-            family: 'google',
-            minimumContextTokens: 1_048_576,
+            id: 'x-ai/grok-4.5',
+            family: 'xai',
+            minimumContextTokens: 500_000,
             minimumOutputTokens: 16_000,
-            maximumPromptPrice: 1.5,
-            maximumCompletionPrice: 7.5,
+            maximumPromptPrice: 2,
+            maximumCompletionPrice: 6,
             requiredParameters: [
               'max_tokens',
               'response_format',
@@ -4465,13 +4466,13 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           }
         ],
         providerPriceCaps: {
-          prompt: 1.5,
-          completion: 7.5,
+          prompt: 2,
+          completion: 6,
           request: 0
         },
         providerRouting: {
-          order: ['google-vertex', 'google-ai-studio'],
-          only: ['google-vertex', 'google-ai-studio'],
+          order: ['xai'],
+          only: ['xai'],
           allow_fallbacks: true,
           require_parameters: true,
           data_collection: 'deny',
@@ -4480,8 +4481,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         framingTokenReserve: 1_024,
         generator: {
           providerPriceCaps: {
-            prompt: 1.5,
-            completion: 7.5,
+            prompt: 2,
+            completion: 6,
             request: 0
           },
           pluginIds: [],
@@ -4495,8 +4496,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         },
         critic: {
           providerPriceCaps: {
-            prompt: 1.5,
-            completion: 7.5,
+            prompt: 2,
+            completion: 6,
             request: 0
           },
           pluginIds: ['response-healing'],
@@ -4505,7 +4506,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           outputTokenCeiling: 6_000,
           framingTokenReserve: 2_048,
           fixedToolFeeMicros: 0,
-          callSpendCeilingMicros: 146_376
+          callSpendCeilingMicros: 171_168
         }
       })) {
     throw new Error(
@@ -4580,7 +4581,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
   const run = async (motion, generationId, inspectRequest) =>
     runOpportunityDiscoveryPlanner({
       job: structuredClone(job),
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
@@ -4892,7 +4893,7 @@ async function verifyLegacyDiscoveryRoleAndAdapterInvariants(
   const run = async (motion, generationId) =>
     runOpportunityDiscoveryPlanner({
       job: structuredClone(job),
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => ({
         data: {
@@ -5525,7 +5526,7 @@ async function verifyLegacyDiscoveryRoleAndAdapterInvariants(
 async function verifyOneMotionUsesTwoTacticFallback(job, evidenceRef) {
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -5577,7 +5578,7 @@ async function verifySingleOperationalVariantCanBePruned(
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to configure scheduling.';
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -5640,7 +5641,7 @@ async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
   }
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -6276,7 +6277,7 @@ async function plannerResultForMotion({ job, motion, generationId }) {
   );
   return runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -6379,7 +6380,7 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
   }
   const projected = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -6437,7 +6438,7 @@ async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
   firstThree[2].priority = 3;
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -6474,7 +6475,7 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
   let requestSeen;
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       calls += 1;
@@ -6644,7 +6645,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   motions[0].paidOffer = 'Paid newborn lactation home visit';
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -6712,7 +6713,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   let projectedRequest;
   const projectedProfileResult = await runOpportunityDiscoveryPlanner({
     job: projectedProfileJob,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       projectedRequest = request;
@@ -6786,7 +6787,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   let lateSellerRequest;
   const lateSellerResult = await runOpportunityDiscoveryPlanner({
     job: lateSellerFocusJob,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       lateSellerRequest = request;
@@ -6865,7 +6866,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   let colonSellerRequest;
   const colonSellerResult = await runOpportunityDiscoveryPlanner({
     job: colonSellerJob,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       colonSellerRequest = request;
@@ -6922,7 +6923,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   const mismatchedWorkerContractResult =
     await runOpportunityDiscoveryPlanner({
       job: mismatchedWorkerContractJob,
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => {
         mismatchedWorkerProviderCalls += 1;
@@ -6952,7 +6953,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   );
   const mismatchedSellerResult = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -6999,7 +7000,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   });
   const targetTokenResult = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -7177,7 +7178,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
   };
   const result = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -7243,7 +7244,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
   let recoveredPlannerCalls = 0;
   const recoveredResult = await runOpportunityDiscoveryPlanner({
     job,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       recoveredPlannerCalls += 1;
@@ -7398,7 +7399,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
         commercialDiscoveryEvidence
       }
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       criticCalls += 1;
@@ -7472,7 +7473,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
         commercialDiscoveryEvidence
       }
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       failedCriticCalls += 1;
@@ -7863,7 +7864,7 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
     }
     const result = await runOpportunityDiscoveryPlanner({
       job,
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => ({
         data: {
@@ -7984,7 +7985,7 @@ async function verifyPrivateContactBearingURLsFailClosed() {
   const runPlanner = (annotations, generationId) =>
     runOpportunityDiscoveryPlanner({
       job: planner,
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => ({
         data: {
@@ -8233,7 +8234,7 @@ async function verifyPrivateContactBearingURLsFailClosed() {
           commercialDiscoveryEvidence: bindingValue
         }
       },
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => {
         criticCalls += 1;
@@ -8376,7 +8377,7 @@ async function verifyTwoStageTargetBinding() {
     );
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -8662,7 +8663,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: downstreamPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       requests.push(request);
@@ -9137,8 +9138,8 @@ async function verifyTwoStageTargetBinding() {
       ? maximizeBoundCriticEnvelope(variantPayload)
       : null;
     if (maximizeCriticEnvelope) {
-      variantPayload.budget.maxSpendMicros = 146_376;
-      variantPayload.budget.maxLLMSpendMicros = 146_376;
+      variantPayload.budget.maxSpendMicros = 171_168;
+      variantPayload.budget.maxLLMSpendMicros = 171_168;
       variantPayload.budget.maxOutputTokens = 6_000;
       targetCandidate.role = padCanonicalAstral('Pediatrician', 120);
       const normalizedMaxDiscovery = normalizeCommercialDiscoveryEvidence(
@@ -9206,7 +9207,7 @@ async function verifyTwoStageTargetBinding() {
         kind: 'opportunity_tournament',
         payload: variantPayload
       },
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async (request) => {
         try {
@@ -9457,7 +9458,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: overlimitAstralPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       overlimitAstralCalls += 1;
@@ -9562,7 +9563,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: fullwidthOwnerPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       fullwidthOwnerCalls += 1;
@@ -9592,7 +9593,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: identityBoundaryPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       identityBoundaryCalls += 1;
@@ -9632,7 +9633,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: privateEmailRoutePayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       privateEmailRouteCalls += 1;
@@ -9672,7 +9673,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: invalidStructuralEmailPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       invalidStructuralEmailCalls += 1;
@@ -9705,7 +9706,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: unmarkedFoundPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       unmarkedFoundCriticCalls += 1;
@@ -9741,7 +9742,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: prunedVariantPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       prunedVariantRequests.push(request);
@@ -9811,7 +9812,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: repeatedOptionalPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       repeatedOptionalRequests.push(request);
@@ -9863,7 +9864,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: collapsedFallbackPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       collapsedFallbackCriticCalls += 1;
@@ -9897,7 +9898,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: conflictingModePayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       conflictingModeCalls += 1;
@@ -10020,7 +10021,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: multiMotionPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       multiMotionRequests.push(request);
@@ -10134,7 +10135,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: bindingFailurePayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       bindingFailureCalls += 1;
@@ -10159,7 +10160,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: organizationSlotMismatchPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       organizationSlotMismatchCalls += 1;
@@ -10183,7 +10184,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: crossMotionPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       crossMotionCalls += 1;
@@ -10229,7 +10230,7 @@ async function verifyTwoStageTargetBinding() {
         kind: 'opportunity_tournament',
         payload
       },
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => {
         calls += 1;
@@ -10385,7 +10386,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: noTargetPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       noTargetCalls += 1;
@@ -10661,7 +10662,7 @@ async function verifyTwoStageTargetBinding() {
         commercialDiscoveryEvidence: foldedCitationEvidence
       }
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       foldedCitationCalls += 1;
@@ -10771,7 +10772,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: incompleteFamiliesPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       incompleteFamilyCalls += 1;
@@ -10803,7 +10804,7 @@ async function verifyTwoStageTargetBinding() {
       kind: 'opportunity_tournament',
       payload: referralRouteMismatchPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       referralRouteMismatchCalls += 1;
@@ -10881,7 +10882,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
   );
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -11052,7 +11053,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       kind: 'opportunity_tournament',
       payload: downstreamPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       requests.push(request);
@@ -11197,7 +11198,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       kind: 'opportunity_tournament',
       payload: publicMessagePayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       publicMessageCalls += 1;
@@ -11244,7 +11245,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       kind: 'opportunity_tournament',
       payload: incompletePayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       incompleteCalls += 1;
@@ -11381,7 +11382,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
         kind: 'opportunity_tournament',
         payload
       },
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async () => {
         calls += 1;
@@ -11504,7 +11505,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
         kind: 'opportunity_tournament',
         payload
       },
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async (request) => {
         calls += 1;
@@ -11548,7 +11549,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       kind: 'opportunity_tournament',
       payload: paidProposalPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       paidProposalCalls += 1;
@@ -11638,7 +11639,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
     'https://jobs.acme.example/software-engineer';
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => ({
       data: {
@@ -11846,7 +11847,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       kind: 'opportunity_tournament',
       payload: unverifiedLiveDemandPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       unverifiedLiveDemandCalls += 1;
@@ -11868,7 +11869,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       kind: 'opportunity_tournament',
       payload: downstreamPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       requests.push(request);
@@ -12041,7 +12042,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       kind: 'opportunity_tournament',
       payload: rogueCallerPayload
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       rogueCallerCriticCalls += 1;
@@ -12105,7 +12106,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
         kind: 'opportunity_tournament',
         payload: variantPayload
       },
-      model: 'google/gemini-3.6-flash',
+      model: 'x-ai/grok-4.5',
       now,
       completeJSON: async (request) => {
         criticCalls += 1;
@@ -12282,7 +12283,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       kind: 'opportunity_tournament',
       payload: structuredClone(downstreamPayload)
     },
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       oneAcceptedCriticCalls += 1;
@@ -12377,7 +12378,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   let requestSeen;
   const result = await runOpportunityDiscoveryPlanner({
     job: productionJob,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -12439,7 +12440,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   let overflowCalls = 0;
   const overflowResult = await runOpportunityDiscoveryPlanner({
     job: overflowJob,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       overflowCalls += 1;
@@ -12701,7 +12702,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   let maxCardinalityCalls = 0;
   const maxCardinalityResult = await runOpportunityDiscoveryPlanner({
     job: maxCardinalityJob,
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async (request) => {
       maxCardinalityCalls += 1;
@@ -13190,7 +13191,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
   }
 }
 
-function verifyPlannerOpenAIStructuredOutputSchemaSubset(schemaValue) {
+function verifyPlannerXAIStructuredOutputSchemaSubset(schemaValue) {
   const root = schemaValue || {};
   const supportedKeywords = new Set([
     '$defs',
@@ -13210,7 +13211,6 @@ function verifyPlannerOpenAIStructuredOutputSchemaSubset(schemaValue) {
     'minItems',
     'minLength',
     'minimum',
-    'multipleOf',
     'pattern',
     'properties',
     'required',
@@ -13229,12 +13229,11 @@ function verifyPlannerOpenAIStructuredOutputSchemaSubset(schemaValue) {
     'date-time',
     'time',
     'date',
-    'duration',
     'email',
-    'hostname',
     'ipv4',
     'ipv6',
-    'uuid'
+    'uuid',
+    'uri'
   ]);
   let objectPropertyCount = 0;
   let enumValueCount = 0;
@@ -13282,6 +13281,18 @@ function verifyPlannerOpenAIStructuredOutputSchemaSubset(schemaValue) {
     if (schema.format && !supportedFormats.has(schema.format)) {
       unsupported.push(`${path}:unsupported_format_${schema.format}`);
     }
+    if (typeof schema.pattern === 'string' &&
+        (/\\[1-9]/.test(schema.pattern) ||
+          /\\[bBpP](?:\{|$)/.test(schema.pattern) ||
+          /\(\?(?:[=!<]|[imsu-])/.test(schema.pattern))) {
+      unsupported.push(`${path}:unsupported_xai_pattern`);
+    }
+    if (Number.isFinite(schema.maxLength) && schema.maxLength > 2_048) {
+      unsupported.push(`${path}:xai_max_length_limit`);
+    }
+    if (Number.isFinite(schema.maxItems) && schema.maxItems > 256) {
+      unsupported.push(`${path}:xai_max_items_limit`);
+    }
     if (schema.type === 'object') {
       const properties = schema.properties || {};
       const keys = Object.keys(properties);
@@ -13294,6 +13305,7 @@ function verifyPlannerOpenAIStructuredOutputSchemaSubset(schemaValue) {
         total + key.length, 0
       );
       if (schema.additionalProperties !== false ||
+          keys.length > 64 ||
           required.length !== keys.length ||
           required.some((key) => !Object.prototype.hasOwnProperty.call(
             properties,
@@ -13385,7 +13397,7 @@ function verifyPlannerOpenAIStructuredOutputSchemaSubset(schemaValue) {
       enumValueCount > 1_000 ||
       unsupported.length > 0) {
     throw new Error(
-      `planner schema exceeds OpenAI Structured Outputs subset: ${JSON.stringify({ objectPropertyCount, maximumObjectDepth, schemaStringLength, enumValueCount, unsupported })}`
+      `planner schema exceeds xAI Structured Outputs subset: ${JSON.stringify({ objectPropertyCount, maximumObjectDepth, schemaStringLength, enumValueCount, unsupported })}`
     );
   }
   return {
@@ -13958,7 +13970,7 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   let calls = 0;
   const result = await runOpportunityDiscoveryPlanner({
     job: structuredClone(jobValue),
-    model: 'google/gemini-3.6-flash',
+    model: 'x-ai/grok-4.5',
     now,
     completeJSON: async () => {
       calls += 1;

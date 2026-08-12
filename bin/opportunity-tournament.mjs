@@ -159,16 +159,16 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'google/gemini-3.6-flash';
+  'x-ai/grok-4.5';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'google',
-    minimumContextTokens: 1_048_576,
+    family: 'xai',
+    minimumContextTokens: 500_000,
     minimumOutputTokens: 16_000,
-    maximumPromptPrice: 1.5,
-    maximumCompletionPrice: 7.5
+    maximumPromptPrice: 2,
+    maximumCompletionPrice: 6
   })
 ]);
 if (1 + OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS.length > 3) {
@@ -196,31 +196,25 @@ const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
 // spend or the total price of a generation. Callers may tighten, but never
 // loosen, these tournament-specific caps.
 //
-// Both bounded stages use the exact qualified Gemini route caps. Callers may
+// Both bounded stages use the exact qualified xAI route caps. Callers may
 // tighten these values but cannot silently widen production model spend.
 const MAX_PROVIDER_PRICE = {
-  prompt: 1.5,
-  completion: 7.5,
+  prompt: 2,
+  completion: 6,
   request: 0
 };
 const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
-  prompt: 1.5,
-  completion: 7.5,
+  prompt: 2,
+  completion: 6,
   request: 0
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  order: [
-    'google-vertex',
-    'google-ai-studio'
-  ],
-  only: [
-    'google-vertex',
-    'google-ai-studio'
-  ],
-  // OpenRouter first tries the multi-endpoint Gemini Flash route, then the
-  // independently qualified Luna and Gemini Lite endpoint families
-  // within this same authorized request.
+  order: ['xai'],
+  only: ['xai'],
+  // Keep the request on xAI's native structured-output endpoint; its documented
+  // schema grammar enforces the string, array, numeric, reference, and regex
+  // constraints used by this commercial-motion contract.
   // Strict parameter, privacy, and price filters remain authoritative.
   allow_fallbacks: true,
   require_parameters: true,
@@ -528,11 +522,11 @@ const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // The parsed cap below also dominates the strict grammar's computed worst-case
 // Unicode/evidence envelope instead of relying on representative samples.
 const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 189_120;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 188_160;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE;
-const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 146_376;
+const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 171_168;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
     OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING *
