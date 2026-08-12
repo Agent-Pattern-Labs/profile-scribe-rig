@@ -11406,13 +11406,15 @@ function normalizeCommercialDiscoveryCandidate(
   const includedExaOrganization =
     provider === OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER &&
     kind === 'organization' && Boolean(publicUrl);
+  const exactProfessionalPersonProvider =
+    (provider === 'people_data_labs_person_search' && kind === 'person') ||
+    (provider === 'brave_web_search' && kind === 'public_professional');
   if (['buyer', 'referral_partner'].includes(commercialRole) &&
       !verifiedPublicProfessionalRoute && !includedExaOrganization) {
     return null;
   }
-  if (['buyer', 'referral_partner'].includes(commercialRole) && (
-    provider !== 'people_data_labs_person_search' || kind !== 'person'
-  ) && !includedExaOrganization) {
+  if (['buyer', 'referral_partner'].includes(commercialRole) &&
+      !exactProfessionalPersonProvider && !includedExaOrganization) {
     return null;
   }
   return compact({
@@ -11553,6 +11555,11 @@ function commercialDiscoveryContainsPrivateContact(
 function commercialDiscoveryURLContainsPrivateContact(value) {
   let decoded = firstText(value);
   if (!decoded) return false;
+  // LinkedIn public-profile slugs commonly contain long numeric provider
+  // identifiers. The exact /in/<slug> grammar excludes query strings,
+  // fragments, ports, credentials, and contact-value punctuation, so those
+  // digits are identity data rather than a private phone number.
+  if (safePublicProfessionalProfileURL(decoded)) return false;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (commercialDiscoveryContainsPrivateContact(decoded, {
       allowBareCodePackage: true

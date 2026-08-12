@@ -924,6 +924,59 @@ function verifyClaimFencedBraveDiscoveryRoleNormalization() {
     }))
   }, now);
 
+  const bravePersonRef =
+    'external_discovery:555555555555555555555555';
+  const bravePersonCandidate =
+    'candidate:external:666666666666666666666666';
+  const bravePersonURL =
+    'https://linkedin.com/in/yiqiao-li-a14408130';
+  const bravePersonEnvelope = commercialDiscoveryFixture({
+    id: 'attempt-brave-person',
+    provider,
+    operation: 'planned_brave_web_search',
+    queryHash: '5'.repeat(64),
+    motion: 'professional-counterparty',
+    buyerArchetype: 'A prospective commercial buyer',
+    market: 'New York, NY',
+    paidProviderCalls: 1,
+    evidence: [{
+      evidenceRef: bravePersonRef,
+      kind: 'verified_external_professional_target',
+      label: 'Yiqiao Li',
+      summary:
+        'Brave Web Search returned this exact public professional identity and reviewable public profile path.',
+      url: bravePersonURL,
+      provider,
+      provenance: 'read_only_professional_provider',
+      roles: ['defined_buyer', 'acquisition', 'channel_fit'],
+      verified: true,
+      observedAt: '2026-07-30T11:00:00Z'
+    }],
+    candidates: [{
+      id: bravePersonCandidate,
+      kind: 'public_professional',
+      displayLabel: 'Yiqiao Li',
+      role: 'A prospective commercial buyer',
+      market: 'New York, NY',
+      publicUrl: bravePersonURL,
+      provider,
+      commercialRole: 'buyer',
+      evidenceRefs: [bravePersonRef],
+      contactPaths: [{
+        kind: 'public_professional_url',
+        available: true,
+        verified: true,
+        reference: bravePersonURL
+      }],
+      exactNamedCandidate: true,
+      identityResolved: true
+    }]
+  });
+  const bravePerson = normalizeCommercialDiscoveryEvidence(
+    bravePersonEnvelope,
+    now
+  );
+
   const liveRef = 'external_discovery:333333333333333333333333';
   const liveCandidate = 'candidate:external:444444444444444444444444';
   const liveURL = 'https://acme-demand.example/rfp/workflow-automation';
@@ -1022,6 +1075,11 @@ function verifyClaimFencedBraveDiscoveryRoleNormalization() {
       identity.candidates?.length !== 0 ||
       identitySelfAttestedAsDemand.valid !== false ||
       !identitySelfAttestedAsDemand.rejectedReasons?.invalid_evidence ||
+      bravePerson.valid !== true ||
+      bravePerson.evidence?.[0]?.url !== bravePersonURL ||
+      bravePerson.candidates?.[0]?.provider !== provider ||
+      bravePerson.candidates?.[0]?.kind !== 'public_professional' ||
+      bravePerson.candidates?.[0]?.publicUrl !== bravePersonURL ||
       live.valid !== true ||
       live.providerCalls !== 2 ||
       live.paidProviderCalls !== 2 ||
@@ -1030,7 +1088,7 @@ function verifyClaimFencedBraveDiscoveryRoleNormalization() {
       live.queryHash !== commercialDiscoveryAttemptLedgerHash(attempts) ||
       reorderedHash === live.queryHash) {
     throw new Error(
-      `claim-fenced Brave discovery did not reject an unrouteable buyer, preserve provider roles, and preserve ordered aggregate hashing: ${JSON.stringify({ identity, identitySelfAttestedAsDemand, live })}`
+      `claim-fenced Brave discovery did not reject an unrouteable organization, retain an exact public person route, preserve provider roles, and preserve ordered aggregate hashing: ${JSON.stringify({ identity, identitySelfAttestedAsDemand, bravePerson, live })}`
     );
   }
 }
