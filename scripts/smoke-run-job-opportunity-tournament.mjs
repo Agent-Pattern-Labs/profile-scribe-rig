@@ -133,11 +133,11 @@ const server = createServer(async (request, response) => {
           total: 2,
           available: [{
             provider: 'OpenAI',
-            model: 'x-ai/grok-4.5',
+            model: 'qwen/qwen3.8-max',
             selected: false
           }, {
             provider: 'Azure',
-            model: 'x-ai/grok-4.5',
+            model: 'qwen/qwen3.8-max',
             selected: false
           }]
         },
@@ -154,7 +154,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({
       id: 'gen-run-job-embedded-502',
-      model: 'x-ai/grok-4.5',
+      model: 'qwen/qwen3.8-max',
       error: {
         code: 502,
         message: 'raw-embedded-provider-secret-sentinel',
@@ -176,7 +176,7 @@ const server = createServer(async (request, response) => {
           total: 3,
           available: [{
             provider: 'OpenAI',
-            model: 'x-ai/grok-4.5',
+            model: 'qwen/qwen3.8-max',
             selected: true
           }]
         },
@@ -212,7 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
-    model: 'x-ai/grok-4.5',
+    model: 'qwen/qwen3.8-max',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -226,7 +226,7 @@ const server = createServer(async (request, response) => {
         total: 1,
         available: [{
           provider: 'OpenAI',
-          model: 'x-ai/grok-4.5',
+          model: 'qwen/qwen3.8-max',
           selected: true
         }]
       },
@@ -747,17 +747,17 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'x-ai/grok-4.5',
+      'qwen/qwen3.8-max',
       'successful call lost its selected model'
     );
     assertEqual(
       providerReceipt?.model,
-      'x-ai/grok-4.5',
+      'qwen/qwen3.8-max',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'x-ai/grok-4.5',
+      'qwen/qwen3.8-max',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1100,7 +1100,10 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(call.envelope.model, undefined, 'generator must use the ordered OpenRouter models contract');
   assertEqual(
     JSON.stringify(call.envelope.models),
-    JSON.stringify(['x-ai/grok-4.5']),
+    JSON.stringify([
+      'qwen/qwen3.8-max',
+      'deepseek/deepseek-v4-flash-0731'
+    ]),
     'generator lost the bounded model fallback order'
   );
   assertEqual(
@@ -1111,16 +1114,16 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(
     call.envelope.provider?.allow_fallbacks,
     true,
-    'generator disabled compatible xAI endpoint fallback'
+    'generator disabled compatible multi-vendor fallback'
   );
   assertEqual(
     JSON.stringify(call.envelope.provider?.order),
-    JSON.stringify(['xai']),
-    'generator lost the ordered xAI provider route'
+    JSON.stringify(['alibaba', 'fireworks', 'deepinfra', 'cloudflare']),
+    'generator lost the ordered multi-vendor provider route'
   );
   assertEqual(
       JSON.stringify(call.envelope.provider?.only),
-      JSON.stringify(['xai']),
+      JSON.stringify(['alibaba', 'fireworks', 'deepinfra', 'cloudflare']),
     'generator allowed an unreviewed fallback vendor'
   );
   assertEqual(
@@ -1218,7 +1221,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'x-ai/grok-4.5',
+          'qwen/qwen3.8-max',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

@@ -159,13 +159,23 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'x-ai/grok-4.5';
-const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([]);
+  'qwen/qwen3.8-max';
+const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([
+  'deepseek/deepseek-v4-flash-0731'
+]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'xai',
-    minimumContextTokens: 500_000,
+    family: 'qwen',
+    minimumContextTokens: 1_000_000,
+    minimumOutputTokens: 16_000,
+    maximumPromptPrice: 2,
+    maximumCompletionPrice: 6
+  }),
+  Object.freeze({
+    id: OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS[0],
+    family: 'deepseek',
+    minimumContextTokens: 1_000_000,
     minimumOutputTokens: 16_000,
     maximumPromptPrice: 2,
     maximumCompletionPrice: 6
@@ -173,6 +183,14 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
 ]);
 if (1 + OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS.length > 3) {
   throw new Error('OpenRouter models fallback contract exceeds 3 routes');
+}
+function opportunityDiscoveryModelFallbackOrder(model) {
+  const requested = firstText(model);
+  return requested === OPPORTUNITY_DISCOVERY_PLANNER_MODEL
+    ? [requested, ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS]
+    : requested
+      ? [requested]
+      : [];
 }
 const OPPORTUNITY_DISCOVERY_REQUIRED_MODEL_PARAMETERS = Object.freeze([
   'max_tokens',
@@ -196,7 +214,7 @@ const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
 // spend or the total price of a generation. Callers may tighten, but never
 // loosen, these tournament-specific caps.
 //
-// Both bounded stages use the exact qualified xAI route caps. Callers may
+// Both bounded stages use the exact qualified multi-vendor route caps. Callers may
 // tighten these values but cannot silently widen production model spend.
 const MAX_PROVIDER_PRICE = {
   prompt: 2,
@@ -210,12 +228,12 @@ const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  order: ['xai'],
-  only: ['xai'],
-  // Keep the request on xAI's native structured-output endpoint; its documented
-  // schema grammar enforces the string, array, numeric, reference, and regex
-  // constraints used by this commercial-motion contract.
-  // Strict parameter, privacy, and price filters remain authoritative.
+  order: ['alibaba', 'fireworks', 'deepinfra', 'cloudflare'],
+  only: ['alibaba', 'fireworks', 'deepinfra', 'cloudflare'],
+  // Prefer Qwen Max on Alibaba, then allow DeepSeek Flash across three
+  // independently hosted native structured-output endpoints. Every admitted
+  // route has compiled the exact bounded planner schema; strict parameter,
+  // privacy, and price filters remain authoritative.
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
@@ -1409,7 +1427,7 @@ export function buildOpenRouterJSONRequestBody({
   responseFormat,
   plugins
   // Temperature is intentionally not sent so the exact request remains
-  // portable across every qualified Google endpoint under
+  // portable across every qualified multi-vendor endpoint under
   // OpenRouter require_parameters:true.
 }) {
   const requestedPlugins = asArray(plugins)
@@ -1967,7 +1985,7 @@ export async function runOpportunityDiscoveryPlanner({
     });
     request = {
       model,
-      models: [model, ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS],
+      models: opportunityDiscoveryModelFallbackOrder(model),
       system,
       user,
       maxTokens: Math.min(
@@ -8597,7 +8615,7 @@ async function runOpportunityTournamentCore({
       });
       const repairCompletionRequest = {
         model,
-        models: [model, ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS],
+        models: opportunityDiscoveryModelFallbackOrder(model),
         system: repairPrompt.system,
         user: repairPrompt.user,
         maxTokens: Math.min(
@@ -14353,7 +14371,7 @@ function boundedStrategyGenerationRequest({
     });
     const request = {
       model,
-      models: [model, ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS],
+      models: opportunityDiscoveryModelFallbackOrder(model),
       system: prompt.system,
       user: prompt.user,
       maxTokens: budget.maxOutputTokens,
@@ -17253,7 +17271,7 @@ async function runCommercialCritic({
   );
   const request = {
     model,
-    models: [model, ...OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS],
+    models: opportunityDiscoveryModelFallbackOrder(model),
     system: prompt.system,
     user: prompt.user,
     maxTokens: Math.min(

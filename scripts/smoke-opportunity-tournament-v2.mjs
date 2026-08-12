@@ -2664,9 +2664,9 @@ async function verifyLengthFinishedStructuredRepair() {
         JSON.stringify(request.models) !== JSON.stringify(['test/v2']) ||
         request.temperature !== undefined ||
         JSON.stringify(request.provider?.order) !==
-          '["xai"]' ||
+          '["alibaba","fireworks","deepinfra","cloudflare"]' ||
         JSON.stringify(request.provider?.only) !==
-          '["xai"]' ||
+          '["alibaba","fireworks","deepinfra","cloudflare"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
         request.provider?.max_price?.prompt !== 2 ||
@@ -2692,7 +2692,7 @@ async function verifyLengthFinishedStructuredRepair() {
       result.winner !== null ||
       result.runnerUp !== null) {
     throw new Error(
-      `parseable length-finished output was not freshly repaired with the compact contract: ${JSON.stringify({ result, requests: requests.map((request) => ({ maxTokens: request.maxTokens, userBytes: Buffer.byteLength(request.user || '', 'utf8'), responseFormat: request.responseFormat })) })}`
+      `parseable length-finished output was not freshly repaired with the compact contract: ${JSON.stringify({ result, requests: requests.map((request) => ({ model: request.model, models: request.models, provider: request.provider, maxTokens: request.maxTokens, userBytes: Buffer.byteLength(request.user || '', 'utf8'), responseFormat: request.responseFormat })) })}`
     );
   }
 }
