@@ -3367,11 +3367,8 @@ function openRouterRouterDiagnostics(value, selectedModelValue) {
   const endpoints = object(metadata.endpoints);
   const available = arrayOfObjects(endpoints.available);
   const selected = available.find((endpoint) => endpoint.selected === true);
-  const attemptStatuses = arrayOfObjects(metadata.attempts)
-    .slice(0, 8)
-    .map((attempt) => Number(attempt.status))
-    .filter((status) => Number.isInteger(status) &&
-      status >= 100 && status <= 599);
+  const routerAttempts = safeOpenRouterRouterAttempts(metadata.attempts);
+  const attemptStatuses = routerAttempts.map((attempt) => attempt.status);
   const attempt = nonNegativeInteger(metadata.attempt);
   const provider = text(selected?.provider);
   const selectedModel = text(selectedModelValue).toLowerCase();
@@ -3384,6 +3381,7 @@ function openRouterRouterDiagnostics(value, selectedModelValue) {
     routerAttempt: attempt,
     routerCandidateCount: nonNegativeInteger(endpoints.total),
     routerAttemptStatuses: attemptStatuses,
+    routerAttempts,
     routerFallbackUsed: attempt > 1 ? true : undefined,
     routerSelectedProvider:
       /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
@@ -3394,6 +3392,22 @@ function openRouterRouterDiagnostics(value, selectedModelValue) {
         ? selectedModel
         : undefined
   });
+}
+
+function safeOpenRouterRouterAttempts(value) {
+  return arrayOfObjects(value).slice(0, 8).map((attempt) => {
+    const provider = text(attempt.provider);
+    const status = Number(attempt.status);
+    if (!Number.isInteger(status) || status < 100 || status > 599) {
+      return undefined;
+    }
+    return compact({
+      provider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
+        ? provider
+        : undefined,
+      status
+    });
+  }).filter(Boolean);
 }
 
 function attachOpenRouterResponseMetadata(
@@ -4375,6 +4389,9 @@ function safeOpenRouterResponseDiagnostics(value) {
         .filter((status) => Number.isInteger(status) &&
           status >= 100 && status <= 599)
       : undefined,
+    routerAttempts: safeOpenRouterRouterAttempts(
+      diagnostics.routerAttempts
+    ),
     routerFallbackUsed:
       diagnostics.routerFallbackUsed === true ? true : undefined,
     routerSelectedProvider:

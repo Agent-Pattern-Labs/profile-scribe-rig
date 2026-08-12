@@ -767,6 +767,11 @@ function verifySuccessfulTournament(receipt, job, calls) {
       JSON.stringify([200]),
       'successful call lost bounded fallback statuses'
     );
+    assertEqual(
+      JSON.stringify(providerReceipt?.responseDiagnostics?.routerAttempts),
+      JSON.stringify([{ provider: 'OpenAI', status: 200 }]),
+      'successful call lost its bounded provider attempt trace'
+    );
   }
   assert(
     metadata.trace?.notes?.includes(
@@ -1029,6 +1034,14 @@ function verifyProvider502Failure(receipt, calls) {
     JSON.stringify([502, 502]),
     'provider 502 lost bounded fallback status diagnostics'
   );
+  assertEqual(
+    JSON.stringify(diagnostics.routerAttempts),
+    JSON.stringify([
+      { provider: 'OpenAI', status: 502 },
+      { provider: 'Azure', status: 502 }
+    ]),
+    'provider 502 lost its bounded provider attempt trace'
+  );
   assert(
     !JSON.stringify(receipt).includes('raw-provider-secret-sentinel'),
     'provider 502 leaked the raw upstream response body'
@@ -1118,15 +1131,14 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
     true,
     'generator disabled compatible multi-vendor fallback'
   );
+  assertEqual(call.envelope.provider?.order, undefined,
+    'generator disabled OpenRouter default load balancing with an order');
+  assertEqual(call.envelope.provider?.only, undefined,
+    'generator replaced default routing with a provider allowlist');
   assertEqual(
-    JSON.stringify(call.envelope.provider?.order),
-    JSON.stringify(['fireworks', 'open-inference/fp8']),
-    'generator lost the ordered multi-vendor provider route'
-  );
-  assertEqual(
-      JSON.stringify(call.envelope.provider?.only),
-      JSON.stringify(['fireworks', 'open-inference/fp8']),
-    'generator allowed an unreviewed fallback vendor'
+    JSON.stringify(call.envelope.provider?.ignore),
+    JSON.stringify(['cloudflare', 'deepinfra', 'inceptron/fp4']),
+    'generator lost its evidence-backed provider quarantine'
   );
   assertEqual(
     call.envelope.provider?.require_parameters,

@@ -219,17 +219,12 @@ const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  order: ['fireworks', 'open-inference/fp8'],
-  only: ['fireworks', 'open-inference/fp8'],
-  // Keep the strict planner on qualified independently hosted native
-  // structured-output endpoints with sufficient context and output capacity.
-  // Fireworks remains first because it has completed this exact production
-  // contract. OpenInference is the FP8 fallback when that route is throttled.
-  // Cloudflare is deliberately excluded: it repeatedly returned HTTP 200 with
-  // an empty body and bogus 1/1 token accounting for this exact request.
-  // DeepInfra and Inceptron are also excluded because production calls there
-  // exhausted the 64k output ceiling without completing the strict planner
-  // object.
+  // Preserve OpenRouter's default health/price load balancing and automatic
+  // fallbacks across every endpoint that natively supports the strict request.
+  // Quarantine only endpoints with durable production evidence of failing this
+  // exact contract: Cloudflare returned empty HTTP-200 bodies, while DeepInfra
+  // and Inceptron exhausted the 64k output ceiling without completing JSON.
+  ignore: ['cloudflare', 'deepinfra', 'inceptron/fp4'],
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
@@ -24465,6 +24460,9 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       .map((status) => Number(status))
       .filter((status) => Number.isInteger(status) &&
         status >= 100 && status <= 599),
+    routerAttempts: normalizeOpenRouterRouterAttempts(
+      diagnostics.routerAttempts
+    ),
     routerFallbackUsed:
       diagnostics.routerFallbackUsed === true ? true : undefined,
     routerSelectedProvider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(
@@ -24478,6 +24476,23 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       ? firstText(diagnostics.routerSelectedModel).toLowerCase()
       : undefined
   });
+}
+
+function normalizeOpenRouterRouterAttempts(value) {
+  return asArray(value).slice(0, 8).map((raw) => {
+    const attempt = asObject(raw);
+    const provider = firstText(attempt.provider);
+    const status = Number(attempt.status);
+    if (!Number.isInteger(status) || status < 100 || status > 599) {
+      return undefined;
+    }
+    return compact({
+      provider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
+        ? provider
+        : undefined,
+      status
+    });
+  }).filter(Boolean);
 }
 
 function normalizeLocalJSONRepairSchemaIssues(value) {

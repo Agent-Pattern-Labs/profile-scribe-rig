@@ -2721,10 +2721,10 @@ async function verifyLengthFinishedStructuredRepair() {
         request.model !== 'test/v2' ||
         JSON.stringify(request.models) !== JSON.stringify(['test/v2']) ||
         request.temperature !== undefined ||
-        JSON.stringify(request.provider?.order) !==
-          '["fireworks","open-inference/fp8"]' ||
-        JSON.stringify(request.provider?.only) !==
-          '["fireworks","open-inference/fp8"]' ||
+        request.provider?.order !== undefined ||
+        request.provider?.only !== undefined ||
+        JSON.stringify(request.provider?.ignore) !==
+          '["cloudflare","deepinfra","inceptron/fp4"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
         request.provider?.max_price?.prompt !== 2 ||
