@@ -7345,6 +7345,26 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
   }
 
   const selectedMotion = recoveredResult.plans[0];
+  // A schema-valid model may repeat the attribution capability in every
+  // nested grounding role. Current normalization must project it to the sole
+  // attribution role instead of rejecting every otherwise grounded tuple.
+  for (const familyKey of ['familyA', 'familyB']) {
+    const grounding = selectedMotion.contingentFinalists[familyKey]
+      .d.r[0].g;
+    for (const refs of [
+      grounding.b,
+      grounding.o,
+      grounding.a,
+      grounding.d.e,
+      grounding.c
+    ]) {
+      if (!refs.includes(
+        PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+      )) {
+        refs.push(PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID);
+      }
+    }
+  }
   const attempt = {
     id: 'attempt-provisional-profile-target',
     provider: 'people_data_labs_person_search',

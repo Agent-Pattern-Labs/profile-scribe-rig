@@ -18003,11 +18003,15 @@ function normalizeRevenuePathGrounding(
     .filter((ref) => allowed.has(ref))
     .filter((ref, index, items) => items.indexOf(ref) === index)
     .slice(0, 12);
+  const causalRefs = (...values) => refs(...values).filter((ref) =>
+    !currentRevenueContract ||
+    ref !== PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+  );
   const destination = asObject(raw.d ?? raw.conversionDestination);
   const grounding = {
-    buyerEvidenceRefs: refs(raw.b, raw.buyerEvidenceRefs),
-    paidOfferEvidenceRefs: refs(raw.o, raw.paidOfferEvidenceRefs),
-    acquisitionEvidenceRefs: refs(raw.a, raw.acquisitionEvidenceRefs),
+    buyerEvidenceRefs: causalRefs(raw.b, raw.buyerEvidenceRefs),
+    paidOfferEvidenceRefs: causalRefs(raw.o, raw.paidOfferEvidenceRefs),
+    acquisitionEvidenceRefs: causalRefs(raw.a, raw.acquisitionEvidenceRefs),
     conversionDestination: currentRevenueContract
       ? opportunityDiscoveryFreshSchemaText(
           [
@@ -18022,12 +18026,12 @@ function normalizeRevenuePathGrounding(
           destination.label,
           raw.conversionDestinationLabel
         ), 240),
-    conversionDestinationEvidenceRefs: refs(
+    conversionDestinationEvidenceRefs: causalRefs(
       destination.e,
       destination.evidenceRefs,
       raw.conversionDestinationEvidenceRefs
     ),
-    paidConversionEvidenceRefs: refs(
+    paidConversionEvidenceRefs: causalRefs(
       raw.c,
       raw.paidConversionEvidenceRefs
     ),
