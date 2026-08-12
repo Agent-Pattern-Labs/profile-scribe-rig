@@ -662,8 +662,21 @@ for (const scenario of cases) {
       ) !== JSON.stringify(['planned']) ||
       requestSeen.plugins?.length !== 0 ||
       requestSeen.allowLocalJSONRepair !== true ||
+      requestSeen.stream !== true ||
+      requestSeen.streamStartTimeoutMs !== 180_000 ||
+      requestSeen.streamIdleTimeoutMs !== 60_000 ||
+      requestSeen.streamTotalTimeoutMs !== 300_000 ||
       serializeOpenRouterJSONRequestBody(requestSeen).includes(
         'allowLocalJSONRepair'
+      ) ||
+      !serializeOpenRouterJSONRequestBody(requestSeen).includes(
+        '"stream":true'
+      ) ||
+      serializeOpenRouterJSONRequestBody(requestSeen).includes(
+        'stream_options'
+      ) ||
+      serializeOpenRouterJSONRequestBody(requestSeen).includes(
+        'streamStartTimeoutMs'
       ) ||
       JSON.stringify(requestSeen.reasoning) !==
         JSON.stringify({ enabled: false, exclude: true }) ||
@@ -4540,6 +4553,13 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           requestMaxBytes: 44 * 1_024,
           promptTokenCeiling: DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING,
           outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
+          streaming: {
+            enabled: true,
+            includeUsage: true,
+            responseStartTimeoutMs: 180_000,
+            idleTimeoutMs: 60_000,
+            totalTimeoutMs: 300_000
+          },
           framingTokenReserve: 1_024,
           fixedToolFeeMicros: 0,
           callSpendCeilingMicros:

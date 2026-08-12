@@ -543,6 +543,14 @@ const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // The parsed cap below also dominates the strict grammar's computed worst-case
 // Unicode/evidence envelope instead of relying on representative samples.
 const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 64_000;
+// Stream the large strict-schema generator response so a healthy model can
+// continue past the former 120-second buffered-response deadline. Silence is
+// bounded independently from total execution time, and the total leaves five
+// minutes of the worker's ten-minute job window for deterministic discovery,
+// the independent critic, persistence, and shutdown.
+const MAX_DISCOVERY_PLANNER_STREAM_START_TIMEOUT_MS = 180_000;
+const MAX_DISCOVERY_PLANNER_STREAM_IDLE_TIMEOUT_MS = 60_000;
+const MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS = 300_000;
 const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 476_160;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
@@ -1360,6 +1368,14 @@ export function opportunityCommercialDiscoveryCapabilities() {
         promptTokenCeiling:
           OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING,
         outputTokenCeiling: MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS,
+        streaming: {
+          enabled: true,
+          includeUsage: true,
+          responseStartTimeoutMs:
+            MAX_DISCOVERY_PLANNER_STREAM_START_TIMEOUT_MS,
+          idleTimeoutMs: MAX_DISCOVERY_PLANNER_STREAM_IDLE_TIMEOUT_MS,
+          totalTimeoutMs: MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS
+        },
         framingTokenReserve: OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
         fixedToolFeeMicros: 0,
         callSpendCeilingMicros:
@@ -1431,7 +1447,8 @@ export function buildOpenRouterJSONRequestBody({
   reasoning,
   provider,
   responseFormat,
-  plugins
+  plugins,
+  stream
   // Temperature is intentionally not sent so the exact request remains
   // portable across every qualified multi-vendor endpoint under
   // OpenRouter require_parameters:true.
@@ -1464,6 +1481,9 @@ export function buildOpenRouterJSONRequestBody({
       : {}),
     ...(requestedPlugins.length > 0
       ? { plugins: requestedPlugins }
+      : {}),
+    ...(stream === true
+      ? { stream: true }
       : {}),
     messages: [
       { role: 'system', content: system },
@@ -2019,9 +2039,15 @@ export async function runOpportunityDiscoveryPlanner({
       // syntax locally only when the repaired value passes this exact response
       // schema; all planner semantic and evidence gates still run afterward.
       allowLocalJSONRepair: true,
+      stream: true,
+      streamStartTimeoutMs:
+        MAX_DISCOVERY_PLANNER_STREAM_START_TIMEOUT_MS,
+      streamIdleTimeoutMs:
+        MAX_DISCOVERY_PLANNER_STREAM_IDLE_TIMEOUT_MS,
+      streamTotalTimeoutMs:
+        MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS,
       additionalPromptTokenReserve: 0,
       fixedToolFeeMicros: 0,
-      timeoutMs: 120_000,
     };
     preflight = providerCallSpendPreflight(request, budget);
     const issue = providerPromptEnvelopeIssue(preflight);
@@ -24401,6 +24427,13 @@ function normalizeOpenRouterResponseDiagnostics(value) {
   const providerErrorCode = firstText(
     diagnostics.providerErrorCode
   ).toLowerCase();
+  const timeoutKind = firstText(diagnostics.timeoutKind).toLowerCase();
+  const timeoutOrigin = firstText(
+    diagnostics.timeoutOrigin
+  ).toLowerCase();
+  const timeoutPhase = firstText(
+    diagnostics.timeoutPhase
+  ).toLowerCase();
   return compact({
     finishReason: truncate(firstText(diagnostics.finishReason), 64),
     nativeFinishReason: truncate(
@@ -24442,7 +24475,7 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       ? providerErrorCode
       : undefined,
     httpStatus: Number.isInteger(Number(diagnostics.httpStatus)) &&
-        Number(diagnostics.httpStatus) >= 400 &&
+        Number(diagnostics.httpStatus) >= 100 &&
         Number(diagnostics.httpStatus) <= 599
       ? Number(diagnostics.httpStatus)
       : undefined,
@@ -24474,7 +24507,46 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       firstText(diagnostics.routerSelectedModel).toLowerCase()
     )
       ? firstText(diagnostics.routerSelectedModel).toLowerCase()
-      : undefined
+      : undefined,
+    streaming: diagnostics.streaming === true ? true : undefined,
+    streamEventCount: nonNegativeInteger(diagnostics.streamEventCount),
+    streamWireByteCount: nonNegativeInteger(
+      diagnostics.streamWireByteCount
+    ),
+    streamFirstDataLatencyMs: nonNegativeInteger(
+      diagnostics.streamFirstDataLatencyMs
+    ),
+    streamDurationMs: nonNegativeInteger(diagnostics.streamDurationMs),
+    streamCompleted:
+      diagnostics.streaming === true
+        ? diagnostics.streamCompleted === true
+        : undefined,
+    timeoutKind: ['idle', 'total'].includes(timeoutKind)
+      ? timeoutKind
+      : undefined,
+    timeoutOrigin:
+      timeoutOrigin === 'profilescribe_local_deadline'
+        ? timeoutOrigin
+        : undefined,
+    timeoutDeadlineMs: nonNegativeInteger(
+      diagnostics.timeoutDeadlineMs
+    ),
+    timeoutPhase: [
+      'response_start',
+      'response_body',
+      'response_stream'
+    ].includes(
+      timeoutPhase
+    )
+      ? timeoutPhase
+      : undefined,
+    responseHeadersReceived:
+      diagnostics.streaming === true || timeoutOrigin
+        ? diagnostics.responseHeadersReceived === true
+        : undefined,
+    timeoutElapsedMs: nonNegativeInteger(
+      diagnostics.timeoutElapsedMs
+    )
   });
 }
 
@@ -24482,6 +24554,7 @@ function normalizeOpenRouterRouterAttempts(value) {
   return asArray(value).slice(0, 8).map((raw) => {
     const attempt = asObject(raw);
     const provider = firstText(attempt.provider);
+    const model = firstText(attempt.model).toLowerCase();
     const status = Number(attempt.status);
     if (!Number.isInteger(status) || status < 100 || status > 599) {
       return undefined;
@@ -24489,6 +24562,9 @@ function normalizeOpenRouterRouterAttempts(value) {
     return compact({
       provider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
         ? provider
+        : undefined,
+      model: /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(model)
+        ? model
         : undefined,
       status
     });

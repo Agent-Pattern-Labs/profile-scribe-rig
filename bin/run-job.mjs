@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
 import { OpenRouter, stepCountIs } from '@openrouter/agent';
+import { readOpenRouterChatCompletionSSE } from './openrouter-sse.mjs';
 import {
   OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
   OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION,
@@ -3100,7 +3101,11 @@ async function callOpenRouterJSON({
   plugins,
   allowLocalJSONRepair,
   temperature,
-  timeoutMs
+  timeoutMs,
+  stream,
+  streamStartTimeoutMs,
+  streamIdleTimeoutMs,
+  streamTotalTimeoutMs
 }) {
   const apiKey = openRouterApiKey();
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is required');
@@ -3115,14 +3120,37 @@ async function callOpenRouterJSON({
     provider,
     responseFormat,
     plugins,
-    temperature
+    temperature,
+    stream
   });
 
   const controller = new AbortController();
-  const resolvedTimeoutMs = openRouterTimeoutMs(timeoutMs);
-  const timer = setTimeout(() => controller.abort(), resolvedTimeoutMs);
+  const streaming = stream === true;
+  const resolvedTimeoutMs = streaming
+    ? openRouterStreamTotalTimeoutMs(streamTotalTimeoutMs)
+    : openRouterTimeoutMs(timeoutMs);
+  const resolvedIdleTimeoutMs = streaming
+    ? openRouterStreamIdleTimeoutMs(streamIdleTimeoutMs)
+    : resolvedTimeoutMs;
+  const resolvedStartTimeoutMs = streaming
+    ? openRouterStreamStartTimeoutMs(streamStartTimeoutMs)
+    : resolvedTimeoutMs;
+  const requestStartedAt = Date.now();
+  let timeoutKind = '';
+  const initialDeadlineMs = streaming
+    ? Math.min(resolvedStartTimeoutMs, resolvedTimeoutMs)
+    : resolvedTimeoutMs;
+  let timer = setTimeout(() => {
+    timeoutKind = streaming && resolvedStartTimeoutMs < resolvedTimeoutMs
+      ? 'idle'
+      : 'total';
+    controller.abort();
+  }, initialDeadlineMs);
   let response;
+  let responseHeadersLatencyMs;
   let body = '';
+  let streamedEnvelope;
+  let streamDiagnostics = {};
   try {
     response = await fetch(openRouterChatCompletionsURL(), {
       method: 'POST',
@@ -3136,14 +3164,201 @@ async function callOpenRouterJSON({
       body: requestBody,
       signal: controller.signal
     });
-    body = await response.text();
+    responseHeadersLatencyMs = Math.max(0, Date.now() - requestStartedAt);
+    clearTimeout(timer);
+    timer = undefined;
+    if (streaming && response.ok) {
+      const elapsedMs = responseHeadersLatencyMs;
+      const totalRemainingMs = Math.max(1, resolvedTimeoutMs - elapsedMs);
+      const streamed = await readOpenRouterChatCompletionSSE(
+        response.body,
+        {
+          idleTimeoutMs: resolvedIdleTimeoutMs,
+          totalTimeoutMs: totalRemainingMs,
+          abortController: controller,
+          initialGenerationId:
+            response.headers.get('x-generation-id'),
+          initialSelectedProvider:
+            response.headers.get('x-provider-name')
+        }
+      );
+      streamedEnvelope = streamed.envelope;
+      streamDiagnostics = {
+        streaming: true,
+        streamEventCount: streamed.diagnostics.streamEventCount,
+        streamWireByteCount: streamed.diagnostics.streamWireByteCount,
+        streamFirstDataLatencyMs:
+          nonNegativeInteger(
+            streamed.diagnostics.streamFirstDataLatencyMs
+          ) === undefined
+            ? undefined
+            : elapsedMs + nonNegativeInteger(
+              streamed.diagnostics.streamFirstDataLatencyMs
+            ),
+        streamDurationMs:
+          elapsedMs + (
+            nonNegativeInteger(streamed.diagnostics.streamDurationMs) || 0
+          ),
+        streamCompleted: streamed.diagnostics.streamCompleted === true,
+        responseHeadersReceived: true,
+        httpStatus: response.status
+      };
+    } else {
+      const elapsedMs = Math.max(0, Date.now() - requestStartedAt);
+      const remainingMs = Math.max(1, resolvedTimeoutMs - elapsedMs);
+      timer = setTimeout(() => {
+        timeoutKind = 'total';
+        controller.abort();
+      }, remainingMs);
+      body = await response.text();
+    }
   } catch (error) {
-    if (error?.name === 'AbortError') {
+    const streamState = object(error?.openRouterStreamState);
+    if (streaming && Object.keys(streamState).length > 0) {
+      const streamUsage = normalizeOpenRouterUsage(streamState.usage);
+      const streamTimeoutKind = text(streamState.timeoutKind);
+      // The response-start timer can win the same event-loop turn in which
+      // fetch resolves its headers. In that race the reader sees AbortError
+      // and attaches stream state, but it did not originate the deadline.
+      // Preserve the outer timer's local provenance instead of leaking an
+      // unclassified AbortError.
+      const responseStartTimeoutKind =
+        !streamTimeoutKind &&
+        (error?.name === 'AbortError' || controller.signal.aborted)
+          ? text(timeoutKind)
+          : '';
+      const effectiveTimeoutKind =
+        streamTimeoutKind || responseStartTimeoutKind;
+      const diagnostics = {
+        finishReason: truncate(text(streamState.finishReason), 64),
+        nativeFinishReason: truncate(
+          text(streamState.nativeFinishReason),
+          64
+        ),
+        contentByteCount: nonNegativeInteger(
+          streamState.contentByteCount
+        ) || 0,
+        contentSha256: text(streamState.contentSha256),
+        ...openRouterRouterDiagnostics(
+          streamState.openrouterMetadata,
+          streamState.selectedModel,
+          streamState.selectedProvider
+        ),
+        streaming: true,
+        streamEventCount: nonNegativeInteger(
+          streamState.streamEventCount
+        ) || 0,
+        streamWireByteCount: nonNegativeInteger(
+          streamState.streamWireByteCount
+        ) || 0,
+        streamFirstDataLatencyMs:
+          nonNegativeInteger(streamState.streamFirstDataLatencyMs) === undefined
+            ? undefined
+            : (responseHeadersLatencyMs || 0) + nonNegativeInteger(
+              streamState.streamFirstDataLatencyMs
+            ),
+        streamDurationMs:
+          Math.max(0, Date.now() - requestStartedAt),
+        streamCompleted: streamState.streamCompleted === true,
+        timeoutKind: effectiveTimeoutKind
+      };
+      if (response) diagnostics.httpStatus = response.status;
+      if (diagnostics.timeoutKind) {
+        diagnostics.timeoutOrigin = 'profilescribe_local_deadline';
+        diagnostics.timeoutDeadlineMs = responseStartTimeoutKind
+          ? initialDeadlineMs
+          : diagnostics.timeoutKind === 'total'
+            ? resolvedTimeoutMs
+            : resolvedIdleTimeoutMs;
+        diagnostics.timeoutPhase = responseStartTimeoutKind
+          ? 'response_start'
+          : 'response_stream';
+        diagnostics.timeoutElapsedMs = Math.max(
+          0,
+          Date.now() - requestStartedAt
+        );
+      }
+      diagnostics.responseHeadersReceived = true;
+      let surfacedError = error;
+      if (effectiveTimeoutKind &&
+          error?.openRouterFailureCode !== 'openrouter_timeout') {
+        surfacedError = new Error(
+          responseStartTimeoutKind
+            ? `OpenRouter streaming request returned no usable response before its ${initialDeadlineMs}ms response-start deadline`
+            : effectiveTimeoutKind === 'total'
+              ? `OpenRouter streaming request exceeded its ${resolvedTimeoutMs}ms hard deadline`
+              : `OpenRouter streaming request made no provider data progress for ${resolvedIdleTimeoutMs}ms`
+        );
+        surfacedError.openRouterFailureCode = 'openrouter_timeout';
+      }
+      throw attachOpenRouterResponseMetadata(
+        surfacedError,
+        streamUsage,
+        diagnostics,
+        safeOpenRouterGenerationId(streamState.generationId)
+      );
+    }
+    if (error?.name === 'AbortError' || timeoutKind) {
+      const headerGenerationId = safeOpenRouterGenerationId(
+        response?.headers?.get('x-generation-id')
+      );
+      const headerProvider = safeOpenRouterProviderName(
+        response?.headers?.get('x-provider-name')
+      );
+      const responseHeadersReceived = Boolean(response);
       const timeoutError = new Error(
-        `OpenRouter request timed out after ${resolvedTimeoutMs}ms`
+        streaming
+          ? timeoutKind === 'total'
+            ? `OpenRouter streaming request exceeded its ${resolvedTimeoutMs}ms hard deadline`
+            : `OpenRouter streaming request returned no response headers for ${resolvedStartTimeoutMs}ms`
+          : `OpenRouter request timed out after ${resolvedTimeoutMs}ms`
       );
       timeoutError.openRouterFailureCode = 'openrouter_timeout';
-      throw timeoutError;
+      throw attachOpenRouterResponseMetadata(
+        timeoutError,
+        {},
+        streaming
+          ? {
+              ...openRouterRouterDiagnostics(
+                {},
+                '',
+                headerProvider
+              ),
+              streaming: true,
+              streamDurationMs:
+                Math.max(0, Date.now() - requestStartedAt),
+              streamCompleted: false,
+              timeoutKind: timeoutKind || 'idle',
+              timeoutOrigin: 'profilescribe_local_deadline',
+              timeoutDeadlineMs:
+                (timeoutKind || 'idle') === 'total'
+                  ? resolvedTimeoutMs
+                  : resolvedStartTimeoutMs,
+              timeoutPhase: responseHeadersReceived
+                ? 'response_body'
+                : 'response_start',
+              timeoutElapsedMs:
+                Math.max(0, Date.now() - requestStartedAt),
+              responseHeadersReceived
+            }
+          : {
+              ...openRouterRouterDiagnostics(
+                {},
+                '',
+                headerProvider
+              ),
+              timeoutKind: 'total',
+              timeoutOrigin: 'profilescribe_local_deadline',
+              timeoutDeadlineMs: resolvedTimeoutMs,
+              timeoutPhase: responseHeadersReceived
+                ? 'response_body'
+                : 'response_start',
+              timeoutElapsedMs:
+                Math.max(0, Date.now() - requestStartedAt),
+              responseHeadersReceived
+            },
+        headerGenerationId
+      );
     }
     throw error;
   } finally {
@@ -3163,7 +3378,8 @@ async function callOpenRouterJSON({
       ...openRouterResponseDiagnostics({}, body),
       ...openRouterRouterDiagnostics(
         envelope?.openrouter_metadata,
-        envelope?.model
+        envelope?.model,
+        envelope?.provider || response.headers.get('x-provider-name')
       ),
       httpStatus: response.status
     };
@@ -3175,7 +3391,7 @@ async function callOpenRouterJSON({
         envelope.error,
         usage,
         diagnostics,
-        generationId,
+        safeOpenRouterGenerationId(generationId),
         response.status
       );
     }
@@ -3190,22 +3406,34 @@ async function callOpenRouterJSON({
         ...diagnostics,
         providerErrorCode: String(response.status)
       },
-      generationId
+      safeOpenRouterGenerationId(generationId)
     );
   }
-  let envelope;
-  try {
-    envelope = parseJSON(body, 'OpenRouter response');
-  } catch {
-    // Never persist the provider body: its bounded byte count and digest are
-    // sufficient to correlate malformed HTTP-200 envelopes safely.
-    const error = new Error('OpenRouter response is not valid JSON');
-    error.openRouterFailureCode = 'openrouter_invalid_response';
-    throw attachOpenRouterResponseMetadata(
-      error,
-      {},
-      openRouterResponseDiagnostics({}, body)
-    );
+  let envelope = streamedEnvelope;
+  if (!streaming) {
+    try {
+      envelope = parseJSON(body, 'OpenRouter response');
+    } catch {
+      // Never persist the provider body: its bounded byte count and digest are
+      // sufficient to correlate malformed HTTP-200 envelopes safely.
+      const error = new Error('OpenRouter response is not valid JSON');
+      error.openRouterFailureCode = 'openrouter_invalid_response';
+      throw attachOpenRouterResponseMetadata(
+        error,
+        {},
+        {
+          ...openRouterResponseDiagnostics({}, body),
+          ...openRouterRouterDiagnostics(
+            {},
+            '',
+            response.headers.get('x-provider-name')
+          )
+        },
+        safeOpenRouterGenerationId(
+          response.headers.get('x-generation-id')
+        )
+      );
+    }
   }
   const usage = normalizeOpenRouterUsage(envelope?.usage);
   const choice = object(envelope?.choices?.[0]);
@@ -3229,8 +3457,10 @@ async function callOpenRouterJSON({
     ...openRouterResponseDiagnostics(choice, rawContent),
     ...openRouterRouterDiagnostics(
       envelope?.openrouter_metadata,
-      envelope?.model
+      envelope?.model,
+      envelope?.provider
     ),
+    ...streamDiagnostics,
     httpStatus: response.status
   };
   if (envelope?.error) {
@@ -3238,7 +3468,10 @@ async function callOpenRouterJSON({
       envelope.error,
       usage,
       diagnostics,
-      envelope?.id
+      safeOpenRouterGenerationId(envelope?.id) ||
+        safeOpenRouterGenerationId(
+          response.headers.get('x-generation-id')
+        )
     );
   }
   if (choice?.error) {
@@ -3246,7 +3479,10 @@ async function callOpenRouterJSON({
       choice.error,
       usage,
       diagnostics,
-      envelope?.id
+      safeOpenRouterGenerationId(envelope?.id) ||
+        safeOpenRouterGenerationId(
+          response.headers.get('x-generation-id')
+        )
     );
   }
   if (openRouterDiagnosticsIndicateTruncation(diagnostics)) {
@@ -3254,7 +3490,10 @@ async function callOpenRouterJSON({
       new Error('OpenRouter ended structured output at its token limit'),
       usage,
       diagnostics,
-      envelope?.id
+      safeOpenRouterGenerationId(envelope?.id) ||
+        safeOpenRouterGenerationId(
+          response.headers.get('x-generation-id')
+        )
     );
   }
   const content = text(rawContent);
@@ -3264,7 +3503,10 @@ async function callOpenRouterJSON({
       error,
       usage,
       diagnostics,
-      envelope?.id
+      safeOpenRouterGenerationId(envelope?.id) ||
+        safeOpenRouterGenerationId(
+          response.headers.get('x-generation-id')
+        )
     );
   }
   let data;
@@ -3297,7 +3539,10 @@ async function callOpenRouterJSON({
           error,
           usage,
           diagnostics,
-          envelope?.id
+          safeOpenRouterGenerationId(envelope?.id) ||
+            safeOpenRouterGenerationId(
+              response.headers.get('x-generation-id')
+            )
         );
       }
     } else {
@@ -3305,14 +3550,20 @@ async function callOpenRouterJSON({
         error,
         usage,
         diagnostics,
-        envelope?.id
+        safeOpenRouterGenerationId(envelope?.id) ||
+          safeOpenRouterGenerationId(
+            response.headers.get('x-generation-id')
+          )
       );
     }
   }
   return {
     data,
     usage,
-    generationId: text(envelope?.id),
+    generationId: safeOpenRouterGenerationId(envelope?.id) ||
+      safeOpenRouterGenerationId(
+        response.headers.get('x-generation-id')
+      ),
     diagnostics,
     annotations
   };
@@ -3357,16 +3608,35 @@ function openRouterResponseDiagnostics(choice, rawContent) {
   });
 }
 
-function openRouterRouterDiagnostics(value, selectedModelValue) {
+function openRouterRouterDiagnostics(
+  value,
+  selectedModelValue,
+  selectedProviderValue
+) {
   const metadata = object(value);
   const endpoints = object(metadata.endpoints);
   const available = arrayOfObjects(endpoints.available);
   const selected = available.find((endpoint) => endpoint.selected === true);
-  const routerAttempts = safeOpenRouterRouterAttempts(metadata.attempts);
-  const attemptStatuses = routerAttempts.map((attempt) => attempt.status);
+  let routerAttempts = safeOpenRouterRouterAttempts(metadata.attempts);
   const attempt = nonNegativeInteger(metadata.attempt);
-  const provider = text(selected?.provider);
-  const selectedModel = text(selectedModelValue).toLowerCase();
+  const provider = text(selected?.provider || selectedProviderValue);
+  const selectedModel = text(
+    selected?.model || selectedModelValue
+  ).toLowerCase();
+  if (routerAttempts.length === 0 && attempt === 1 &&
+      /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider) &&
+      /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(selectedModel)) {
+    routerAttempts = [{
+      provider,
+      model: selectedModel,
+      status: 200
+    }];
+  }
+  routerAttempts = routerAttempts.map((item) => ({
+    ...item,
+    model: item.model || selectedModel
+  }));
+  const attemptStatuses = routerAttempts.map((item) => item.status);
   return compact({
     routerStrategy: /^[a-z][a-z0-9_-]{0,31}$/.test(
       text(metadata.strategy).toLowerCase()
@@ -3389,9 +3659,24 @@ function openRouterRouterDiagnostics(value, selectedModelValue) {
   });
 }
 
+function safeOpenRouterGenerationId(value) {
+  const generationId = text(value);
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(generationId)
+    ? generationId
+    : '';
+}
+
+function safeOpenRouterProviderName(value) {
+  const provider = text(value);
+  return /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
+    ? provider
+    : '';
+}
+
 function safeOpenRouterRouterAttempts(value) {
   return arrayOfObjects(value).slice(0, 8).map((attempt) => {
     const provider = text(attempt.provider);
+    const model = text(attempt.model).toLowerCase();
     const status = Number(attempt.status);
     if (!Number.isInteger(status) || status < 100 || status > 599) {
       return undefined;
@@ -3399,6 +3684,9 @@ function safeOpenRouterRouterAttempts(value) {
     return compact({
       provider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
         ? provider
+        : undefined,
+      model: /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(model)
+        ? model
         : undefined,
       status
     });
@@ -4349,6 +4637,12 @@ function safeOpenRouterResponseDiagnostics(value) {
   const routerSelectedProvider = text(
     diagnostics.routerSelectedProvider
   );
+  const routerSelectedModel = text(
+    diagnostics.routerSelectedModel
+  ).toLowerCase();
+  const timeoutKind = text(diagnostics.timeoutKind).toLowerCase();
+  const timeoutOrigin = text(diagnostics.timeoutOrigin).toLowerCase();
+  const timeoutPhase = text(diagnostics.timeoutPhase).toLowerCase();
   return compact({
     finishReason: truncate(diagnostics.finishReason, 64),
     nativeFinishReason: truncate(diagnostics.nativeFinishReason, 64),
@@ -4365,7 +4659,7 @@ function safeOpenRouterResponseDiagnostics(value) {
       ? providerErrorCode
       : undefined,
     httpStatus: Number.isInteger(httpStatus) &&
-        httpStatus >= 400 && httpStatus <= 599
+        httpStatus >= 100 && httpStatus <= 599
       ? httpStatus
       : undefined,
     routerStrategy: /^[a-z][a-z0-9_-]{0,31}$/.test(routerStrategy)
@@ -4394,7 +4688,50 @@ function safeOpenRouterResponseDiagnostics(value) {
         routerSelectedProvider
       )
         ? routerSelectedProvider
-        : undefined
+        : undefined,
+    routerSelectedModel:
+      /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(routerSelectedModel)
+        ? routerSelectedModel
+        : undefined,
+    streaming: diagnostics.streaming === true ? true : undefined,
+    streamEventCount: nonNegativeInteger(diagnostics.streamEventCount),
+    streamWireByteCount: nonNegativeInteger(
+      diagnostics.streamWireByteCount
+    ),
+    streamFirstDataLatencyMs: nonNegativeInteger(
+      diagnostics.streamFirstDataLatencyMs
+    ),
+    streamDurationMs: nonNegativeInteger(diagnostics.streamDurationMs),
+    streamCompleted:
+      diagnostics.streaming === true
+        ? diagnostics.streamCompleted === true
+        : undefined,
+    timeoutKind: ['idle', 'total'].includes(timeoutKind)
+      ? timeoutKind
+      : undefined,
+    timeoutOrigin:
+      timeoutOrigin === 'profilescribe_local_deadline'
+        ? timeoutOrigin
+        : undefined,
+    timeoutDeadlineMs: nonNegativeInteger(
+      diagnostics.timeoutDeadlineMs
+    ),
+    timeoutPhase: [
+      'response_start',
+      'response_body',
+      'response_stream'
+    ].includes(
+      timeoutPhase
+    )
+      ? timeoutPhase
+      : undefined,
+    responseHeadersReceived:
+      diagnostics.streaming === true || timeoutOrigin
+        ? diagnostics.responseHeadersReceived === true
+        : undefined,
+    timeoutElapsedMs: nonNegativeInteger(
+      diagnostics.timeoutElapsedMs
+    )
   });
 }
 
@@ -4663,6 +5000,39 @@ function openRouterTimeoutMs(requestedTimeoutMs) {
   const configuredTimeoutMs = numberOr(
     process.env.PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS,
     120_000
+  );
+  return Math.min(
+    numberOr(requestedTimeoutMs, configuredTimeoutMs),
+    configuredTimeoutMs
+  );
+}
+
+function openRouterStreamIdleTimeoutMs(requestedTimeoutMs) {
+  const configuredTimeoutMs = numberOr(
+    process.env.PROFILESCRIBE_RIG_OPENROUTER_STREAM_IDLE_TIMEOUT_MS,
+    60_000
+  );
+  return Math.min(
+    numberOr(requestedTimeoutMs, configuredTimeoutMs),
+    configuredTimeoutMs
+  );
+}
+
+function openRouterStreamStartTimeoutMs(requestedTimeoutMs) {
+  const configuredTimeoutMs = numberOr(
+    process.env.PROFILESCRIBE_RIG_OPENROUTER_STREAM_START_TIMEOUT_MS,
+    180_000
+  );
+  return Math.min(
+    numberOr(requestedTimeoutMs, configuredTimeoutMs),
+    configuredTimeoutMs
+  );
+}
+
+function openRouterStreamTotalTimeoutMs(requestedTimeoutMs) {
+  const configuredTimeoutMs = numberOr(
+    process.env.PROFILESCRIBE_RIG_OPENROUTER_STREAM_TOTAL_TIMEOUT_MS,
+    300_000
   );
   return Math.min(
     numberOr(requestedTimeoutMs, configuredTimeoutMs),

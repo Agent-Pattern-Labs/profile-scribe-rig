@@ -112,10 +112,15 @@ const server = createServer(async (request, response) => {
     routerMetadataHeader: request.headers['x-openrouter-metadata']
   });
 
-  if (input.objective?.id === 'objective-run-job-slow-response-body') {
-    response.writeHead(200, { 'Content-Type': 'application/json' });
+  if (input.objective?.id === 'objective-run-job-slow-response-body' ||
+      input.objective?.id === 'objective-run-job-slow-response-body-critic') {
+    response.writeHead(200, {
+      'Content-Type': 'application/json',
+      'X-Generation-Id': 'gen-run-job-slow-response-body',
+      'X-Provider-Name': 'Slow Body Provider'
+    });
     response.flushHeaders();
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
     if (!response.destroyed) {
       response.end('raw-slow-body-secret-sentinel');
     }
@@ -337,7 +342,7 @@ try {
 
   const slowResponseBodyJob = tournamentJob(
     'slow-response-body',
-    'objective-run-job-slow-response-body'
+    'objective-run-job-slow-response-body-critic'
   );
   const slowResponseBodyFile = writeJob(
     'slow-response-body',
@@ -345,7 +350,7 @@ try {
   );
   const slowResponseBodyCallOffset = providerCalls.length;
   const slowResponseBody = await runJob(slowResponseBodyFile, port, {
-    env: { PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS: '50' }
+    env: { PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS: '250' }
   });
   verifySlowResponseBodyTimeout(
     slowResponseBody,
@@ -796,7 +801,11 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       JSON.stringify(providerReceipt?.responseDiagnostics?.routerAttempts),
-      JSON.stringify([{ provider: 'OpenAI', status: 200 }]),
+      JSON.stringify([{
+        provider: 'OpenAI',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        status: 200
+      }]),
       'successful call lost its bounded provider attempt trace'
     );
   }
@@ -1079,6 +1088,7 @@ function verifyProvider502Failure(receipt, calls) {
 function verifySlowResponseBodyTimeout(receipt, calls) {
   const metadata = receipt.metadata || {};
   const providerReceipt = metadata.llm?.strategyGeneratorJudge || {};
+  const diagnostics = providerReceipt.responseDiagnostics || {};
   assertEqual(
     receipt.status,
     'skipped',
@@ -1087,7 +1097,7 @@ function verifySlowResponseBodyTimeout(receipt, calls) {
   assertEqual(
     calls.length,
     1,
-    'slow response body caused an application redispatch'
+    `slow response body caused an application redispatch: ${JSON.stringify(receipt)}`
   );
   assertEqual(
     metadata.usage?.calls,
@@ -1109,6 +1119,37 @@ function verifySlowResponseBodyTimeout(receipt, calls) {
     'openrouter_timeout',
     'slow response body lost its cause-matched timeout'
   );
+  assertEqual(
+    providerReceipt.generationId,
+    'gen-run-job-slow-response-body',
+    'slow response body lost its safe generation header'
+  );
+  assertEqual(
+    diagnostics.routerSelectedProvider,
+    'Slow Body Provider',
+    'slow response body lost its safe provider header'
+  );
+  assertEqual(
+    diagnostics.timeoutOrigin,
+    'profilescribe_local_deadline',
+    'slow response body was misattributed as an upstream timeout'
+  );
+  assertEqual(diagnostics.timeoutKind, 'total', 'slow body timeout kind');
+  assertEqual(
+    diagnostics.timeoutPhase,
+    'response_body',
+    'slow body timeout phase'
+  );
+  assertEqual(
+    diagnostics.responseHeadersReceived,
+    true,
+    'slow body header state'
+  );
+  assertEqual(diagnostics.timeoutDeadlineMs, 250, 'slow body deadline');
+  assert(
+    diagnostics.timeoutElapsedMs >= 230,
+    `slow body elapsed time missing: ${JSON.stringify(diagnostics)}`
+  );
   assert(
     !JSON.stringify(receipt).includes('raw-slow-body-secret-sentinel'),
     'slow response body leaked the raw provider body'
@@ -1128,8 +1169,8 @@ function verifyEmbeddedProviderFailure(receipt, calls) {
   assertEqual(providerReceipt.error, 'openrouter_provider_unavailable', 'embedded provider error lost its cause');
   assertEqual(
     diagnostics.httpStatus,
-    undefined,
-    'embedded provider error promoted its successful transport status to provider authority'
+    200,
+    'embedded provider error lost its distinct successful transport status'
   );
   assertEqual(diagnostics.providerErrorType, 'provider_unavailable', 'embedded provider error lost upstream type');
   assertEqual(diagnostics.providerErrorCode, 'upstream_502', 'embedded provider error lost upstream code');
