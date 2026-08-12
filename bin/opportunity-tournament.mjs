@@ -518,7 +518,13 @@ const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
   }
 ];
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
-const MAX_CRITIC_OUTPUT_TOKENS = 1_200;
+// Terra Pro can spend several thousand output tokens on provider-side
+// reasoning before emitting its small strict verdict. A 1,200-token ceiling
+// produced a length stop after 4,718 billed completion tokens in production.
+// Six thousand remains below the $1 tournament envelope while allowing the
+// second and final model stage to finish its bounded schema.
+const MAX_CRITIC_OUTPUT_TOKENS = 6_000;
+const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // The provider may pretty-print strict structured output. Keep enough token
 // headroom for that transport representation while the independently parsed,
 // minified plan remains capped by MAX_DISCOVERY_PLANNER_RESPONSE_BYTES.
@@ -532,8 +538,8 @@ const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
 const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 355_200;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
-  OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
-const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 184_400;
+  COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE;
+const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 258_960;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
     OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING *
@@ -1345,6 +1351,7 @@ export function opportunityCommercialDiscoveryCapabilities() {
         promptTokenCeiling:
           OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING,
         outputTokenCeiling: MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS,
+        framingTokenReserve: OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
         fixedToolFeeMicros: 0,
         callSpendCeilingMicros:
           MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
@@ -1356,6 +1363,8 @@ export function opportunityCommercialDiscoveryCapabilities() {
         promptTokenCeiling:
           MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING,
         outputTokenCeiling: MAX_CRITIC_OUTPUT_TOKENS,
+        framingTokenReserve:
+          COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE,
         fixedToolFeeMicros: 0,
         callSpendCeilingMicros:
           MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS
@@ -15802,7 +15811,10 @@ function providerCallSpendPreflight(
   // user-visible strings. Price-per-million USD multiplied by tokens is the
   // same numeric unit as micro-USD.
   const serializedPromptTokenCeiling =
-    requestByteCount + OPENAI_PROMPT_FRAMING_TOKEN_RESERVE;
+    requestByteCount + (
+      nonNegativeInteger(options.framingTokenReserve) ||
+      OPENAI_PROMPT_FRAMING_TOKEN_RESERVE
+    );
   // Forced web search can inject provider-owned context after serialization.
   // For the pinned GPT-5.6 Luna route, use its complete native context window
   // as the absolute prompt ceiling instead of adding it to the serialized
@@ -15829,6 +15841,9 @@ function providerCallSpendPreflight(
     outputTokenCeiling,
     fixedRequestFeeCeilingMicros,
     fixedToolFeeMicros,
+    framingTokenReserve:
+      nonNegativeInteger(options.framingTokenReserve) ||
+      OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
     callSpendCeilingMicros:
       Math.ceil(promptTokenCeiling * price.prompt) +
       Math.ceil(outputTokenCeiling * price.completion) +
@@ -15872,7 +15887,9 @@ function providerPromptTokenCanary(preflightValue, usageValue) {
   return compact({
     requestBodyByteCount:
       nonNegativeInteger(preflight.requestBodyByteCount) || 0,
-    framingTokenReserve: OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
+    framingTokenReserve:
+      nonNegativeInteger(preflight.framingTokenReserve) ||
+      OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
     injectedContextTokenReserve:
       nonNegativeInteger(preflight.injectedContextTokenReserve) || 0,
     serializedPromptTokenCeiling:
@@ -17266,7 +17283,8 @@ async function runCommercialCritic({
     timeoutMs: 60_000
   };
   const preflight = providerCallSpendPreflight(request, budget, {
-    maxRequestBodyByteCount: MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES
+    maxRequestBodyByteCount: MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES,
+    framingTokenReserve: COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE
   });
   const envelopeIssue = providerPromptEnvelopeIssue(preflight);
   if (envelopeIssue) {

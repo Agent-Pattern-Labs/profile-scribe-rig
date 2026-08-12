@@ -1160,7 +1160,7 @@ function verifyCriticCall(call) {
     'opportunity_tournament_critic_v1',
     'critic used the wrong structured contract'
   );
-  assertEqual(call.envelope.max_tokens, 1200, 'critic output was not bounded');
+  assertEqual(call.envelope.max_tokens, 6000, 'critic output was not bounded');
   assertEqual(
     call.input?.criticContract,
     'opportunity_tournament_critic_v1',

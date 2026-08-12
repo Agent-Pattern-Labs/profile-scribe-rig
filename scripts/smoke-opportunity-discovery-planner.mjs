@@ -4500,6 +4500,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           requestMaxBytes: 44 * 1_024,
           promptTokenCeiling: DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING,
           outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS,
+          framingTokenReserve: 1_024,
           fixedToolFeeMicros: 0,
           callSpendCeilingMicros:
             DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
@@ -4512,10 +4513,11 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           },
           pluginIds: ['response-healing'],
           requestMaxBytes: 64 * 1_024,
-          promptTokenCeiling: 65_536 + 1_024,
-          outputTokenCeiling: 1_200,
+          promptTokenCeiling: 65_536 + 2_048,
+          outputTokenCeiling: 6_000,
+          framingTokenReserve: 2_048,
           fixedToolFeeMicros: 0,
-          callSpendCeilingMicros: 184_400
+          callSpendCeilingMicros: 258_960
         }
       })) {
     throw new Error(
@@ -9147,6 +9149,9 @@ async function verifyTwoStageTargetBinding() {
       ? maximizeBoundCriticEnvelope(variantPayload)
       : null;
     if (maximizeCriticEnvelope) {
+      variantPayload.budget.maxSpendMicros = 258_960;
+      variantPayload.budget.maxLLMSpendMicros = 258_960;
+      variantPayload.budget.maxOutputTokens = 6_000;
       targetCandidate.role = padCanonicalAstral('Pediatrician', 120);
       const normalizedMaxDiscovery = normalizeCommercialDiscoveryEvidence(
         variantPayload.commercialDiscoveryEvidence,
@@ -9224,6 +9229,7 @@ async function verifyTwoStageTargetBinding() {
             request,
             task,
             finalists: criticFinalists,
+            expectedMaxTokens: maximizeCriticEnvelope ? 6_000 : 1_200,
             expectedTargets: [targetName],
             expectedOrganizations: [
               maximizeCriticEnvelope &&
@@ -9361,6 +9367,7 @@ async function verifyTwoStageTargetBinding() {
   if (jointWorstCritic.requestBytes < 45_000 ||
       jointWorstCritic.requestBytes > 65_536 - 512 ||
       65_536 - jointWorstCritic.requestBytes < 512 ||
+      jointWorstCritic.request?.maxTokens !== 6_000 ||
       jointWorstFinalists.length !== 2 ||
       !exactRunes(jointWorstTask.objective?.id, 48) ||
       !exactRunes(jointWorstTask.objective?.outcome, 120) ||
@@ -12895,6 +12902,7 @@ function assertCompactCriticPair({
   task,
   finalists,
   expectedTargets,
+  expectedMaxTokens = 1_200,
   expectedOrganizations = [
     'Riverside Pediatrics',
     'Summit Pediatrics'
@@ -12970,7 +12978,7 @@ function assertCompactCriticPair({
       task.executionPolicy?.executionAuthorization !== 'none' ||
       task.executionPolicy?.requiresReview !== true ||
       task.executionPolicy?.sideEffectsPerformed !== 0 ||
-      request.maxTokens !== 1_200 ||
+      request.maxTokens !== expectedMaxTokens ||
       responseSchema?.properties?.comparisons?.maxItems !== 2 ||
       responseSchema?.properties?.selectedOrdering?.maxItems !== 2 ||
       requestBytes > 64 * 1_024 ||
