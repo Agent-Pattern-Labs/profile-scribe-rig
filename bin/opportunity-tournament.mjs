@@ -12445,7 +12445,15 @@ function provisionalOfferValidationExperiment({
     conversionDestination: truncate(destination, 240),
     paidConversion: truncate(paidConversion, 240),
     attributionSignal: truncate(attribution, 320),
-    action: truncate(`Review first: ${action}`, 700),
+    // The authored current-route action already starts with an "After review"
+    // presentation preamble. Move that boundary into the canonical leading
+    // marker so downstream classifiers see the actual bounded revenue action,
+    // rather than misclassifying the repeated word "review" as passive
+    // observation. No target, channel, offer, or action prose is synthesized.
+    action: truncate(
+      `Review first: ${action.replace(/^After review(?: via)?\s+/i, '')}`,
+      700
+    ),
     missingEvidence: [
       'a user-confirmed current paid offer and price',
       'a live conversion destination for that offer',

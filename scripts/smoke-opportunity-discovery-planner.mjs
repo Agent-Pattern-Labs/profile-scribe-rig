@@ -7496,6 +7496,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
       !/^Proposed paid ProfileScribe\b/.test(experiment?.paidOffer || '') ||
       !experiment?.buyer?.includes('Alex Rivera') ||
       !experiment?.action?.startsWith('Review first: ') ||
+      /^Review first: After review\b/.test(experiment?.action || '') ||
       !experiment?.action?.includes('Alex Rivera') ||
       !experiment?.action?.includes('proposed paid') ||
       experiment?.requiresReview !== true ||
