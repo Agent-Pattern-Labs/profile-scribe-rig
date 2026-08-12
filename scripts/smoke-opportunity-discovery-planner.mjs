@@ -243,8 +243,8 @@ function productionCitation(url, title, content) {
     contentHash
   };
 }
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 32_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 284_160;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 64_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 476_160;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
@@ -4505,7 +4505,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'deepseek/deepseek-v4-flash-0731',
             family: 'deepseek',
             minimumContextTokens: 1_000_000,
-            minimumOutputTokens: 32_000,
+            minimumOutputTokens: 64_000,
             maximumPromptPrice: 2,
             maximumCompletionPrice: 6,
             requiredParameters: [
