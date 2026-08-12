@@ -135,6 +135,43 @@ function verifyBoundedLocalJSONRepair() {
       `exact two-plan root projection drifted: ${JSON.stringify(projectedPlanPair)}`
     );
   }
+  const joinedSplitRoot = repairAndValidateOpenRouterJSONMessage(
+    JSON.stringify([
+      {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: '',
+        plans: [{ label: 'buyer' }]
+      },
+      { label: 'referral' }
+    ]),
+    planPairResponseFormat
+  );
+  if (JSON.stringify(joinedSplitRoot) !== JSON.stringify(projectedPlanPair)) {
+    throw new Error(
+      `split root plus plan was not losslessly joined: ${JSON.stringify(joinedSplitRoot)}`
+    );
+  }
+  let unsafeSplitRejected = false;
+  try {
+    repairAndValidateOpenRouterJSONMessage(
+      JSON.stringify([
+        {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans: []
+        },
+        { label: 'referral' }
+      ]),
+      planPairResponseFormat
+    );
+  } catch {
+    unsafeSplitRejected = true;
+  }
+  if (!unsafeSplitRejected) {
+    throw new Error('incomplete split root was synthesized into a valid plan');
+  }
   let projectedPlanIssue;
   let projectedPlanShapes;
   try {

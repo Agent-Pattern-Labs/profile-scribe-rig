@@ -1491,6 +1491,32 @@ export function repairAndValidateOpenRouterJSONMessage(
         !Array.isArray(item)) &&
       firstText(asObject(responseFormat).json_schema?.name) ===
         OPPORTUNITY_DISCOVERY_PLAN_CONTRACT) {
+    const exactRootKeys = [
+      'contractVersion', 'plans', 'reason', 'status'
+    ];
+    const splitRoots = data.filter((item) => {
+      const keys = Object.keys(asObject(item)).sort();
+      return JSON.stringify(keys) === JSON.stringify(exactRootKeys) &&
+        Array.isArray(item.plans) && item.plans.length === 1 &&
+        item.plans[0] && typeof item.plans[0] === 'object' &&
+        !Array.isArray(item.plans[0]);
+    });
+    if (splitRoots.length === 1) {
+      const loosePlans = data.filter((item) => item !== splitRoots[0]);
+      if (loosePlans.length === 1) {
+        const joinedRoot = {
+          ...splitRoots[0],
+          plans: [...splitRoots[0].plans, loosePlans[0]]
+        };
+        if (validate(joinedRoot)) data = joinedRoot;
+      }
+    }
+  }
+  if (Array.isArray(data) && data.length === MAX_DISCOVERY_PLANNER_PLANS &&
+      data.every((item) => item && typeof item === 'object' &&
+        !Array.isArray(item)) &&
+      firstText(asObject(responseFormat).json_schema?.name) ===
+        OPPORTUNITY_DISCOVERY_PLAN_CONTRACT) {
     const exactRootCandidates = data.filter((item) => validate(item));
     if (exactRootCandidates.length === 1) {
       data = exactRootCandidates[0];
