@@ -665,7 +665,8 @@ const FRESH_DISCOVERY_EXECUTION_ROUTES = Object.freeze([
     acquisitionMode: 'partner_channel',
     demandArtifactKinds: Object.freeze(['not_applicable']),
     providerSequences: Object.freeze([
-      Object.freeze(['people_data_labs_person_search'])
+      Object.freeze(['people_data_labs_person_search']),
+      Object.freeze(['brave_web_search'])
     ])
   }),
   Object.freeze({
@@ -692,7 +693,8 @@ const FRESH_DISCOVERY_EXECUTION_ROUTES = Object.freeze([
     acquisitionMode: 'permissioned_outreach',
     demandArtifactKinds: Object.freeze(['not_applicable']),
     providerSequences: Object.freeze([
-      Object.freeze(['people_data_labs_person_search'])
+      Object.freeze(['people_data_labs_person_search']),
+      Object.freeze(['brave_web_search'])
     ])
   }),
   Object.freeze({
@@ -3288,7 +3290,7 @@ function normalizeCommercialDiscoveryCapabilities(value) {
 function commercialDiscoveryMotionKindsForCapabilities(value) {
   const capabilities = normalizeCommercialDiscoveryCapabilities(value);
   const allowed = [];
-  if (capabilities.pdlPersonSearch) {
+  if (capabilities.pdlPersonSearch || capabilities.braveWebSearch) {
     allowed.push('referral_person', 'direct_buyer_person');
   }
   if (capabilities.braveWebSearch && capabilities.pdlPersonSearch) {

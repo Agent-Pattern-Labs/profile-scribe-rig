@@ -4346,7 +4346,10 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           commercialRole: 'referral_partner',
           acquisitionMode: 'partner_channel',
           demandArtifactKinds: ['not_applicable'],
-          providerSequences: [['people_data_labs_person_search']]
+          providerSequences: [
+            ['people_data_labs_person_search'],
+            ['brave_web_search']
+          ]
         },
         {
           motionKind: 'referral_org_decision_maker',
@@ -4368,7 +4371,10 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           commercialRole: 'buyer',
           acquisitionMode: 'permissioned_outreach',
           demandArtifactKinds: ['not_applicable'],
-          providerSequences: [['people_data_labs_person_search']]
+          providerSequences: [
+            ['people_data_labs_person_search'],
+            ['brave_web_search']
+          ]
         },
         {
           motionKind: 'direct_buyer_org_decision_maker',
