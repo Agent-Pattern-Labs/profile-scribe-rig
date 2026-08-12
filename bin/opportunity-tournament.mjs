@@ -11869,9 +11869,11 @@ function commercialDiscoveryReviewChannelForHypothesis(
       firstText(path.acquisitionMode) === 'partner_channel' &&
       routeCandidates.some((candidate) =>
         firstText(candidate.commercialRole) === 'referral_partner' &&
-        firstText(candidate.provider) ===
-          'people_data_labs_person_search' &&
-        firstText(candidate.kind) === 'person' &&
+        ((firstText(candidate.provider) ===
+            'people_data_labs_person_search' &&
+          firstText(candidate.kind) === 'person') ||
+         (firstText(candidate.provider) === 'brave_web_search' &&
+          firstText(candidate.kind) === 'public_professional')) &&
         compactStrings(candidate.evidenceRefs).some((ref) =>
           exactPartnerEvidenceRefs.has(ref)
         )
@@ -11899,9 +11901,11 @@ function commercialDiscoveryReviewChannelForHypothesis(
     exactBuyerEvidenceRefs.size > 0 &&
     routeCandidates.some((candidate) =>
       firstText(candidate.commercialRole) === 'buyer' &&
-      firstText(candidate.provider) ===
-        'people_data_labs_person_search' &&
-      firstText(candidate.kind) === 'person' &&
+      ((firstText(candidate.provider) ===
+          'people_data_labs_person_search' &&
+        firstText(candidate.kind) === 'person') ||
+       (firstText(candidate.provider) === 'brave_web_search' &&
+        firstText(candidate.kind) === 'public_professional')) &&
       compactStrings(candidate.evidenceRefs).some((ref) =>
         exactBuyerEvidenceRefs.has(ref)
       )
@@ -12288,6 +12292,10 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
       criticAccepted
         ? provisionalOfferValidationExperiment({
             winner: winnerHypothesis,
+            acquisitionMechanism: firstText(
+              discoveryReviewChannel,
+              winnerHypothesis?.channel
+            ),
             evidenceHash: firstText(
               raw.evidenceHash,
               stableHash(evidenceCatalog)
@@ -12355,15 +12363,24 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
           asObject(coherent.gate).reason,
           'No immediate revenue action is grounded by the approved evidence.'
         );
-  const experimentAllowedChannel = commercialContext.allowedChannels.find(
-    (channel) =>
-      allowedValue(
-        firstText(coherentExperiment.acquisitionMechanism),
-        [channel]
-      ) ||
-      comparable(firstText(coherentExperiment.acquisitionMechanism))
-        .includes(comparable(channel))
-  ) || '';
+  const experimentAcquisitionMechanism = firstText(
+    coherentExperiment.acquisitionMechanism
+  );
+  const experimentAllowedChannel =
+    discoveryReviewChannel && allowedValue(
+      experimentAcquisitionMechanism,
+      [discoveryReviewChannel]
+    )
+      ? discoveryReviewChannel
+      : commercialContext.allowedChannels.find(
+          (channel) =>
+            allowedValue(
+              experimentAcquisitionMechanism,
+              [channel]
+            ) ||
+            comparable(experimentAcquisitionMechanism)
+              .includes(comparable(channel))
+        ) || '';
   const resultGate = normalizeIncrementalRevenueGateForResult(
     gate,
     resultType
@@ -12390,6 +12407,7 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
 
 function provisionalOfferValidationExperiment({
   winner: winnerValue,
+  acquisitionMechanism,
   evidenceHash
 }) {
   const winner = asObject(winnerValue);
@@ -12420,7 +12438,10 @@ function provisionalOfferValidationExperiment({
     knownFact: truncate(knownFact, 320),
     buyer: truncate(buyer, 240),
     paidOffer: truncate(offer, 240),
-    acquisitionMechanism: truncate(firstText(winner.channel), 240),
+    acquisitionMechanism: truncate(firstText(
+      acquisitionMechanism,
+      winner.channel
+    ), 240),
     conversionDestination: truncate(destination, 240),
     paidConversion: truncate(paidConversion, 240),
     attributionSignal: truncate(attribution, 320),

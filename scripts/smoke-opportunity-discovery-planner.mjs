@@ -11042,12 +11042,12 @@ async function verifyProviderAttestedBuyerReviewRoute() {
 
   const attempt = {
     id: 'attempt-provider-attested-buyer-search',
-    provider: 'people_data_labs_person_search',
-    operation: 'planned_professional_search',
+    provider: 'brave_web_search',
+    operation: 'planned_brave_web_search',
     queryHash: 'a'.repeat(64),
     status: 'succeeded',
-    estimatedSpendMicros: 280_000,
-    actualSpendMicros: 280_000,
+    estimatedSpendMicros: 5_000,
+    actualSpendMicros: 5_000,
     creditsUsed: 1,
     resultCount: 1,
     reservedAt: '2026-08-01T12:00:00Z',
@@ -11059,7 +11059,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
   const buyerCandidateId =
     'candidate:external:888888888888888888888888';
   const buyerPublicUrl =
-    'https://www.linkedin.com/in/jordan-lee-operations';
+    'https://linkedin.com/in/jordan-lee-operations';
   const canonicalBuyerPublicUrl =
     'https://linkedin.com/in/jordan-lee-operations';
   const commercialDiscoveryEvidence = {
@@ -11070,7 +11070,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
     buyerArchetype: selectedMotion.buyer,
     queryHash: commercialDiscoveryAttemptLedgerHash([attempt]),
     market: selectedMotion.market,
-    providersAttempted: ['people_data_labs_person_search'],
+    providersAttempted: ['brave_web_search'],
     providerCalls: 1,
     paidProviderCalls: 1,
     creditsUsed: 1,
@@ -11086,10 +11086,10 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       label:
         'Jordan Lee — Operations Director at Northstar Field Services',
       summary:
-        'People Data Labs returned Jordan Lee as a current Operations Director at Northstar Field Services in the United States. This exact public professional record supports a review-first buyer route only and does not prove interest, permission, or demand.',
+        'Brave Web Search returned Jordan Lee as a current Operations Director at Northstar Field Services in the United States. This exact public professional record supports a review-first buyer route only and does not prove interest, permission, or demand.',
       url: buyerPublicUrl,
-      provider: 'people_data_labs_person_search',
-      provenance: 'people_data_labs_professional_record',
+      provider: 'brave_web_search',
+      provenance: 'read_only_professional_provider',
       roles: buyerRoles,
       verified: true,
       observedAt: '2026-08-01T12:00:01Z'
@@ -11097,14 +11097,14 @@ async function verifyProviderAttestedBuyerReviewRoute() {
     candidates: [{
       motionId: selectedMotion.id,
       id: buyerCandidateId,
-      kind: 'person',
+      kind: 'public_professional',
       displayLabel: 'Jordan Lee',
       organization: 'Northstar Field Services',
       role: 'Operations Director',
       commercialRole: 'buyer',
       market: 'United States',
       publicUrl: buyerPublicUrl,
-      provider: 'people_data_labs_person_search',
+      provider: 'brave_web_search',
       evidenceRefs: [buyerEvidenceRef],
       contactPaths: [{
         kind: 'public_professional_url',
@@ -11127,7 +11127,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
       normalizedDiscovery.candidates[0]?.publicUrl !==
         canonicalBuyerPublicUrl) {
     throw new Error(
-      `provider-attested buyer evidence fixture is invalid: ${JSON.stringify(normalizedDiscovery)}`
+      `provider-attested Brave buyer evidence fixture is invalid: ${JSON.stringify(normalizedDiscovery)}`
     );
   }
   const downstreamPayload = {
@@ -11199,7 +11199,7 @@ async function verifyProviderAttestedBuyerReviewRoute() {
         const target = byRole.get('exact_outside_target');
         return JSON.stringify(bindings.map((binding) => binding.role).sort()) ===
             JSON.stringify(expectedBindingRoles) &&
-          target?.kind === 'person' &&
+          target?.kind === 'public_professional' &&
           target?.claim === 'Jordan Lee' &&
           target?.organization === 'Northstar Field Services' &&
           target?.publicUrl === canonicalBuyerPublicUrl &&
