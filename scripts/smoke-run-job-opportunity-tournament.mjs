@@ -133,11 +133,11 @@ const server = createServer(async (request, response) => {
           total: 2,
           available: [{
             provider: 'OpenAI',
-            model: 'openai/gpt-5.6-terra-pro',
+            model: 'google/gemini-3.6-flash',
             selected: false
           }, {
             provider: 'Azure',
-            model: 'openai/gpt-5.6-terra-pro',
+            model: 'google/gemini-3.6-flash',
             selected: false
           }]
         },
@@ -154,7 +154,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({
       id: 'gen-run-job-embedded-502',
-      model: 'openai/gpt-5.6-terra-pro',
+      model: 'google/gemini-3.6-flash',
       error: {
         code: 502,
         message: 'raw-embedded-provider-secret-sentinel',
@@ -176,7 +176,7 @@ const server = createServer(async (request, response) => {
           total: 3,
           available: [{
             provider: 'OpenAI',
-            model: 'openai/gpt-5.6-terra-pro',
+            model: 'google/gemini-3.6-flash',
             selected: true
           }]
         },
@@ -212,7 +212,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({
     id: `gen-run-job-${providerCalls.length}`,
-    model: 'openai/gpt-5.6-terra-pro',
+    model: 'google/gemini-3.6-flash',
     choices: [{
       finish_reason: 'stop',
       native_finish_reason: 'stop',
@@ -226,7 +226,7 @@ const server = createServer(async (request, response) => {
         total: 1,
         available: [{
           provider: 'OpenAI',
-          model: 'openai/gpt-5.6-terra-pro',
+          model: 'google/gemini-3.6-flash',
           selected: true
         }]
       },
@@ -747,17 +747,17 @@ function verifySuccessfulTournament(receipt, job, calls) {
     );
     assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'openai/gpt-5.6-terra-pro',
+      'google/gemini-3.6-flash',
       'successful call lost its selected model'
     );
     assertEqual(
       providerReceipt?.model,
-      'openai/gpt-5.6-terra-pro',
+      'google/gemini-3.6-flash',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'openai/gpt-5.6-terra-pro',
+      'google/gemini-3.6-flash',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1096,11 +1096,11 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   }
   assertEqual(dimensions.r?.minItems, 1, 'generator schema lost its revenue path');
   assertEqual(dimensions.r?.maxItems, 1, 'generator schema allowed extra revenue paths');
-  assertEqual(call.envelope.temperature, undefined, 'generator must omit temperature for Luna require_parameters');
+  assertEqual(call.envelope.temperature, undefined, 'generator must keep the qualified provider request stable');
   assertEqual(call.envelope.model, undefined, 'generator must use the ordered OpenRouter models contract');
   assertEqual(
     JSON.stringify(call.envelope.models),
-    JSON.stringify(['openai/gpt-5.6-terra-pro']),
+    JSON.stringify(['google/gemini-3.6-flash']),
     'generator lost the bounded model fallback order'
   );
   assertEqual(
@@ -1115,24 +1115,12 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   );
   assertEqual(
       JSON.stringify(call.envelope.provider?.order),
-      JSON.stringify([
-      'deepinfra',
-      'openai',
-      'parasail',
-      'google-vertex',
-      'google-ai-studio'
-    ]),
-    'generator lost the ordered cross-vendor fallback route'
+      JSON.stringify(['google-vertex', 'google-ai-studio']),
+    'generator lost the ordered Google provider route'
   );
   assertEqual(
       JSON.stringify(call.envelope.provider?.only),
-      JSON.stringify([
-      'deepinfra',
-      'openai',
-      'parasail',
-      'google-vertex',
-      'google-ai-studio'
-    ]),
+      JSON.stringify(['google-vertex', 'google-ai-studio']),
     'generator allowed an unreviewed fallback vendor'
   );
   assertEqual(
@@ -1230,7 +1218,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'openai/gpt-5.6-terra-pro',
+          'google/gemini-3.6-flash',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

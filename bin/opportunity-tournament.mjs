@@ -159,16 +159,16 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
-  'openai/gpt-5.6-terra-pro';
+  'google/gemini-3.6-flash';
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'openai',
-    minimumContextTokens: 1_050_000,
+    family: 'google',
+    minimumContextTokens: 1_048_576,
     minimumOutputTokens: 16_000,
-    maximumPromptPrice: 2.5,
-    maximumCompletionPrice: 15
+    maximumPromptPrice: 1.5,
+    maximumCompletionPrice: 7.5
   })
 ]);
 if (1 + OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS.length > 3) {
@@ -196,32 +196,25 @@ const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
 // spend or the total price of a generation. Callers may tighten, but never
 // loosen, these tournament-specific caps.
 //
-// The legacy tournament and critic retain the cheaper qualified-route caps.
-// The discovery generator has a separate Terra ceiling below so raising
-// its complex-contract capacity cannot silently widen historical call spend.
+// Both bounded stages use the exact qualified Gemini route caps. Callers may
+// tighten these values but cannot silently widen production model spend.
 const MAX_PROVIDER_PRICE = {
-  prompt: 2.5,
-  completion: 15,
+  prompt: 1.5,
+  completion: 7.5,
   request: 0
 };
 const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
-  prompt: 2.5,
-  completion: 15,
+  prompt: 1.5,
+  completion: 7.5,
   request: 0
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
   order: [
-    'deepinfra',
-    'openai',
-    'parasail',
     'google-vertex',
     'google-ai-studio'
   ],
   only: [
-    'deepinfra',
-    'openai',
-    'parasail',
     'google-vertex',
     'google-ai-studio'
   ],
@@ -518,7 +511,7 @@ const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
   }
 ];
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
-// Terra Pro can spend several thousand output tokens on provider-side
+// A production critic spent several thousand output tokens on provider-side
 // reasoning before emitting its small strict verdict. A 1,200-token ceiling
 // produced a length stop after 4,718 billed completion tokens in production.
 // Six thousand remains below the $1 tournament envelope while allowing the
@@ -535,11 +528,11 @@ const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // The parsed cap below also dominates the strict grammar's computed worst-case
 // Unicode/evidence envelope instead of relying on representative samples.
 const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 16_000;
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 355_200;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 189_120;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE;
-const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 258_960;
+const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 146_376;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
     OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING *
@@ -1421,9 +1414,9 @@ export function buildOpenRouterJSONRequestBody({
   provider,
   responseFormat,
   plugins
-  // Temperature is intentionally not sent so the same exact request remains
-  // eligible for the Luna fallback, which does not advertise that parameter
-  // under OpenRouter require_parameters:true.
+  // Temperature is intentionally not sent so the exact request remains
+  // portable across every qualified Google endpoint under
+  // OpenRouter require_parameters:true.
 }) {
   const requestedPlugins = asArray(plugins)
     .filter((item) =>
