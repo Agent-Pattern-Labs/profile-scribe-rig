@@ -12445,7 +12445,7 @@ function provisionalOfferValidationExperiment({
     conversionDestination: truncate(destination, 240),
     paidConversion: truncate(paidConversion, 240),
     attributionSignal: truncate(attribution, 320),
-    action: truncate(action, 700),
+    action: truncate(`Review first: ${action}`, 700),
     missingEvidence: [
       'a user-confirmed current paid offer and price',
       'a live conversion destination for that offer',

@@ -7495,6 +7495,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
       experiment?.kind !== 'revenue_path_grounding' ||
       !/^Proposed paid ProfileScribe\b/.test(experiment?.paidOffer || '') ||
       !experiment?.buyer?.includes('Alex Rivera') ||
+      !experiment?.action?.startsWith('Review first: ') ||
       !experiment?.action?.includes('Alex Rivera') ||
       !experiment?.action?.includes('proposed paid') ||
       experiment?.requiresReview !== true ||
