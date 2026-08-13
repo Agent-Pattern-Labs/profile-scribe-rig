@@ -218,7 +218,9 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // completed HTTP-200/stop response that violated the exact strict schema in
   // eight independently validated fields across both returned motions, and
   // Fireworks later returned a completed HTTP-200/stop response that violated
-  // four exact pattern constraints across both returned motions.
+  // four exact pattern constraints across both returned motions, and Morph
+  // returned the same terminal envelope while violating the compensated-job
+  // maximum length and one causal-path minimum length in its sole motion.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
   ignore: [
@@ -231,7 +233,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'wafer',
     'ambient',
     'baidu',
-    'fireworks'
+    'fireworks',
+    'morph'
   ],
   sort: 'throughput',
   allow_fallbacks: true,

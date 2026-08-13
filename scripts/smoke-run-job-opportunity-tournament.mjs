@@ -3011,7 +3011,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
       'wafer',
       'ambient',
       'baidu',
-      'fireworks'
+      'fireworks',
+      'morph'
     ]),
     'generator lost its evidence-backed provider quarantine'
   );

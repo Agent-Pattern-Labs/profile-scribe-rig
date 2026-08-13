@@ -1982,6 +1982,7 @@ await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
 await verifyAmbientProductionTimeoutFailsOnce(unsafeJob);
 await verifyBaiduProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyFireworksProductionStrictSchemaMismatchFailsOnce(unsafeJob);
+await verifyMorphProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
@@ -5154,7 +5155,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'wafer',
             'ambient',
             'baidu',
-            'fireworks'
+            'fireworks',
+            'morph'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7674,7 +7676,8 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'wafer',
     'ambient',
     'baidu',
-    'fireworks'
+    'fireworks',
+    'morph'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
@@ -7784,7 +7787,8 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
     'wafer',
     'ambient',
     'baidu',
-    'fireworks'
+    'fireworks',
+    'morph'
   ];
   const capabilityRouting =
     opportunityCommercialDiscoveryCapabilities()
@@ -7986,7 +7990,8 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
     'wafer',
     'ambient',
     'baidu',
-    'fireworks'
+    'fireworks',
+    'morph'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8196,7 +8201,8 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
     'wafer',
     'ambient',
     'baidu',
-    'fireworks'
+    'fireworks',
+    'morph'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8318,6 +8324,264 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
   }
 }
 
+async function verifyMorphProductionStrictSchemaMismatchFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  let wireRequestSeen;
+  const rawSentinel = 'raw-morph-schema-mismatch-secret-sentinel';
+  const invalidCompensatedJob =
+    `Paid role ${'professional '.repeat(12)}`.trim();
+  const invalidRevenueLabel = 'Paid';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      wireRequestSeen = JSON.parse(serializeOpenRouterJSONRequestBody({
+        ...request,
+        apiKey: 'not-serialized'
+      }));
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      const evidenceRef = buildEvidenceCatalog(job.payload, {}, now, {
+        includeSystemAttributionCapability: true
+      }).find((item) => /^observation:/i.test(item.id || ''))?.id;
+      if (!evidenceRef) {
+        throw new Error(
+          'Morph fixture has no approved observation evidence'
+        );
+      }
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(
+          cases[0].plans(evidenceRef)[0],
+          evidenceRef
+        )
+      );
+      for (const plan of plans) plan.market = exactMarket;
+      plans[0].paidOffer.compensatedJob = invalidCompensatedJob;
+      plans[0].contingentFinalists.pathBase.r[0].l =
+        invalidRevenueLabel;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage: {
+          prompt_tokens: 13_339,
+          completion_tokens: 4_396,
+          total_tokens: 17_735,
+          cost: 0.003076209
+        },
+        generationId: 'gen-1786638788-wg2KrrJutrbOs8xQ9n96',
+        diagnostics: {
+          httpStatus: 200,
+          routerStrategy: 'direct',
+          routerAttempt: 4,
+          routerCandidateCount: 27,
+          routerAttemptStatuses: [504, 429, 504, 200],
+          routerAttempts: [{
+            provider: 'AtlasCloud',
+            model: 'deepseek/deepseek-v4-flash-20260731',
+            status: 504
+          }, {
+            provider: 'Parasail',
+            model: 'deepseek/deepseek-v4-flash-20260731',
+            status: 429
+          }, {
+            provider: 'Together',
+            model: 'deepseek/deepseek-v4-flash-20260731',
+            status: 504
+          }, {
+            provider: 'Morph',
+            model: 'deepseek/deepseek-v4-flash-20260731',
+            status: 200
+          }],
+          routerAttemptSequenceSource: 'reported',
+          routerSelectedEndpointEvidenced: true,
+          routerSelectedProvider: 'Morph',
+          routerSelectedModel: 'deepseek/deepseek-v4-flash-20260731',
+          routerEnvelopeProvider: 'Morph',
+          routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+          routerFinalAttemptProvider: 'Morph',
+          routerFinalAttemptModel: 'deepseek/deepseek-v4-flash-20260731',
+          routerFallbackUsed: true,
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 15_071,
+          contentSha256:
+            '779742adce8fdf44d981dabc3e28c356087e3b5cb54efb987c2bfd3ed1c11736',
+          streaming: true,
+          streamEventCount: 4_397,
+          streamWireByteCount: 1_260_074,
+          streamFirstDataLatencyMs: 1_402,
+          streamDurationMs: 76_681,
+          streamCompleted: true,
+          responseHeadersReceived: true,
+          rawProviderBody: rawSentinel
+        },
+        annotations: []
+      };
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIssues = [
+    ['maxLength', '/plans/0/paidOffer/compensatedJob'],
+    ['minLength', '/plans/0/contingentFinalists/pathBase/r/0/l']
+  ];
+  const actualIssues = result.normalizationDiagnostic?.issues?.map(
+    (issue) => [issue.keyword, issue.instancePath]
+  );
+  const actualIssueKeys = result.normalizationDiagnostic?.issues?.map(
+    (issue) => Object.keys(issue).sort()
+  );
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer',
+    'ambient',
+    'baidu',
+    'fireworks',
+    'morph'
+  ];
+  if (calls !== 1 ||
+      JSON.stringify(wireRequestSeen?.response_format) !==
+        JSON.stringify(requestSeen?.responseFormat) ||
+      JSON.stringify(wireRequestSeen?.provider?.ignore) !==
+        JSON.stringify(expectedIgnore) ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 2, completion: 6, request: 0 }
+      }) ||
+      result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.acceptedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(result.planSelection?.rejectedPlans) !== '[]' ||
+      result.webSearchReceipt !== null ||
+      result.usage?.calls !== 1 || result.usage?.successfulCalls !== 1 ||
+      result.usage?.promptTokens !== 13_339 ||
+      result.usage?.completionTokens !== 4_396 ||
+      result.usage?.totalTokens !== 17_735 ||
+      result.usage?.reportedCostMicros !== 3_077 ||
+      result.usage?.costReporting !== 'complete' ||
+      result.usage?.withinBudget !== true ||
+      receipt?.status !== 'completed' ||
+      receipt?.error !== undefined ||
+      receipt?.generationId !==
+        'gen-1786638788-wg2KrrJutrbOs8xQ9n96' ||
+      receipt?.model !== 'deepseek/deepseek-v4-flash-20260731' ||
+      receipt?.requestedModel !== 'deepseek/deepseek-v4-flash-0731' ||
+      receipt?.openRouterUsage?.prompt_tokens !== 13_339 ||
+      receipt?.openRouterUsage?.completion_tokens !== 4_396 ||
+      receipt?.openRouterUsage?.total_tokens !== 17_735 ||
+      receipt?.openRouterUsage?.cost !== 0.003076209 ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerStrategy !== 'direct' ||
+      diagnostics?.routerAttempt !== 4 ||
+      diagnostics?.routerCandidateCount !== 27 ||
+      JSON.stringify(diagnostics?.routerAttemptStatuses) !==
+        JSON.stringify([504, 429, 504, 200]) ||
+      JSON.stringify(diagnostics?.routerAttempts) !== JSON.stringify([{
+        provider: 'AtlasCloud',
+        model: 'deepseek/deepseek-v4-flash-20260731',
+        status: 504
+      }, {
+        provider: 'Parasail',
+        model: 'deepseek/deepseek-v4-flash-20260731',
+        status: 429
+      }, {
+        provider: 'Together',
+        model: 'deepseek/deepseek-v4-flash-20260731',
+        status: 504
+      }, {
+        provider: 'Morph',
+        model: 'deepseek/deepseek-v4-flash-20260731',
+        status: 200
+      }]) ||
+      diagnostics?.routerAttemptSequenceSource !== 'reported' ||
+      diagnostics?.routerSelectedProvider !== 'Morph' ||
+      diagnostics?.routerSelectedModel !==
+        'deepseek/deepseek-v4-flash-20260731' ||
+      diagnostics?.routerEnvelopeProvider !== 'Morph' ||
+      diagnostics?.routerEnvelopeModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.routerFinalAttemptProvider !== 'Morph' ||
+      diagnostics?.routerFinalAttemptModel !==
+        'deepseek/deepseek-v4-flash-20260731' ||
+      diagnostics?.routerSelectedEndpointEvidenced !== true ||
+      diagnostics?.routerFallbackUsed !== true ||
+      diagnostics?.finishReason !== 'stop' ||
+      diagnostics?.nativeFinishReason !== 'stop' ||
+      diagnostics?.contentByteCount !== 15_071 ||
+      diagnostics?.contentSha256 !==
+        '779742adce8fdf44d981dabc3e28c356087e3b5cb54efb987c2bfd3ed1c11736' ||
+      diagnostics?.streaming !== true ||
+      diagnostics?.streamEventCount !== 4_397 ||
+      diagnostics?.streamWireByteCount !== 1_260_074 ||
+      diagnostics?.streamFirstDataLatencyMs !== 1_402 ||
+      diagnostics?.streamDurationMs !== 76_681 ||
+      diagnostics?.streamCompleted !== true ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.localJSONRepairApplied !== undefined ||
+      diagnostics?.localJSONRepairFailure !== undefined ||
+      result.preflight?.routeProvenanceValidated !== true ||
+      !Number.isInteger(result.preflight?.responseBodyByteCount) ||
+      result.preflight.responseBodyByteCount <= 0 ||
+      result.preflight.responseBodyByteCount >
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
+      result.normalizationDiagnostic?.contractVersion !==
+        OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      result.normalizationDiagnostic?.failedMotionCount !== 1 ||
+      JSON.stringify(actualIssues) !== JSON.stringify(expectedIssues) ||
+      actualIssueKeys?.some((keys) =>
+        JSON.stringify(keys) !==
+          JSON.stringify(['instancePath', 'keyword'])) ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.commercialDiscoveryEvidence !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(rawSentinel) ||
+      JSON.stringify(result).includes(invalidCompensatedJob) ||
+      JSON.stringify(result).includes(invalidRevenueLabel)) {
+    throw new Error(
+      `Morph production strict-schema mismatch did not fail once after exact completed accounting: ${JSON.stringify({
+        calls,
+        routeIgnore: requestSeen?.provider?.ignore,
+        wireSchemaParity:
+          JSON.stringify(wireRequestSeen?.response_format) ===
+            JSON.stringify(requestSeen?.responseFormat),
+        status: result.status,
+        plans: result.plans?.length,
+        planSelection: result.planSelection,
+        usage: result.usage,
+        receipt,
+        preflight: result.preflight,
+        normalizationDiagnostic: result.normalizationDiagnostic,
+        criticPresent: result.llm?.commercialCritic !== undefined,
+        repairPresent: result.llm?.strategyFamilyRepair !== undefined,
+        discoveryPresent:
+          result.commercialDiscoveryEvidence !== undefined,
+        sideEffectsPerformed: result.sideEffectsPerformed,
+        rawSentinelPresent: JSON.stringify(result).includes(rawSentinel)
+      })}`
+    );
+  }
+}
+
 async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
   const expectedIgnore = [
     'cloudflare',
@@ -8329,7 +8593,8 @@ async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
     'wafer',
     'ambient',
     'baidu',
-    'fireworks'
+    'fireworks',
+    'morph'
   ];
   for (const scenario of [{
     provider: 'Wafer',
