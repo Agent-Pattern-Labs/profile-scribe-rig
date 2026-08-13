@@ -203,11 +203,12 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // Quarantine only endpoints with durable evidence under the applicable
   // transport contract: Cloudflare returned empty HTTP-200 envelopes,
   // OpenInference exceeded the compact 40-KiB structured-output envelope,
-  // and Decart returned HTTP 200/stop while violating eight strict-schema
-  // minLength constraints with empty compact fields.
+  // Decart returned HTTP 200/stop while violating eight strict-schema
+  // minLength constraints with empty compact fields, and DigitalOcean emitted
+  // only 3,014 content bytes before the exact 300-second planner deadline.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
-  ignore: ['cloudflare', 'open-inference', 'decart'],
+  ignore: ['cloudflare', 'open-inference', 'decart', 'digitalocean'],
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
