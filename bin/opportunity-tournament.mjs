@@ -231,6 +231,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // bytes without finish or usage before the same exact total deadline.
   // Mancer 2 then returned a completed HTTP-200/stop response whose root
   // object violated the exact strict structured-output envelope.
+  // Io Net subsequently returned HTTP 200 and streamed 9,184 content bytes
+  // without finish or usage before the same exact total deadline.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
   ignore: [
@@ -249,7 +251,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ],
   sort: 'throughput',
   allow_fallbacks: true,

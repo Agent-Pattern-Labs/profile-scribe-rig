@@ -3017,7 +3017,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
       'parasail',
       'together',
       'deepinfra',
-      'mancer'
+      'mancer',
+      'io-net'
     ]),
     'generator lost its evidence-backed provider quarantine'
   );

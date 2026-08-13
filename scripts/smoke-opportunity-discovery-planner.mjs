@@ -1988,6 +1988,7 @@ await verifyAtlasCloudProductionRawOverflowFailsOnce(unsafeJob);
 await verifyParasailProductionTimeoutFailsOnce(unsafeJob);
 await verifyTogetherProductionTimeoutFailsOnce(unsafeJob);
 await verifyDeepInfraProductionTimeoutFailsOnce(unsafeJob);
+await verifyIoNetProductionTimeoutFailsOnce(unsafeJob);
 await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
@@ -5166,7 +5167,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'parasail',
             'together',
             'deepinfra',
-            'mancer'
+            'mancer',
+            'io-net'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7692,7 +7694,8 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
@@ -7808,7 +7811,8 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   const capabilityRouting =
     opportunityCommercialDiscoveryCapabilities()
@@ -8016,7 +8020,8 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8232,7 +8237,8 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8485,7 +8491,8 @@ async function verifyMorphProductionStrictSchemaMismatchFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8719,7 +8726,8 @@ async function verifyMancerProductionStrictRootSchemaMismatchFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8881,7 +8889,8 @@ async function verifyAtlasCloudProductionRawOverflowFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9040,7 +9049,8 @@ async function verifyParasailProductionTimeoutFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9198,7 +9208,8 @@ async function verifyTogetherProductionTimeoutFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9356,7 +9367,8 @@ async function verifyDeepInfraProductionTimeoutFailsOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9453,6 +9465,165 @@ async function verifyDeepInfraProductionTimeoutFailsOnce(job) {
   }
 }
 
+async function verifyIoNetProductionTimeoutFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  const rawSentinel = 'raw-io-net-timeout-secret-sentinel';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      const error = new Error(
+        'OpenRouter streaming request exceeded its bounded total deadline'
+      );
+      error.openRouterFailureCode = 'openrouter_timeout';
+      error.openRouterGenerationId =
+        'gen-1786648559-zOkTBWOkxN1JDTYwO7rY';
+      error.openRouterDiagnostics = {
+        httpStatus: 200,
+        routerSelectedProvider: 'Io Net',
+        routerSelectedModel: 'deepseek/deepseek-v4-flash-0731',
+        routerEnvelopeProvider: 'Io Net',
+        routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+        contentByteCount: 9_184,
+        contentSha256:
+          '78d3cf13b0ceb0b47da213f18f1a37de5510f35c15e8391e43a76bbd9da9bb1d',
+        streaming: true,
+        streamEventCount: 8_453,
+        streamWireByteCount: 2_407_792,
+        streamFirstDataLatencyMs: 6_132,
+        streamDurationMs: 300_009,
+        streamCompleted: false,
+        timeoutKind: 'total',
+        timeoutOrigin: 'profilescribe_local_deadline',
+        timeoutDeadlineMs: 300_000,
+        timeoutElapsedMs: 300_009,
+        timeoutPhase: 'response_stream',
+        responseHeadersReceived: true,
+        rawProviderBody: rawSentinel
+      };
+      throw error;
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer',
+    'ambient',
+    'baidu',
+    'fireworks',
+    'morph',
+    'atlas-cloud',
+    'parasail',
+    'together',
+    'deepinfra',
+    'mancer',
+    'io-net'
+  ];
+  if (calls !== 1 ||
+      requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
+      JSON.stringify(requestSeen?.models) !==
+        JSON.stringify(['deepseek/deepseek-v4-flash-0731']) ||
+      requestSeen?.maxTokens !== 42_000 ||
+      requestSeen?.stream !== true ||
+      requestSeen?.streamMaxContentBytes !== 163_840 ||
+      requestSeen?.streamStartTimeoutMs !== 180_000 ||
+      requestSeen?.streamIdleTimeoutMs !== 60_000 ||
+      requestSeen?.streamTotalTimeoutMs !== 300_000 ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 2, completion: 6, request: 0 }
+      }) ||
+      result.status !== 'blocked' ||
+      result.plans.length !== 0 ||
+      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.acceptedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(result.planSelection?.rejectedPlans) !== '[]' ||
+      result.webSearchReceipt !== null ||
+      result.usage?.calls !== 1 ||
+      result.usage?.successfulCalls !== 0 ||
+      result.usage?.promptTokens !== 0 ||
+      result.usage?.completionTokens !== 0 ||
+      result.usage?.totalTokens !== 0 ||
+      result.usage?.reportedCostMicros !== 0 ||
+      result.usage?.reportedCostUsd !== 0 ||
+      result.usage?.costReporting !== 'unavailable' ||
+      result.usage?.withinBudget !== true ||
+      receipt?.status !== 'failed' ||
+      receipt?.error !== 'openrouter_timeout' ||
+      receipt?.generationId !==
+        'gen-1786648559-zOkTBWOkxN1JDTYwO7rY' ||
+      receipt?.model !== 'deepseek/deepseek-v4-flash-0731' ||
+      receipt?.requestedModel !== 'deepseek/deepseek-v4-flash-0731' ||
+      JSON.stringify(receipt?.openRouterUsage) !== '{}' ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerSelectedProvider !== 'Io Net' ||
+      diagnostics?.routerSelectedModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.routerEnvelopeProvider !== 'Io Net' ||
+      diagnostics?.routerEnvelopeModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.contentByteCount !== 9_184 ||
+      diagnostics?.contentSha256 !==
+        '78d3cf13b0ceb0b47da213f18f1a37de5510f35c15e8391e43a76bbd9da9bb1d' ||
+      diagnostics?.streaming !== true ||
+      diagnostics?.streamEventCount !== 8_453 ||
+      diagnostics?.streamWireByteCount !== 2_407_792 ||
+      diagnostics?.streamFirstDataLatencyMs !== 6_132 ||
+      diagnostics?.streamDurationMs !== 300_009 ||
+      diagnostics?.streamCompleted !== false ||
+      diagnostics?.timeoutKind !== 'total' ||
+      diagnostics?.timeoutOrigin !== 'profilescribe_local_deadline' ||
+      diagnostics?.timeoutDeadlineMs !== 300_000 ||
+      diagnostics?.timeoutElapsedMs !== 300_009 ||
+      diagnostics?.timeoutPhase !== 'response_stream' ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.finishReason !== undefined ||
+      diagnostics?.nativeFinishReason !== undefined ||
+      diagnostics?.localJSONRepairApplied !== undefined ||
+      diagnostics?.localJSONRepairFailure !== undefined ||
+      result.preflight?.authorized !== true ||
+      !Number.isInteger(result.preflight?.requestBodyByteCount) ||
+      result.preflight.requestBodyByteCount <= 0 ||
+      result.preflight.requestBodyByteCount > 45_056 ||
+      !/^[a-f0-9]{64}$/.test(result.preflight?.requestBodySha256 || '') ||
+      result.preflight?.serializedPromptTokenCeiling !==
+        result.preflight.requestBodyByteCount + 1_024 ||
+      result.preflight?.promptTokenCeiling !==
+        result.preflight.serializedPromptTokenCeiling ||
+      result.preflight?.responseBodyByteCount !== undefined ||
+      result.preflight?.routeProvenanceValidated !== undefined ||
+      result.normalizationDiagnostic !== undefined ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.commercialDiscoveryEvidence !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(rawSentinel)) {
+    throw new Error(
+      `Io Net production timeout did not fail once with bounded diagnostics: ${JSON.stringify({
+        calls,
+        request: requestSeen,
+        result,
+        rawSentinelPresent: JSON.stringify(result).includes(rawSentinel)
+      })}`
+    );
+  }
+}
+
 async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
   const expectedIgnore = [
     'cloudflare',
@@ -9470,7 +9641,8 @@ async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
     'parasail',
     'together',
     'deepinfra',
-    'mancer'
+    'mancer',
+    'io-net'
   ];
   for (const scenario of [{
     provider: 'Wafer',
