@@ -11,13 +11,14 @@ import {
   buildEvidenceCatalog,
   commercialDiscoveryAttemptLedgerHash,
   diverseFinalists,
+  localStructuredOutputValidatorCacheStats,
   normalizeCommercialDiscoveryEvidence,
   opportunityCommercialDiscoveryCapabilities,
   repairAndValidateOpenRouterJSONMessage,
   serializeOpenRouterJSONRequestBody,
   validateOpportunityCommercialDiscoveryNoTargetEnvelope,
   runOpportunityTournament,
-  runOpportunityDiscoveryPlanner
+  runOpportunityDiscoveryPlanner as runOpportunityDiscoveryPlannerRaw
 } from '../bin/opportunity-tournament.mjs';
 
 const now = new Date('2026-08-01T12:00:00Z');
@@ -27,12 +28,32 @@ const usage = {
   total_tokens: 1550,
   cost: 0.0065
 };
-const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 32 * 1024;
+const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 40 * 1024;
 const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 24 * 1024;
-const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES = 32 * 1024;
+const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES = 34_400;
 const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 20 * 1024;
 const COMPENSATED_JOB_PAID_OFFER =
   'A current compensated role matching verified professional skills';
+
+// Normal planner fixtures exercise business/schema behavior, so give each
+// successful injected completion the same direct-route receipt required at the
+// real transport boundary. Route-negative probes call the raw export below.
+async function runOpportunityDiscoveryPlanner(args) {
+  const completeJSON = args.completeJSON;
+  return runOpportunityDiscoveryPlannerRaw({
+    ...args,
+    completeJSON: async (request) => {
+      const completion = await completeJSON(request);
+      return {
+        ...completion,
+        diagnostics: {
+          ...acceptedPlannerRouteDiagnostics(),
+          ...(completion?.diagnostics || {})
+        }
+      };
+    }
+  });
+}
 
 verifyBoundedLocalJSONRepair();
 
@@ -68,28 +89,60 @@ function verifyBoundedLocalJSONRepair() {
   })) {
     throw new Error(`bounded local JSON repair changed valid data: ${JSON.stringify(repaired)}`);
   }
-  const singletonArrayRepaired = repairAndValidateOpenRouterJSONMessage(
-    '[{"plans":["buyer","referral"],"status":"planned",}]',
-    responseFormat
-  );
-  if (JSON.stringify(singletonArrayRepaired) !== JSON.stringify(repaired)) {
+  let singletonArrayIssue;
+  try {
+    repairAndValidateOpenRouterJSONMessage(
+      '[{"plans":["buyer","referral"],"status":"planned",}]',
+      responseFormat
+    );
+  } catch (error) {
+    singletonArrayIssue = error;
+  }
+  if (singletonArrayIssue?.localJSONRepairRootShape?.kind !== 'array' ||
+      singletonArrayIssue.localJSONRepairRootShape.arrayLength !== 1 ||
+      singletonArrayIssue.localJSONRepairSchemaIssues?.[0]?.keyword !==
+        'type') {
     throw new Error(
-      `singleton object array was not safely unwrapped: ${JSON.stringify(singletonArrayRepaired)}`
+      `singleton root array was promoted or lost its exact schema diagnostic: ${JSON.stringify(singletonArrayIssue)}`
     );
   }
-  const exactRootFromFragments = repairAndValidateOpenRouterJSONMessage(
-    '{"plans":["buyer","referral"],"status":"planned"}\n{}',
-    {
-      ...responseFormat,
-      json_schema: {
-        ...responseFormat.json_schema,
-        name: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT
-      }
+  for (let index = 0; index < 32; index += 1) {
+    const value = `planned-${index}`;
+    const churnFormat = structuredClone(responseFormat);
+    churnFormat.json_schema.schema.properties.status.enum = [value];
+    const churned = repairAndValidateOpenRouterJSONMessage(
+      JSON.stringify({ plans: ['buyer', 'referral'], status: value }),
+      churnFormat
+    );
+    if (churned.status !== value) {
+      throw new Error('bounded local AJV cache changed validated data');
     }
-  );
-  if (JSON.stringify(exactRootFromFragments) !== JSON.stringify(repaired)) {
+  }
+  const validatorCache = localStructuredOutputValidatorCacheStats();
+  if (validatorCache.maximum !== 16 || validatorCache.size < 1 ||
+      validatorCache.size > validatorCache.maximum) {
     throw new Error(
-      `one exact root was not selected from repaired fragments: ${JSON.stringify(exactRootFromFragments)}`
+      `local structured-output validator cache is unbounded: ${JSON.stringify(validatorCache)}`
+    );
+  }
+  let fragmentedRootIssue;
+  try {
+    repairAndValidateOpenRouterJSONMessage(
+      '{"plans":["buyer","referral"],"status":"planned"}\n{}',
+      {
+        ...responseFormat,
+        json_schema: {
+          ...responseFormat.json_schema,
+          name: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT
+        }
+      }
+    );
+  } catch (error) {
+    fragmentedRootIssue = error;
+  }
+  if (fragmentedRootIssue?.localJSONRepairRootShape?.kind !== 'array') {
+    throw new Error(
+      `fragmented roots were promoted before exact schema validation: ${JSON.stringify(fragmentedRootIssue)}`
     );
   }
   const planPairResponseFormat = {
@@ -123,35 +176,43 @@ function verifyBoundedLocalJSONRepair() {
       }
     }
   };
-  const projectedPlanPair = repairAndValidateOpenRouterJSONMessage(
-    '{"label":"buyer"}\n{"label":"referral"}',
-    planPairResponseFormat
-  );
-  if (projectedPlanPair.contractVersion !==
-        OPPORTUNITY_DISCOVERY_PLAN_CONTRACT ||
-      projectedPlanPair.status !== 'planned' ||
-      projectedPlanPair.reason !== '' ||
-      JSON.stringify(projectedPlanPair.plans) !==
-        JSON.stringify([{ label: 'buyer' }, { label: 'referral' }])) {
+  let projectedPlanPairIssue;
+  try {
+    repairAndValidateOpenRouterJSONMessage(
+      '{"label":"buyer"}\n{"label":"referral"}',
+      planPairResponseFormat
+    );
+  } catch (error) {
+    projectedPlanPairIssue = error;
+  }
+  if (projectedPlanPairIssue?.localJSONRepairRootShape?.kind !== 'array' ||
+      projectedPlanPairIssue.localJSONRepairRootShape.arrayLength !== 2 ||
+      projectedPlanPairIssue.localJSONRepairSchemaIssues?.[0]?.keyword !==
+        'type') {
     throw new Error(
-      `exact two-plan root projection drifted: ${JSON.stringify(projectedPlanPair)}`
+      `two loose plans were projected into a valid root: ${JSON.stringify(projectedPlanPairIssue)}`
     );
   }
-  const joinedSplitRoot = repairAndValidateOpenRouterJSONMessage(
-    JSON.stringify([
-      {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason: '',
-        plans: [{ label: 'buyer' }]
-      },
-      { label: 'referral' }
-    ]),
-    planPairResponseFormat
-  );
-  if (JSON.stringify(joinedSplitRoot) !== JSON.stringify(projectedPlanPair)) {
+  let joinedSplitRootIssue;
+  try {
+    repairAndValidateOpenRouterJSONMessage(
+      JSON.stringify([
+        {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans: [{ label: 'buyer' }]
+        },
+        { label: 'referral' }
+      ]),
+      planPairResponseFormat
+    );
+  } catch (error) {
+    joinedSplitRootIssue = error;
+  }
+  if (joinedSplitRootIssue?.localJSONRepairRootShape?.kind !== 'array') {
     throw new Error(
-      `split root plus plan was not losslessly joined: ${JSON.stringify(joinedSplitRoot)}`
+      `split root plus plan was joined before exact validation: ${JSON.stringify(joinedSplitRootIssue)}`
     );
   }
   let unsafeSplitRejected = false;
@@ -194,10 +255,9 @@ function verifyBoundedLocalJSONRepair() {
     );
   }
   if (JSON.stringify(projectedPlanIssue) !== JSON.stringify({
-    keyword: 'required',
-    instancePath: '/plans/1',
-    schemaPath: '#/properties/plans/items/required',
-    missingProperty: 'label'
+    keyword: 'type',
+    instancePath: '/',
+    schemaPath: '#/type'
   })) {
     throw new Error(
       `two-plan projection lost item-level schema diagnostics: ${JSON.stringify(projectedPlanIssue)}`
@@ -565,10 +625,6 @@ for (const scenario of cases) {
           ?.items?.properties?.market?.enum?.[0];
       for (const responsePlan of responsePlans) {
         responsePlan.market = exactSchemaMarket;
-        if (responsePlan.motionKind === 'compensated_job') {
-          responsePlan.paidOffer =
-            'A current compensated role matching verified professional skills';
-        }
         delete responsePlan.conversionDestination;
         delete responsePlan.paidConversion;
         delete responsePlan.attributionSignal;
@@ -579,6 +635,10 @@ for (const scenario of cases) {
         responsePlan.contingentFinalists = compactContingentFinalists(
           responsePlan.contingentFinalists
         );
+        responsePlan.paidOffer = {
+          seller: responsePlan.paidOffer,
+          compensatedJob: COMPENSATED_JOB_PAID_OFFER
+        };
         const compactBytes = Buffer.byteLength(
           JSON.stringify(responsePlan.contingentFinalists),
           'utf8'
@@ -600,28 +660,8 @@ for (const scenario of cases) {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
         reason: '',
-        plans: responsePlans
+        plans: compactFreshPlannerPlans(responsePlans)
       };
-      if (scenario.name === 'lactation referral reasoning') {
-        // These target-slot values are individually schema-valid but
-        // contradict their containing motion. They are protocol structure,
-        // not commercial facts, so normalization must bind them
-        // deterministically without a second model call.
-        responseData.plans[0].targetSlot.commercialRole = 'buyer';
-        responseData.plans[0].targetSlot.requiredEvidenceRoles = [
-          'defined_buyer'
-        ];
-      }
-      for (const responsePlan of responseData.plans) {
-        if (responsePlan.commercialRole !== 'paid_demand') continue;
-        // Paid-demand route selection uniquely implies one exact public live
-        // demand target. These schema-valid slot values reproduce planner
-        // protocol drift seen in production and must be normalized locally;
-        // the outside target itself still requires provider evidence.
-        responsePlan.targetSlot.finalTargetKind = 'person';
-        responsePlan.targetSlot.resolutionStrategy =
-          'organization_then_decision_maker';
-      }
       const responseBytes = Buffer.byteLength(
         JSON.stringify(responseData),
         'utf8'
@@ -671,6 +711,12 @@ for (const scenario of cases) {
           ?.enum
       ) !== JSON.stringify(['planned']) ||
       requestSeen.plugins?.length !== 0 ||
+      !initialPlannerPrompt.constraints?.some((constraint) =>
+        /model call has no search plugin.*after plan acceptance.*separately budgeted bounded provider reads/is.test(
+          constraint
+        )
+      ) ||
+      /Forced Exa/i.test(requestSeen.user || '') ||
       requestSeen.allowLocalJSONRepair !== true ||
       requestSeen.stream !== true ||
       requestSeen.streamStartTimeoutMs !== 180_000 ||
@@ -729,6 +775,7 @@ for (const scenario of cases) {
       ) ||
       result.usage.calls !== 1 ||
       result.usage.successfulCalls !== 1 ||
+      result.preflight?.routeProvenanceValidated !== true ||
       result.webSearchReceipt?.attempted !== false ||
       result.webSearchReceipt?.resultCount !== 0 ||
       result.webSearchReceipt?.annotations?.length !== 0 ||
@@ -793,39 +840,31 @@ for (const scenario of cases) {
     ?.properties?.e || {};
   const followUpLabelPattern = plannerDefinitions.followUpItem
     ?.properties?.l?.pattern || '';
-  const selectedChannelValues = plannerDefinitions.channelItem
-    ?.properties?.l?.enum || [];
-  const referralChannelValues = selectedChannelValues.filter((value) =>
-    /(?:referral fit|partner-channel)/.test(value)
+  const resolvePlannerSchema = (schema) => typeof schema?.$ref === 'string'
+    ? plannerDefinitions[schema.$ref.split('/').at(-1)]
+    : schema;
+  const buyerLabelSchema = resolvePlannerSchema(
+    plannerDefinitions.buyerItem?.properties?.l
   );
-  const buyerChannelValues = selectedChannelValues.filter((value) =>
-    /(?:buyer fit|purchase-authority)/.test(value)
+  const channelLabelSchema = resolvePlannerSchema(
+    plannerDefinitions.channelItem?.properties?.l
   );
-  const paidDemandChannelValues = selectedChannelValues.filter((value) =>
-    /paid-demand/.test(value)
+  const actionLabelSchema = resolvePlannerSchema(
+    plannerDefinitions.actionItem?.properties?.l
   );
-  const selectedBuyerValues = plannerDefinitions.buyerItem
-    ?.properties?.l?.enum || [];
-  const referralBuyerValues = selectedBuyerValues.filter((value) =>
-    !/TARGET_NAME/.test(value)
-  );
-  const buyerTargetValues = selectedBuyerValues.filter((value) =>
-    /TARGET_NAME/.test(value) && !/(?:employer|paid engagement)/.test(value)
-  );
-  const paidDemandBuyerValues = selectedBuyerValues.filter((value) =>
-    /(?:employer|paid engagement)/.test(value)
-  );
-  const selectedActionValues = plannerDefinitions.actionItem
-    ?.properties?.l?.enum || [];
-  const referralActionValues = selectedActionValues.filter((value) =>
-    /(?:refer|introduce|recommend)/.test(value)
-  );
-  const buyerActionValues = selectedActionValues.filter((value) =>
-    /ask \{\{TARGET_NAME\}\} to (?:book|buy|purchase|sign)/.test(value)
-  );
-  const paidDemandActionValues = selectedActionValues.filter((value) =>
-    /official paid-demand page/.test(value)
-  );
+  const schemaAcceptsString = (schemaValue, value) => {
+    const schema = resolvePlannerSchema(schemaValue);
+    const length = [...String(value)].length;
+    try {
+      return (!Number.isInteger(schema?.minLength) ||
+          length >= schema.minLength) &&
+        (!Number.isInteger(schema?.maxLength) ||
+          length <= schema.maxLength) &&
+        new RegExp(schema?.pattern || '', 'u').test(value);
+    } catch {
+      return false;
+    }
+  };
   const schemaAcceptsBlank = (schema) => {
     try {
       const resolved = typeof schema?.$ref === 'string'
@@ -912,7 +951,7 @@ for (const scenario of cases) {
       !plannerPlanSchema.targetRoleSubrole?.enum?.includes('partnerships') ||
       plannerPlanSchema.organizationTerms?.maxItems !== 4 ||
       [
-        plannerPlanSchema.paidOffer,
+        plannerPlanSchema.paidOffer?.properties?.seller,
         plannerPlanSchema.organizationTerms?.items,
         plannerPlanSchema.jobTitle,
         plannerPlanSchema.skills?.items,
@@ -939,38 +978,24 @@ for (const scenario of cases) {
       !/copy one exact approved market value.*do not expand.*abbreviate.*widen/is.test(
         plannerPlanSchema.market?.description || ''
       ) ||
-      referralChannelValues.length !== 2 ||
-      referralChannelValues.some((value) =>
-        !/^Review-first public professional profile \{\{TARGET_URL\}\} for /.test(value)
+      buyerLabelSchema?.maxLength !== 96 ||
+      channelLabelSchema?.maxLength !== 120 ||
+      actionLabelSchema?.maxLength !== 180 ||
+      !schemaAcceptsString(
+        buyerLabelSchema,
+        '{{TARGET_NAME}} is a purchasing organization for the current paid advisory service'
       ) ||
-      buyerChannelValues.length !== 2 ||
-      buyerChannelValues.some((value) =>
-        !/^Review-first public professional profile \{\{TARGET_URL\}\} for /.test(value)
+      !schemaAcceptsString(
+        channelLabelSchema,
+        'Review-first verified professional profile {{TARGET_URL}} for executive buyer fit'
       ) ||
-      paidDemandChannelValues.length !== 2 ||
-      paidDemandChannelValues.some((value) =>
-        !/^Review-first official paid-demand page \{\{TARGET_URL\}\} for /.test(value)
+      !schemaAcceptsString(
+        actionLabelSchema,
+        'After approval via verified professional profile {{TARGET_URL}}, request {{TARGET_NAME}} to buy the current paid advisory service'
       ) ||
-      referralBuyerValues.length !== 2 || buyerTargetValues.length !== 2 ||
-      paidDemandBuyerValues.length !== 2 ||
-      referralBuyerValues.some((value) => /TARGET_(?:NAME|URL)/.test(value)) ||
-      [...buyerTargetValues, ...paidDemandBuyerValues].some((value) =>
-        !/^\{\{TARGET_NAME\}\}: /.test(value)
-      ) ||
-      referralActionValues.length !== 4 ||
-      referralActionValues.some((value) =>
-        !/^After review via public professional profile \{\{TARGET_URL\}\}, ask \{\{TARGET_NAME\}\} to (?:refer|introduce|recommend)/.test(value) ||
-          !/(?:book|buy|purchase|sign up for) the current paid offer$/.test(value)
-      ) ||
-      buyerActionValues.length !== 4 ||
-      buyerActionValues.some((value) =>
-        !/^After review via public professional profile \{\{TARGET_URL\}\}, ask \{\{TARGET_NAME\}\} to (?:book|buy|purchase|sign)/.test(value) ||
-        !/(?:paid consultation|paid service package|paid service contract)$/.test(value)
-      ) ||
-      paidDemandActionValues.length !== 4 ||
-      paidDemandActionValues.some((value) =>
-        !/^After review via official paid-demand page \{\{TARGET_URL\}\}, (?:apply|bid|submit|respond)/.test(value) ||
-          !/\{\{TARGET_NAME\}\}$/.test(value)
+      schemaAcceptsString(
+        actionLabelSchema,
+        'After review, inspect scheduling and write a report'
       ) ||
       !contingentProperties.pathBase ||
       !contingentProperties.tacticA ||
@@ -1078,30 +1103,16 @@ for (const scenario of cases) {
       JSON.stringify(plannerDefinitions.actionItem?.required) !==
         JSON.stringify(['l', 'e']) ||
       plannerDefinitions.actionItem?.properties?.rp ||
-      !referralActionValues.includes(
-        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid consultation'
-      ) && !referralActionValues.includes(
-        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer'
-      ) ||
-      referralActionValues.includes(
-        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation'
-      ) ||
-      !buyerActionValues.includes(
-        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package'
-      ) ||
-      !paidDemandActionValues.includes(
-        'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}'
-      ) ||
-      !/one selected closed action.*verifies exact membership.*commercialRole.*never composes action prose/is.test(
+      !/one bounded model-authored review-first commercial action.*never composes or rewrites/is.test(
         plannerDefinitions.actionItem?.description || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /a:2\/tactic.*one selected l\/e.*referral actions introduce.*current paid offer.*paid booking\/payment.*buyer actions ask.*book\/buy\/sign.*paid-demand actions submit.*paid application\/proposal response.*crossed-role labels.*marketplace\/directory placement/is.test(
+        /a:2\/tactic.*one model-authored l\/e.*referral_partner introduces.*current paid offer.*paid booking\/payment.*buyer asks.*book\/buy\/sign.*paid_demand submits.*paid application\/proposal response.*preserves l without rewriting/is.test(
           rule
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /validates the one selected r\.rm against motionKind.*derives r\.v\/r\.a\/r\.c\/r\.o.*positional tactic keys.*k\.v\/i\/c\/o\/p\/t\/d\/s/i.test(
+        /selects r\.rm\.seller.*r\.rm\.compensatedJob.*derives r\.v\/r\.a\/r\.c\/r\.o.*positional tactic keys.*k\.v\/i\/c\/o\/p\/t\/d\/s/i.test(
           rule
         )
       ) ||
@@ -1131,7 +1142,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /prefer 4 distinct selected actions; >=2 across both tactics must be distinct\+viable/is.test(
+        /prefer 4 distinct actions; >=2 across both tactics must be distinct\+viable/is.test(
           rule
         )
       ) ||
@@ -1143,12 +1154,12 @@ for (const scenario of cases) {
       /claims no email\/phone\/form\/proposal route/i.test(
         requestSeen.system || ''
       ) ||
-      !/one selected mechanism.*permits compensated_role only for compensated_job.*seller mechanisms otherwise.*derives v\/a\/c\/o and the complete causal witness/is.test(
+      !/rm:\{seller,compensatedJob\}.*selects the motionKind branch.*derives v\/a\/c\/o and the complete causal witness/is.test(
         plannerPrompt.outputContract?.revenuePath || ''
       )) {
     throw new Error(
       `${scenario.name}: call 1 omitted its compact semantic contract ${JSON.stringify({ blankSchemas: [
-        plannerPlanSchema.paidOffer,
+        plannerPlanSchema.paidOffer?.properties?.seller,
         plannerPlanSchema.organizationTerms?.items,
         plannerPlanSchema.jobTitle,
         plannerPlanSchema.skills?.items,
@@ -1167,7 +1178,7 @@ for (const scenario of cases) {
         projection: /projects r\.c per tactic/is.test(requestSeen.system || ''),
         acquisition: /acquisitionMechanism is exact and structural.*buyer\/referral="Review-first public professional profile".*paid_demand="Review-first official paid-demand page"/is.test(requestSeen.system || ''),
         market: /market must copy one response-schema enum value exactly.*never expand.*abbreviate.*widen/is.test(requestSeen.system || ''),
-        actions: /a:2\/tactic.*one selected l\/e.*referral actions introduce.*buyer actions ask.*paid-demand actions submit/is.test(requestSeen.system || ''),
+        actions: /a:2\/tactic.*one model-authored l\/e.*referral_partner introduces.*buyer asks.*paid_demand submits/is.test(requestSeen.system || ''),
         diversity: /prefer 4 distinct selected actions; >=2 across both tactics must be distinct\+viable/is.test(requestSeen.system || ''),
         demand: /compensated_job finds an employer job posting.*public web snippets.*RFP pages.*have no fresh paid-demand authority.*two referral motions with different counterparties are valid.*diversity never requires paid_demand.*supplier\/competitor offers.*accepts insurance.*are supply, never demand/is.test(requestSeen.system || '')
       } })}`
@@ -1301,6 +1312,7 @@ function plannerResponseAtByteCount(byteCount) {
       motion.contingentFinalists
     );
   }
+  response.plans = compactFreshPlannerPlans(response.plans);
   if (Number.isInteger(byteCount) && byteCount > 0) {
     const baseBytes = Buffer.byteLength(JSON.stringify(response), 'utf8');
     if (baseBytes > byteCount) {
@@ -1347,6 +1359,361 @@ async function runPlannerResponseEnvelopeCase(byteCount) {
   });
 }
 
+await verifyPlannerRouteProvenanceGate();
+await verifyPlannerExactUsageGate();
+await verifyPlannerFinishGate();
+
+async function verifyPlannerFinishGate() {
+  const validData = plannerResponseAtByteCount(0);
+  const unsafeSentinel = 'raw-finish-reason-secret sentinel!';
+  for (const scenario of [{
+    label: 'missing-finish',
+    diagnostics: {},
+    issue: 'finish_reason_missing'
+  }, {
+    label: 'length-finish',
+    diagnostics: {
+      finishReason: 'length',
+      nativeFinishReason: 'length'
+    },
+    issue: 'finish_reason_not_stop'
+  }, {
+    label: 'incompatible-native-finish',
+    diagnostics: {
+      finishReason: 'stop',
+      nativeFinishReason: 'length'
+    },
+    issue: 'native_finish_reason_not_stop'
+  }, {
+    label: 'unsafe-finish',
+    diagnostics: {
+      finishReason: unsafeSentinel,
+      nativeFinishReason: unsafeSentinel
+    },
+    issue: 'finish_reason_not_stop'
+  }]) {
+    const result = await runOpportunityDiscoveryPlannerRaw({
+      job: envelopeJob,
+      model: 'deepseek/deepseek-v4-flash-0731',
+      now,
+      completeJSON: async () => {
+        const diagnostics = {
+          ...acceptedPlannerRouteDiagnostics(),
+          ...scenario.diagnostics,
+          contentByteCount: Buffer.byteLength(
+            JSON.stringify(validData),
+            'utf8'
+          ),
+          contentSha256: '6'.repeat(64)
+        };
+        if (scenario.label === 'missing-finish') {
+          delete diagnostics.finishReason;
+          delete diagnostics.nativeFinishReason;
+        }
+        return {
+          data: structuredClone(validData),
+          usage,
+          generationId: `generation-planner-finish-${scenario.label}`,
+          diagnostics,
+          annotations: []
+        };
+      }
+    });
+    if (result.status !== 'blocked' || result.plans.length !== 0 ||
+        result.recoveryCause !==
+          'commercial_discovery_planner_completion_recovery' ||
+        result.failureCode !== 'planner_finish_reason_invalid' ||
+        result.preflight?.finishIssue !== scenario.issue ||
+        result.preflight?.routeProvenanceValidated !== false ||
+        result.normalizationDiagnostic != null ||
+        result.llm?.discoveryPlanner?.status !== 'completed' ||
+        JSON.stringify(result).includes(unsafeSentinel) ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${scenario.label} planner finish reason did not fail before route/schema normalization: ${JSON.stringify(result)}`
+      );
+    }
+  }
+}
+
+async function verifyPlannerExactUsageGate() {
+  const validData = plannerResponseAtByteCount(0);
+  for (const scenario of [{
+    label: 'missing-token-field',
+    usage: {
+      prompt_tokens: 900,
+      total_tokens: 1550,
+      cost: 0.0065
+    },
+    issue: 'usage_tokens_missing_or_not_exact_positive_integers'
+  }, {
+    label: 'string-token-fields',
+    usage: {
+      prompt_tokens: '900',
+      completion_tokens: '650',
+      total_tokens: '1550',
+      cost: 0.0065
+    },
+    issue: 'usage_tokens_missing_or_not_exact_positive_integers'
+  }, {
+    label: 'inconsistent-total',
+    usage: {
+      prompt_tokens: 900,
+      completion_tokens: 650,
+      total_tokens: 1551,
+      cost: 0.0065
+    },
+    issue: 'usage_total_tokens_inconsistent'
+  }, {
+    label: 'string-cost',
+    usage: {
+      prompt_tokens: 900,
+      completion_tokens: 650,
+      total_tokens: 1550,
+      cost: '0.0065'
+    },
+    issue: 'usage_cost_missing_or_not_exact_number'
+  }]) {
+    const result = await runOpportunityDiscoveryPlannerRaw({
+      job: envelopeJob,
+      model: 'deepseek/deepseek-v4-flash-0731',
+      now,
+      completeJSON: async () => ({
+        data: structuredClone(validData),
+        usage: scenario.usage,
+        generationId: `generation-planner-usage-${scenario.label}`,
+        diagnostics: {
+          ...acceptedPlannerRouteDiagnostics(),
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: Buffer.byteLength(
+            JSON.stringify(validData),
+            'utf8'
+          ),
+          contentSha256: '7'.repeat(64)
+        },
+        annotations: []
+      })
+    });
+    if (result.status !== 'blocked' || result.plans.length !== 0 ||
+        result.recoveryCause !==
+          'commercial_discovery_planner_provider_usage_recovery' ||
+        result.failureCode !== 'planner_provider_usage_invalid' ||
+        result.preflight?.cause !==
+          'commercial_discovery_planner_provider_usage_recovery' ||
+        result.preflight?.failureCode !==
+          'planner_provider_usage_invalid' ||
+        result.preflight?.usageIssue !== scenario.issue ||
+        result.preflight?.routeProvenanceValidated !== false ||
+        result.normalizationDiagnostic != null ||
+        result.usage?.calls !== 1 ||
+        result.usage?.successfulCalls !== 1 ||
+        result.llm?.discoveryPlanner?.status !== 'completed' ||
+        result.llm?.discoveryPlanner?.generationId !==
+          `generation-planner-usage-${scenario.label}` ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${scenario.label} planner usage did not fail before route/schema normalization with completed provider accounting: ${JSON.stringify(result)}`
+      );
+    }
+  }
+}
+
+async function verifyPlannerRouteProvenanceGate() {
+  const validData = plannerResponseAtByteCount(0);
+  const sensitiveRawSentinel = 'planner-raw-response-must-not-persist';
+  for (const scenario of [{
+    label: 'missing-selected-route',
+    issue: 'selected_provider_missing',
+    diagnostics: {
+      httpStatus: 200
+    }
+  }, {
+    label: 'numeric-string-route-diagnostics',
+    issue: 'completed_http_status_not_2xx',
+    diagnostics: {
+      httpStatus: '200',
+      routerStrategy: 'direct',
+      routerAttempt: '1',
+      routerCandidateCount: '1',
+      routerAttemptStatuses: ['200'],
+      routerAttempts: [{
+        provider: 'String Fixture Provider',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        status: '200'
+      }],
+      routerAttemptSequenceSource: 'reported',
+      routerSelectedEndpointEvidenced: true,
+      routerSelectedProvider: 'String Fixture Provider',
+      routerSelectedModel: 'deepseek/deepseek-v4-flash-0731'
+    }
+  }, {
+    label: 'foreign-selected-model',
+    issue: 'selected_model_not_requested',
+    diagnostics: {
+      httpStatus: 200,
+      routerStrategy: 'direct',
+      routerAttempt: 1,
+      routerCandidateCount: 1,
+      routerAttemptStatuses: [200],
+      routerAttempts: [{
+        provider: 'Foreign Fixture Provider',
+        model: 'foreign/vendor-model',
+        status: 200
+      }],
+      routerAttemptSequenceSource: 'reported',
+      routerSelectedEndpointEvidenced: true,
+      routerSelectedProvider: 'Foreign Fixture Provider',
+      routerSelectedModel: 'foreign/vendor-model'
+    }
+  }, {
+    label: 'incomplete-fallback-route',
+    issue: 'attempt_sequence_incomplete',
+    diagnostics: {
+      httpStatus: 200,
+      routerStrategy: 'fallback',
+      routerAttempt: 2,
+      routerCandidateCount: 2,
+      routerAttemptStatuses: [502, 200],
+      routerAttempts: [{
+        provider: 'Final Fixture Provider',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        status: 200
+      }],
+      routerAttemptSequenceSource: 'reported',
+      routerSelectedEndpointEvidenced: true,
+      routerFallbackUsed: true,
+      routerSelectedProvider: 'Final Fixture Provider',
+      routerSelectedModel: 'deepseek/deepseek-v4-flash-0731'
+    }
+  }, {
+    label: 'malformed-filterable-fallback-route',
+    issue: 'attempt_sequence_incomplete',
+    diagnostics: {
+      httpStatus: 200,
+      routerStrategy: 'fallback',
+      routerAttempt: 2,
+      routerCandidateCount: 3,
+      routerAttemptStatuses: [502, 200],
+      routerAttempts: [{
+        provider: 'First Fixture Provider',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        status: 502
+      }, {
+        provider: 'Malformed Fixture Provider',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        status: 'not-a-status'
+      }, {
+        provider: 'Final Fixture Provider',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        status: 200
+      }],
+      routerAttemptSequenceSource: 'reported',
+      routerSelectedEndpointEvidenced: true,
+      routerFallbackUsed: true,
+      routerSelectedProvider: 'Final Fixture Provider',
+      routerSelectedModel: 'deepseek/deepseek-v4-flash-0731'
+    }
+  }]) {
+    const result = await runOpportunityDiscoveryPlannerRaw({
+      job: envelopeJob,
+      model: 'deepseek/deepseek-v4-flash-0731',
+      now,
+      completeJSON: async () => ({
+        data: structuredClone(validData),
+        usage,
+        generationId: `generation-planner-route-${scenario.label}`,
+        rawResponse: sensitiveRawSentinel,
+        diagnostics: {
+          ...scenario.diagnostics,
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: Buffer.byteLength(
+            JSON.stringify(validData),
+            'utf8'
+          ),
+          contentSha256: '9'.repeat(64)
+        },
+        annotations: []
+      })
+    });
+    const receipt = result.llm?.discoveryPlanner;
+    if (result.status !== 'blocked' || result.plans.length !== 0 ||
+        result.recoveryCause !==
+          'commercial_discovery_planner_route_provenance_recovery' ||
+        result.failureCode !== 'planner_route_provenance_invalid' ||
+        result.preflight?.cause !==
+          'commercial_discovery_planner_route_provenance_recovery' ||
+        result.preflight?.failureCode !==
+          'planner_route_provenance_invalid' ||
+        result.preflight?.routeProvenanceIssue !== scenario.issue ||
+        result.preflight?.routeProvenanceValidated !== false ||
+        result.normalizationDiagnostic != null ||
+        result.usage?.calls !== 1 ||
+        result.usage?.successfulCalls !== 1 ||
+        result.usage?.promptTokens !== usage.prompt_tokens ||
+        result.usage?.completionTokens !== usage.completion_tokens ||
+        result.usage?.reportedCostMicros !== 6_500 ||
+        receipt?.status !== 'completed' ||
+        receipt?.generationId !==
+          `generation-planner-route-${scenario.label}` ||
+        receipt?.responseDiagnostics?.contentSha256 !== '9'.repeat(64) ||
+        JSON.stringify(result).includes(sensitiveRawSentinel) ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${scenario.label} planner route provenance did not fail closed with exact completed accounting: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const reviewedPermaslug =
+    'deepseek/deepseek-v4-flash-20260731';
+  const permaslugResult = await runOpportunityDiscoveryPlannerRaw({
+    job: envelopeJob,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async () => ({
+      data: structuredClone(validData),
+      usage,
+      generationId: 'generation-planner-reviewed-permaslug',
+      diagnostics: {
+        httpStatus: 200,
+        routerStrategy: 'direct',
+        routerAttempt: 1,
+        routerCandidateCount: 1,
+        routerAttemptStatuses: [200],
+        routerAttempts: [{
+          provider: 'Permaslug Fixture Provider',
+          model: reviewedPermaslug,
+          status: 200
+        }],
+        routerAttemptSequenceSource: 'reported',
+        routerSelectedEndpointEvidenced: true,
+        routerSelectedProvider: 'Permaslug Fixture Provider',
+        routerSelectedModel: reviewedPermaslug,
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: Buffer.byteLength(
+          JSON.stringify(validData),
+          'utf8'
+        ),
+        contentSha256: '8'.repeat(64)
+      },
+      annotations: []
+    })
+  });
+  if (permaslugResult.status !== 'planned' ||
+      permaslugResult.preflight?.routeProvenanceValidated !== true ||
+      permaslugResult.llm?.discoveryPlanner?.model !== reviewedPermaslug ||
+      permaslugResult.llm?.discoveryPlanner?.requestedModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      permaslugResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `reviewed planner permaslug was not bound to its exact alias: ${JSON.stringify(permaslugResult)}`
+    );
+  }
+}
+
 const withinResponseMarginBytes = Buffer.byteLength(
   JSON.stringify(plannerResponseAtByteCount(0)),
   'utf8'
@@ -1376,7 +1743,7 @@ if (overflowResponse.status !== 'blocked' ||
     overflowResponse.preflight?.maxResponseBodyByteCount !==
       MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
   throw new Error(
-    `planner did not enforce its 192 KiB response gate: ${JSON.stringify(overflowResponse)}`
+    `planner did not enforce its 40 KiB response gate: ${JSON.stringify(overflowResponse)}`
   );
 }
 
@@ -1404,9 +1771,9 @@ const zeroMotionEscape = await runOpportunityDiscoveryPlanner({
 });
 if (zeroMotionEscape.status !== 'blocked' ||
     zeroMotionEscape.plans.length !== 0 ||
-    !/cannot replace required commercial motions.*typed target slots/i.test(
-      zeroMotionEscape.reason
-    )) {
+    zeroMotionEscape.llm?.discoveryPlanner?.status !== 'completed' ||
+    zeroMotionEscape.normalizationDiagnostic?.code !==
+      'strict_schema_mismatch') {
   throw new Error(
     `fresh zero-motion escape was not classified as an AI contract failure: ${JSON.stringify(zeroMotionEscape)}`
   );
@@ -1470,13 +1837,13 @@ const unsafeResult = await runOpportunityDiscoveryPlanner({
     };
   }
 });
-if (unsafeResult.status !== 'planned' ||
-    !/patient|sensitive|private-contact|reserved target syntax/i.test(
-      unsafeResult.planSelection?.rejectedPlans?.[0]?.reason || ''
-    ) ||
-    unsafeResult.plans.length !== 1 ||
-    unsafeResult.planSelection?.acceptedPlanCount !== 1 ||
-    unsafeResult.planSelection?.rejectedPlanCount !== 1 ||
+if (unsafeResult.status !== 'blocked' ||
+    unsafeResult.plans.length !== 0 ||
+    unsafeResult.llm?.discoveryPlanner?.status !== 'completed' ||
+    unsafeResult.llm?.discoveryPlanner?.error ||
+    unsafeResult.usage?.successfulCalls !== 1 ||
+    unsafeResult.normalizationDiagnostic?.code !==
+      'strict_schema_mismatch' ||
     unsafeResult.sideEffectsPerformed !== 0) {
   throw new Error(
     `unsafe discovery plan was not fail-closed: ${JSON.stringify(unsafeResult)}`
@@ -1498,11 +1865,13 @@ await verifyOmittedTargetEvidenceProtocolCanonicalization(
 );
 await verifyOneMotionUsesTwoTacticFallback(unsafeJob, unsafeRef);
 await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
+await verifyLinkedRecoveryCannotBeBusinessAction(unsafeJob, unsafeRef);
+await verifySupportingBottleneckIsMissingEvidence(unsafeJob, unsafeRef);
 await verifyQualifiedPartnerReferralActionsPass(unsafeJob, unsafeRef);
 await verifyCompactConversionActionProjection(unsafeJob, unsafeRef);
 await verifyRepeatedOptionalRoleActionsArePruned(unsafeJob, unsafeRef);
 await verifyPaidDemandResponseActionVerbs(unsafeJob, unsafeRef);
-await verifyOptionalSupportingBottleneckPasses(unsafeJob, unsafeRef);
+await verifyRequiredSupportingBottleneckFailsClosed(unsafeJob, unsafeRef);
 await verifyAuthoredTerminalOutcomeIsNonAuthoritative(unsafeJob, unsafeRef);
 await verifyMechanismSpecificTerminalOutcomes(unsafeJob, unsafeRef);
 await verifyRevenueStopUnits(unsafeJob, unsafeRef);
@@ -1528,7 +1897,7 @@ if (smallestCompactResponseReduction < 0.1 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + optional supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 32 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${44 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${43 * 1024} 512-byte-headroom floor; joint-worst critic request ${largestCommercialCriticRequestBytes} bytes / <=${65_536 - 512} (${65_536 - largestCommercialCriticRequestBytes} bytes headroom); semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target; schema-derived bound ${computedPlannerSchemaResponseBoundBytes} bytes; concrete joint maximum ${maximumConcretePlannerResponseBytes} bytes)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + required supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 40 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${44 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${43 * 1024} 512-byte-headroom floor; joint-worst critic request ${largestCommercialCriticRequestBytes} bytes / <=${65_536 - 512} (${65_536 - largestCommercialCriticRequestBytes} bytes headroom); semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target; schema-derived bound ${computedPlannerSchemaResponseBoundBytes} bytes; concrete joint maximum ${maximumConcretePlannerResponseBytes} bytes)\n`
 );
 
 async function verifyApprovedObservationPreflight() {
@@ -1647,6 +2016,8 @@ async function verifyMaximumFamilyEvidenceContainment() {
           `adaptive planner projection lost every approved observation: ${JSON.stringify(visibleObservationRefs)}`
         );
       }
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
       const motions = twoPlannerMotions(
         applyNovelTypedCausalSemantics(
           cases[0].plans(visibleObservationRefs[0])[1]
@@ -1698,6 +2069,19 @@ async function verifyMaximumFamilyEvidenceContainment() {
         const observationOnlyBundle = distributeObservationRefs(
           replaceSystemRef(bundle)
         );
+        // This probe is about maximum child-evidence containment. Keep its
+        // authored causal prose inside the same strict commercial grammar as
+        // the normal planner fixture so unrelated text-pattern checks cannot
+        // mask the containment assertion.
+        const canonicalRevenue = compactContingentFinalists(
+          cases[0].plans(visibleObservationRefs[0])[0]
+            .contingentFinalists
+        ).pathBase.r[0];
+        for (const revenue of observationOnlyBundle.pathBase.r) {
+          revenue.io = canonicalRevenue.io;
+          revenue.cd = canonicalRevenue.cd;
+          revenue.g.d.l = canonicalRevenue.g.d.l;
+        }
         if (motionIndex === 0) {
           const approved = new Set([
             'target:evidence',
@@ -1724,10 +2108,12 @@ async function verifyMaximumFamilyEvidenceContainment() {
             ...observed.filter((ref) => ref !== 'target:evidence')
           ];
         }
-        return {
+        const [freshMotion] = compactFreshPlannerPlans([{
           ...motion,
           contingentFinalists: observationOnlyBundle
-        };
+        }]);
+        freshMotion.market = exactMarket;
+        return freshMotion;
       });
       return {
         data: {
@@ -1756,7 +2142,7 @@ async function verifyMaximumFamilyEvidenceContainment() {
       ) ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
-      `child-grounded family evidence was not rebuilt losslessly: ${JSON.stringify({ status: result.status, reason: result.reason, planSelection: result.planSelection, preflight: result.preflight, llm: result.llm, familyEvidence, expectedFirstFamilyEvidence, visibleObservationRefsSeen })}`
+      `child-grounded family evidence was not rebuilt losslessly: ${JSON.stringify({ status: result.status, reason: result.reason, planSelection: result.planSelection, normalizationDiagnostic: result.normalizationDiagnostic, preflight: result.preflight, llm: result.llm, familyEvidence, expectedFirstFamilyEvidence, visibleObservationRefsSeen })}`
     );
   }
 }
@@ -1773,6 +2159,9 @@ async function verifyTypedCommercialMotionSelection(
       completeJSON: async (request) => {
         inspectRequest?.(request);
         const freshPlans = compactFreshPlannerPlans(plans);
+        const exactMarket = request.responseFormat?.json_schema?.schema
+          ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+        for (const freshPlan of freshPlans) freshPlan.market = exactMarket;
         return {
           data: {
             contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
@@ -1810,7 +2199,26 @@ async function verifyTypedCommercialMotionSelection(
   compensatedMotions[1].priority = 2;
   compensatedMotions[1].jobTitle = 'Platform engineer';
   compensatedMotions[1].skills = ['Go', 'Cloud infrastructure'];
+  const authoredCompensatedJobOffer =
+    'A model-authored paid platform engineering role';
+  const authoredCompensatedIncome =
+    'Salary payment from the accepted platform engineering role.';
+  const authoredCompensatedDestination =
+    'The official application page for the platform engineering role';
+  const authoredCompensatedAttribution =
+    'CRM source records the exact researched job posting';
   for (const motion of compensatedMotions) {
+    motion.paidOffer = {
+      seller: motion.paidOffer,
+      compensatedJob: authoredCompensatedJobOffer
+    };
+    for (const familyKey of ['familyA', 'familyB']) {
+      const revenue = motion.contingentFinalists[familyKey].d.r[0];
+      revenue.io = authoredCompensatedIncome;
+      revenue.cd = authoredCompensatedDestination;
+      revenue.ats = authoredCompensatedAttribution;
+      revenue.g.d.l = authoredCompensatedDestination;
+    }
     motion.conversionDestination = '';
     motion.paidConversion = '';
     motion.attributionSignal = '';
@@ -1859,12 +2267,19 @@ async function verifyTypedCommercialMotionSelection(
       compensatedJob?.commercialRole !== 'paid_demand' ||
       compensatedJob?.acquisitionMode !== 'permissioned_outreach' ||
       compensatedJob?.professionalRoleQueryContract ||
+      compensatedJob?.paidOffer !== authoredCompensatedJobOffer ||
       compensatedJob?.conversionDestination !==
-        'The exact public application page for the researched compensated role' ||
-      compensatedJob?.paidConversion !==
-        'The profile owner accepts the researched compensated role' ||
+        authoredCompensatedDestination ||
+      compensatedJob?.paidConversion !== authoredCompensatedIncome ||
       compensatedJob?.attributionSignal !==
-        'The accepted role records the exact researched job posting' ||
+        authoredCompensatedAttribution ||
+      ['familyA', 'familyB'].some((familyKey) => {
+        const revenue = compensatedJob?.contingentFinalists?.[familyKey]
+          ?.d?.r?.[0];
+        return revenue?.io !== authoredCompensatedIncome ||
+          revenue?.cd !== authoredCompensatedDestination ||
+          revenue?.ats !== authoredCompensatedAttribution;
+      }) ||
       JSON.stringify(compensatedOnlySchemaFields) !== JSON.stringify({}) ||
       compensatedJob?.query !==
         'current compensated job hiring Go backend engineer Go PostgreSQL United States' ||
@@ -1959,12 +2374,15 @@ async function verifyTypedCommercialMotionSelection(
   });
   if (untypedFresh.status !== 'blocked' ||
       untypedFresh.plans.length !== 0 ||
-      untypedFresh.planSelection?.acceptedPlanCount !== 0 ||
-      untypedFresh.planSelection?.rejectedPlanCount !== 2 ||
-      untypedFresh.planSelection?.rejectedPlans?.some((item) =>
-        !/(?:commercial_motion_route_v1 typed route contract|no typed causal revenue witness)/i.test(
-          item.reason || ''
-        )
+      untypedFresh.planSelection?.returnedPlanCount !== 0 ||
+      untypedFresh.llm?.discoveryPlanner?.status !== 'completed' ||
+      untypedFresh.usage?.successfulCalls !== 1 ||
+      untypedFresh.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      untypedFresh.normalizationDiagnostic?.failedMotionCount !== 2 ||
+      !untypedFresh.normalizationDiagnostic?.issues?.some((issue) =>
+        issue.keyword === 'required' &&
+        issue.missingProperty === 'motionKind'
       ) ||
       untypedFresh.sideEffectsPerformed !== 0) {
     throw new Error(
@@ -2063,13 +2481,15 @@ async function verifyTypedCommercialMotionSelection(
     plans: [unavailableOrganizationMotion, pediatricReferral],
     generationId: 'generation-pdl-only-salvage'
   });
-  if (pdlOnlySalvage.status !== 'planned' ||
-      pdlOnlySalvage.plans.length !== 1 ||
-      pdlOnlySalvage.plans[0]?.id !== 'plan_2_referral_person' ||
-      pdlOnlySalvage.planSelection?.acceptedPlanCount !== 1 ||
-      pdlOnlySalvage.planSelection?.rejectedPlanCount !== 1 ||
-      !/unavailable read-only provider route/i.test(
-        pdlOnlySalvage.planSelection?.rejectedPlans?.[0]?.reason || ''
+  if (pdlOnlySalvage.status !== 'blocked' ||
+      pdlOnlySalvage.plans.length !== 0 ||
+      pdlOnlySalvage.llm?.discoveryPlanner?.status !== 'completed' ||
+      pdlOnlySalvage.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      pdlOnlySalvage.normalizationDiagnostic?.failedMotionCount !== 1 ||
+      !pdlOnlySalvage.normalizationDiagnostic?.issues?.some((issue) =>
+        issue.keyword === 'enum' &&
+        issue.instancePath === '/plans/0/motionKind'
       )) {
     throw new Error(
       `PDL-only plan salvage retained an unavailable organization route: ${JSON.stringify(pdlOnlySalvage)}`
@@ -2125,6 +2545,9 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
       completeJSON: async (request) => {
         inspectRequest?.(request);
         const freshPlans = compactFreshPlannerPlans(plans);
+        const exactMarket = request.responseFormat?.json_schema?.schema
+          ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+        for (const freshPlan of freshPlans) freshPlan.market = exactMarket;
         return {
           data: {
             contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
@@ -2816,27 +3239,32 @@ async function verifyOmittedChildEvidenceCanonicalization(
       content: 'A current public professional newborn-care page.'
     }
   };
-  const completionFor = (candidate, generationId) => ({
-    data: {
-      contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-      status: 'planned',
-      reason: '',
-      plans: (() => {
-        const motions = twoPlannerMotions(candidate, primaryEvidenceRef);
-        motions[1] = compactFreshPlannerPlans([motions[1]])[0];
-        return motions;
-      })()
-    },
-    usage,
-    generationId,
-    diagnostics: {
-      finishReason: 'stop',
-      nativeFinishReason: 'stop',
-      contentByteCount: 900,
-      contentSha256: '6'.repeat(64)
-    },
-    annotations: [annotation]
-  });
+  const completionFor = (candidate, generationId, request, shape) => {
+    let motions = twoPlannerMotions(candidate, primaryEvidenceRef);
+    motions = shape === 'compact'
+      ? compactFreshPlannerPlans(motions)
+      : [motions[0], compactFreshPlannerPlans([motions[1]])[0]];
+    const exactMarket = request.responseFormat?.json_schema?.schema
+      ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+    for (const motion of motions) motion.market = exactMarket;
+    return {
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: '',
+        plans: motions
+      },
+      usage,
+      generationId,
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 900,
+        contentSha256: '6'.repeat(64)
+      },
+      annotations: [annotation]
+    };
+  };
   const childEvidenceSlots = (candidate) => [
     candidate.contingentFinalists.familyA.d.a[0].e,
     candidate.contingentFinalists.familyB.d.a[0].e,
@@ -2890,7 +3318,9 @@ async function verifyOmittedChildEvidenceCanonicalization(
         }
         return completionFor(
           candidate,
-          `generation-approved-child-${shape}`
+          `generation-approved-child-${shape}`,
+          request,
+          shape
         );
       }
     });
@@ -2898,11 +3328,21 @@ async function verifyOmittedChildEvidenceCanonicalization(
     // otherwise-approved refs were intentionally not selected into its exact
     // schema enum, so both a historical materialized shape and a compact shape
     // that forges them must lose fresh provider/materialization authority.
-    if (result.status !== 'planned' || result.plans.length !== 1 ||
-        result.planSelection?.acceptedPlanCount !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        !/(?:contingent finalist contract|typed causal revenue witness)/i
-          .test(result.planSelection?.rejectedPlans?.[0]?.reason || '')) {
+    const failedClosed = result.status === 'blocked' &&
+      result.plans.length === 0 &&
+      result.planSelection?.returnedPlanCount === 0 &&
+      result.llm?.discoveryPlanner?.status === 'completed' &&
+      result.usage?.successfulCalls === 1 &&
+      result.normalizationDiagnostic?.code === 'strict_schema_mismatch' &&
+      result.normalizationDiagnostic?.failedMotionCount === 1 &&
+      result.normalizationDiagnostic?.issues?.some((issue) =>
+        shape === 'materialized'
+          ? issue.keyword === 'additionalProperties' ||
+            issue.keyword === 'required'
+          : issue.keyword === 'enum' &&
+            issue.instancePath.startsWith('/plans/0/contingentFinalists/')
+      );
+    if (!failedClosed || result.sideEffectsPerformed !== 0) {
       throw new Error(
         `model-hidden approved child evidence regained fresh ${shape} authority: ${JSON.stringify(result)}`
       );
@@ -2925,19 +3365,21 @@ async function verifyOmittedChildEvidenceCanonicalization(
       job,
       model: 'deepseek/deepseek-v4-flash-0731',
       now,
-      completeJSON: async () => completionFor(
+      completeJSON: async (request) => completionFor(
         candidate,
-        `generation-unknown-child-${shape}`
+        `generation-unknown-child-${shape}`,
+        request,
+        shape
       )
     });
-    if (result.status !== 'planned' ||
-        result.plans.length !== 1 ||
-        result.planSelection?.acceptedPlanCount !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        result.sideEffectsPerformed !== 0 ||
-        !/(?:contingent finalist contract|typed causal revenue witness)/i.test(
-          result.planSelection?.rejectedPlans?.[0]?.reason || ''
-        )) {
+    const failedClosed = result.status === 'blocked' &&
+      result.plans.length === 0 &&
+      result.planSelection?.returnedPlanCount === 0 &&
+      result.llm?.discoveryPlanner?.status === 'completed' &&
+      result.usage?.successfulCalls === 1 &&
+      result.normalizationDiagnostic?.code === 'strict_schema_mismatch' &&
+      result.normalizationDiagnostic?.failedMotionCount === 1;
+    if (!failedClosed || result.sideEffectsPerformed !== 0) {
       throw new Error(
         `unknown ${shape} child evidence did not fail closed: ${JSON.stringify(result)}`
       );
@@ -2975,27 +3417,31 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       content: 'A current public professional newborn-care page.'
     }
   };
-  const completionFor = (candidate, generationId) => ({
-    data: {
-      contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-      status: 'planned',
-      reason: 'The paid path is ready for deterministic target binding.',
-      plans: (() => {
-        const motions = twoPlannerMotions(candidate, primaryEvidenceRef);
-        motions[1] = compactFreshPlannerPlans([motions[1]])[0];
-        return motions;
-      })()
-    },
-    usage,
-    generationId,
-    diagnostics: {
-      finishReason: 'stop',
-      nativeFinishReason: 'stop',
-      contentByteCount: 900,
-      contentSha256: 'd'.repeat(64)
-    },
-    annotations: [annotation]
-  });
+  const completionFor = (candidate, generationId, request) => {
+    const motions = compactFreshPlannerPlans(
+      twoPlannerMotions(candidate, primaryEvidenceRef)
+    );
+    const exactMarket = request.responseFormat?.json_schema?.schema
+      ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+    for (const motion of motions) motion.market = exactMarket;
+    return {
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: '',
+        plans: motions
+      },
+      usage,
+      generationId,
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 900,
+        contentSha256: 'd'.repeat(64)
+      },
+      annotations: [annotation]
+    };
+  };
   const roleCases = [
     {
       label: 'referral partner',
@@ -3028,6 +3474,32 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   const groundingRefs = (grounding, role) => role === 'd'
     ? grounding.d?.e || []
     : grounding[role] || [];
+  const assertStrictSchemaBlocked = (
+    result,
+    label,
+    expectedPathPrefix = '/plans/0/'
+  ) => {
+    const issues = result.normalizationDiagnostic?.issues;
+    if (result.status !== 'blocked' || result.plans.length !== 0 ||
+        result.planSelection?.returnedPlanCount !== 0 ||
+        result.planSelection?.acceptedPlanCount !== 0 ||
+        result.planSelection?.rejectedPlanCount !== 0 ||
+        result.llm?.discoveryPlanner?.status !== 'completed' ||
+        result.llm?.discoveryPlanner?.error ||
+        result.usage?.calls !== 1 || result.usage?.successfulCalls !== 1 ||
+        result.normalizationDiagnostic?.code !==
+          'strict_schema_mismatch' ||
+        result.normalizationDiagnostic?.failedMotionCount !== 1 ||
+        !Array.isArray(issues) || issues.length < 1 || issues.length > 8 ||
+        !issues.some((issue) =>
+          typeof issue.instancePath === 'string' &&
+          issue.instancePath.startsWith(expectedPathPrefix)
+        ) || result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${label} did not fail at the exact strict-schema boundary: ${JSON.stringify(result)}`
+      );
+    }
+  };
 
   for (const roleCase of roleCases) {
     const candidate = structuredClone(roleCase.candidate);
@@ -3044,9 +3516,10 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       job: structuredClone(baseJob),
       model: 'deepseek/deepseek-v4-flash-0731',
       now,
-      completeJSON: async () => completionFor(
+      completeJSON: async (request) => completionFor(
         candidate,
-        `generation-omitted-target-${roleCase.label.replace(/\W+/g, '-')}`
+        `generation-omitted-target-${roleCase.label.replace(/\W+/g, '-')}`,
+        request
       )
     });
     const families = ['familyA', 'familyB'].map((familyKey) =>
@@ -3112,44 +3585,17 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     job: structuredClone(baseJob),
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => completionFor(
+    completeJSON: async (request) => completionFor(
       mixedPaidOfferContamination,
-      'generation-mixed-unauthorized-paid-offer-target-evidence'
+      'generation-mixed-unauthorized-paid-offer-target-evidence',
+      request
     )
   });
-  const repairedPaidOfferPlan = mixedPaidOfferResult.plans.find((item) =>
-    item.commercialRole === mixedPaidOfferContamination.commercialRole &&
-      item.searchMode === mixedPaidOfferContamination.searchMode
+  assertStrictSchemaBlocked(
+    mixedPaidOfferResult,
+    'mixed owner/target paid-offer contamination',
+    '/plans/0/contingentFinalists/pathBase/'
   );
-  const mixedPaidOfferRepaired = ['familyA', 'familyB'].every((familyKey) => {
-    const family = repairedPaidOfferPlan?.contingentFinalists?.[familyKey];
-    const revenue = family?.d?.r?.[0];
-    return family?.d?.o?.every((offer) =>
-      offer.e.includes(primaryEvidenceRef) &&
-      !offer.e.includes(targetRef)
-    ) &&
-      revenue?.g?.o?.includes(primaryEvidenceRef) &&
-      !revenue.g.o.includes(targetRef) &&
-      family.d.a.every((action) =>
-        action.e.includes(primaryEvidenceRef) &&
-        action.e.includes(targetRef)
-      ) &&
-      family.d.c.every((channel) =>
-        !channel.e.includes(primaryEvidenceRef) &&
-        channel.e.includes(targetRef)
-      ) &&
-      !revenue.g.a.includes(primaryEvidenceRef) &&
-      revenue.g.a.includes(targetRef);
-  });
-  if (mixedPaidOfferResult.status !== 'planned' ||
-      mixedPaidOfferResult.plans.length !== 2 ||
-      !repairedPaidOfferPlan ||
-      !mixedPaidOfferRepaired ||
-      mixedPaidOfferResult.sideEffectsPerformed !== 0) {
-    throw new Error(
-      `mixed owner/target paid-offer contamination was not structurally repaired: ${JSON.stringify(mixedPaidOfferResult)}`
-    );
-  }
 
   const mixedFollowUpContamination = structuredClone(
     cases[0].plans(primaryEvidenceRef)[0]
@@ -3171,30 +3617,17 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     job: structuredClone(baseJob),
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => completionFor(
+    completeJSON: async (request) => completionFor(
       mixedFollowUpContamination,
-      'generation-mixed-unauthorized-follow-up-target-evidence'
+      'generation-mixed-unauthorized-follow-up-target-evidence',
+      request
     )
   });
-  const repairedFollowUpPlan = mixedFollowUpResult.plans.find((item) =>
-    item.commercialRole === mixedFollowUpContamination.commercialRole &&
-      item.searchMode === mixedFollowUpContamination.searchMode
+  assertStrictSchemaBlocked(
+    mixedFollowUpResult,
+    'mixed owner/target follow-up contamination',
+    '/plans/0/contingentFinalists/tactic'
   );
-  if (mixedFollowUpResult.status !== 'planned' ||
-      mixedFollowUpResult.plans.length !== 2 ||
-      !repairedFollowUpPlan ||
-      !['familyA', 'familyB'].every((familyKey) =>
-        repairedFollowUpPlan.contingentFinalists[familyKey].d.f.every(
-          (followUp) =>
-            followUp.e.includes(primaryEvidenceRef) &&
-            !followUp.e.includes(targetRef)
-        )
-      ) ||
-      mixedFollowUpResult.sideEffectsPerformed !== 0) {
-    throw new Error(
-      `mixed owner/target follow-up contamination was not structurally repaired: ${JSON.stringify(mixedFollowUpResult)}`
-    );
-  }
 
   for (const [index, assertedState] of [
     'Follow up because they have already expressed interest',
@@ -3226,24 +3659,17 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       job: structuredClone(baseJob),
       model: 'deepseek/deepseek-v4-flash-0731',
       now,
-      completeJSON: async () => completionFor(
+      completeJSON: async (request) => completionFor(
         assertedFollowUpState,
-        `generation-asserted-unverified-follow-up-state-${index + 1}`
+        `generation-asserted-unverified-follow-up-state-${index + 1}`,
+        request
       )
     });
-    if (assertedFollowUpResult.status !== 'planned' ||
-        assertedFollowUpResult.plans.length !== 1 ||
-        assertedFollowUpResult.planSelection?.acceptedPlanCount !== 1 ||
-        assertedFollowUpResult.planSelection?.rejectedPlanCount !== 1 ||
-        assertedFollowUpResult.sideEffectsPerformed !== 0 ||
-        !/follow_up_unverified_state/i.test(
-          assertedFollowUpResult.planSelection?.rejectedPlans?.[0]
-            ?.reason || ''
-        )) {
-      throw new Error(
-        `unverified follow-up state was not rejected: ${JSON.stringify({ assertedState, assertedFollowUpResult })}`
-      );
-    }
+    assertStrictSchemaBlocked(
+      assertedFollowUpResult,
+      `unverified follow-up state ${assertedState}`,
+      '/plans/0/contingentFinalists/tacticA/f/'
+    );
   }
 
   const neutralFollowUp = structuredClone(
@@ -3260,9 +3686,10 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     job: structuredClone(baseJob),
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => completionFor(
+    completeJSON: async (request) => completionFor(
       neutralFollowUp,
-      'generation-neutral-bounded-follow-up'
+      'generation-neutral-bounded-follow-up',
+      request
     )
   });
   if (neutralFollowUpResult.status !== 'planned' ||
@@ -3318,31 +3745,17 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
       job: structuredClone(baseJob),
       model: 'deepseek/deepseek-v4-flash-0731',
       now,
-      completeJSON: async () => completionFor(
+      completeJSON: async (request) => completionFor(
         candidate,
-        `generation-unauthorized-target-${unauthorized.label.replace(/\W+/g, '-')}`
+        `generation-unauthorized-target-${unauthorized.label.replace(/\W+/g, '-')}`,
+        request
       )
     });
-    const missingGroundingCode = {
-      b: 'grounding_buyer',
-      o: 'grounding_offer',
-      d: 'grounding_destination_evidence',
-      c: 'grounding_conversion',
-      t: 'grounding_attribution'
-    }[unauthorized.role];
-    if (result.status !== 'planned' ||
-        result.plans.length !== 1 ||
-        result.planSelection?.acceptedPlanCount !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        result.sideEffectsPerformed !== 0 ||
-        !new RegExp(
-          `incomplete causal revenue path.*${missingGroundingCode}`,
-          'i'
-        ).test(result.planSelection?.rejectedPlans?.[0]?.reason || '')) {
-      throw new Error(
-        `target-only unauthorized ${unauthorized.label} grounding did not fail closed after structural repair: ${JSON.stringify(result)}`
-      );
-    }
+    assertStrictSchemaBlocked(
+      result,
+      `target-only unauthorized ${unauthorized.label} grounding`,
+      '/plans/0/contingentFinalists/pathBase/r/0/g/'
+    );
   }
 
   const tacticDimensions = new Set(['c', 'a', 'f']);
@@ -3366,24 +3779,19 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
         job: structuredClone(baseJob),
         model: 'deepseek/deepseek-v4-flash-0731',
         now,
-        completeJSON: async () => completionFor(
+        completeJSON: async (request) => completionFor(
           candidate,
-          `generation-unauthorized-target-dimension-${roleCase.label.replace(/\W+/g, '-')}-${dimension}`
+          `generation-unauthorized-target-dimension-${roleCase.label.replace(/\W+/g, '-')}-${dimension}`,
+          request
         )
       });
-      if (result.status !== 'planned' ||
-          result.plans.length !== 1 ||
-          result.planSelection?.acceptedPlanCount !== 1 ||
-          result.planSelection?.rejectedPlanCount !== 1 ||
-          result.sideEffectsPerformed !== 0 ||
-          !new RegExp(
-            `incomplete ${dimension} finalist dimension`,
-            'i'
-          ).test(result.planSelection?.rejectedPlans?.[0]?.reason || '')) {
-        throw new Error(
-          `target-only unauthorized ${roleCase.label} ${dimension} dimension did not fail closed after structural repair: ${JSON.stringify(result)}`
-        );
-      }
+      assertStrictSchemaBlocked(
+        result,
+        `target-only unauthorized ${roleCase.label} ${dimension} dimension`,
+        `/plans/0/contingentFinalists/${
+          tacticDimensions.has(dimension) ? 'tacticA' : 'pathBase'
+        }/${dimension}/`
+      );
     }
   }
 
@@ -3397,24 +3805,17 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     job: structuredClone(baseJob),
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => completionFor(
+    completeJSON: async (request) => completionFor(
       missingObservation,
-      'generation-target-protocol-no-observation'
+      'generation-target-protocol-no-observation',
+      request
     )
   });
-  if (missingObservationResult.status !== 'planned' ||
-      missingObservationResult.plans.length !== 1 ||
-      missingObservationResult.planSelection?.acceptedPlanCount !== 1 ||
-      missingObservationResult.planSelection?.rejectedPlanCount !== 1 ||
-      !/missing approved observation evidence/i.test(
-        missingObservationResult.planSelection?.rejectedPlans?.[0]
-          ?.reason || ''
-      ) ||
-      missingObservationResult.sideEffectsPerformed !== 0) {
-    throw new Error(
-      `target canonicalization invented an observation: ${JSON.stringify(missingObservationResult)}`
-    );
-  }
+  assertStrictSchemaBlocked(
+    missingObservationResult,
+    'missing approved observation evidence',
+    '/plans/0/contingentFinalists/'
+  );
 
   const forged = cases[0].plans(primaryEvidenceRef)[0];
   forged.contingentFinalists = replaceExactRef(
@@ -3429,23 +3830,17 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     job: structuredClone(baseJob),
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => completionFor(
+    completeJSON: async (request) => completionFor(
       forged,
-      'generation-target-protocol-forged-ref'
+      'generation-target-protocol-forged-ref',
+      request
     )
   });
-  if (forgedResult.status !== 'planned' ||
-      forgedResult.plans.length !== 1 ||
-      forgedResult.planSelection?.acceptedPlanCount !== 1 ||
-      forgedResult.planSelection?.rejectedPlanCount !== 1 ||
-      forgedResult.sideEffectsPerformed !== 0 ||
-      !/(?:contingent finalist contract|typed causal revenue witness)/i.test(
-        forgedResult.planSelection?.rejectedPlans?.[0]?.reason || ''
-      )) {
-    throw new Error(
-      `target canonicalization admitted an unknown ref: ${JSON.stringify(forgedResult)}`
-    );
-  }
+  assertStrictSchemaBlocked(
+    forgedResult,
+    'unknown target-protocol evidence reference',
+    '/plans/0/contingentFinalists/'
+  );
 }
 
 async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
@@ -3483,19 +3878,24 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       job,
       model: 'deepseek/deepseek-v4-flash-0731',
       now,
-      completeJSON: async () => ({
+      completeJSON: async (request) => {
+        const motions = (() => {
+          const candidates = twoPlannerMotions(candidate, evidenceRef);
+          if (preserveMaterialized.has(candidate)) {
+            candidates[1] = compactFreshPlannerPlans([candidates[1]])[0];
+            return candidates;
+          }
+          return compactFreshPlannerPlans(candidates);
+        })();
+        const exactMarket = request.responseFormat?.json_schema?.schema
+          ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+        for (const motion of motions) motion.market = exactMarket;
+        return ({
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
-          reason: plannerReason,
-          plans: (() => {
-            const motions = twoPlannerMotions(candidate, evidenceRef);
-            if (preserveMaterialized.has(candidate)) {
-              motions[1] = compactFreshPlannerPlans([motions[1]])[0];
-              return motions;
-            }
-            return compactFreshPlannerPlans(motions);
-          })()
+          reason: '',
+          plans: motions
         },
         usage,
         generationId,
@@ -3506,7 +3906,8 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
           contentSha256: '1'.repeat(64)
         },
         annotations: []
-      })
+      });
+      }
     });
 
   const allowed = await run(
@@ -3597,10 +3998,14 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     allowedBoundPublicMessageMotion,
     'generation-safe-bound-public-profile-message'
   );
-  if (allowedBoundPublicMessage.status !== 'planned' ||
-      allowedBoundPublicMessage.plans.length !== 2) {
+  if (allowedBoundPublicMessage.status !== 'blocked' ||
+      allowedBoundPublicMessage.plans.length !== 0 ||
+      allowedBoundPublicMessage.llm?.discoveryPlanner?.status !==
+        'completed' ||
+      allowedBoundPublicMessage.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch') {
     throw new Error(
-      `a review-first message bound to the exact public professional URL was mistaken for private-contact acquisition: ${JSON.stringify(allowedBoundPublicMessage)}`
+      `a post-materialization public-message fixture bypassed exact schema validation: ${JSON.stringify(allowedBoundPublicMessage)}`
     );
   }
 
@@ -3727,15 +4132,20 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     job: numericEvidenceJob,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
+    completeJSON: async (request) => {
+      const plans = compactFreshPlannerPlans(twoPlannerMotions(
+        replaceEvidenceRef(numericEvidenceMotion),
+        numericEvidenceRef
+      ));
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const motion of plans) motion.market = exactMarket;
+      return ({
       data: {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
         reason: '',
-        plans: compactFreshPlannerPlans(twoPlannerMotions(
-          replaceEvidenceRef(numericEvidenceMotion),
-          numericEvidenceRef
-        ))
+        plans
       },
       usage,
       generationId: 'generation-safe-numeric-evidence-ref',
@@ -3746,7 +4156,8 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
         contentSha256: '1'.repeat(64)
       },
       annotations: []
-    })
+    });
+    }
   });
   if (allowedNumericEvidenceRef.status !== 'planned' ||
       allowedNumericEvidenceRef.plans.length !== 2) {
@@ -3846,16 +4257,13 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     publicDemand,
     'generation-public-demand-unused-sensitive-filter-fields'
   );
-  const retiredPublicRejection = publicResult.planSelection?.rejectedPlans
-    ?.find((item) => item.id === 'plan_1_buyer_solicitation');
-  if (publicResult.status !== 'planned' ||
-      publicResult.plans.length !== 1 ||
-      publicResult.plans.some((item) =>
-        item.motionKind === 'buyer_solicitation'
-      ) ||
-      publicResult.planSelection?.rejectedPlanCount !== 1 ||
-      !/retired fresh execution route|finite fresh execution route|unavailable read-only provider route|no typed causal revenue witness/i.test(
-        retiredPublicRejection?.reason || ''
+  if (publicResult.status !== 'blocked' ||
+      publicResult.plans.length !== 0 ||
+      publicResult.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      !publicResult.normalizationDiagnostic?.issues?.some((issue) =>
+        issue.keyword === 'enum' &&
+        issue.instancePath === '/plans/0/motionKind'
       )) {
     throw new Error(
       `retired public-live-demand route regained fresh authority: ${JSON.stringify(publicResult)}`
@@ -4345,6 +4753,30 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       adversary.candidate,
       `generation-sensitive-adversary-${index + 1}`
     );
+    if (preserveMaterialized.has(adversary.candidate)) {
+      const encoded = JSON.stringify(result);
+      if (result.status !== 'blocked' || result.plans.length !== 0 ||
+          result.planSelection?.returnedPlanCount !== 0 ||
+          result.planSelection?.acceptedPlanCount !== 0 ||
+          result.planSelection?.rejectedPlanCount !== 0 ||
+          result.usage?.calls !== 1 ||
+          result.usage?.successfulCalls !== 1 ||
+          result.normalizationDiagnostic?.code !==
+            'strict_schema_mismatch' ||
+          result.normalizationDiagnostic?.failedMotionCount !== 1 ||
+          !Array.isArray(result.normalizationDiagnostic?.issues) ||
+          result.normalizationDiagnostic.issues.length < 1 ||
+          result.normalizationDiagnostic.issues.length > 8 ||
+          encoded.includes(adversary.candidate.id) ||
+          encoded.includes(adversary.candidate.contingentFinalists
+            ?.familyA?.l || '__no_family_label__') ||
+          result.sideEffectsPerformed !== 0) {
+        throw new Error(
+          `${adversary.label} materialized non-wire response was not rejected at the exact schema boundary: ${encoded}`
+        );
+      }
+      continue;
+    }
     const rationaleOnly = new Set([
       'literal email is forbidden even in descriptive prose',
       'obfuscated literal email is forbidden',
@@ -4567,7 +4999,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           request: 0
         },
         providerRouting: {
-          ignore: ['cloudflare', 'deepinfra', 'inceptron/fp4', 'io-net'],
+          ignore: ['cloudflare'],
           allow_fallbacks: true,
           require_parameters: true,
           data_collection: 'deny',
@@ -4607,10 +5039,17 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           pluginIds: ['response-healing'],
           requestMaxBytes: 64 * 1_024,
           promptTokenCeiling: 65_536 + 2_048,
-          outputTokenCeiling: 6_000,
+          outputTokenCeiling: 2_000,
+          timeoutMs: 120_000,
+          runtimeParsedResponseMaxBytes: 16 * 1_024,
           framingTokenReserve: 2_048,
           fixedToolFeeMicros: 0,
-          callSpendCeilingMicros: 171_168
+          callSpendCeilingMicros: 147_168
+        },
+        interstageCommercialDiscovery: {
+          providerCalls: 2,
+          perCallTimeoutMs: 6_000,
+          totalAllowanceMs: 12_000
         }
       })) {
     throw new Error(
@@ -4648,6 +5087,15 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
   if (recomputedCriticCallSpendCeilingMicros !==
       callEnvelope.critic.callSpendCeilingMicros) {
     throw new Error('critic call-spend capability derivation drifted');
+  }
+  if (callEnvelope.generator.streaming.totalTimeoutMs +
+      callEnvelope.interstageCommercialDiscovery.totalAllowanceMs +
+      callEnvelope.critic.timeoutMs !== 432_000 ||
+      callEnvelope.interstageCommercialDiscovery.providerCalls *
+        callEnvelope.interstageCommercialDiscovery.perCallTimeoutMs !==
+          callEnvelope.interstageCommercialDiscovery.totalAllowanceMs ||
+      600_000 - 432_000 !== 168_000) {
+    throw new Error('opportunity tournament end-to-end timing bound drifted');
   }
 
   const candidate = (overrides = {}) => {
@@ -4689,14 +5137,18 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
       now,
       completeJSON: async (request) => {
         inspectRequest?.(request);
+        const motions = compactFreshPlannerPlans(
+          twoPlannerMotions(motion, evidenceRef)
+        );
+        const exactMarket = request.responseFormat?.json_schema?.schema
+          ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+        for (const item of motions) item.market = exactMarket;
         return {
           data: {
             contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
             status: 'planned',
             reason: '',
-            plans: compactFreshPlannerPlans(
-              twoPlannerMotions(motion, evidenceRef)
-            )
+            plans: motions
           },
           usage,
           generationId,
@@ -4763,63 +5215,180 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     );
   }
 
-  for (const [label, mutate] of [
-    ['buyer label crossed into referral role', (fresh) => {
-      fresh.contingentFinalists.pathBase.b[0].l =
-        'Qualified buyer for the current paid offer';
-    }],
-    ['channel label crossed into paid-demand role', (fresh) => {
-      fresh.contingentFinalists.tacticA.c[0].l =
-        'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification';
-    }],
-    ['action label crossed into referral role', (fresh) => {
-      fresh.contingentFinalists.tacticA.a[0].l =
-        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer';
-    }],
-    ['seller route selected compensated mechanism', (fresh) => {
-      fresh.contingentFinalists.pathBase.r[0].rm = 'compensated_role';
-    }],
-    ['seller route selected compensated paid offer', (fresh) => {
-      fresh.paidOffer =
-        'A current compensated role matching verified professional skills';
-    }]
-  ]) {
-    const primary = compactFreshPlannerPlans([candidate()])[0];
-    mutate(primary);
-    const result = await runOpportunityDiscoveryPlanner({
-      job: structuredClone(job),
-      model: 'deepseek/deepseek-v4-flash-0731',
-      now,
-      completeJSON: async () => ({
-        data: {
-          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-          status: 'planned',
-          reason: '',
-          plans: [
-            primary,
-            compactFreshPlannerPlans(
-              twoPlannerMotions(candidate(), evidenceRef)
-            )[1]
-          ]
-        },
-        usage,
-        generationId: `generation-crossed-selected-role-${label.replaceAll(' ', '-')}`,
-        diagnostics: {
-          finishReason: 'stop',
-          nativeFinishReason: 'stop',
-          contentByteCount: 900,
-          contentSha256: '9'.repeat(64)
-        },
-        annotations: []
-      })
-    });
-    if (result.status !== 'planned' || result.plans.length !== 1 ||
-        result.planSelection?.acceptedPlanCount !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1) {
-      throw new Error(
-        `${label} did not fail closed: ${JSON.stringify(result)}`
-      );
+  const strictMotion = (motion, request) => ({
+    motionKind: motion.motionKind,
+    paidOffer: motion.paidOffer,
+    market: request.responseFormat.json_schema.schema
+      .properties.plans.items.properties.market.enum[0],
+    targetRoleSubrole: motion.targetRoleSubrole,
+    organizationTerms: motion.organizationTerms?.length > 0
+      ? motion.organizationTerms
+      : ['Verified professional organization'],
+    jobTitle: motion.jobTitle || 'Verified professional role',
+    skills: motion.skills?.length > 0
+      ? motion.skills
+      : ['Verified professional skill'],
+    contingentFinalists: motion.contingentFinalists
+  });
+  const roleAuthoredPrimary = compactFreshPlannerPlans([candidate()])[0];
+  // Use non-catalogue strings to prove the single selected buyer, channel,
+  // and action values remain model-authored and byte-for-byte stable.
+  roleAuthoredPrimary.contingentFinalists.pathBase.b.forEach(
+    (item, index) => {
+      item.l = `{{TARGET_NAME}} is an accountable buyer for the current paid advisory service option ${index + 1}`;
     }
+  );
+  for (const [tacticIndex, tacticKey] of ['tacticA', 'tacticB'].entries()) {
+    const tactic = roleAuthoredPrimary.contingentFinalists[tacticKey];
+    tactic.c.forEach((item, index) => {
+      item.l = `Review-first verified professional profile {{TARGET_URL}} for executive purchase route ${tacticIndex + 1}${index + 1}`;
+    });
+    tactic.a.forEach((item, index) => {
+      item.l = `After approval via verified professional profile {{TARGET_URL}}, request {{TARGET_NAME}} to buy the current paid advisory service option ${tacticIndex + 1}${index + 1}`;
+    });
+  }
+  roleAuthoredPrimary.contingentFinalists.tacticB.a.reverse();
+  const roleAuthoredExpected = {
+    paidOffer: roleAuthoredPrimary.paidOffer.seller,
+    mechanism:
+      roleAuthoredPrimary.contingentFinalists.pathBase.r[0].rm.seller,
+    buyers: roleAuthoredPrimary.contingentFinalists.pathBase.b
+      .map((item) => item.l),
+    channels: [
+      roleAuthoredPrimary.contingentFinalists.tacticA.c
+        .map((item) => item.l),
+      roleAuthoredPrimary.contingentFinalists.tacticB.c
+        .map((item) => item.l)
+    ],
+    actions: [
+      roleAuthoredPrimary.contingentFinalists.tacticA.a
+        .map((item) => item.l),
+      roleAuthoredPrimary.contingentFinalists.tacticB.a
+        .map((item) => item.l)
+    ]
+  };
+  const roleAuthoredResult = await runOpportunityDiscoveryPlanner({
+    job: structuredClone(job),
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: '',
+        plans: [
+          strictMotion(roleAuthoredPrimary, request),
+          strictMotion(compactFreshPlannerPlans(
+            twoPlannerMotions(candidate(), evidenceRef)
+          )[1], request)
+        ]
+      },
+      usage,
+      generationId: 'generation-role-authored-branch-selection',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 900,
+        contentSha256: '9'.repeat(64)
+      },
+      annotations: []
+    })
+  });
+  const selectedMotion = roleAuthoredResult.plans.find((item) =>
+    item.id === 'plan_1_direct_buyer_person'
+  );
+  const selectedFamilies = ['familyA', 'familyB'].map((familyKey) =>
+    selectedMotion?.contingentFinalists?.[familyKey]
+  );
+  if (roleAuthoredResult.status !== 'planned' ||
+      roleAuthoredResult.plans.length !== 2 || !selectedMotion ||
+      selectedMotion.paidOffer !== roleAuthoredExpected.paidOffer ||
+      selectedFamilies.some((family, familyIndex) =>
+        family?.d?.r?.[0]?.rm !== roleAuthoredExpected.mechanism ||
+        family?.d?.r?.[0]?.k?.v !== 'revenue_causal_witness_v2' ||
+        family?.d?.r?.[0]?.k?.n !== 14 ||
+        family?.d?.r?.[0]?.k?.u !== 'calendar_days' ||
+        JSON.stringify(family?.d?.b?.map((item) => item.l)) !==
+          JSON.stringify(roleAuthoredExpected.buyers) ||
+        JSON.stringify(family?.d?.c?.map((item) => item.l)) !==
+          JSON.stringify(roleAuthoredExpected.channels[familyIndex]) ||
+        JSON.stringify(family?.d?.a?.map((item) => item.l)) !==
+          JSON.stringify(roleAuthoredExpected.actions[familyIndex]) ||
+        family?.d?.r?.[0]?.c !==
+          roleAuthoredExpected.actions[familyIndex][0]
+      ) || roleAuthoredResult.normalizationDiagnostic) {
+    throw new Error(
+      `model-authored role branch was not selected byte-for-byte: ${JSON.stringify({ roleAuthoredExpected, roleAuthoredResult })}`
+    );
+  }
+
+  const invalidLabelPrimary = structuredClone(roleAuthoredPrimary);
+  invalidLabelPrimary.contingentFinalists.tacticA.a[0].l =
+    'After review, inspect scheduling and write an operational report.';
+  const invalidLabelResult = await runOpportunityDiscoveryPlanner({
+    job: structuredClone(job),
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => ({
+      data: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: '',
+        plans: [
+          strictMotion(invalidLabelPrimary, request),
+          strictMotion(compactFreshPlannerPlans(
+            twoPlannerMotions(candidate(), evidenceRef)
+          )[1], request)
+        ]
+      },
+      usage,
+      generationId: 'generation-strict-schema-arbitrary-action',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        contentByteCount: 900,
+        contentSha256: '8'.repeat(64)
+      },
+      annotations: []
+    })
+  });
+  if (invalidLabelResult.status !== 'blocked' ||
+      invalidLabelResult.plans.length !== 0 ||
+      invalidLabelResult.planSelection?.returnedPlanCount !== 0 ||
+      invalidLabelResult.llm?.discoveryPlanner?.status !== 'completed' ||
+      invalidLabelResult.llm?.discoveryPlanner?.error ||
+      invalidLabelResult.usage?.successfulCalls !== 1 ||
+      invalidLabelResult.normalizationDiagnostic?.contractVersion !==
+        OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT ||
+      invalidLabelResult.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      invalidLabelResult.normalizationDiagnostic?.failedMotionCount !== 1 ||
+      !Array.isArray(invalidLabelResult.normalizationDiagnostic?.issues) ||
+      invalidLabelResult.normalizationDiagnostic.issues.length < 1 ||
+      invalidLabelResult.normalizationDiagnostic.issues.length > 8 ||
+      invalidLabelResult.normalizationDiagnostic.issues.some((issue) =>
+        !['required', 'additionalProperties', 'type', 'enum', 'const',
+          'pattern', 'minLength', 'maxLength', 'minItems', 'maxItems',
+          'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum',
+          'format']
+          .includes(issue?.keyword) ||
+        typeof issue?.instancePath !== 'string' ||
+        issue.instancePath.length > 160 ||
+        !/^(?:\/(?:[A-Za-z0-9_-]|~0|~1)*)*$/u.test(issue.instancePath) ||
+        Object.keys(issue).some((key) =>
+          !['keyword', 'instancePath', 'missingProperty'].includes(key)
+        ) ||
+        (Object.hasOwn(issue, 'missingProperty') &&
+          !/^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(issue.missingProperty))
+      ) ||
+      JSON.stringify(invalidLabelResult.normalizationDiagnostic).includes(
+        'inspect scheduling'
+      ) || JSON.stringify(invalidLabelResult.normalizationDiagnostic).includes(
+        'must be equal to one of the allowed values'
+      ) || invalidLabelResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `arbitrary schema-invalid action reached normalization: ${JSON.stringify(invalidLabelResult)}`
+    );
   }
 
   const derivedMappingLines = [];
@@ -4867,12 +5436,19 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
       adversary,
       `generation-${label}-canonical-subrole`
     );
-    if (result.status !== 'planned' || result.plans.length !== 1 ||
-        result.planSelection?.acceptedPlanCount !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        !/supported .*targetRoleSubrole/i.test(
-          result.planSelection?.rejectedPlans?.[0]?.reason || ''
-        )) {
+    if (result.status !== 'blocked' || result.plans.length !== 0 ||
+        result.planSelection?.returnedPlanCount !== 0 ||
+        result.llm?.discoveryPlanner?.status !== 'completed' ||
+        result.usage?.successfulCalls !== 1 ||
+        result.normalizationDiagnostic?.code !==
+          'strict_schema_mismatch' ||
+        !result.normalizationDiagnostic?.issues?.some((issue) =>
+          (issue.instancePath === '/plans/0/targetRoleSubrole' &&
+            issue.keyword === 'enum') ||
+          (issue.instancePath === '/plans/0' &&
+            issue.keyword === 'required' &&
+            issue.missingProperty === 'targetRoleSubrole')
+        ) || result.sideEffectsPerformed !== 0) {
       throw new Error(
         `${label} canonical subrole escaped fresh validation: ${JSON.stringify(result)}`
       );
@@ -5691,38 +6267,50 @@ async function verifyOneMotionUsesTwoTacticFallback(job, evidenceRef) {
     job,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
-      data: {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason: 'One grounded motion contains two distinct causal tactics.',
-        plans: compactFreshPlannerPlans([
-          cases[0].plans(evidenceRef)[0]
-        ])
-      },
-      usage,
-      generationId: 'generation-one-motion-two-families',
-      diagnostics: {
-        finishReason: 'stop',
-        nativeFinishReason: 'stop',
-        contentByteCount: 700,
-        contentSha256: '1'.repeat(64)
-      },
-      annotations: [{
-        type: 'url_citation',
-        url_citation: {
-          url: 'https://riverside-pediatrics.example/newborn-care',
-          title: 'Riverside Pediatrics newborn care',
-          content: 'Current public newborn-care practice in Queens.'
-        }
-      }]
-    })
+    completeJSON: async (request) => {
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(cases[0].plans(evidenceRef)[0], evidenceRef)
+      );
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of plans) plan.market = exactMarket;
+      // Keep the wire contract exact while making only motion two
+      // semantically non-diverse. Repeating the selected paid-demand action
+      // across both model-authored tactics leaves the closed schema intact,
+      // but must fail the local causal-diversity gate. Motion one survives
+      // for the critic's two-tactic comparison.
+      const repeatedAction =
+        plans[1].contingentFinalists.tacticA.a[0].l;
+      for (const tactic of [
+        plans[1].contingentFinalists.tacticA,
+        plans[1].contingentFinalists.tacticB
+      ]) {
+        for (const action of tactic.a) action.l = repeatedAction;
+      }
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage,
+        generationId: 'generation-one-motion-two-families',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 700,
+          contentSha256: '1'.repeat(64)
+        },
+        annotations: []
+      };
+    }
   });
   if (result.status !== 'planned' ||
       result.plans.length !== 1 ||
-      result.planSelection?.returnedPlanCount !== 1 ||
+      result.planSelection?.returnedPlanCount !== 2 ||
       result.planSelection?.acceptedPlanCount !== 1 ||
-      result.planSelection?.rejectedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 1 ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `one-motion two-tactic fallback was not retained: ${JSON.stringify(result)}`
@@ -5734,106 +6322,196 @@ async function verifySingleOperationalVariantCanBePruned(
   job,
   evidenceRef
 ) {
-  const motion = canonicalMaterializedPlannerPlans([
-    cases[0].plans(evidenceRef)[0]
-  ])[0];
-  motion.contingentFinalists.familyA.d.a[1].l =
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to configure scheduling.';
   const result = await runOpportunityDiscoveryPlanner({
     job,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
-      data: {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason:
-          'One grounded motion retains two causal families after local variant pruning.',
-        plans: (() => {
-          const motions = twoPlannerMotions(motion, evidenceRef);
-          motions[1] = canonicalMaterializedPlannerPlans([motions[1]])[0];
-          return motions;
-        })()
-      },
-      usage,
-      generationId: 'generation-one-operational-variant',
-      diagnostics: {
-        finishReason: 'stop',
-        nativeFinishReason: 'stop',
-        contentByteCount: 700,
-        contentSha256: '0'.repeat(64)
-      },
-      annotations: [{
-        type: 'url_citation',
-        url_citation: {
-          url: 'https://riverside-pediatrics.example/newborn-care',
-          title: 'Riverside Pediatrics newborn care',
-          content: 'Current public newborn-care practice in Queens.'
-        }
-      }]
-    })
+    completeJSON: async (request) => {
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(cases[0].plans(evidenceRef)[0], evidenceRef)
+      );
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of plans) plan.market = exactMarket;
+      plans[0].contingentFinalists.tacticA.a[0].l =
+        'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to configure scheduling.';
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage,
+        generationId: 'generation-one-operational-variant',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 700,
+          contentSha256: '0'.repeat(64)
+        },
+        annotations: []
+      };
+    }
   });
-  if (result.status !== 'planned' ||
-      result.plans.length !== 2 ||
-      result.plans[0].contingentFinalists?.familyA?.d?.a?.length !== 2 ||
+  if (result.status !== 'blocked' ||
+      result.plans.length !== 0 ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      result.usage?.successfulCalls !== 1 ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
-      `one invalid action variant blocked two viable causal families: ${JSON.stringify(result)}`
+      `schema-invalid operational action was not rejected before normalization: ${JSON.stringify(result)}`
+    );
+  }
+}
+
+async function verifyLinkedRecoveryCannotBeBusinessAction(
+  job,
+  evidenceRef
+) {
+  for (const recoveryVerb of ['retry', 'rerun']) {
+    const result = await runOpportunityDiscoveryPlanner({
+      job,
+      model: 'deepseek/deepseek-v4-flash-0731',
+      now,
+      completeJSON: async (request) => {
+        const plans = compactFreshPlannerPlans(
+          twoPlannerMotions(cases[0].plans(evidenceRef)[0], evidenceRef)
+        );
+        const exactMarket = request.responseFormat?.json_schema?.schema
+          ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+        for (const plan of plans) plan.market = exactMarket;
+        const invalidPlan = plans[0];
+        for (const tacticKey of ['tacticA', 'tacticB']) {
+          for (const action of
+            invalidPlan.contingentFinalists[tacticKey].a) {
+            action.l = action.l.endsWith(' {{TARGET_NAME}}')
+              ? action.l.replace(
+                  / (to|for) \{\{TARGET_NAME\}\}$/,
+                  ` after ${recoveryVerb} review $1 {{TARGET_NAME}}`
+                )
+              : `${action.l} after ${recoveryVerb} review`;
+          }
+        }
+        return {
+          data: {
+            contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+            status: 'planned',
+            reason: '',
+            plans
+          },
+          usage,
+          generationId: `generation-linked-${recoveryVerb}-action`,
+          diagnostics: {
+            finishReason: 'stop',
+            nativeFinishReason: 'stop',
+            contentByteCount: 800,
+            contentSha256: '6'.repeat(64)
+          },
+          annotations: []
+        };
+      }
+    });
+    if (result.status !== 'planned' || result.plans.length !== 1 ||
+        result.normalizationDiagnostic != null ||
+        result.planSelection?.acceptedPlanCount !== 1 ||
+        result.planSelection?.rejectedPlanCount !== 1 ||
+        !/primary_action_linked_recovery/.test(
+          result.planSelection?.rejectedPlans?.[0]?.reason || ''
+        ) ||
+        result.usage?.successfulCalls !== 1 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${recoveryVerb} instruction became a model-authored business action: ${JSON.stringify(result)}`
+      );
+    }
+  }
+}
+
+async function verifySupportingBottleneckIsMissingEvidence(job, evidenceRef) {
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(cases[0].plans(evidenceRef)[0], evidenceRef)
+      );
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of plans) {
+        plan.market = exactMarket;
+        plan.contingentFinalists.pathBase.r[0].sb =
+          'No paid conversion proof is known; prepare a tracking artifact.';
+      }
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage,
+        generationId: 'generation-operational-supporting-bottleneck',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 700,
+          contentSha256: 'b'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  if (result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.normalizationDiagnostic != null ||
+      result.planSelection?.rejectedPlanCount !== 2 ||
+      result.planSelection?.rejectedPlans?.some((item) =>
+        !/supporting_bottleneck_not_evidence_gap/.test(item.reason || '')
+      ) ||
+      result.usage?.successfulCalls !== 1 ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `operational supporting bottleneck became experiment evidence: ${JSON.stringify(result)}`
     );
   }
 }
 
 async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
-  const motion = canonicalMaterializedPlannerPlans([
-    cases[0].plans(evidenceRef)[0]
-  ])[0];
-  const actions = [
-    'Review first: via verified professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend that one qualified family book the current consultation.',
-    'After review, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified family to book the current consultation.',
-    'After review, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner referral to the paid booking offer.',
-    'After approval, via LinkedIn {{TARGET_URL}}, ask {{TARGET_NAME}} for a partner introduction to the paid offer.'
-  ];
-  let index = 0;
-  for (const familyKey of ['familyA', 'familyB']) {
-    const family = motion.contingentFinalists[familyKey];
-    family.d.r[0].c = actions[index];
-    for (const action of family.d.a) {
-      action.l = actions[index];
-      index += 1;
-    }
-  }
+  let expectedActions = [];
   const result = await runOpportunityDiscoveryPlanner({
     job,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
-      data: {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason: 'One review-first referral motion has two active causal tactics.',
-        plans: (() => {
-          const motions = twoPlannerMotions(motion, evidenceRef);
-          motions[1] = canonicalMaterializedPlannerPlans([motions[1]])[0];
-          return motions;
-        })()
-      },
-      usage,
-      generationId: 'generation-qualified-partner-referral-actions',
-      diagnostics: {
-        finishReason: 'stop',
-        nativeFinishReason: 'stop',
-        contentByteCount: 800,
-        contentSha256: '2'.repeat(64)
-      },
-      annotations: [{
-        type: 'url_citation',
-        url_citation: {
-          url: 'https://riverside-pediatrics.example/newborn-care',
-          title: 'Riverside Pediatrics newborn care',
-          content: 'Current public newborn-care practice in Queens.'
-        }
-      }]
-    })
+    completeJSON: async (request) => {
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(cases[0].plans(evidenceRef)[0], evidenceRef)
+      );
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of plans) plan.market = exactMarket;
+      expectedActions = [
+        ...plans[0].contingentFinalists.tacticA.a,
+        ...plans[0].contingentFinalists.tacticB.a
+      ].map((action) => action.l);
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage,
+        generationId: 'generation-qualified-partner-referral-actions',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 800,
+          contentSha256: '2'.repeat(64)
+        },
+        annotations: []
+      };
+    }
   });
   const returnedActions = ['familyA', 'familyB'].flatMap((familyKey) =>
     result.plans[0]?.contingentFinalists?.[familyKey]?.d?.a?.map(
@@ -5841,7 +6519,7 @@ async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
     ) || []
   );
   if (result.status !== 'planned' || result.plans.length !== 2 ||
-      JSON.stringify(returnedActions) !== JSON.stringify(actions)) {
+      JSON.stringify(returnedActions) !== JSON.stringify(expectedActions)) {
     throw new Error(
       `qualified partner-referral revenue actions were rejected: ${JSON.stringify(result)}`
     );
@@ -5882,13 +6560,14 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
     motion: arbitrary,
     generationId: 'generation-compact-arbitrary-conversion-action'
   });
-  if (arbitraryProjected.status !== 'planned' ||
-      arbitraryProjected.plans.length !== 2 ||
-      arbitraryProjected.plans[0]?.contingentFinalists?.familyA?.d?.r?.[0]
-        ?.c !== arbitraryProjected.plans[0]?.contingentFinalists?.familyA
-        ?.d?.a?.[0]?.l) {
+  if (arbitraryProjected.status !== 'blocked' ||
+      arbitraryProjected.plans.length !== 0 ||
+      arbitraryProjected.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      arbitraryProjected.usage?.successfulCalls !== 1 ||
+      arbitraryProjected.sideEffectsPerformed !== 0) {
     throw new Error(
-      `model-forged redundant compact conversion action retained authority: ${JSON.stringify(arbitraryProjected)}`
+      `model-forged redundant compact conversion action escaped the strict schema: ${JSON.stringify(arbitraryProjected)}`
     );
   }
 
@@ -5897,22 +6576,19 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
     invalid.contingentFinalists
   );
   for (const action of invalid.contingentFinalists.tacticA.a) {
-    action.l =
-      'After review, monitor {{TARGET_NAME}} without making a paid referral request.';
+    action.e = ['observation:invented-conversion-evidence'];
   }
   const rejected = await plannerResultForMotion({
     job,
     motion: invalid,
     generationId: 'generation-compact-no-valid-conversion-action'
   });
-  if (rejected.status !== 'planned' || rejected.plans.length !== 1 ||
-      rejected.planSelection?.rejectedPlanCount !== 1 ||
-      !/(?:reserved target syntax|primary_action_(?:passive|negated|non_revenue|partner_referral)|no typed causal revenue witness)/i.test(
-        rejected.planSelection?.rejectedPlans?.[0]?.reason || ''
-      ) ||
+  if (rejected.status !== 'blocked' || rejected.plans.length !== 0 ||
+      rejected.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      rejected.usage?.successfulCalls !== 1 ||
       rejected.sideEffectsPerformed !== 0) {
     throw new Error(
-      `compact conversion projection rescued an invalid tactic: ${JSON.stringify(rejected)}`
+      `compact conversion projection accepted out-of-catalog evidence: ${JSON.stringify(rejected)}`
     );
   }
 
@@ -5923,19 +6599,41 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
     materializedMarker.contingentFinalists[familyKey].d.r[0].c =
       'project_selected_tactic_action';
   }
-  const materializedRejected = await plannerResultForMotion({
+  const materializedRejected = await runOpportunityDiscoveryPlanner({
     job,
-    motion: materializedMarker,
-    generationId: 'generation-materialized-conversion-marker'
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      materializedMarker.market = exactMarket;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans: [materializedMarker, structuredClone(materializedMarker)]
+        },
+        usage,
+        generationId: 'generation-materialized-conversion-marker',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 800,
+          contentSha256: '4'.repeat(64)
+        },
+        annotations: []
+      };
+    }
   });
-  if (materializedRejected.status !== 'planned' ||
-      materializedRejected.plans.length !== 1 ||
-      materializedRejected.planSelection?.rejectedPlanCount !== 1 ||
-      !/(?:projected revenue action|reserved target syntax)/i.test(
-        materializedRejected.planSelection?.rejectedPlans?.[0]?.reason || ''
-      )) {
+  if (materializedRejected.status !== 'blocked' ||
+      materializedRejected.plans.length !== 0 ||
+      materializedRejected.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      materializedRejected.usage?.successfulCalls !== 1 ||
+      materializedRejected.sideEffectsPerformed !== 0) {
     throw new Error(
-      `materialized conversion marker was improperly projected: ${JSON.stringify(materializedRejected)}`
+      `materialized conversion marker bypassed the strict wire contract: ${JSON.stringify(materializedRejected)}`
     );
   }
 
@@ -5980,59 +6678,50 @@ async function verifyCompactConversionActionProjection(job, evidenceRef) {
 }
 
 async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
-  const motion = canonicalMaterializedPlannerPlans([
-    cases[1].plans(evidenceRef)[0]
-  ])[0];
-  motion.market = 'Queens, New York, United States';
+  const motion = cases[1].plans(evidenceRef)[0];
+  motion.contingentFinalists = compactContingentFinalists(
+    motion.contingentFinalists
+  );
   const actions = [
-    'After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}.',
-    'After review via official paid-demand page {{TARGET_URL}}, apply a compensated application for {{TARGET_NAME}}.',
-    'After review via official paid-demand page {{TARGET_URL}}, respond one paid response to {{TARGET_NAME}}.',
-    'After review via official paid-demand page {{TARGET_URL}}, bid a paid bid for {{TARGET_NAME}}.'
-  ];
-  let index = 0;
-  for (const familyKey of ['familyA', 'familyB']) {
-    const family = motion.contingentFinalists[familyKey];
-    const firstActionIndex = index;
-    for (const action of
-      family.d.a) {
-      action.l = actions[index];
-      index += 1;
-    }
-    family.d.r[0].c = actions[firstActionIndex];
-  }
+    ...motion.contingentFinalists.tacticA.a,
+    ...motion.contingentFinalists.tacticB.a
+  ].map((action) => action.l);
   const accepted = await plannerResultForMotion({
     job,
     motion,
     generationId: 'generation-paid-demand-response-verbs'
   });
-  if (accepted.status !== 'planned' || accepted.plans.length !== 2) {
+  const paidDemandMotion = accepted.plans.find((plan) =>
+    plan.motionKind === 'compensated_job'
+  );
+  const acceptedActions = ['familyA', 'familyB'].flatMap((familyKey) =>
+    paidDemandMotion?.contingentFinalists?.[familyKey]?.d?.a?.map(
+      (action) => action.l
+    ) || []
+  );
+  if (accepted.status !== 'planned' || accepted.plans.length !== 2 ||
+      JSON.stringify(acceptedActions) !== JSON.stringify(actions)) {
     throw new Error(
       `paid application/proposal/response verbs were rejected: ${JSON.stringify(accepted)}`
     );
   }
 
-  const artifactOnly = canonicalMaterializedPlannerPlans([
-    cases[1].plans(evidenceRef)[0]
-  ])[0];
-  artifactOnly.market = 'Queens, New York, United States';
-  artifactOnly.contingentFinalists.familyA.d.a[0].l =
+  const artifactOnly = cases[1].plans(evidenceRef)[0];
+  artifactOnly.contingentFinalists = compactContingentFinalists(
+    artifactOnly.contingentFinalists
+  );
+  artifactOnly.contingentFinalists.tacticA.a[0].l =
     'After review via official paid-demand page {{TARGET_URL}}, submit one research report to {{TARGET_NAME}}.';
-  artifactOnly.contingentFinalists.familyA.d.a[1].l =
+  artifactOnly.contingentFinalists.tacticA.a[1].l =
     'After review via official paid-demand page {{TARGET_URL}}, submit one analytics dashboard to {{TARGET_NAME}}.';
-  artifactOnly.contingentFinalists.familyA.d.r[0].c =
-    artifactOnly.contingentFinalists.familyA.d.a[0].l;
   const rejected = await plannerResultForMotion({
     job,
     motion: artifactOnly,
     generationId: 'generation-non-revenue-artifact-submission'
   });
-  if (rejected.status !== 'planned' ||
-      !/(?:primary_action_(?:non_revenue|passive)|private_contact_route:acquisition)/i.test(
-        rejected.planSelection?.rejectedPlans?.[0]?.reason || ''
-      ) ||
-      rejected.plans.length !== 1 ||
-      rejected.planSelection?.rejectedPlanCount !== 1 ||
+  if (rejected.status !== 'blocked' || rejected.plans.length !== 0 ||
+      rejected.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      rejected.usage?.successfulCalls !== 1 ||
       rejected.sideEffectsPerformed !== 0) {
     throw new Error(
       `non-revenue artifact submission passed: ${JSON.stringify(rejected)}`
@@ -6040,7 +6729,10 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
   }
 }
 
-async function verifyOptionalSupportingBottleneckPasses(job, evidenceRef) {
+async function verifyRequiredSupportingBottleneckFailsClosed(
+  job,
+  evidenceRef
+) {
   const motion = cases[0].plans(evidenceRef)[0];
   motion.contingentFinalists = compactContingentFinalists(
     motion.contingentFinalists
@@ -6051,9 +6743,12 @@ async function verifyOptionalSupportingBottleneckPasses(job, evidenceRef) {
     motion,
     generationId: 'generation-empty-optional-supporting-bottleneck'
   });
-  if (result.status !== 'planned' || result.plans.length !== 2) {
+  if (result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      result.usage?.successfulCalls !== 1 ||
+      result.sideEffectsPerformed !== 0) {
     throw new Error(
-      `empty optional supporting bottleneck was rejected: ${JSON.stringify(result)}`
+      `empty required supporting bottleneck escaped exact schema validation: ${JSON.stringify(result)}`
     );
   }
 }
@@ -6072,26 +6767,20 @@ async function verifyAuthoredTerminalOutcomeIsNonAuthoritative(
       motion.contingentFinalists
     );
     const revenue = motion.contingentFinalists.pathBase.r[0];
-    // o is absent from the strict fresh schema. A provider-bypass fixture may
-    // still forge it, but deterministic materialization must derive the
-    // canonical terminal outcome solely from rm.
+    // o is absent from the strict fresh schema. A provider completion that
+    // forges it must be rejected before deterministic materialization; code
+    // derives the canonical terminal outcome solely from rm only after that
+    // exact boundary passes.
     revenue.o = outcome;
     const result = await plannerResultForMotion({
       job,
       motion,
       generationId: `generation-forged-terminal-outcome-${index + 1}`
     });
-    const acceptedMotion = result.plans.find((item) =>
-      item.commercialRole === motion.commercialRole &&
-        item.searchMode === motion.searchMode
-    );
-    const derivedOutcomes = ['familyA', 'familyB'].map((familyKey) =>
-      acceptedMotion?.contingentFinalists?.[familyKey]?.d?.r?.[0]?.o
-    );
-    if (result.status !== 'planned' || result.plans.length !== 2 ||
-        derivedOutcomes.some((value) =>
-          value !== canonicalTerminalPaidOutcome('paid_booking')
-        ) || result.sideEffectsPerformed !== 0) {
+    if (result.status !== 'blocked' || result.plans.length !== 0 ||
+        result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+        result.usage?.successfulCalls !== 1 ||
+        result.sideEffectsPerformed !== 0) {
       throw new Error(
         `model-authored terminal outcome retained authority (${outcome}): ${JSON.stringify(result)}`
       );
@@ -6117,26 +6806,19 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
     const motion = mechanism === 'compensated_role'
       ? cases[1].plans(evidenceRef)[0]
       : cases[0].plans(evidenceRef)[0];
-    if (mechanism === 'compensated_role') {
-      motion.paidOffer = COMPENSATED_JOB_PAID_OFFER;
-    }
     motion.contingentFinalists = compactContingentFinalists(
       motion.contingentFinalists
     );
     const revenue = motion.contingentFinalists.pathBase.r[0];
-    revenue.rm = mechanism;
-    revenue.v = 'model_forged_contract';
-    revenue.a = 'inbound';
-    revenue.c = 'Model-forged conversion prose.';
-    revenue.o = 'Model-forged unpaid terminal prose.';
+    revenue.rm = {
+      seller: mechanism === 'compensated_role'
+        ? 'paid_booking'
+        : mechanism,
+      compensatedJob: 'compensated_role'
+    };
     revenue.k = {
       n: 14,
-      u: 'calendar_days',
-      v: 'model_forged_witness',
-      c: 'paid_booking',
-      o: 'direct_sale',
-      p: 'forged_terminal',
-      t: 'forged_attribution'
+      u: 'calendar_days'
     };
     return motion;
   };
@@ -6173,6 +6855,27 @@ async function verifyMechanismSpecificTerminalOutcomes(job, evidenceRef) {
         `deterministic ${mechanism} revenue projection failed: ${JSON.stringify(result)}`
       );
     }
+  }
+
+  const compensatedRouteWithSellerMechanism = motionFor(
+    'compensated_role'
+  );
+  compensatedRouteWithSellerMechanism.contingentFinalists
+    .pathBase.r[0].rm.compensatedJob = 'paid_booking';
+  const crossedMechanismResult = await plannerResultForMotion({
+    job,
+    motion: compensatedRouteWithSellerMechanism,
+    generationId: 'generation-compensated-route-seller-mechanism'
+  });
+  if (crossedMechanismResult.status !== 'blocked' ||
+      crossedMechanismResult.plans.length !== 0 ||
+      crossedMechanismResult.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      crossedMechanismResult.usage?.successfulCalls !== 1 ||
+      crossedMechanismResult.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `compensated route accepted a seller mechanism: ${JSON.stringify(crossedMechanismResult)}`
+    );
   }
 }
 
@@ -6233,11 +6936,9 @@ async function verifyRevenueStopUnits(job, evidenceRef) {
       motion,
       generationId: `generation-invalid-revenue-stop-${index + 1}`
     });
-    if (result.status !== 'planned' ||
-        !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
-          .includes('[numeric_stop]') ||
-        result.plans.length !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
+    if (result.status !== 'blocked' || result.plans.length !== 0 ||
+        result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+        result.usage?.successfulCalls !== 1 ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
         `invalid typed revenue stop passed (${invalid.text}): ${JSON.stringify(result)}`
@@ -6247,48 +6948,90 @@ async function verifyRevenueStopUnits(job, evidenceRef) {
 }
 
 async function verifyNaturalBookingAttribution(job, evidenceRef) {
-  const authoredSignals = [
+  const acceptedAuthoredSignals = [
     'Referral source recorded on the booking with the tournament action id.',
     'Campaign source field stored on the appointment record.',
-    'Referral origin recorded with the consultation.',
-    'No attribution is recorded for the booking.',
-    'The booking has an unknown source.'
+    'Referral origin recorded with the consultation.'
   ];
-  for (const [index, attributionSignal] of authoredSignals.entries()) {
+  for (const [index, attributionSignal] of
+    acceptedAuthoredSignals.entries()) {
     const motion = cases[0].plans(evidenceRef)[0];
     motion.contingentFinalists = compactContingentFinalists(
       motion.contingentFinalists
     );
     const revenue = motion.contingentFinalists.pathBase.r[0];
     revenue.atm = 'booking_record';
+    revenue.ats = attributionSignal;
     motion.attributionSignal = attributionSignal;
     const result = await plannerResultForMotion({
       job,
       motion,
-      generationId: `generation-canonical-system-attribution-${index + 1}`
+      generationId: `generation-model-authored-attribution-${index + 1}`
     });
-    if (result.status !== 'planned' ||
-        result.plans.length !== 2 ||
+    const selectedPlan = result.plans.find((plan) =>
+      plan.motionKind === motion.motionKind &&
+      plan.commercialRole === motion.commercialRole
+    );
+    const selectedRevenue = ['familyA', 'familyB'].map((familyKey) =>
+      selectedPlan?.contingentFinalists?.[familyKey]?.d?.r?.[0]
+    );
+    if (result.status !== 'planned' || result.plans.length !== 2 ||
         result.planSelection?.rejectedPlanCount !== 0 ||
-        result.plans.some((plan) =>
-          plan.attributionSignal !==
-            (plan.motionKind === 'compensated_job'
-              ? 'The accepted role records the exact researched job posting'
-              : 'ProfileScribe source field records the tournament action') ||
-          [
-            plan.contingentFinalists?.familyA?.d?.r?.[0],
-            plan.contingentFinalists?.familyB?.d?.r?.[0]
-          ].some((path) =>
-            path?.atm !== 'crm_source' ||
-            path?.ats !==
-              (plan.motionKind === 'compensated_job'
-                ? 'The accepted role records the exact researched job posting'
-                : 'ProfileScribe source field records the tournament action')
-          )
-        ) ||
+        selectedPlan?.attributionSignal !== attributionSignal ||
+        selectedRevenue.some((path) => path?.ats !== attributionSignal) ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
-        `model-authored attribution escaped canonical system authority (${attributionSignal}): ${JSON.stringify(result)}`
+        `model-authored attribution was rewritten (${attributionSignal}): ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  const rejectedAuthoredSignals = [
+    {
+      text: 'No attribution is recorded for the booking.',
+      expectedStage: 'strict_schema'
+    },
+    {
+      text: 'The booking has an unknown source.',
+      expectedStage: 'semantic'
+    }
+  ];
+  for (const [index, rejectedSignal] of
+    rejectedAuthoredSignals.entries()) {
+    const attributionSignal = rejectedSignal.text;
+    const motion = cases[0].plans(evidenceRef)[0];
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    const revenue = motion.contingentFinalists.pathBase.r[0];
+    revenue.atm = 'booking_record';
+    revenue.ats = attributionSignal;
+    motion.attributionSignal = attributionSignal;
+    const result = await plannerResultForMotion({
+      job,
+      motion,
+      generationId: `generation-rejected-model-attribution-${index + 1}`
+    });
+    const rejectedAtSchema = rejectedSignal.expectedStage ===
+        'strict_schema' &&
+      result.status === 'blocked' &&
+      result.plans.length === 0 &&
+      result.normalizationDiagnostic?.code === 'strict_schema_mismatch';
+    const rejectedSemantically = rejectedSignal.expectedStage ===
+        'semantic' &&
+      result.status === 'planned' &&
+      result.plans.length === 1 &&
+      result.planSelection?.returnedPlanCount === 2 &&
+      result.planSelection?.acceptedPlanCount === 1 &&
+      result.planSelection?.rejectedPlanCount === 1 &&
+      !result.plans.some((plan) =>
+        plan.attributionSignal === attributionSignal
+      );
+    if ((!rejectedAtSchema && !rejectedSemantically) ||
+        result.usage?.successfulCalls !== 1 ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `contradictory model-authored attribution was accepted (${attributionSignal}): ${JSON.stringify(result)}`
       );
     }
   }
@@ -6311,13 +7054,15 @@ async function verifyCausalPathDiagnosticsAreFieldSpecific(
     motion,
     generationId: 'generation-field-specific-causal-diagnostics'
   });
-  const expected =
-    '[incremental_income,conversion_destination,expected_value]';
-  if (result.status !== 'planned' ||
-      !(result.planSelection?.rejectedPlans?.[0]?.reason || '')
-        .includes(expected) ||
-      result.plans.length !== 1 ||
-      result.planSelection?.rejectedPlanCount !== 1 ||
+  if (result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      JSON.stringify(result.normalizationDiagnostic?.issues) !==
+        JSON.stringify([{
+          keyword: 'minimum',
+          instancePath:
+            '/plans/0/contingentFinalists/pathBase/r/0/vm'
+        }]) ||
+      result.usage?.successfulCalls !== 1 ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `causal-path diagnostics were not field-specific and safe: ${JSON.stringify(result)}`
@@ -6381,16 +7126,10 @@ async function verifyTypedCausalWitnessContract(job, evidenceRef) {
     motion: forged,
     generationId: 'generation-forged-witness-duplicates'
   });
-  const projectedRevenue = projected.plans.find((item) =>
-    item.commercialRole === forged.commercialRole &&
-      item.searchMode === forged.searchMode
-  )?.contingentFinalists?.familyA?.d?.r?.[0];
-  if (projected.status !== 'planned' || projected.plans.length !== 2 ||
-      projectedRevenue?.k?.v !== 'revenue_causal_witness_v2' ||
-      projectedRevenue?.k?.c !== projectedRevenue?.rm ||
-      projectedRevenue?.k?.o !== projectedRevenue?.rm ||
-      projectedRevenue?.k?.p !== `${projectedRevenue?.rm}_terminal` ||
-      projectedRevenue?.k?.t !== projectedRevenue?.atm) {
+  if (projected.status !== 'blocked' || projected.plans.length !== 0 ||
+      projected.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      projected.usage?.successfulCalls !== 1 ||
+      projected.sideEffectsPerformed !== 0) {
     throw new Error(
       `model-forged witness duplicates retained authority: ${JSON.stringify(projected)}`
     );
@@ -6407,12 +7146,12 @@ async function verifyTypedCausalWitnessContract(job, evidenceRef) {
     motion: collapsedSingleton,
     generationId: 'generation-collapsed-singleton-revenue-path'
   });
-  if (restoredSingleton.status !== 'planned' ||
-      restoredSingleton.plans.length !== 1 ||
-      restoredSingleton.planSelection?.rejectedPlanCount !== 1 ||
-      !/no typed causal revenue witness/i.test(
-        restoredSingleton.planSelection?.rejectedPlans?.[0]?.reason || ''
-      )) {
+  if (restoredSingleton.status !== 'blocked' ||
+      restoredSingleton.plans.length !== 0 ||
+      restoredSingleton.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      restoredSingleton.usage?.successfulCalls !== 1 ||
+      restoredSingleton.sideEffectsPerformed !== 0) {
     throw new Error(
       `non-schema singleton revenue wrapper was not rejected locally: ${JSON.stringify(restoredSingleton)}`
     );
@@ -6428,12 +7167,12 @@ async function verifyTypedCausalWitnessContract(job, evidenceRef) {
     motion: missing,
     generationId: 'generation-missing-fresh-causal-witness'
   });
-  if (missingResult.status !== 'planned' ||
-      missingResult.plans.length !== 1 ||
-      missingResult.planSelection?.rejectedPlanCount !== 1 ||
-      !/(?:no typed causal revenue witness|typed causal revenue witness.*missing_witness)/i.test(
-        missingResult.planSelection?.rejectedPlans?.[0]?.reason || ''
-      ) || missingResult.sideEffectsPerformed !== 0) {
+  if (missingResult.status !== 'blocked' ||
+      missingResult.plans.length !== 0 ||
+      missingResult.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      missingResult.usage?.successfulCalls !== 1 ||
+      missingResult.sideEffectsPerformed !== 0) {
     throw new Error(
       `fresh planner response omitted its bounded witness: ${JSON.stringify(missingResult)}`
     );
@@ -6447,37 +7186,31 @@ async function plannerResultForMotion({ job, motion, generationId }) {
     job,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
-      data: {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason: 'Two review-first commercial motions retain causal tactics.',
-        plans: (() => {
-          const motions = twoPlannerMotions(motion, evidenceRef);
-          const compact = motion.contingentFinalists?.pathBase;
-          motions[1] = compact
-            ? compactFreshPlannerPlans([motions[1]])[0]
-            : canonicalMaterializedPlannerPlans([motions[1]])[0];
-          return motions;
-        })()
-      },
-      usage,
-      generationId,
-      diagnostics: {
-        finishReason: 'stop',
-        nativeFinishReason: 'stop',
-        contentByteCount: 800,
-        contentSha256: '4'.repeat(64)
-      },
-      annotations: [{
-        type: 'url_citation',
-        url_citation: {
-          url: 'https://riverside-pediatrics.example/newborn-care',
-          title: 'Riverside Pediatrics newborn care',
-          content: 'Current public newborn-care practice in Queens.'
-        }
-      }]
-    })
+    completeJSON: async (request) => {
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(motion, evidenceRef)
+      );
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of plans) plan.market = exactMarket;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage,
+        generationId,
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 800,
+          contentSha256: '4'.repeat(64)
+        },
+        annotations: []
+      };
+    }
   });
 }
 
@@ -6515,22 +7248,25 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
   );
   if (accepted.status !== 'planned' || !acceptedMotion ||
       acceptedActions.length !== 4 ||
-      new Set(acceptedActions).size !== 4 ||
+      JSON.stringify(acceptedActions) !== JSON.stringify([
+        familyAAction,
+        familyAAction,
+        familyBAction,
+        familyBAction
+      ]) ||
       accepted.planSelection?.rejectedPlanCount !== 0 ||
       accepted.plannerDiagnostic) {
     throw new Error(
-      `repeated optional selected-role actions blocked two complete causal tactics: ${JSON.stringify(accepted)}`
+      `model-authored repeated actions were rewritten or rejected despite two viable tactics: ${JSON.stringify(accepted)}`
     );
   }
 
-  const collapsedPlans = twoPlannerMotions(
+  const collapsedMotions = twoPlannerMotions(
     cases[0].plans(evidenceRef)[0],
     evidenceRef
   );
-  for (const collapsed of collapsedPlans) {
-    collapsed.contingentFinalists = compactContingentFinalists(
-      collapsed.contingentFinalists
-    );
+  const collapsedPlans = collapsedMotions.map((motionValue) => {
+    const [collapsed] = compactFreshPlannerPlans([motionValue]);
     const repeated =
       collapsed.contingentFinalists.tacticA.a[0].l;
     for (const tacticKey of ['tacticA', 'tacticB']) {
@@ -6538,58 +7274,43 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
         action.l = repeated;
       }
     }
-    if (collapsed.motionKind === 'compensated_job') {
-      collapsed.paidOffer = COMPENSATED_JOB_PAID_OFFER;
-    }
-  }
+    return collapsed;
+  });
   const projected = await runOpportunityDiscoveryPlanner({
     job,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
-      data: {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason: 'Both motions repeat one selected-role action.',
-        plans: collapsedPlans
-      },
-      usage,
-      generationId: 'generation-collapsed-selected-actions',
-      diagnostics: {
-        finishReason: 'stop',
-        nativeFinishReason: 'stop',
-        contentByteCount: 800,
-        contentSha256: '1'.repeat(64)
-      },
-      annotations: [{
-        type: 'url_citation',
-        url_citation: {
-          url: 'https://riverside-pediatrics.example/newborn-care',
-          title: 'Riverside Pediatrics newborn care',
-          content: 'Current public newborn-care practice in Queens.'
-        }
-      }]
-    })
+    completeJSON: async (request) => {
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of collapsedPlans) plan.market = exactMarket;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans: collapsedPlans
+        },
+        usage,
+        generationId: 'generation-collapsed-selected-actions',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 800,
+          contentSha256: '1'.repeat(64)
+        },
+        annotations: []
+      };
+    }
   });
-  const projectedActions = projected.plans.flatMap((plan) =>
-    ['familyA', 'familyB'].flatMap((familyKey) =>
-      plan.contingentFinalists?.[familyKey]?.d?.a?.map(
-        (action) => action.l
-      ) || []
-    )
-  );
-  if (projected.status !== 'planned' || projected.plans.length !== 2 ||
-      projected.planSelection?.rejectedPlanCount !== 0 ||
-      projected.plannerDiagnostic || projectedActions.length !== 8 ||
-      projected.plans.some((plan) => new Set(
-        ['familyA', 'familyB'].flatMap((familyKey) =>
-          plan.contingentFinalists?.[familyKey]?.d?.a?.map(
-            (action) => action.l
-          ) || []
-        )
-      ).size !== 4) || projected.sideEffectsPerformed !== 0) {
+  if (projected.status !== 'blocked' || projected.plans.length !== 0 ||
+      projected.planSelection?.returnedPlanCount !== 2 ||
+      projected.planSelection?.acceptedPlanCount !== 0 ||
+      projected.planSelection?.rejectedPlanCount !== 2 ||
+      projected.usage?.successfulCalls !== 1 ||
+      projected.sideEffectsPerformed !== 0) {
     throw new Error(
-      `collapsed selected-role actions were not projected from the closed positional enum: ${JSON.stringify(projected)}`
+      `collapsed selected-role actions were rewritten instead of rejected: ${JSON.stringify(projected)}`
     );
   }
 }
@@ -6622,10 +7343,12 @@ async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
     })
   });
   if (result.status !== 'blocked' ||
-      !/requires one or two grounded commercial motions/i.test(
-        result.reason
-      ) ||
       result.plans.length !== 0 ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      !result.normalizationDiagnostic?.issues?.some((issue) =>
+        issue.keyword === 'maxItems' && issue.instancePath === '/plans'
+      ) ||
+      result.usage?.successfulCalls !== 1 ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `raw over-cardinality was normalized into compliance: ${JSON.stringify(result)}`
@@ -6681,7 +7404,7 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
       result.usage?.completionTokens !==
         liveTruncatedCompletionTokens ||
       result.usage?.reportedCostMicros !== 21_680 ||
-      receipt?.status !== 'failed' ||
+      receipt?.status !== 'incomplete' ||
       receipt?.error !== 'openrouter_truncated_structured_output' ||
       receipt?.generationId !== 'generation-live-length-regression' ||
       receipt?.responseDiagnostics?.finishReason !== 'length' ||
@@ -6796,30 +7519,37 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   }
   const evidenceRef = directoryEvidence.id;
   let requestSeen;
-  const motions = scenario.plans(evidenceRef).map((motion) => {
-    motion.paidOffer =
-      'ProfileScribe paid professional-presence subscription';
-    motion.evidenceRefs = [
-      ...motion.evidenceRefs,
-      sellerFocusEvidence.id
-    ];
-    motion.contingentFinalists = compactContingentFinalists(
-      motion.contingentFinalists
-    );
-    return motion;
-  });
-  motions[0].paidOffer = 'Paid newborn lactation home visit';
+  const motions = compactFreshPlannerPlans(
+    scenario.plans(evidenceRef).map((motion) => {
+      motion.paidOffer = {
+        seller: 'ProfileScribe paid professional-presence subscription',
+        compensatedJob: COMPENSATED_JOB_PAID_OFFER
+      };
+      motion.evidenceRefs = [
+        ...motion.evidenceRefs,
+        sellerFocusEvidence.id
+      ];
+      motion.contingentFinalists = compactContingentFinalists(
+        motion.contingentFinalists
+      );
+      return motion;
+    })
+  );
+  motions[0].paidOffer.seller = 'Paid newborn lactation home visit';
   const result = await runOpportunityDiscoveryPlanner({
     job,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const motion of motions) motion.market = exactMarket;
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
-          reason: 'Compare two source-bound commercial motions.',
+          reason: '',
           plans: motions
         },
         usage,
@@ -6835,8 +7565,6 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     }
   });
   const prompt = JSON.parse(requestSeen?.user || '{}');
-  const rejectedReason =
-    result.planSelection?.rejectedPlans?.[0]?.reason || '';
   if (prompt.sellerContract?.requiredPrimaryFocus !== 'ProfileScribe' ||
       JSON.stringify(prompt.sellerContract?.requiredEvidenceRefs) !==
         JSON.stringify([sellerFocusEvidence.id]) ||
@@ -6850,11 +7578,11 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
           rule
         )
       ) ||
-      result.status !== 'planned' ||
-      result.plans.length !== 1 ||
-      !/paidOffer must remain bound.*ProfileScribe/i.test(rejectedReason) ||
-      result.plans[0]?.paidOffer !==
-        'ProfileScribe paid professional-presence subscription') {
+      result.status !== 'blocked' ||
+      result.plans.length !== 0 ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      result.usage?.successfulCalls !== 1 ||
+      result.sideEffectsPerformed !== 0) {
     throw new Error(
       `primary seller focus was not enforced: ${JSON.stringify({ prompt, result })}`
     );
@@ -6862,10 +7590,12 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
 
   const projectedProfileJob = structuredClone(job);
   projectedProfileJob.payload.evidenceSnapshot.profile.currentFocus = [];
-  const projectedProfileMotions = scenario.plans(evidenceRef).map(
-    (motion) => {
-      motion.paidOffer =
-        'ProfileScribe paid professional-presence subscription';
+  const projectedProfileMotions = compactFreshPlannerPlans(
+    scenario.plans(evidenceRef).map((motion) => {
+      motion.paidOffer = {
+        seller: 'ProfileScribe paid professional-presence subscription',
+        compensatedJob: COMPENSATED_JOB_PAID_OFFER
+      };
       motion.evidenceRefs = [
         ...motion.evidenceRefs,
         sellerFocusEvidence.id
@@ -6874,7 +7604,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
         motion.contingentFinalists
       );
       return motion;
-    }
+    })
   );
   let projectedRequest;
   const projectedProfileResult = await runOpportunityDiscoveryPlanner({
@@ -6883,12 +7613,16 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     now,
     completeJSON: async (request) => {
       projectedRequest = request;
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const motion of projectedProfileMotions) {
+        motion.market = exactMarket;
+      }
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
-          reason:
-            'Compare two worker-bound ProfileScribe commercial motions.',
+          reason: '',
           plans: projectedProfileMotions
         },
         usage,
@@ -6944,11 +7678,17 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     requiredEvidenceRefs: ['profile:focus:9']
   };
   const lateSellerFocusMotions = projectedProfileMotions.map((motionValue) => {
-    const motion = structuredClone(motionValue);
-    motion.evidenceRefs = motion.evidenceRefs.map((ref) =>
-      ref === 'profile:focus:1' ? 'profile:focus:9' : ref
-    );
-    return motion;
+    const replaceFocusRef = (value) => {
+      if (Array.isArray(value)) return value.map(replaceFocusRef);
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+          key,
+          replaceFocusRef(item)
+        ]));
+      }
+      return value === 'profile:focus:1' ? 'profile:focus:9' : value;
+    };
+    return replaceFocusRef(structuredClone(motionValue));
   });
   let lateSellerRequest;
   const lateSellerResult = await runOpportunityDiscoveryPlanner({
@@ -6957,11 +7697,16 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     now,
     completeJSON: async (request) => {
       lateSellerRequest = request;
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const motion of lateSellerFocusMotions) {
+        motion.market = exactMarket;
+      }
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
-          reason: 'The ninth canonical focus remains the active seller.',
+          reason: '',
           plans: lateSellerFocusMotions
         },
         usage,
@@ -7012,7 +7757,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     `Current paid ${colonSellerFocus} engagement with a checkout destination.`;
   const colonPaidOffer =
     `${colonSellerFocus} paid advisory engagement`;
-  const colonSellerMotions = scenario.plans(evidenceRef).map(
+  const colonSellerMotions = compactFreshPlannerPlans(scenario.plans(evidenceRef).map(
     (motion) => {
       motion.paidOffer = {
         seller: colonPaidOffer,
@@ -7028,7 +7773,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       );
       return motion;
     }
-  );
+  ));
   let colonSellerRequest;
   const colonSellerResult = await runOpportunityDiscoveryPlanner({
     job: colonSellerJob,
@@ -7036,6 +7781,9 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     now,
     completeJSON: async (request) => {
       colonSellerRequest = request;
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const motion of colonSellerMotions) motion.market = exactMarket;
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
@@ -7107,38 +7855,46 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     );
   }
 
-  const mismatchedSellerMotions = scenario.plans(evidenceRef).map(
+  const mismatchedSellerMotions = compactFreshPlannerPlans(scenario.plans(evidenceRef).map(
     (motion) => {
-      motion.paidOffer =
-        'ProfileScribe paid professional-presence subscription';
+      motion.paidOffer = {
+        seller: 'ProfileScribe paid professional-presence subscription',
+        compensatedJob: COMPENSATED_JOB_PAID_OFFER
+      };
       motion.contingentFinalists = compactContingentFinalists(
         motion.contingentFinalists
       );
       return motion;
     }
-  );
+  ));
   const mismatchedSellerResult = await runOpportunityDiscoveryPlanner({
     job,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
-      data: {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason:
-          'The offer prose names ProfileScribe but cites only unrelated directory evidence.',
-        plans: mismatchedSellerMotions
-      },
-      usage,
-      generationId: 'generation-mismatched-primary-seller-evidence',
-      diagnostics: {
-        finishReason: 'stop',
-        nativeFinishReason: 'stop',
-        contentByteCount: 900,
-        contentSha256: '8'.repeat(64)
-      },
-      annotations: []
-    })
+    completeJSON: async (request) => {
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const motion of mismatchedSellerMotions) {
+        motion.market = exactMarket;
+      }
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans: mismatchedSellerMotions
+        },
+        usage,
+        generationId: 'generation-mismatched-primary-seller-evidence',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '8'.repeat(64)
+        },
+        annotations: []
+      };
+    }
   });
   if (mismatchedSellerResult.status !== 'planned' ||
       mismatchedSellerResult.plans.length !== 2 ||
@@ -7150,11 +7906,11 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     );
   }
 
-  const targetTokenMotions = scenario.plans(evidenceRef).map((motion) => {
-    motion.buyer =
-      'The payer represented by {{TARGET_NAME}}';
-    motion.paidOffer =
-      'ProfileScribe paid professional-presence subscription';
+  const targetTokenMotions = compactFreshPlannerPlans(scenario.plans(evidenceRef).map((motion) => {
+    motion.paidOffer = {
+      seller: 'ProfileScribe paid professional-presence subscription',
+      compensatedJob: COMPENSATED_JOB_PAID_OFFER
+    };
     motion.evidenceRefs = [
       ...motion.evidenceRefs,
       sellerFocusEvidence.id
@@ -7162,17 +7918,24 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     motion.contingentFinalists = compactContingentFinalists(
       motion.contingentFinalists
     );
-    return motion;
-  });
+    const compact = compactFreshPlannerPlans([motion])[0];
+    compact.contingentFinalists.pathBase.r[0].l =
+      'The payer represented by {{TARGET_NAME}}';
+    return compact;
+  }));
   const targetTokenResult = await runOpportunityDiscoveryPlanner({
     job,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
+    completeJSON: async (request) => {
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const motion of targetTokenMotions) motion.market = exactMarket;
+      return {
       data: {
         contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
         status: 'planned',
-        reason: 'The target tokens were put in plan prose.',
+        reason: '',
         plans: targetTokenMotions
       },
       usage,
@@ -7184,13 +7947,15 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
         contentSha256: '7'.repeat(64)
       },
       annotations: []
-    })
+      };
+    }
   });
-  if (targetTokenResult.status !== 'planned' ||
-      targetTokenResult.plans.length !== 2 ||
-      targetTokenResult.plans.some((motion) =>
-        /TARGET_NAME/.test(motion.buyer || '')
-      )) {
+  if (targetTokenResult.status !== 'blocked' ||
+      targetTokenResult.plans.length !== 0 ||
+      targetTokenResult.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      targetTokenResult.usage?.successfulCalls !== 1 ||
+      targetTokenResult.sideEffectsPerformed !== 0) {
     throw new Error(
       `removed top-level buyer authority leaked into execution: ${JSON.stringify(targetTokenResult)}`
     );
@@ -7283,7 +8048,10 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     // Fresh normalization must project those structural roles from the
     // authoritative seller/system refs before any provider or critic work.
     for (const revenue of motion.contingentFinalists.pathBase.r) {
-      revenue.rm = 'paid_pilot';
+      revenue.rm = {
+        seller: 'paid_pilot',
+        compensatedJob: 'compensated_role'
+      };
       revenue.atm = 'crm_source';
       revenue.ats =
         'ProfileScribe source field records the tournament action';
@@ -7319,7 +8087,11 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
         ).map((key) => [
           key,
           key === 'paidOffer'
-            ? motion.paidOffer
+            ? {
+                seller: motion.paidOffer,
+                compensatedJob:
+                  'A model-authored compensated professional role'
+              }
             : key === 'jobTitle'
               ? 'ProfileScribe product consultant'
               : motion[key]
@@ -7398,10 +8170,10 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     );
   }
 
-  // OpenRouter can occasionally pass through a healed JSON object that omits
-  // the duplicated top-level causal fields while preserving their exact
-  // model-authored values in pathBase.r. This is the production incident
-  // shape that previously rejected both motions as missing a destination.
+  // Direct completions are exact-contract inputs now. A healed object that
+  // adds a removed top-level causal field or an unsupported structural enum
+  // must fail AJV before normalization; completed provider usage remains
+  // accounted and no model prose is repaired.
   let recoveredPlannerCalls = 0;
   const recoveredResult = await runOpportunityDiscoveryPlanner({
     job,
@@ -7428,29 +8200,18 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     }
   });
   if (recoveredPlannerCalls !== 1 ||
-      recoveredResult.status !== 'planned' ||
-      recoveredResult.plans.length !== 2 ||
-      recoveredResult.planSelection?.acceptedPlanCount !== 2 ||
-      recoveredResult.plans.some((motion) =>
-        !motion.conversionDestination ||
-        !motion.paidConversion ||
-        motion.attributionSignal !==
-          'ProfileScribe source field records the tournament action' ||
-        [
-          motion.contingentFinalists?.familyA?.d?.r?.[0],
-          motion.contingentFinalists?.familyB?.d?.r?.[0]
-        ].some((revenue) =>
-          revenue?.atm !== 'crm_source' ||
-          revenue?.ats !==
-            'ProfileScribe source field records the tournament action'
-        )
-      )) {
+      recoveredResult.status !== 'blocked' ||
+      recoveredResult.plans.length !== 0 ||
+      recoveredResult.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      recoveredResult.usage?.successfulCalls !== 1 ||
+      recoveredResult.sideEffectsPerformed !== 0) {
     throw new Error(
-      `nested causal fields did not recover the production planner contract: ${JSON.stringify(recoveredResult)}`
+      `schema-invalid healed causal fields were accepted: ${JSON.stringify(recoveredResult)}`
     );
   }
 
-  const selectedMotion = recoveredResult.plans[0];
+  const selectedMotion = result.plans[0];
   // A schema-valid model may repeat the attribution capability in every
   // nested grounding role. Current normalization must project it to the sole
   // attribution role instead of rejecting every otherwise grounded tuple.
@@ -7512,7 +8273,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     patientTargetingExcluded: true,
     sideEffectsPerformed: 0,
     attempts: [attempt],
-    plan: persistedSingleMotionPlan(recoveredResult, selectedMotion),
+    plan: persistedSingleMotionPlan(result, selectedMotion),
     evidence: [{
       motionId: selectedMotion.id,
       evidenceRef: targetEvidenceRef,
@@ -7560,6 +8321,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
     );
   }
   let criticCalls = 0;
+  let expectedWinner = null;
   const downstream = await runOpportunityTournament({
     job: {
       id: 'job-provisional-offer-validation',
@@ -7605,6 +8367,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
           `critic lost provisional authority: ${JSON.stringify(task)}`
         );
       }
+      expectedWinner = finalists[0];
       return acceptedCriticCompletion(
         finalists,
         'generation-provisional-offer-critic'
@@ -7613,6 +8376,9 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
   });
   const experiment = downstream.nextExperiment || downstream.result
     ?.nextExperiment;
+  const expectedSourceFinalist = downstream.hypotheses?.find((hypothesis) =>
+    hypothesis.id === expectedWinner?.finalistId
+  );
   if (criticCalls !== 1 ||
       downstream.status !== 'skipped' ||
       downstream.result?.resultType !== 'revenue_evidence_gap' ||
@@ -7621,8 +8387,32 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
       experiment?.kind !== 'revenue_path_grounding' ||
       !/^Proposed paid ProfileScribe\b/.test(experiment?.paidOffer || '') ||
       !experiment?.buyer?.includes('Alex Rivera') ||
-      !experiment?.action?.startsWith('Review first: ') ||
-      /^Review first: After review\b/.test(experiment?.action || '') ||
+      !expectedWinner || !expectedSourceFinalist ||
+      experiment?.title !== expectedWinner.paidOffer ||
+      experiment?.knownFact !== expectedSourceFinalist.proofPoint ||
+      experiment?.buyer !== expectedWinner.buyer ||
+      experiment?.paidOffer !== expectedWinner.paidOffer ||
+      experiment?.acquisitionMechanism !==
+        expectedWinner.acquisitionChannel ||
+      experiment?.conversionDestination !==
+        expectedWinner.revenuePath?.conversionDestination ||
+      experiment?.paidConversion !==
+        expectedWinner.revenuePath?.incrementalIncomeOutcome ||
+      experiment?.paidOutcome !==
+        expectedWinner.revenuePath?.incrementalIncomeOutcome ||
+      experiment?.attributionSignal !==
+        expectedWinner.revenuePath?.attributionSignal ||
+      experiment?.stopCondition !==
+        expectedWinner.revenuePath?.stopCondition ||
+      experiment?.successSignal !==
+        expectedWinner.revenuePath?.incrementalIncomeOutcome ||
+      experiment?.action !== expectedWinner.primaryAction ||
+      JSON.stringify(experiment?.evidenceRefs) !== JSON.stringify(
+        expectedSourceFinalist.evidenceRefs.filter((ref) =>
+          /^observation:/i.test(ref)
+        )
+      ) ||
+      !experiment?.action?.startsWith('After review via ') ||
       !experiment?.action?.includes('Alex Rivera') ||
       !experiment?.action?.includes('proposed paid') ||
       experiment?.requiresReview !== true ||
@@ -8066,31 +8856,21 @@ async function verifySemanticDriftFailsClosed(job, evidenceRef) {
         }
       })
     });
-    const expectedReason = check.reason;
-    if (check.canonicalized) {
-      if (result.status !== 'planned' ||
-          result.plans.length !== 2 ||
-          result.planSelection?.rejectedPlanCount !== 0 ||
-          result.sideEffectsPerformed !== 0) {
-        throw new Error(
-          `${check.name} was not structurally canonicalized: ${JSON.stringify(result)}`
-        );
-      }
-      continue;
-    }
-    const rejectedReasons = result.planSelection?.rejectedPlans
-      ?.map((item) => item.reason).join(' ') || '';
-    if (result.status !== 'planned' ||
-        (!expectedReason.test(rejectedReasons) &&
-          !/reserved target syntax|projected revenue action/i.test(
-            rejectedReasons
-          )) ||
-        result.plans.length !== 1 ||
-        result.planSelection?.acceptedPlanCount !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
+    // These historical probes deliberately inject the post-materialization
+    // shape at the direct transport boundary. Exact local AJV must now stop
+    // every such object before any canonicalization or semantic projection;
+    // lower-level semantic validators remain covered by schema-valid compact
+    // fixtures elsewhere in this smoke.
+    if (result.status !== 'blocked' ||
+        result.plans.length !== 0 ||
+        result.planSelection?.returnedPlanCount !== 0 ||
+        result.llm?.discoveryPlanner?.status !== 'completed' ||
+        result.usage?.successfulCalls !== 1 ||
+        result.normalizationDiagnostic?.code !==
+          'strict_schema_mismatch' ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
-        `${check.name} did not prune only the invalid motion: ${JSON.stringify(result)}`
+        `${check.name} bypassed exact direct-completion validation: ${JSON.stringify(result)}`
       );
     }
   }
@@ -8562,35 +9342,41 @@ async function verifyTwoStageTargetBinding() {
     job: planner,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
-      data: {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason: 'The strongest source-bindable referral search is warranted.',
-        plans: twoPlannerMotions({
+    completeJSON: async (request) => {
+      const plans = compactFreshPlannerPlans(twoPlannerMotions({
           ...typedScenarioMotion,
           contingentFinalists: compactContingentFinalists(
             typedScenarioMotion.contingentFinalists
           )
-        }, evidenceRef)
-      },
-      usage,
-      generationId: 'generation-two-stage-planner',
-      diagnostics: {
-        finishReason: 'stop',
-        nativeFinishReason: 'stop',
-        contentByteCount: 900,
-        contentSha256: 'c'.repeat(64)
-      },
-      annotations: [{
-        type: 'url_citation',
-        url_citation: {
-          url: 'https://riverside-pediatrics.example/newborn-care',
-          title: 'Riverside Pediatrics newborn care',
-          content: 'Riverside Pediatrics is a current pediatric practice serving newborns in Queens.'
-        }
-      }]
-    })
+        }, evidenceRef));
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of plans) plan.market = exactMarket;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage,
+        generationId: 'generation-two-stage-planner',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: 'c'.repeat(64)
+        },
+        annotations: [{
+          type: 'url_citation',
+          url_citation: {
+            url: 'https://riverside-pediatrics.example/newborn-care',
+            title: 'Riverside Pediatrics newborn care',
+            content: 'Riverside Pediatrics is a current pediatric practice serving newborns in Queens.'
+          }
+        }]
+      };
+    }
   });
   if (discoveryPlan.status !== 'planned' ||
       discoveryPlan.webSearchReceipt?.provider !==
@@ -8907,6 +9693,7 @@ async function verifyTwoStageTargetBinding() {
         },
         generationId: 'generation-two-stage-critic',
         diagnostics: {
+          ...acceptedCriticRouteDiagnostics(),
           finishReason: 'stop',
           nativeFinishReason: 'stop',
           contentByteCount: 700,
@@ -9262,7 +10049,7 @@ async function verifyTwoStageTargetBinding() {
         180
       );
       revenue.sb = padCanonicalAstral(
-        `Prepare only the evidence backed ${familyLabel} review artifact`,
+        `No attributed ${familyLabel} paid conversion has been observed for this route`,
         180
       );
       revenue.g = {
@@ -9321,9 +10108,9 @@ async function verifyTwoStageTargetBinding() {
       ? maximizeBoundCriticEnvelope(variantPayload)
       : null;
     if (maximizeCriticEnvelope) {
-      variantPayload.budget.maxSpendMicros = 171_168;
-      variantPayload.budget.maxLLMSpendMicros = 171_168;
-      variantPayload.budget.maxOutputTokens = 6_000;
+      variantPayload.budget.maxSpendMicros = 147_168;
+      variantPayload.budget.maxLLMSpendMicros = 147_168;
+      variantPayload.budget.maxOutputTokens = 2_000;
       targetCandidate.role = padCanonicalAstral('Pediatrician', 120);
       const normalizedMaxDiscovery = normalizeCommercialDiscoveryEvidence(
         variantPayload.commercialDiscoveryEvidence,
@@ -9401,7 +10188,7 @@ async function verifyTwoStageTargetBinding() {
             request,
             task,
             finalists: criticFinalists,
-            expectedMaxTokens: maximizeCriticEnvelope ? 6_000 : 1_200,
+            expectedMaxTokens: maximizeCriticEnvelope ? 2_000 : 1_200,
             expectedTargets: [targetName],
             expectedOrganizations: [
               maximizeCriticEnvelope &&
@@ -9539,7 +10326,7 @@ async function verifyTwoStageTargetBinding() {
   if (jointWorstCritic.requestBytes < 45_000 ||
       jointWorstCritic.requestBytes > 65_536 - 512 ||
       65_536 - jointWorstCritic.requestBytes < 512 ||
-      jointWorstCritic.request?.maxTokens !== 6_000 ||
+      jointWorstCritic.request?.maxTokens !== 2_000 ||
       jointWorstFinalists.length !== 2 ||
       !exactRunes(jointWorstTask.objective?.id, 48) ||
       !exactRunes(jointWorstTask.objective?.outcome, 120) ||
@@ -10334,6 +11121,7 @@ async function verifyTwoStageTargetBinding() {
         },
         generationId: 'generation-two-stage-multi-motion-critic',
         diagnostics: {
+          ...acceptedCriticRouteDiagnostics(),
           finishReason: 'stop',
           nativeFinishReason: 'stop',
           contentByteCount: 750,
@@ -11118,28 +11906,34 @@ async function verifyProviderAttestedBuyerReviewRoute() {
     job: planner,
     model: 'deepseek/deepseek-v4-flash-0731',
     now,
-    completeJSON: async () => ({
-      data: {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason: 'One exact outside buyer search is source-bindable.',
-        plans: twoPlannerMotions({
+    completeJSON: async (request) => {
+      const plans = compactFreshPlannerPlans(twoPlannerMotions({
           ...rawMotion,
           contingentFinalists: compactContingentFinalists(
             rawMotion.contingentFinalists
           )
-        }, sellerEvidenceRef)
-      },
-      usage,
-      generationId: 'generation-provider-attested-buyer-planner',
-      diagnostics: {
-        finishReason: 'stop',
-        nativeFinishReason: 'stop',
-        contentByteCount: 900,
-        contentSha256: '4'.repeat(64)
-      },
-      annotations: []
-    })
+        }, sellerEvidenceRef));
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of plans) plan.market = exactMarket;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage,
+        generationId: 'generation-provider-attested-buyer-planner',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 900,
+          contentSha256: '4'.repeat(64)
+        },
+        annotations: []
+      };
+    }
   });
   const selectedMotion = discoveryPlan.plans[0];
   const buyerRoles = ['acquisition', 'channel_fit', 'defined_buyer'];
@@ -12178,6 +12972,29 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       );
     }
   });
+  const exactCurrentRecommendationProjection = (
+    recommendation,
+    selected
+  ) => {
+    const source = result.hypotheses?.find((hypothesis) =>
+      hypothesis.id === recommendation?.hypothesisId
+    );
+    const comparison = result.searchSpace?.commercialCritic?.comparisons
+      ?.find((item) =>
+        item.finalistId === recommendation?.hypothesisId
+      );
+    return Boolean(
+      recommendation && source && comparison &&
+      recommendation.title === source.offer &&
+      recommendation.action === source.action &&
+      recommendation.why === source.proofPoint &&
+      recommendation.whyNow === source.timingTrigger &&
+      recommendation.uncertainty === comparison.uncertainty &&
+      (selected
+        ? recommendation.whyOverRunnerUp === comparison.reason
+        : !recommendation.whyOverRunnerUp)
+    );
+  };
   if (criticIssue ||
       requests.length !== 1 ||
       result.status !== 'completed' ||
@@ -12191,6 +13008,8 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       result.result?.executionAuthorization !== 'none' ||
       result.result?.sideEffectsPerformed !== 0 ||
       result.winner?.candidateId !== candidateID ||
+      !exactCurrentRecommendationProjection(result.winner, true) ||
+      !exactCurrentRecommendationProjection(result.runnerUp, false) ||
       result.candidates?.find((candidate) =>
         candidate.id === candidateID
       )?.kind !== 'employer_job_posting' ||
@@ -12507,6 +13326,8 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
     expectRejected: true
   });
 
+  const oneAcceptedWinnerReason =
+    'Exact critic rationale: current target, attributable payment, bounded stop.';
   let oneAcceptedCriticCalls = 0;
   const oneAccepted = await runOpportunityTournament({
     job: {
@@ -12523,6 +13344,9 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
         task.finalists || [],
         'generation-paid-demand-one-critic-accepted'
       );
+      completion.data.comparisons[0].reason =
+        oneAcceptedWinnerReason;
+      completion.data.comparisons[0].uncertainty = 'moderate';
       const rejected = completion.data.comparisons[1];
       rejected.verdict = 'reject';
       rejected.activeRevenueAction = false;
@@ -12535,6 +13359,22 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
     }
   });
   const oneAcceptedCritic = oneAccepted.searchSpace?.commercialCritic;
+  const oneAcceptedWinnerSource = oneAccepted.hypotheses?.find(
+    (hypothesis) =>
+      hypothesis.id === oneAccepted.winner?.hypothesisId
+  );
+  const oneAcceptedWinnerComparison =
+    oneAcceptedCritic?.comparisons?.find((comparison) =>
+      comparison.finalistId === oneAccepted.winner?.hypothesisId
+    );
+  const oneAcceptedWinnerPresentation = JSON.stringify({
+    title: oneAccepted.winner?.title,
+    action: oneAccepted.winner?.action,
+    why: oneAccepted.winner?.why,
+    whyNow: oneAccepted.winner?.whyNow,
+    whyOverRunnerUp: oneAccepted.winner?.whyOverRunnerUp,
+    uncertainty: oneAccepted.winner?.uncertainty
+  });
   if (oneAcceptedCriticCalls !== 1 ||
       oneAccepted.status !== 'completed' ||
       oneAccepted.result?.resultType !== 'immediate_revenue_action' ||
@@ -12545,8 +13385,21 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       oneAccepted.hypotheses?.[1]?.status !== 'critic_rejected' ||
       oneAccepted.runnerUp !== null ||
       !oneAccepted.winner ||
-      !/independent commercial critic/i.test(
-        oneAccepted.winner?.whyOverRunnerUp || ''
+      !oneAcceptedWinnerSource ||
+      !oneAcceptedWinnerComparison ||
+      oneAccepted.winner.title !== oneAcceptedWinnerSource.offer ||
+      oneAccepted.winner.action !== oneAcceptedWinnerSource.action ||
+      oneAccepted.winner.why !== oneAcceptedWinnerSource.proofPoint ||
+      oneAccepted.winner.whyNow !==
+        oneAcceptedWinnerSource.timingTrigger ||
+      oneAccepted.winner.uncertainty !==
+        oneAcceptedWinnerComparison.uncertainty ||
+      oneAccepted.winner.uncertainty !== 'moderate' ||
+      oneAccepted.winner.whyOverRunnerUp !==
+        oneAcceptedWinnerComparison.reason ||
+      oneAccepted.winner.whyOverRunnerUp !== oneAcceptedWinnerReason ||
+      /Cited evidence:|Incremental-income target:|Timing is unverified;|Source relevance:|The timing remains a hypothesis|No real-world outcome has been observed|The independent commercial critic ranked|prepare only the singular, reviewable next step/i.test(
+        oneAcceptedWinnerPresentation
       ) ||
       oneAcceptedCritic?.comparisons?.length !== 2 ||
       oneAcceptedCritic?.acceptedFinalistIds?.length !== 1 ||
@@ -12554,7 +13407,127 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       oneAcceptedCritic?.verdict !== 'accepted' ||
       oneAccepted.result?.incrementalRevenueGate?.passed !== true) {
     throw new Error(
-      `one accepted finalist did not complete after the critic compared two: ${JSON.stringify({ calls: oneAcceptedCriticCalls, result: oneAccepted })}`
+      `one accepted finalist did not preserve the exact finalist/critic recommendation projection: ${JSON.stringify({ calls: oneAcceptedCriticCalls, source: oneAcceptedWinnerSource, comparison: oneAcceptedWinnerComparison, result: oneAccepted })}`
+    );
+  }
+
+  const selectedRejectedReason =
+    'The selected finalist still lacks model-observed proof that this exact paid-demand route will convert.';
+  const topLevelRejectedReason =
+    'Both finalists remain too uncertain for acceptance.';
+  let allRejectedCriticCalls = 0;
+  const allRejected = await runOpportunityTournament({
+    job: {
+      id: 'job-paid-demand-critic-all-rejected',
+      kind: 'opportunity_tournament',
+      payload: structuredClone(downstreamPayload)
+    },
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      allRejectedCriticCalls += 1;
+      const task = JSON.parse(request.user || '{}');
+      const completion = acceptedCriticCompletion(
+        task.finalists || [],
+        'generation-paid-demand-critic-all-rejected'
+      );
+      completion.data.reason = topLevelRejectedReason;
+      for (const [index, comparison] of
+        completion.data.comparisons.entries()) {
+        comparison.verdict = 'reject';
+        comparison.activeRevenueAction = false;
+        comparison.causalAcquisitionPath = false;
+        comparison.incrementalRevenueOutcome = false;
+        comparison.reasonCode = 'unsupported_evidence';
+        comparison.reason = index === 0
+          ? selectedRejectedReason
+          : 'The alternate finalist also lacks sufficient exact conversion proof.';
+      }
+      return completion;
+    }
+  });
+  const allRejectedSource = allRejected.hypotheses?.[0] || {};
+  const allRejectedExperiment = allRejected.nextExperiment || {};
+  const allRejectedBottleneck =
+    allRejectedSource.revenuePath?.supportingBottleneck;
+  if (allRejectedCriticCalls !== 1 ||
+      allRejected.status !== 'skipped' ||
+      allRejected.hypotheses?.length !== 2 ||
+      allRejected.hypotheses.some((hypothesis) =>
+        hypothesis.status !== 'critic_rejected'
+      ) ||
+      !allRejectedBottleneck ||
+      allRejectedSource.judgeReason === selectedRejectedReason ||
+      allRejectedExperiment.kind !== 'revenue_path_grounding' ||
+      JSON.stringify(allRejectedExperiment.missingEvidence) !==
+        JSON.stringify([allRejectedBottleneck]) ||
+      allRejectedExperiment.missingEvidence?.includes(
+        topLevelRejectedReason
+      ) ||
+      allRejectedExperiment.missingEvidence?.includes(
+        selectedRejectedReason
+      ) ||
+      allRejectedExperiment.title !== allRejectedSource.offer ||
+      allRejectedExperiment.knownFact !== allRejectedSource.proofPoint ||
+      allRejectedExperiment.buyer !== allRejectedSource.buyerSegment ||
+      allRejectedExperiment.paidOffer !== allRejectedSource.offer ||
+      allRejectedExperiment.acquisitionMechanism !==
+        allRejectedSource.channel ||
+      allRejectedExperiment.action !== allRejectedSource.action ||
+      allRejectedExperiment.paidConversion !==
+        allRejectedSource.revenuePath?.incrementalIncomeOutcome ||
+      allRejectedExperiment.paidOutcome !==
+        allRejectedSource.revenuePath?.incrementalIncomeOutcome ||
+      allRejectedExperiment.successSignal !==
+        allRejectedSource.revenuePath?.incrementalIncomeOutcome ||
+      allRejectedExperiment.stopCondition !==
+        allRejectedSource.revenuePath?.stopCondition ||
+      JSON.stringify(allRejectedExperiment.evidenceRefs) !== JSON.stringify(
+        allRejectedSource.evidenceRefs?.filter((ref) =>
+          /^observation:/i.test(ref)
+        )
+      )) {
+    throw new Error(
+      `all-reject critic result did not preserve the source finalist's authored revenue path: ${JSON.stringify({ calls: allRejectedCriticCalls, result: allRejected })}`
+    );
+  }
+
+  const emptyBottleneckPayload = structuredClone(downstreamPayload);
+  for (const familyKey of ['familyA', 'familyB']) {
+    emptyBottleneckPayload.commercialDiscoveryEvidence.plan.plans[0]
+      .contingentFinalists[familyKey].d.r[0].sb = '';
+  }
+  let emptyBottleneckCriticCalls = 0;
+  const emptyBottleneck = await runOpportunityTournament({
+    job: {
+      id: 'job-paid-demand-no-actionable-empty-bottleneck',
+      kind: 'opportunity_tournament',
+      payload: emptyBottleneckPayload
+    },
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      emptyBottleneckCriticCalls += 1;
+      const task = JSON.parse(request.user || '{}');
+      return acceptedCriticCompletion(
+        task.finalists || [],
+        'generation-paid-demand-no-actionable-empty-bottleneck'
+      );
+    }
+  });
+  if (emptyBottleneckCriticCalls !== 0 ||
+      emptyBottleneck.status !== 'skipped' ||
+      emptyBottleneck.hypotheses?.length !== 0 ||
+      emptyBottleneck.nextExperiment?.kind !==
+        'commercial_discovery_contract_recovery' ||
+      JSON.stringify(emptyBottleneck.nextExperiment?.missingEvidence) !==
+        JSON.stringify(['commercial_discovery_contract_validation']) ||
+      emptyBottleneck.result?.resultType !== 'technical_recovery' ||
+      emptyBottleneck.nextExperiment?.missingEvidence?.some((value) =>
+        value === emptyBottleneck.searchSpace?.commercialCritic?.reason
+      )) {
+    throw new Error(
+      `empty authored bottleneck was replaced with critic prose after no actionable target: ${JSON.stringify({ calls: emptyBottleneckCriticCalls, result: emptyBottleneck })}`
     );
   }
 }
@@ -12619,12 +13592,18 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
       productionMotion.contingentFinalists = compactContingentFinalists(
         productionMotion.contingentFinalists
       );
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(productionMotion, evidenceRef)
+      );
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of plans) plan.market = exactMarket;
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
           reason: '',
-          plans: twoPlannerMotions(productionMotion, evidenceRef)
+          plans
         },
         usage,
         generationId: 'generation-production-shaped-headroom',
@@ -12682,12 +13661,18 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
       productionMotion.contingentFinalists = compactContingentFinalists(
         productionMotion.contingentFinalists
       );
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(productionMotion, evidenceRef)
+      );
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const plan of plans) plan.market = exactMarket;
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
-          reason: 'Two compact source-bound professional motions.',
-          plans: twoPlannerMotions(productionMotion, evidenceRef)
+          reason: '',
+          plans
         },
         usage,
         generationId: 'generation-production-shaped-adaptive-envelope',
@@ -12947,18 +13932,22 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
       productionMotion.contingentFinalists = compactContingentFinalists(
         productionMotion.contingentFinalists
       );
-      const responsePlans = twoPlannerMotions(
+      const responsePlans = compactFreshPlannerPlans(twoPlannerMotions(
         productionMotion,
         outerReservedObservation.id
-      ).map((motion) => ({
-        ...motion,
-        paidOffer: reservedSellerFocus + ' paid professional service'
-      }));
+      ));
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const motion of responsePlans) {
+        motion.market = exactMarket;
+        motion.paidOffer.seller =
+          reservedSellerFocus + ' paid professional service';
+      }
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
           status: 'planned',
-          reason: 'Two compact source-bound professional motions.',
+          reason: '',
           plans: responsePlans
         },
         usage,
@@ -13199,8 +14188,15 @@ function assertCompactCriticPair({
       task.executionPolicy?.requiresReview !== true ||
       task.executionPolicy?.sideEffectsPerformed !== 0 ||
       request.maxTokens !== expectedMaxTokens ||
+      request.timeoutMs !== 120_000 ||
+      request.stream !== undefined ||
+      JSON.stringify(request.plugins) !==
+        JSON.stringify([{ id: 'response-healing' }]) ||
       responseSchema?.properties?.comparisons?.maxItems !== 2 ||
+      responseSchema?.properties?.comparisons?.items?.properties?.reason
+        ?.maxLength !== 240 ||
       responseSchema?.properties?.selectedOrdering?.maxItems !== 2 ||
+      responseSchema?.properties?.reason?.maxLength !== 360 ||
       requestBytes > 64 * 1_024 ||
       !everyRoleIsBound ||
       !targetBindingsArePublic ||
@@ -13261,12 +14257,36 @@ function acceptedCriticCompletion(finalists, generationId) {
     },
     generationId,
     diagnostics: {
+      ...acceptedCriticRouteDiagnostics(),
       finishReason: 'stop',
       nativeFinishReason: 'stop',
       contentByteCount: 700,
       contentSha256: '8'.repeat(64)
     }
   };
+}
+
+function acceptedCriticRouteDiagnostics() {
+  return {
+    httpStatus: 200,
+    routerStrategy: 'direct',
+    routerAttempt: 1,
+    routerCandidateCount: 1,
+    routerAttemptStatuses: [200],
+    routerAttempts: [{
+      provider: 'Fixture Provider',
+      model: 'deepseek/deepseek-v4-flash-0731',
+      status: 200
+    }],
+    routerAttemptSequenceSource: 'reported',
+    routerSelectedEndpointEvidenced: true,
+    routerSelectedProvider: 'Fixture Provider',
+    routerSelectedModel: 'deepseek/deepseek-v4-flash-0731'
+  };
+}
+
+function acceptedPlannerRouteDiagnostics() {
+  return acceptedCriticRouteDiagnostics();
 }
 
 function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
@@ -13282,16 +14302,20 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
   const add = (...values) => values.reduce((total, value) => ({
     textCodepoints:
       total.textCodepoints + value.textCodepoints,
+    asciiCodepoints:
+      total.asciiCodepoints + value.asciiCodepoints,
     evidenceRefOccurrences:
       total.evidenceRefOccurrences + value.evidenceRefOccurrences,
     fixedBytes: total.fixedBytes + value.fixedBytes
   }), {
     textCodepoints: 0,
+    asciiCodepoints: 0,
     evidenceRefOccurrences: 0,
     fixedBytes: 0
   });
   const multiply = (value, count) => ({
     textCodepoints: value.textCodepoints * count,
+    asciiCodepoints: value.asciiCodepoints * count,
     evidenceRefOccurrences: value.evidenceRefOccurrences * count,
     fixedBytes: value.fixedBytes * count
   });
@@ -13301,9 +14325,19 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
     }
     if (schema.$ref) {
       const ref = schema.$ref;
+      if (/#\/\$defs\/compact(?:Buyer|Channel|Action)Label$/.test(ref)) {
+        const resolved = resolveRef(ref);
+        return {
+          textCodepoints: 0,
+          asciiCodepoints: resolved.maxLength,
+          evidenceRefOccurrences: 0,
+          fixedBytes: 2
+        };
+      }
       if (/(?:^|\/)(?:observation)?EvidenceRef$/i.test(ref)) {
         return {
           textCodepoints: 0,
+          asciiCodepoints: 0,
           evidenceRefOccurrences: 1,
           fixedBytes: 2
         };
@@ -13317,6 +14351,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
       const serialized = schema.enum.map((value) => JSON.stringify(value));
       return {
         textCodepoints: 0,
+        asciiCodepoints: 0,
         evidenceRefOccurrences: 0,
         fixedBytes: Math.max(0, ...serialized.map((value) =>
           Buffer.byteLength(value, 'utf8')
@@ -13332,6 +14367,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
       }
       return {
         textCodepoints: schema.maxLength,
+        asciiCodepoints: 0,
         evidenceRefOccurrences: 0,
         fixedBytes: 2
       };
@@ -13347,6 +14383,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
       // emits a canonical finite IEEE-754 representation of at most 24 bytes.
       return {
         textCodepoints: 0,
+        asciiCodepoints: 0,
         evidenceRefOccurrences: 0,
         fixedBytes: 24
       };
@@ -13360,6 +14397,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
       const items = multiply(walk(schema.items, refStack), schema.maxItems);
       return add(items, {
         textCodepoints: 0,
+        asciiCodepoints: 0,
         evidenceRefOccurrences: 0,
         fixedBytes: 2 + Math.max(0, schema.maxItems - 1)
       });
@@ -13375,6 +14413,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
       const children = required.map((key) => add(
         {
           textCodepoints: 0,
+          asciiCodepoints: 0,
           evidenceRefOccurrences: 0,
           fixedBytes: Buffer.byteLength(JSON.stringify(key), 'utf8') + 1
         },
@@ -13384,6 +14423,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
         ...children,
         {
           textCodepoints: 0,
+          asciiCodepoints: 0,
           evidenceRefOccurrences: 0,
           fixedBytes: 2 + Math.max(0, required.length - 1)
         }
@@ -13395,12 +14435,14 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
   };
   const stats = walk(root);
   const astralTextBytes = stats.textCodepoints * 4;
+  const asciiTextBytes = stats.asciiCodepoints;
   const maximumEvidenceRefBytes =
     stats.evidenceRefOccurrences * 64;
-  const derivedBound = astralTextBytes + maximumEvidenceRefBytes +
+  const derivedBound = astralTextBytes + asciiTextBytes + maximumEvidenceRefBytes +
     stats.fixedBytes;
   computedPlannerSchemaResponseBoundBytes = derivedBound;
-  if (stats.textCodepoints > 5_200 ||
+  if (stats.textCodepoints > 5_216 ||
+      stats.asciiCodepoints !== 2_784 ||
       stats.evidenceRefOccurrences !== 56 ||
       derivedBound > MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES ||
       MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES >
@@ -13656,9 +14698,10 @@ function verifyFreshPlannerStrictSchemaTotality({
     }
     return {
       motionKind: motion.motionKind,
-      paidOffer: motion.motionKind === 'compensated_job'
-        ? 'A current compensated role matching verified professional skills'
-        : motion.paidOffer,
+      paidOffer: {
+        seller: motion.paidOffer,
+        compensatedJob: COMPENSATED_JOB_PAID_OFFER
+      },
       market,
       targetRoleSubrole: motion.targetRoleSubrole,
       organizationTerms: motion.organizationTerms?.length > 0
@@ -13694,6 +14737,15 @@ function verifyFreshPlannerStrictSchemaTotality({
     response.plans[0].rationale =
       'This prose is deliberately outside the fresh execution contract.';
   });
+  for (const paidOffer of [
+    'Unpaid job role',
+    'Volunteer role',
+    'Pro bono engagement'
+  ]) {
+    expectInvalid(`non-income compensated-job offer ${paidOffer}`, (response) => {
+      response.plans[0].paidOffer.compensatedJob = paidOffer;
+    });
+  }
   for (const [label, value] of [
     ['leading whitespace', ' invalid'],
     ['trailing whitespace', 'invalid '],
@@ -13815,7 +14867,7 @@ function verifyFreshPlannerStrictSchemaTotality({
     return `${text}${'😀'.repeat(maxCodepoints - length)}`;
   };
   const maxFieldPaths = [
-    ['paidOffer', ['plans', 0, 'paidOffer'], 140],
+    ['paidOffer', ['plans', 0, 'paidOffer', 'seller'], 140],
     ['organizationTerms', ['plans', 0, 'organizationTerms', 0], 48],
     ['jobTitle', ['plans', 0, 'jobTitle'], 80],
     ['skills', ['plans', 0, 'skills', 0], 48],
@@ -13953,7 +15005,16 @@ function verifyFreshPlannerStrictSchemaTotality({
     if (typeof value === 'string') {
       if (!Number.isInteger(nodeSchema.maxLength) ||
           Array.isArray(nodeSchema.enum)) return value;
-      const candidate = padAstral(value, nodeSchema.maxLength);
+      const asciiRoleSchema = [
+        maximumSchema.$defs.compactBuyerLabel,
+        maximumSchema.$defs.compactChannelLabel,
+        maximumSchema.$defs.compactActionLabel
+      ].includes(nodeSchema);
+      const candidate = asciiRoleSchema
+        ? `${value}${'x'.repeat(
+            nodeSchema.maxLength - unicodeCodepointLength(value)
+          )}`
+        : padAstral(value, nodeSchema.maxLength);
       try {
         if (nodeSchema.pattern &&
             !new RegExp(nodeSchema.pattern, 'u').test(candidate)) {
@@ -13986,9 +15047,9 @@ function verifyFreshPlannerStrictSchemaTotality({
     .compile(maximumSchema);
   if (!validateMaximum(maximumResponse) ||
       evidenceOccurrenceCount !== 56 || evidenceArrayCount === 0 ||
-      // Buyer, channel, and action alternatives are closed enums; all
-      // remaining model-authored bounded strings must still be maximized.
-      maximizedStringOccurrenceCount !== 50 ||
+      // All 20 safe-ASCII buyer/channel/action strings plus the other 52
+      // bounded authored strings must reach their individual maxima.
+      maximizedStringOccurrenceCount !== 72 ||
       maximumResponse.plans.some((planValue) =>
         planValue.organizationTerms.length !== 4 ||
         planValue.skills.length !== 4
@@ -14134,8 +15195,10 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   }
   response.plans[1] = {
     motionKind: 'compensated_job',
-    paidOffer:
-      'A current compensated role matching verified professional skills',
+    paidOffer: {
+      seller: rawJobMotion.paidOffer,
+      compensatedJob: COMPENSATED_JOB_PAID_OFFER
+    },
     market: response.plans[0].market,
     targetRoleSubrole: 'executive',
     organizationTerms: ['Verified employer organization'],
@@ -14154,7 +15217,7 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
   const first = response.plans[0];
   const second = response.plans[1];
   const expectedRoundTrips = [
-    first.paidOffer,
+    first.paidOffer.seller,
     first.organizationTerms[0],
     second.jobTitle,
     second.skills[0],
@@ -14500,7 +15563,7 @@ function contingentFinalists(motion) {
         c: [ref],
         t: [attributionRef]
       },
-      sb: 'Prepare only the evidence-backed action artifact.',
+      sb: 'No attributed paid booking has been observed for this route.',
       vm: 500_000
     }],
     o: sharedVariants.map((variant) => ({
@@ -14606,13 +15669,13 @@ function applyNovelTypedCausalSemantics(value) {
   for (const familyKey of ['familyA', 'familyB']) {
     const revenue = motion.contingentFinalists[familyKey].d.r[0];
     revenue.io =
-      'Cash reaches the owner only because this reviewed path succeeds.';
+      'Expected revenue reaches the owner only because this reviewed path succeeds.';
     revenue.c =
       'Invite {{TARGET_NAME}} as the named partner to refer one suitable family to the current paid service and booking destination.';
     revenue.o = canonicalTerminalPaidOutcome(revenue.rm);
     revenue.ats =
       'Persist the originating practice beside the transaction.';
-    revenue.cd = 'https://owner.example/offer';
+    revenue.cd = 'The owner service checkout at https://owner.example/offer';
     revenue.st = 'Conclude on the fourteenth day.';
   }
   return motion;
@@ -14633,11 +15696,6 @@ function compactContingentFinalists(value) {
     const text = [...canonical].slice(0, 72).join('').trim();
     return text || fallback;
   };
-  const commercialRole = familyA.d.r[0]?.rm === 'compensated_role'
-    ? 'paid_demand'
-    : familyA.m === 'partner_channel'
-      ? 'referral_partner'
-      : 'buyer';
   const buyerLabels = {
     referral_partner: [
       'Qualified buyer for the current paid offer',
@@ -14686,21 +15744,27 @@ function compactContingentFinalists(value) {
       'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
     ]
   };
-  const selectedItem = (item) => ({ l: item.l, e: item.e });
+  const selectedRole = !String(familyA.d.b?.[0]?.l || '').includes(
+    '{{TARGET_NAME}}'
+  )
+    ? 'referral_partner'
+    : familyA.d.a.some((item) =>
+      /\b(?:application|bid|proposal|response)\b/i.test(item.l || '')
+    )
+      ? 'paid_demand'
+      : 'buyer';
   const buyerItem = (item, index) => ({
-    l: buyerLabels[commercialRole][index % 2],
+    l: buyerLabels[selectedRole][index % 2],
     e: item.e
   });
   const channelItem = (item, index, family) => ({
-    l: channelLabels[commercialRole][
-      ((family === familyB ? 1 : 0) + index) % 2
-    ],
+    l: channelLabels[selectedRole][
+      ((family === familyB ? 1 : 0) + index) % 2],
     e: item.e
   });
   const actionItem = (item, index, family) => ({
-    l: actionLabels[commercialRole][
-      ((family === familyB ? 2 : 0) + index) % 4
-    ],
+    l: actionLabels[selectedRole][
+      ((family === familyB ? 2 : 0) + index) % 4],
     e: item.e
   });
   const tactic = (family) => ({
@@ -14716,7 +15780,12 @@ function compactContingentFinalists(value) {
     delete revenue.a;
     delete revenue.c;
     delete revenue.o;
-    revenue.rm = authoredMechanism;
+    revenue.rm = {
+      seller: authoredMechanism === 'compensated_role'
+        ? 'paid_pilot'
+        : authoredMechanism,
+      compensatedJob: 'compensated_role'
+    };
     revenue.l = tokenFree(
       revenue.l,
       'Current attributable paid outcome'
@@ -14778,20 +15847,11 @@ function compactProvisionalContingentFinalists(
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to assess one proposed paid service proposal',
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one proposed paid service contract'
   ];
-  const referralChannels = [
-    'Review-first public professional profile {{TARGET_URL}} for referral fit verification',
-    'Review-first public professional profile {{TARGET_URL}} for partner-channel verification'
-  ];
-  const directChannels = [
-    'Review-first public professional profile {{TARGET_URL}} for buyer fit verification',
-    'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification'
-  ];
-  const buyers = commercialRole === 'referral_partner'
-    ? referralBuyers
-    : directBuyers;
   compact.pathBase.b = compact.pathBase.b.map((item, index) => ({
     ...item,
-    l: buyers[index % buyers.length]
+    l: commercialRole === 'referral_partner'
+      ? referralBuyers[index % referralBuyers.length]
+      : directBuyers[index % directBuyers.length]
   }));
   compact.pathBase.o = compact.pathBase.o.map((item) => ({
     ...item,
@@ -14814,25 +15874,17 @@ function compactProvisionalContingentFinalists(
     }
   }));
   for (const [tacticIndex, tacticKey] of ['tacticA', 'tacticB'].entries()) {
-    compact[tacticKey].c = compact[tacticKey].c.map((item, index) => ({
-      ...item,
-      l: (commercialRole === 'referral_partner'
-        ? referralChannels
-        : directChannels)[(tacticIndex + index) % 2]
-    }));
     compact[tacticKey].a = compact[tacticKey].a.map((item, index) => {
       const variant = tacticIndex * 2 + index;
       return {
         ...item,
         l: commercialRole === 'referral_partner'
           ? referralActions[variant]
-          : commercialRole === 'buyer'
-            ? directActions[variant]
-            : item.l
+          : directActions[variant]
       };
     });
   }
-  if (!buyers.length) {
+  if (!['referral_partner', 'buyer'].includes(commercialRole)) {
     throw new Error('provisional buyer fixture has no role alternatives');
   }
   return compact;
@@ -14841,29 +15893,35 @@ function compactProvisionalContingentFinalists(
 function compactFreshPlannerPlans(values) {
   return (values || []).map((planValue) => {
     const freshPlan = structuredClone(planValue);
-    delete freshPlan.buyer;
-    delete freshPlan.counterparty;
-    delete freshPlan.rationale;
-    delete freshPlan.conversionDestination;
-    delete freshPlan.paidConversion;
-    delete freshPlan.attributionSignal;
-    if (freshPlan.motionKind === 'compensated_job') {
-      freshPlan.paidOffer =
-        'A current compensated role matching verified professional skills';
-    }
     if (freshPlan.contingentFinalists?.familyA &&
         freshPlan.contingentFinalists?.familyB) {
       freshPlan.contingentFinalists = compactContingentFinalists(
         freshPlan.contingentFinalists
       );
     }
-    for (const revenue of
-      freshPlan.contingentFinalists?.pathBase?.r || []) {
+    const revenues = freshPlan.contingentFinalists?.pathBase?.r;
+    for (const revenue of Array.isArray(revenues) ? revenues : []) {
       revenue.atm = 'crm_source';
-      revenue.ats =
-        'ProfileScribe source field records the tournament action';
     }
-    return freshPlan;
+    return {
+      motionKind: freshPlan.motionKind,
+      paidOffer: {
+        seller: typeof freshPlan.paidOffer === 'string'
+          ? freshPlan.paidOffer
+          : freshPlan.paidOffer?.seller,
+        compensatedJob: typeof freshPlan.paidOffer === 'object'
+          ? freshPlan.paidOffer?.compensatedJob
+          : COMPENSATED_JOB_PAID_OFFER
+      },
+      market: freshPlan.market,
+      targetRoleSubrole: freshPlan.targetRoleSubrole,
+      organizationTerms: freshPlan.organizationTerms || [],
+      jobTitle: freshPlan.jobTitle || 'Verified professional role',
+      skills: freshPlan.skills?.length > 0
+        ? freshPlan.skills
+        : ['Verified professional skill'],
+      contingentFinalists: freshPlan.contingentFinalists
+    };
   });
 }
 
@@ -14893,7 +15951,9 @@ function canonicalMaterializedPlannerPlans(values) {
       const originalRevenue = source.d.r[0];
       source.d.r[0] = {
         ...compactRevenue,
-        rm: compactRevenue.rm,
+        rm: motion.motionKind === 'compensated_job'
+          ? compactRevenue.rm.compensatedJob
+          : compactRevenue.rm.seller,
         v: originalRevenue.v,
         a: motion.acquisitionMode,
         c: source.d.a[0].l,

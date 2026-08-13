@@ -363,6 +363,12 @@ async function verifyInvalidSuccessContractsAreRejected() {
       metadata: baseMetadata
     },
     {
+      name: 'unsafe freeform finish',
+      finishReason: 'raw finish reason secret sentinel !',
+      usage: baseUsage,
+      metadata: baseMetadata
+    },
+    {
       name: 'incomplete fallback trace',
       finishReason: 'stop',
       usage: baseUsage,
@@ -418,6 +424,12 @@ async function verifyInvalidSuccessContractsAreRejected() {
     assert(
       caught.openRouterStreamState?.streamCompleted === false,
       `${testCase.name} was marked complete`
+    );
+    assert(
+      !JSON.stringify(caught.openRouterStreamState || {}).includes(
+        'raw finish reason secret sentinel'
+      ),
+      `${testCase.name} leaked a freeform provider finish reason`
     );
   }
 }
@@ -490,6 +502,49 @@ async function verifyTerminalAccountingIsBoundToFinalEvent() {
 }
 
 async function verifyRouteAttemptBoundsAndOutcomes() {
+  const directSelected = {
+    provider: 'Direct Provider',
+    model: 'deepseek/deepseek-v4-flash-0731',
+    selected: true
+  };
+  const reconstructedDirect = scheduledStream([
+    [0, event({
+      id: 'gen-stream-direct-reconstructed',
+      model: directSelected.model,
+      provider: directSelected.provider,
+      choices: [{
+        delta: { content: '{}' },
+        finish_reason: 'stop',
+        native_finish_reason: 'stop'
+      }]
+    })],
+    [0, event({
+      id: 'gen-stream-direct-reconstructed',
+      choices: [],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 2,
+        total_tokens: 12,
+        cost: 0.0001
+      },
+      openrouter_metadata: {
+        strategy: 'direct',
+        attempt: 1,
+        endpoints: { total: 1, available: [directSelected] },
+        attempts: [{ provider: directSelected.provider, status: 200 }]
+      }
+    })],
+    [0, 'data: [DONE]\n\n']
+  ]);
+  const directResult = await readOpenRouterChatCompletionSSE(
+    reconstructedDirect,
+    { idleTimeoutMs: 50, totalTimeoutMs: 150 }
+  );
+  assert(
+    directResult.diagnostics.streamCompleted === true,
+    'direct attempt was not reconstructed from its selected endpoint'
+  );
+
   const selected = {
     provider: 'Provider 64',
     model: 'deepseek/deepseek-v4-flash-0731',
@@ -542,7 +597,15 @@ async function verifyRouteAttemptBoundsAndOutcomes() {
   for (const [name, mutated] of [
     ['too many attempts', [...attempts, { ...attempts[62] }]],
     ['nonfinal success', attempts.map((item, index) =>
-      index === 5 ? { ...item, status: 200 } : item)]
+      index === 5 ? { ...item, status: 200 } : item)],
+    ['fallback attempt missing model', attempts.map((item, index) =>
+      index === 5
+        ? { provider: item.provider, status: item.status }
+        : item)],
+    ['fallback final attempt missing model', attempts.map((item, index) =>
+      index === attempts.length - 1
+        ? { provider: item.provider, status: item.status }
+        : item)]
   ]) {
     const stream = scheduledStream([
       [0, event({
@@ -793,7 +856,11 @@ async function verifyRunJobUsesStreamingTransport() {
         PROFILESCRIBE_RIG_OPENROUTER_STREAM_TOTAL_TIMEOUT_MS: '2000'
       }
     );
-    assertEqual(execution.code, 0, `run-job integration failed: ${execution.stderr}`);
+    assertEqual(
+      execution.code,
+      0,
+      `run-job integration failed: ${execution.stderr || execution.stdout}`
+    );
     const output = JSON.parse(execution.stdout);
     const planner = output.metadata?.discoveryPlan?.llm?.discoveryPlanner;
     const diagnostics = planner?.responseDiagnostics;

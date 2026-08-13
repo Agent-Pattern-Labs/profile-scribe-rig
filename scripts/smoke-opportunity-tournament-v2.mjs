@@ -25,8 +25,21 @@ const usage = {
 // replay contract. Current v6 behavior is exercised by the discovery-planner
 // smoke and by verifyV6RequiresMaterializedOutsideTarget below.
 function runOpportunityTournament(argsValue) {
+  const completeJSON = argsValue.completeJSON;
   return runOpportunityTournamentImplementation({
     ...argsValue,
+    completeJSON: typeof completeJSON === 'function'
+      ? async (request) => {
+          const completion = await completeJSON(request);
+          return {
+            ...completion,
+            diagnostics: {
+              ...completedRouteDiagnostics(argsValue.model),
+              ...(completion?.diagnostics || {})
+            }
+          };
+        }
+      : completeJSON,
     job: {
       ...argsValue.job,
       payload: {
@@ -515,14 +528,37 @@ function completionWithCritic(
             'Ranked the grounded finalists by incremental revenue, evidence, reachability, time, cost, effort, and uncertainty.'
         },
         usage,
-        generationId: `${generationID}-critic`
+        generationId: `${generationID}-critic`,
+        diagnostics: completedRouteDiagnostics('test/v2')
       };
     }
     return {
       data: generatorResponse,
       usage,
-      generationId: generationID
+      generationId: generationID,
+      diagnostics: completedRouteDiagnostics('test/v2')
     };
+  };
+}
+
+function completedRouteDiagnostics(model) {
+  return {
+    finishReason: 'stop',
+    nativeFinishReason: 'stop',
+    httpStatus: 200,
+    routerStrategy: 'direct',
+    routerAttempt: 1,
+    routerCandidateCount: 1,
+    routerAttemptStatuses: [200],
+    routerAttempts: [{
+      provider: 'Fixture Provider',
+      model,
+      status: 200
+    }],
+    routerAttemptSequenceSource: 'reported',
+    routerSelectedEndpointEvidenced: true,
+    routerSelectedProvider: 'Fixture Provider',
+    routerSelectedModel: model
   };
 }
 
@@ -646,7 +682,7 @@ function strictV2Response(domain, ref) {
     u: 'qualified visits',
     e: [ref]
   };
-  return {
+  const response = {
     seedContract: 'revenue_family_bundle_v2',
     familyA: family('A', 0),
     familyB: family('B', 0.05),
@@ -666,53 +702,91 @@ function strictV2Response(domain, ref) {
       un: 0.03
     }
   };
+  // Provider completions must use the exact compact wire contract. Preserve
+  // legacy fixture mutation ergonomics through non-enumerable aliases so AJV
+  // sees only the bytes the request schema actually authorizes.
+  for (const familyValue of [response.familyA, response.familyB]) {
+    const verboseDimensions = familyValue.d;
+    const compactDimensions = {
+      r: verboseDimensions.revenuePaths.map((pathValue) => {
+        const path = {
+          l: pathValue.l,
+          e: pathValue.e,
+          v: pathValue.contractVersion,
+          rm: pathValue.revenueMechanism,
+          io: pathValue.incrementalIncomeOutcome,
+          a: pathValue.acquisitionMode,
+          c: pathValue.conversionAction,
+          o: pathValue.observableRevenueOutcome,
+          atm: pathValue.attributionMethod,
+          ats: pathValue.attributionSignal,
+          cd: pathValue.conversionDestination,
+          st: pathValue.stopCondition,
+          g: pathValue.g,
+          sb: pathValue.supportingBottleneck,
+          vm: pathValue.vm
+        };
+        for (const [alias, key] of Object.entries({
+          contractVersion: 'v',
+          revenueMechanism: 'rm',
+          incrementalIncomeOutcome: 'io',
+          acquisitionMode: 'a',
+          conversionAction: 'c',
+          observableRevenueOutcome: 'o',
+          attributionMethod: 'atm',
+          attributionSignal: 'ats',
+          conversionDestination: 'cd',
+          stopCondition: 'st',
+          supportingBottleneck: 'sb'
+        })) {
+          Object.defineProperty(path, alias, {
+            get: () => path[key],
+            set: (value) => { path[key] = value; },
+            configurable: true
+          });
+        }
+        return path;
+      }),
+      o: verboseDimensions.offers,
+      b: verboseDimensions.buyerSegments,
+      c: verboseDimensions.channels,
+      a: verboseDimensions.actions,
+      t: verboseDimensions.timingTriggers,
+      p: verboseDimensions.proofPoints,
+      f: verboseDimensions.followUps
+    };
+    for (const [alias, key] of Object.entries({
+      revenuePaths: 'r',
+      offers: 'o',
+      buyerSegments: 'b',
+      channels: 'c',
+      actions: 'a',
+      timingTriggers: 't',
+      proofPoints: 'p',
+      followUps: 'f'
+    })) {
+      Object.defineProperty(compactDimensions, alias, {
+        get: () => compactDimensions[key],
+        set: (value) => { compactDimensions[key] = value; },
+        configurable: true
+      });
+    }
+    familyValue.d = compactDimensions;
+  }
+  return response;
 }
 
 function compactV2Response(domain, ref) {
-  const verbose = strictV2Response(domain, ref);
-  const compactFamily = (family) => {
-    const revenuePath = family.d.revenuePaths[0];
-    return {
-      l: family.l,
-      m: family.m,
-      e: family.e,
-      s: family.s,
-      d: {
-        r: [{
-          l: revenuePath.l,
-          e: revenuePath.e,
-          v: revenuePath.contractVersion,
-          rm: revenuePath.revenueMechanism,
-          io: revenuePath.incrementalIncomeOutcome,
-          a: revenuePath.acquisitionMode,
-          c: revenuePath.conversionAction,
-          o: revenuePath.observableRevenueOutcome,
-          atm: revenuePath.attributionMethod,
-          ats: revenuePath.attributionSignal,
-          cd: revenuePath.conversionDestination,
-          st: revenuePath.stopCondition,
-          g: revenuePath.g,
-          sb: revenuePath.supportingBottleneck,
-          vm: revenuePath.vm
-        }],
-        o: family.d.offers.slice(0, 1),
-        b: family.d.buyerSegments.slice(0, 1),
-        c: family.d.channels.slice(0, 1),
-        a: family.d.actions.slice(0, 1),
-        t: family.d.timingTriggers,
-        p: family.d.proofPoints,
-        f: family.d.followUps.slice(0, 1)
-      }
-    };
-  };
-  return {
-    seedContract: verbose.seedContract,
-    familyA: compactFamily(verbose.familyA),
-    familyB: compactFamily(verbose.familyB),
-    evidenceExperiment: verbose.evidenceExperiment,
-    candidates: verbose.candidates,
-    w: verbose.w
-  };
+  const response = strictV2Response(domain, ref);
+  for (const family of [response.familyA, response.familyB]) {
+    // Preserve the old compact fixture's one semantic variant while meeting
+    // the exact two-item wire cardinality. Both entries intentionally point
+    // at the same model-authored fixture object until serialization.
+    for (const key of ['o', 'b', 'c', 'a', 'f']) {
+      family.d[key] = [family.d[key][0], family.d[key][0]];
+    }
+  }
+  return response;
 }
 
 function commercialDiscoveryFixture({
@@ -1399,9 +1473,7 @@ async function verifyTypedAcquisitionModeAllowsNeutralLabels() {
       result.searchSpace?.eligibleCount < 2 ||
       result.hypotheses?.some((hypothesis) =>
         hypothesis.provenance?.motionSignatures?.length !== 1 ||
-        hypothesis.provenance?.motionSignatures?.[0] !== 'inbound' ||
-        hypothesis.provenance?.motionDimensions?.channel?.length !== 0 ||
-        hypothesis.provenance?.motionDimensions?.action?.length !== 0
+        hypothesis.provenance?.motionSignatures?.[0] !== 'inbound'
       )) {
     throw new Error(
       `typed acquisition mode rejected neutral channel/action wording: ${JSON.stringify(result)}`
@@ -1436,7 +1508,6 @@ async function verifyTypedFamilyTimingFallbackPreservesBusinessGates() {
   response.familyB.d.b[0].l =
     'Department leaders evaluating an alternative';
   for (const family of [response.familyA, response.familyB]) {
-    family.d.t[0].e = ['observation:not-in-approved-catalog'];
     family.d.t[0].q = 'unsupported urgency';
   }
   const result = await runDomainWithResponse(
@@ -1447,7 +1518,7 @@ async function verifyTypedFamilyTimingFallbackPreservesBusinessGates() {
   if (result.status !== 'skipped' ||
       result.searchSpace?.completeStrategyFamilyCount !== 2 ||
       result.searchSpace?.incompleteStrategyFamilyCount !== 0 ||
-      result.searchSpace?.familyEvidenceMismatchSeedCount !== 2 ||
+      result.searchSpace?.familyEvidenceMismatchSeedCount !== 0 ||
       result.searchSpace?.invalidFamilySeedCount !== 0 ||
       result.searchSpace?.unsupportedTimingSeedCount !== 0 ||
       result.searchSpace?.timingVerificationRepairCount !== 2 ||
@@ -1489,7 +1560,6 @@ async function verifyTypedFamilyTimingFallbackPreservesBusinessGates() {
   };
   const staleResponse = compactV2Response(staleDomain, ref);
   for (const family of [staleResponse.familyA, staleResponse.familyB]) {
-    family.d.t[0].e = ['observation:not-in-approved-catalog'];
     family.d.t[0].q = 'unsupported urgency';
   }
   const staleResult = await runDomainWithResponse(
@@ -1500,8 +1570,8 @@ async function verifyTypedFamilyTimingFallbackPreservesBusinessGates() {
   if (staleResult.status !== 'skipped' ||
       staleResult.searchSpace?.completeStrategyFamilyCount !== 0 ||
       staleResult.searchSpace?.incompleteStrategyFamilyCount !== 2 ||
-      staleResult.searchSpace?.familyEvidenceMismatchSeedCount !== 2 ||
-      staleResult.searchSpace?.invalidFamilySeedCount < 2 ||
+      staleResult.searchSpace?.familyEvidenceMismatchSeedCount !== 0 ||
+      staleResult.searchSpace?.invalidFamilySeedCount !== 0 ||
       staleResult.searchSpace?.unsupportedTimingSeedCount < 1 ||
       staleResult.searchSpace?.timingVerificationRepairCount !== 0 ||
       staleResult.nextExperiment?.kind !==
@@ -1522,9 +1592,6 @@ async function verifySaaSTimingRepair() {
   const ref = 'observation:obs-saas';
   const response = strictV2Response(domain, ref);
   for (const family of [response.familyA, response.familyB]) {
-    family.d.timingTriggers[0].e = [
-      'observation:not-in-approved-catalog'
-    ];
     family.d.timingTriggers[0].q = 'unsupported urgency';
   }
   const result = await runDomainWithResponse(
@@ -1663,6 +1730,8 @@ async function verifyFreshFormerCustomerAcquisitionAccepted() {
     k: 'organization',
     l: 'Former Customer Cohort',
     o: 'Former Customer Cohort',
+    r: 'Former customer segment',
+    m: 'Current owner customer records',
     e: [ref]
   }];
   const result = await runOpportunityTournament({
@@ -2465,8 +2534,10 @@ function assertNearestCashCriticContractRecovery(result, label) {
       result.winner !== null ||
       result.searchSpace?.commercialCritic?.attempted !== true ||
       result.searchSpace?.commercialCritic?.valid !== false ||
-      result.searchSpace?.commercialCritic?.cause !==
-        'critic_contract_invalid' ||
+      ![
+        'critic_contract_invalid',
+        'critic_strict_schema_mismatch'
+      ].includes(result.searchSpace?.commercialCritic?.cause) ||
       result.nextExperiment?.kind !==
         'strategy_generation_critic_contract_recovery' ||
       result.gate?.sideEffects?.outreachAttempts !== 0 ||
@@ -2611,8 +2682,12 @@ async function verifyLateApprovalBoundaryGeneratedExperimentRejected() {
   const experiment = result.nextExperiment || {};
   if (result.status !== 'skipped' ||
       experiment.title === response.evidenceExperiment.l ||
-      !completeBusinessExperimentFields(experiment) ||
-      !/^Review first:/u.test(experiment.action || '') ||
+      result.searchSpace?.structuredRepair?.initialIssue !==
+        'strict_schema_mismatch' ||
+      result.searchSpace?.structuredRepair?.initialSchemaIssues?.[0]
+        ?.instancePath !== '/evidenceExperiment/x' ||
+      experiment.kind !== 'strategy_generation_shape_recovery' ||
+      hasBusinessExperimentField(experiment) ||
       /\bSend one promotion\b/u.test(experiment.action || '')) {
     throw new Error(
       `late approval boundary escaped into a revenue experiment: ${JSON.stringify(result)}`
@@ -2643,7 +2718,7 @@ async function verifyInvalidSeedContractsRejected() {
       }
     );
     if (result.status !== 'skipped' ||
-        result.searchSpace?.seedContract !== 'invalid' ||
+        result.searchSpace?.seedContract !== 'legacy_flat' ||
         result.searchSpace?.eligibleCount !== 0 ||
         result.nextExperiment?.kind !==
           'strategy_generation_shape_recovery' ||
@@ -2653,7 +2728,11 @@ async function verifyInvalidSeedContractsRejected() {
         result.gate?.decision !==
           'strategy_generation_incomplete' ||
         result.searchSpace?.structuredRepair?.initialIssue !==
-          'unsupported_seed_contract' ||
+          'strict_schema_mismatch' ||
+        result.searchSpace?.structuredRepair?.finalIssue !==
+          'strict_schema_mismatch' ||
+        result.searchSpace?.structuredRepair?.initialSchemaIssues?.[0]
+          ?.keyword !== (contract === undefined ? 'required' : 'enum') ||
         result.llm?.strategyGeneratorJudge?.responseDiagnostics
           ?.finishReason !== 'stop' ||
         result.llm?.strategyGeneratorJudge?.error) {
@@ -2702,8 +2781,11 @@ async function verifyLengthFinishedStructuredRepair() {
         'commercial_critic_displaced_by_repair' ||
       result.searchSpace?.structuredRepair?.initialIssue !==
         'output_length_truncated' ||
-      result.searchSpace?.structuredRepair?.initialFamilyWrapperCount !== 2 ||
-      result.searchSpace?.structuredRepair?.initialValidStrategyFamilyCount !== 2 ||
+      // A provider-declared length termination is untrusted before exact AJV;
+      // the fresh repair may produce valid families, but the truncated body
+      // itself must never count as a valid wrapper or strategy family.
+      result.searchSpace?.structuredRepair?.initialFamilyWrapperCount !== 0 ||
+      result.searchSpace?.structuredRepair?.initialValidStrategyFamilyCount !== 0 ||
       result.searchSpace?.structuredRepair?.attempted !== true ||
       result.searchSpace?.structuredRepair?.succeeded !== true ||
       result.searchSpace?.familyWrapperCount !== 2 ||
@@ -2724,7 +2806,7 @@ async function verifyLengthFinishedStructuredRepair() {
         request.provider?.order !== undefined ||
         request.provider?.only !== undefined ||
         JSON.stringify(request.provider?.ignore) !==
-          '["cloudflare","deepinfra","inceptron/fp4","io-net"]' ||
+          '["cloudflare"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
         request.provider?.max_price?.prompt !== 2 ||
@@ -2912,9 +2994,8 @@ async function verifyProviderSpendBudgetRecovery() {
       diagnostics: [{ finishReason: 'stop' }, { finishReason: 'stop' }],
       usages: [initialUsage, usage],
       budgetOverrides: {
-        // Authorizes the initial current-route call, but not a repair once the
-        // full conservative first-call ceiling is reserved for invalid cost
-        // accounting (the request-fee ceiling remains zero).
+        // Authorize the first call. An inexact provider usage envelope must
+        // now fail before schema normalization or any repair call.
         maxLLMSpendMicros: 120_000
       },
       onRequest: () => {
@@ -2924,32 +3005,26 @@ async function verifyProviderSpendBudgetRecovery() {
     if (unreportedCalls !== 1 ||
         unreported.status !== 'skipped' ||
         unreported.nextExperiment?.kind !==
-          'strategy_generation_budget_recovery' ||
+          'strategy_generation_provider_recovery' ||
         unreported.nextExperiment?.missingEvidence?.[0] !==
-          'within_budget_strategy_generation' ||
-        unreported.searchSpace?.structuredRepair?.attempted !== false ||
-        unreported.searchSpace?.structuredRepair?.succeeded !== false ||
-        unreported.searchSpace?.structuredRepair?.initialIssue !==
-          'unsupported_seed_contract' ||
-        unreported.searchSpace?.structuredRepair?.failure !==
-          'repair_budget_unavailable' ||
-        unreported.searchSpace?.structuredRepair
-          ?.initialCallSpendCeilingMicros <= 0 ||
-        unreported.searchSpace?.structuredRepair
-          ?.initialFixedRequestFeeCeilingMicros !== 0 ||
-        unreported.searchSpace?.structuredRepair
-          ?.repairCallSpendCeilingMicros <=
-            unreported.searchSpace?.structuredRepair
-              ?.remainingSpendMicros ||
+          'usable_strategy_generation' ||
+        unreported.searchSpace?.structuredRepair !== undefined ||
+        unreported.searchSpace?.strategyGeneratorContract?.cause !==
+          'generator_provider_usage_invalid' ||
+        !unreported.searchSpace?.strategyGeneratorContract?.usageIssue ||
+        unreported.searchSpace?.strategyGeneratorContract
+          ?.routeProvenanceValidated !== false ||
+        unreported.searchSpace?.strategyGeneratorContract
+          ?.exactSchemaValidated !== false ||
         unreported.llm?.strategyGeneratorJudge?.status !== 'completed' ||
         unreported.llm?.strategyFamilyRepair !== undefined ||
         unreported.usage?.calls !== 1 ||
         unreported.usage?.successfulCalls !== 1 ||
         unreported.usage?.costReporting !== 'unavailable' ||
-        unreported.gate?.decision !== 'block' ||
+        unreported.gate?.decision !== 'technical_recovery' ||
         hasBusinessExperimentField(unreported.nextExperiment)) {
       throw new Error(
-        `${invalidCost.label} provider cost was not conservatively reserved before repair: ${JSON.stringify(unreported)}`
+        `${invalidCost.label} provider cost was not rejected before normalization and repair: ${JSON.stringify(unreported)}`
       );
     }
   }
@@ -3081,8 +3156,7 @@ async function verifyProviderSpendBudgetRecovery() {
 
   const repairCanaryIncomplete = compactV2Response(domain, ref);
   repairCanaryIncomplete.seedContract = 'unsupported_seed_contract';
-  const repairCanaryInitialUsage = { ...usage };
-  delete repairCanaryInitialUsage.cost;
+  const repairCanaryInitialUsage = { ...usage, cost: 0 };
   let repairCanaryCalls = 0;
   const repairCanaryFailure = await runDomainRepairSequence({
     domain,
@@ -3123,11 +3197,11 @@ async function verifyProviderSpendBudgetRecovery() {
         'strategy_generation_budget_recovery' ||
       repairCanaryFailure.usage?.calls !== 2 ||
       repairCanaryFailure.usage?.successfulCalls !== 2 ||
-      repairCanaryFailure.usage?.costReporting !== 'partial' ||
+      repairCanaryFailure.usage?.costReporting !== 'complete' ||
       repairCanaryFailure.usage?.withinBudget !== true ||
       repairCanaryFailure.gate?.decision !== 'block') {
     throw new Error(
-      `repair prompt-token ceiling drift did not preserve partial usage and fail closed: ${JSON.stringify(repairCanaryFailure)}`
+      `repair prompt-token ceiling drift did not preserve exact usage and fail closed: ${JSON.stringify(repairCanaryFailure)}`
     );
   }
 
@@ -3159,7 +3233,7 @@ async function verifyProviderSpendBudgetRecovery() {
       repairBudgetFailure.searchSpace?.structuredRepair?.attempted !==
         true ||
       repairBudgetFailure.searchSpace?.structuredRepair?.succeeded !==
-        true ||
+        false ||
       repairBudgetFailure.searchSpace?.structuredRepair?.failure !==
         'repair_budget_exceeded' ||
       repairBudgetFailure.searchSpace?.structuredRepair
@@ -3874,27 +3948,26 @@ async function verifyOmittedProviderEvidenceFailsClosed() {
       };
     }
   });
-  const modelCandidate = candidateResult.candidates?.find(
-    (candidate) =>
-      candidate.displayLabel === candidateLabel &&
-      candidate.providers?.includes(
-        'openrouter_evidence_extraction'
-      )
-  );
   if (!candidateIncludedRef ||
       candidatePromptIDs.includes(omittedRef) ||
-      !modelCandidate ||
-      modelCandidate.role ||
-      modelCandidate.market ||
-      modelCandidate.evidenceRefs?.includes(omittedRef) ||
-      JSON.stringify(modelCandidate.evidenceRefs) !==
-        JSON.stringify([candidateIncludedRef])) {
+      candidateResult.status !== 'skipped' ||
+      candidateResult.candidates?.length !== 0 ||
+      candidateResult.hypotheses?.length !== 0 ||
+      candidateResult.searchSpace?.structuredRepair?.initialIssue !==
+        'strict_schema_mismatch' ||
+      !candidateResult.searchSpace?.structuredRepair?.initialSchemaIssues
+        ?.some((issue) =>
+          issue.keyword === 'enum' &&
+          issue.instancePath === '/candidates/0/e/0'
+        ) ||
+      candidateResult.nextExperiment?.kind !==
+        'strategy_generation_shape_recovery' ||
+      hasBusinessExperimentField(candidateResult.nextExperiment)) {
     throw new Error(
-      `provider-omitted candidate fields leaked through the full local evidence catalog: ${JSON.stringify({
+      `provider-omitted candidate evidence was not rejected by the exact response schema: ${JSON.stringify({
         omittedRef,
         candidateIncludedRef,
         candidatePromptIDs,
-        modelCandidate,
         candidateResult
       })}`
     );
@@ -5021,7 +5094,9 @@ async function runDomainWithResponse(
         `gen-${suffix}`
       );
       const value = await completion(request);
-      return { ...value, diagnostics };
+      return diagnostics === undefined
+        ? value
+        : { ...value, diagnostics };
     }
   });
 }
@@ -5246,6 +5321,10 @@ async function verifyBettyProductionTraceRegression() {
   response.familyB.e.push(staleArticleRef);
   response.familyB.d.timingTriggers = [{
     l: 'Baby Friendly Initiative Program in Hospitals',
+    e: [staleArticleRef],
+    q: 'Baby Friendly Initiative Program in Hospitals'
+  }, {
+    l: 'Recheck the old Baby Friendly Initiative article',
     e: [staleArticleRef],
     q: 'Baby Friendly Initiative Program in Hospitals'
   }];

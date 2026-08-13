@@ -47,6 +47,11 @@ const DEFAULT_OPENROUTER_TOURNAMENT_MODEL =
 const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-5';
 const DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_OPENROUTER_RESPONSES_URL = 'https://openrouter.ai/api/v1/responses';
+const STRICT_TOURNAMENT_JSON_CONTRACTS = new Set([
+  OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+  OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT,
+  OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT
+]);
 
 function argValue(name) {
   const index = args.indexOf(name);
@@ -812,7 +817,7 @@ async function runOpportunityTournamentJob(job, options) {
           { name: 'build_evidence_snapshot', status: tournament.evidenceHash ? 'completed' : 'skipped' },
           {
             name: 'generate_semantic_strategy_seeds',
-            status: object(tournament.usage).successfulCalls > 0 ? 'completed' : 'skipped'
+            ...opportunityTournamentGeneratorTraceStep(tournament)
           },
           {
             name: 'repair_structured_strategy_families',
@@ -857,7 +862,7 @@ async function runOpportunityTournamentJob(job, options) {
           'research_only',
           object(tournament.searchSpace).contingentFinalistSource ===
               'discovery_planner_call_1'
-            ? 'call_2_commercial_critic_after_upstream_generator_search'
+            ? 'call_2_commercial_critic_after_generator_planning'
             : object(tournament.usage).calls > 1
             ? object(object(tournament.searchSpace).commercialCritic).attempted
               ? 'two_bounded_llm_calls_generator_and_critic'
@@ -868,17 +873,48 @@ async function runOpportunityTournamentJob(job, options) {
           'deterministic_expansion',
           ...(object(tournament.searchSpace).contingentFinalistSource ===
               'discovery_planner_call_1'
-            ? ['folded_exa_web_search_in_generator']
-            : []),
-          ...(object(tournament.searchSpace).contingentFinalistSource ===
-              'discovery_planner_call_1'
-            ? ['outside_target_discovery_completed_upstream']
+            ? ['outside_target_discovery_after_plan_acceptance']
             : ['no_pdl']),
           'no_outreach',
           'no_publish'
         ]
       }
     }
+  };
+}
+
+function opportunityTournamentGeneratorTraceStep(tournamentValue) {
+  const tournament = object(tournamentValue);
+  const searchSpace = object(tournament.searchSpace);
+  const llm = object(tournament.llm);
+  const currentGenerator = object(llm.strategyGeneratorJudge);
+  const upstreamGenerator = object(llm.contingentFinalistGenerator);
+  const contingentSource = text(searchSpace.contingentFinalistSource);
+  if (contingentSource === 'discovery_planner_call_1' ||
+      text(upstreamGenerator.source) === 'discovery_planner_call_1') {
+    return {
+      status: 'skipped',
+      source: 'discovery_planner_call_1',
+      reason: 'contingent_finalists_generated_upstream'
+    };
+  }
+  if (text(currentGenerator.purpose) ===
+      'opportunity_tournament_strategy_generation') {
+    const providerStatus = text(currentGenerator.status);
+    return compact({
+      status: providerStatus === 'failed'
+        ? 'failed'
+        : ['completed', 'incomplete'].includes(providerStatus)
+          ? 'completed'
+          : 'skipped',
+      source: 'current_job_generator_call',
+      providerStatus: providerStatus || undefined
+    });
+  }
+  return {
+    status: 'skipped',
+    source: 'none',
+    reason: 'no_generator_call_receipt'
   };
 }
 
@@ -1019,7 +1055,7 @@ async function runOpportunityDiscoveryPlanningJob(
     jobId: text(job.id),
     jobKind: text(job.kind),
     summary: planned
-      ? 'Generated complete contingent commercial finalists and executed one bounded, read-only Exa web search; no outreach or publishing occurred.'
+      ? 'Generated complete contingent commercial finalists for separately bounded outside-target discovery; no search plugin, outreach, or publishing occurred.'
       : firstNonEmpty(
           discoveryPlan.reason,
           'The bounded opportunity discovery planner could not produce a valid plan.'
@@ -2950,8 +2986,10 @@ async function callOpenRouterAgentJSON({
   }
   const usage = normalizeOpenRouterUsage(response?.usage);
   const diagnostics = compact({
-    finishReason: truncate(text(response?.status), 64),
-    nativeFinishReason: truncate(text(response?.incompleteDetails?.reason), 64),
+    finishReason: safeOpenRouterFinishReason(response?.status),
+    nativeFinishReason: safeOpenRouterFinishReason(
+      response?.incompleteDetails?.reason
+    ),
     contentByteCount: Buffer.byteLength(content, 'utf8'),
     contentSha256: createHash('sha256').update(content).digest('hex'),
     routerSelectedProvider: truncate(
@@ -3232,10 +3270,11 @@ async function callOpenRouterJSON({
       const effectiveTimeoutKind =
         streamTimeoutKind || responseStartTimeoutKind;
       const diagnostics = {
-        finishReason: truncate(text(streamState.finishReason), 64),
-        nativeFinishReason: truncate(
-          text(streamState.nativeFinishReason),
-          64
+        finishReason: safeOpenRouterFinishReason(
+          streamState.finishReason
+        ),
+        nativeFinishReason: safeOpenRouterFinishReason(
+          streamState.nativeFinishReason
         ),
         contentByteCount: nonNegativeInteger(
           streamState.contentByteCount
@@ -3512,8 +3551,16 @@ async function callOpenRouterJSON({
     );
   }
   let data;
+  const safeStructuredParseError = new Error(
+    'OpenRouter structured JSON message was invalid'
+  );
+  safeStructuredParseError.openRouterFailureCode =
+    'openrouter_invalid_response';
   try {
-    data = parseJSON(extractJSONObject(content), 'OpenRouter JSON message');
+    data = parseJSON(
+      strictTournamentJSONPayload(content, responseFormat),
+      'OpenRouter JSON message'
+    );
   } catch (error) {
     if (allowLocalJSONRepair === true) {
       try {
@@ -3538,7 +3585,7 @@ async function callOpenRouterJSON({
             localJSONRepairRootElementShapes(repairError)
         };
         throw attachOpenRouterResponseMetadata(
-          error,
+          safeStructuredParseError,
           usage,
           diagnostics,
           safeOpenRouterGenerationId(envelope?.id) ||
@@ -3549,7 +3596,7 @@ async function callOpenRouterJSON({
       }
     } else {
       throw attachOpenRouterResponseMetadata(
-        error,
+        safeStructuredParseError,
         usage,
         diagnostics,
         safeOpenRouterGenerationId(envelope?.id) ||
@@ -3603,11 +3650,31 @@ function openRouterResponseDiagnostics(choice, rawContent) {
   choice = object(choice);
   rawContent = typeof rawContent === 'string' ? rawContent : '';
   return compact({
-    finishReason: truncate(text(choice.finish_reason), 64),
-    nativeFinishReason: truncate(text(choice.native_finish_reason), 64),
+    finishReason: safeOpenRouterFinishReason(choice.finish_reason),
+    nativeFinishReason: safeOpenRouterFinishReason(
+      choice.native_finish_reason
+    ),
     contentByteCount: Buffer.byteLength(rawContent, 'utf8'),
     contentSha256: createHash('sha256').update(rawContent).digest('hex')
   });
+}
+
+function safeOpenRouterFinishReason(value) {
+  const reason = text(value).toLowerCase();
+  return new Set([
+    'stop',
+    'length',
+    'error',
+    'content_filter',
+    'tool_calls',
+    'function_call',
+    'cancelled',
+    'canceled',
+    'max_tokens',
+    'max_output_tokens',
+    'refusal',
+    'planner_materialized'
+  ]).has(reason) ? reason : '';
 }
 
 function openRouterRouterDiagnostics(
@@ -3618,26 +3685,78 @@ function openRouterRouterDiagnostics(
   const metadata = object(value);
   const endpoints = object(metadata.endpoints);
   const available = arrayOfObjects(endpoints.available);
-  const selected = available.find((endpoint) => endpoint.selected === true);
+  const selectedEndpoints = available.filter(
+    (endpoint) => endpoint.selected === true
+  );
+  const selected = selectedEndpoints.length === 1
+    ? selectedEndpoints[0]
+    : {};
+  const selectedEndpointProvider = safeOpenRouterProviderName(
+    selected.provider
+  );
+  const selectedEndpointModel = safeOpenRouterModelName(selected.model);
+  const selectedEndpointSafelyEvidenced =
+    selectedEndpoints.length === 1 &&
+    Boolean(selectedEndpointProvider) &&
+    Boolean(selectedEndpointModel);
+  const reportedAttemptSequence =
+    Array.isArray(metadata.attempts) && metadata.attempts.length > 0;
   let routerAttempts = safeOpenRouterRouterAttempts(metadata.attempts);
-  const attempt = nonNegativeInteger(metadata.attempt);
-  const provider = text(selected?.provider || selectedProviderValue);
-  const selectedModel = text(
-    selected?.model || selectedModelValue
+  const attempt = Number.isInteger(metadata.attempt) &&
+      metadata.attempt >= 1 && metadata.attempt <= 64
+    ? metadata.attempt
+    : undefined;
+  const candidateCount = Number.isInteger(endpoints.total) &&
+      endpoints.total >= 1 && endpoints.total <= 64
+    ? endpoints.total
+    : undefined;
+  const reportedAttemptSequenceExact =
+    reportedAttemptSequence &&
+    metadata.attempts.length <= 64 &&
+    metadata.attempts.length === attempt &&
+    routerAttempts.length === metadata.attempts.length;
+  const provider = selectedEndpointProvider ||
+    safeOpenRouterProviderName(selectedProviderValue);
+  const selectedModel = selectedEndpointModel ||
+    safeOpenRouterModelName(selectedModelValue);
+  let attemptSequenceSource = reportedAttemptSequenceExact
+    ? 'reported'
+    : '';
+  // A one-attempt success is uniquely reconstructable only when OpenRouter
+  // identifies exactly one selected endpoint with both a safe provider and
+  // model. Envelope/header fallbacks are useful diagnostics, but they are not
+  // enough evidence to manufacture an attempt sequence. Multi-attempt routes
+  // are never reconstructed because their failed prefix would be unknowable.
+  const reportedDirectAttempt = attempt === 1 &&
+    routerAttempts.length === 1
+      ? routerAttempts[0]
+      : null;
+  const rawReportedDirectAttempt = attempt === 1 &&
+    Array.isArray(metadata.attempts) && metadata.attempts.length === 1
+      ? object(metadata.attempts[0])
+      : null;
+  const rawReportedDirectModel = text(
+    rawReportedDirectAttempt?.model
   ).toLowerCase();
-  if (routerAttempts.length === 0 && attempt === 1 &&
-      /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider) &&
-      /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(selectedModel)) {
+  const safelyReconstructableDirectAttempt = attempt === 1 &&
+    selectedEndpointSafelyEvidenced &&
+    (!reportedAttemptSequence ||
+      (Array.isArray(metadata.attempts) && metadata.attempts.length === 1 &&
+       reportedDirectAttempt?.provider === selectedEndpointProvider &&
+       (!rawReportedDirectModel ||
+        (reportedDirectAttempt?.model === selectedEndpointModel &&
+         rawReportedDirectModel === selectedEndpointModel)) &&
+       reportedDirectAttempt.status >= 200 &&
+       reportedDirectAttempt.status < 300));
+  if (safelyReconstructableDirectAttempt &&
+      (!reportedDirectAttempt?.model || !reportedAttemptSequence)) {
     routerAttempts = [{
-      provider,
-      model: selectedModel,
-      status: 200
+      provider: selectedEndpointProvider,
+      model: selectedEndpointModel,
+      status: reportedDirectAttempt?.status ?? 200
     }];
+    attemptSequenceSource = 'selected_endpoint_reconstructed';
   }
-  routerAttempts = routerAttempts.map((item) => ({
-    ...item,
-    model: item.model || selectedModel
-  }));
   const attemptStatuses = routerAttempts.map((item) => item.status);
   return compact({
     routerStrategy: /^[a-z][a-z0-9_-]{0,31}$/.test(
@@ -3646,9 +3765,12 @@ function openRouterRouterDiagnostics(
       ? text(metadata.strategy).toLowerCase()
       : undefined,
     routerAttempt: attempt,
-    routerCandidateCount: nonNegativeInteger(endpoints.total),
+    routerCandidateCount: candidateCount,
     routerAttemptStatuses: attemptStatuses,
     routerAttempts,
+    routerAttemptSequenceSource: attemptSequenceSource || undefined,
+    routerSelectedEndpointEvidenced:
+      selectedEndpointSafelyEvidenced ? true : undefined,
     routerFallbackUsed: attempt > 1 ? true : undefined,
     routerSelectedProvider:
       /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
@@ -3675,11 +3797,18 @@ function safeOpenRouterProviderName(value) {
     : '';
 }
 
+function safeOpenRouterModelName(value) {
+  const model = text(value).toLowerCase();
+  return /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(model)
+    ? model
+    : '';
+}
+
 function safeOpenRouterRouterAttempts(value) {
   return arrayOfObjects(value).slice(0, 64).map((attempt) => {
     const provider = text(attempt.provider);
     const model = text(attempt.model).toLowerCase();
-    const status = Number(attempt.status);
+    const status = attempt.status;
     if (!Number.isInteger(status) || status < 100 || status > 599) {
       return undefined;
     }
@@ -3722,11 +3851,10 @@ function openRouterProviderError(
 ) {
   const details = object(value);
   const detailsMetadata = object(details.metadata);
-  const error = new Error(
-    `OpenRouter generation failed: ${
-      text(details.message) || 'unknown provider error'
-    }`
-  );
+  // The provider's free-form message may echo request or prompt content. Use
+  // it only for finite local classification and never put it on an Error that
+  // can reach the top-level job serializer or operator logs.
+  const error = new Error('OpenRouter generation failed safely');
   const reportedErrorType = text(
     detailsMetadata.error_type ?? details.error_type
   ).toLowerCase();
@@ -3744,9 +3872,9 @@ function openRouterProviderError(
   ).toLowerCase();
   const safeDiagnostics = {
     ...object(diagnostics),
-    ...(Number.isInteger(Number(httpStatus)) &&
-        Number(httpStatus) >= 400 && Number(httpStatus) <= 599
-      ? { httpStatus: Number(httpStatus) }
+    ...(Number.isInteger(httpStatus) &&
+        httpStatus >= 400 && httpStatus <= 599
+      ? { httpStatus }
       : {}),
     ...(/^[a-z][a-z0-9_]{0,63}$/.test(errorType)
       ? { providerErrorType: errorType }
@@ -3762,9 +3890,9 @@ function openRouterProviderError(
       ? 'openrouter_truncated_structured_output'
       : /^[a-z][a-z0-9_]{0,63}$/.test(errorType)
         ? `openrouter_${errorType}`
-        : Number.isInteger(Number(httpStatus)) &&
-            Number(httpStatus) >= 400 && Number(httpStatus) <= 599
-          ? `openrouter_http_${Number(httpStatus)}`
+        : Number.isInteger(httpStatus) &&
+            httpStatus >= 400 && httpStatus <= 599
+          ? `openrouter_http_${httpStatus}`
           : 'openrouter_provider_error';
   return attachOpenRouterResponseMetadata(
     error,
@@ -3818,17 +3946,21 @@ function openRouterDiagnosticsIndicateTruncation(value) {
 function normalizeOpenRouterUsage(usage) {
   usage = object(usage);
   if (Object.keys(usage).length === 0) return {};
+  const exactPositiveInteger = (value) =>
+    typeof value === 'number' && Number.isInteger(value) && value > 0
+      ? value
+      : undefined;
   const normalized = compact({
-    prompt_tokens: positiveInteger(usage.prompt_tokens),
-    completion_tokens: positiveInteger(usage.completion_tokens),
-    total_tokens: positiveInteger(usage.total_tokens),
-    promptTokens: positiveInteger(
+    prompt_tokens: exactPositiveInteger(usage.prompt_tokens),
+    completion_tokens: exactPositiveInteger(usage.completion_tokens),
+    total_tokens: exactPositiveInteger(usage.total_tokens),
+    promptTokens: exactPositiveInteger(
       usage.promptTokens ?? usage.inputTokens
     ),
-    completionTokens: positiveInteger(
+    completionTokens: exactPositiveInteger(
       usage.completionTokens ?? usage.outputTokens
     ),
-    totalTokens: positiveInteger(usage.totalTokens),
+    totalTokens: exactPositiveInteger(usage.totalTokens),
     cost: providerCost(usage.cost)
   });
   return {
@@ -4634,7 +4766,7 @@ function safeOpenRouterResponseDiagnostics(value) {
   const providerErrorCode = text(
     diagnostics.providerErrorCode
   ).toLowerCase();
-  const httpStatus = Number(diagnostics.httpStatus);
+  const httpStatus = diagnostics.httpStatus;
   const routerStrategy = text(diagnostics.routerStrategy).toLowerCase();
   const routerSelectedProvider = text(
     diagnostics.routerSelectedProvider
@@ -4645,9 +4777,16 @@ function safeOpenRouterResponseDiagnostics(value) {
   const timeoutKind = text(diagnostics.timeoutKind).toLowerCase();
   const timeoutOrigin = text(diagnostics.timeoutOrigin).toLowerCase();
   const timeoutPhase = text(diagnostics.timeoutPhase).toLowerCase();
+  const routerAttemptSequenceSource = text(
+    diagnostics.routerAttemptSequenceSource
+  ).toLowerCase();
   return compact({
-    finishReason: truncate(diagnostics.finishReason, 64),
-    nativeFinishReason: truncate(diagnostics.nativeFinishReason, 64),
+    finishReason: safeOpenRouterFinishReason(
+      diagnostics.finishReason
+    ),
+    nativeFinishReason: safeOpenRouterFinishReason(
+      diagnostics.nativeFinishReason
+    ),
     contentByteCount: nonNegativeInteger(diagnostics.contentByteCount),
     contentSha256: /^[a-f0-9]{64}$/.test(contentSha256)
       ? contentSha256
@@ -4667,22 +4806,37 @@ function safeOpenRouterResponseDiagnostics(value) {
     routerStrategy: /^[a-z][a-z0-9_-]{0,31}$/.test(routerStrategy)
       ? routerStrategy
       : undefined,
-    routerAttempt: nonNegativeInteger(diagnostics.routerAttempt),
-    routerCandidateCount: nonNegativeInteger(
-      diagnostics.routerCandidateCount
-    ),
+    routerAttempt: Number.isInteger(diagnostics.routerAttempt) &&
+        diagnostics.routerAttempt >= 1 && diagnostics.routerAttempt <= 64
+      ? diagnostics.routerAttempt
+      : undefined,
+    routerCandidateCount:
+      Number.isInteger(diagnostics.routerCandidateCount) &&
+        diagnostics.routerCandidateCount >= 1 &&
+        diagnostics.routerCandidateCount <= 64
+        ? diagnostics.routerCandidateCount
+        : undefined,
     routerAttemptStatuses: Array.isArray(
       diagnostics.routerAttemptStatuses
     )
       ? diagnostics.routerAttemptStatuses
         .slice(0, 64)
-        .map((status) => Number(status))
         .filter((status) => Number.isInteger(status) &&
           status >= 100 && status <= 599)
       : undefined,
     routerAttempts: safeOpenRouterRouterAttempts(
       diagnostics.routerAttempts
     ),
+    routerAttemptSequenceSource: [
+      'reported',
+      'selected_endpoint_reconstructed'
+    ].includes(routerAttemptSequenceSource)
+      ? routerAttemptSequenceSource
+      : undefined,
+    routerSelectedEndpointEvidenced:
+      diagnostics.routerSelectedEndpointEvidenced === true
+        ? true
+        : undefined,
     routerFallbackUsed:
       diagnostics.routerFallbackUsed === true ? true : undefined,
     routerSelectedProvider:
@@ -4848,6 +5002,24 @@ function extractJSONObject(raw) {
     return value.slice(start, end + 1);
   }
   return value;
+}
+
+// Structured tournament contracts are exact trust boundaries. Accept the
+// entire message (or one whole JSON code fence for provider compatibility),
+// never an object substring surrounded by model prose. Exact schema and
+// semantic validation happen downstream on this parsed root.
+function strictTournamentJSONPayload(raw, responseFormat) {
+  const jsonSchema = object(object(responseFormat).json_schema);
+  const contract = text(jsonSchema.name);
+  if (jsonSchema.strict !== true ||
+      !STRICT_TOURNAMENT_JSON_CONTRACTS.has(contract)) {
+    return extractJSONObject(raw);
+  }
+  const value = text(raw);
+  const wholeFence = value.match(
+    /^```(?:json)?[ \t]*(?:\r?\n)?([\s\S]*?)(?:\r?\n)?```$/i
+  );
+  return wholeFence ? wholeFence[1].trim() : value;
 }
 
 function htmlTitle(raw) {

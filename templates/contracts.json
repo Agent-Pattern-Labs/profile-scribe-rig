@@ -65,8 +65,8 @@
         { "name": "payload.tournamentId", "type": "string", "required": true },
         { "name": "payload.objective", "type": "object", "required": true },
         { "name": "payload.budget", "type": "object", "required": true },
-        { "name": "payload.budget.maxLLMCalls", "type": "integer", "description": "V6 authorizes one rig call per stage: one complete contingent-finalist/search planner call when discoveryPlanningOnly=true, then one critic-only call after app-validated target discovery. No downstream generator or repair call is authorized." },
-        { "name": "payload.discoveryPlanningOnly", "type": "boolean", "description": "Runs v6 call 1: two complete contingent motions plus the forced read-only Exa search." },
+        { "name": "payload.budget.maxLLMCalls", "type": "integer", "description": "V6 authorizes one rig model call per stage: one complete contingent-finalist planner call when discoveryPlanningOnly=true, then one critic-only call after separately budgeted app-validated target discovery. No downstream generator or repair call is authorized." },
+        { "name": "payload.discoveryPlanningOnly", "type": "boolean", "description": "Runs v6 call 1: two complete contingent motions with typed unresolved target slots. The model call has no search plugin; outside target reads happen separately after plan acceptance." },
         { "name": "payload.commercialDiscoveryEvidence", "type": "object", "description": "Claim-fenced outside target evidence whose fact/candidate motion IDs must belong to the persisted plan and match one another. When both motions bind, one complete family from each enters the critic." },
         { "name": "payload.evidenceSnapshot", "type": "object" },
         { "name": "payload.priorOutcomes", "type": "array" },
@@ -77,7 +77,7 @@
     {
       "name": "profile-scribe.opportunity-discovery-plan-result",
       "version": "1.0.0",
-      "description": "V6 call-1 receipt containing two complete contingent commercial motions, one forced Exa search receipt, and no execution authority.",
+      "description": "V6 call-1 receipt containing two complete contingent commercial motions, an explicit not-attempted folded-search receipt, and no execution authority. Outside target reads happen separately after plan acceptance.",
       "fields": [
         { "name": "status", "type": "enum", "required": true, "values": ["completed", "skipped"] },
         { "name": "jobId", "type": "string", "required": true },

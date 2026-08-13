@@ -217,8 +217,10 @@ export async function readOpenRouterChatCompletionSSE(
         selectedProvider = safeText(metadata.provider_name) || selectedProvider;
       }
     }
-    finishReason = safeText(choice.finish_reason) || finishReason;
-    nativeFinishReason = safeText(choice.native_finish_reason) || nativeFinishReason;
+    finishReason = safeFinishReason(choice.finish_reason) || finishReason;
+    nativeFinishReason = safeFinishReason(
+      choice.native_finish_reason
+    ) || nativeFinishReason;
     lastJSONEventWasTerminalAccounting =
       completeOpenRouterUsage(chunk.usage) &&
       completeOpenRouterRoute({
@@ -354,6 +356,23 @@ export async function readOpenRouterChatCompletionSSE(
   };
 }
 
+function safeFinishReason(value) {
+  const reason = safeText(value).toLowerCase();
+  return new Set([
+    'stop',
+    'length',
+    'error',
+    'content_filter',
+    'tool_calls',
+    'function_call',
+    'cancelled',
+    'canceled',
+    'max_tokens',
+    'max_output_tokens',
+    'refusal'
+  ]).has(reason) ? reason : '';
+}
+
 async function readBeforeDeadline(
   reader,
   { idleRemaining, totalRemaining, idleMs, totalMs }
@@ -475,7 +494,7 @@ function completeOpenRouterRoute({ metadata, selectedModel, selectedProvider }) 
     const status = attempt?.status;
     const final = index === attempts.length - 1;
     if (!safeProvider(provider) ||
-        (model && !safeModel(model)) ||
+        (attemptNumber > 1 ? !safeModel(model) : model && !safeModel(model)) ||
         !Number.isInteger(status) || status < 100 || status > 599 ||
         (!final && status >= 200 && status <= 299) ||
         (final && (status < 200 || status > 299))) {
@@ -485,7 +504,9 @@ function completeOpenRouterRoute({ metadata, selectedModel, selectedProvider }) 
   const finalAttempt = plainObject(attempts[attempts.length - 1]);
   const finalModel = safeText(finalAttempt?.model).toLowerCase();
   return safeText(finalAttempt?.provider) === endpointProvider &&
-    (!finalModel || finalModel === endpointModel) &&
+    (attemptNumber === 1
+      ? !finalModel || finalModel === endpointModel
+      : finalModel === endpointModel) &&
     finalAttempt.status >= 200 && finalAttempt.status <= 299;
 }
 

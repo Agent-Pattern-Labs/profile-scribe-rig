@@ -20,6 +20,8 @@ const usage = {
   total_tokens: 2100,
   cost: 0.0042
 };
+const STRICT_CONTENT_PROSE_SENTINEL =
+  'raw-structured-prose-must-not-persist';
 
 const server = createServer(async (request, response) => {
   let raw = '';
@@ -113,7 +115,9 @@ const server = createServer(async (request, response) => {
   });
 
   if (input.objective?.id === 'objective-run-job-slow-response-body' ||
-      input.objective?.id === 'objective-run-job-slow-response-body-critic') {
+      (input.objective?.id ===
+        'objective-run-job-slow-response-body-critic' &&
+       schemaName === 'opportunity_tournament_critic_v1')) {
     response.writeHead(200, {
       'Content-Type': 'application/json',
       'X-Generation-Id': 'gen-run-job-slow-response-body',
@@ -208,12 +212,23 @@ const server = createServer(async (request, response) => {
   let data;
   if (schemaName === 'opportunity_tournament_critic_v1') {
     data = criticResponse(input.finalists || []);
+    if (input.objective?.id === 'objective-run-job-invalid-critic-bound') {
+      data.reason = 'x'.repeat(361);
+    }
+    if (input.objective?.id ===
+        'objective-run-job-invalid-critic-whitespace') {
+      data.comparisons[0].reason =
+        ' Leading critic reason with  rewritten whitespace.\n';
+    }
   } else {
     const objectiveID = input.objective?.id || 'unknown-objective';
     const callCount =
       (generatorCallsByObjective.get(objectiveID) || 0) + 1;
     generatorCallsByObjective.set(objectiveID, callCount);
-    if (objectiveID === 'objective-run-job-repair' && callCount === 1) {
+    if ([
+      'objective-run-job-repair',
+      'objective-run-job-repair-foreign-model'
+    ].includes(objectiveID) && callCount === 1) {
       data = { seedContract: 'unsupported_seed_contract' };
     } else {
       const evidenceRef = (input.evidenceCatalog || [])
@@ -223,32 +238,215 @@ const server = createServer(async (request, response) => {
     }
   }
 
-  const content = JSON.stringify(data);
-  response.writeHead(200, { 'Content-Type': 'application/json' });
-  response.end(JSON.stringify({
-    id: `gen-run-job-${providerCalls.length}`,
-    model: 'deepseek/deepseek-v4-flash-0731',
-    choices: [{
-      finish_reason: 'stop',
-      native_finish_reason: 'stop',
-      message: { content }
-    }],
-    usage,
-    openrouter_metadata: {
-      strategy: 'direct',
-      attempt: 1,
+  const objectiveID = input.objective?.id || '';
+  const criticCall = schemaName === 'opportunity_tournament_critic_v1';
+  let content = JSON.stringify(data);
+  if (!criticCall && objectiveID ===
+      'objective-run-job-generator-prefix-prose') {
+    content = `PREFIX ${STRICT_CONTENT_PROSE_SENTINEL}\n${content}`;
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-suffix-prose') {
+    content = `${content}\nSUFFIX ${STRICT_CONTENT_PROSE_SENTINEL}`;
+  }
+  if ((!criticCall && objectiveID ===
+        'objective-run-job-generator-unmatched-fence') ||
+      (criticCall && objectiveID ===
+        'objective-run-job-critic-unmatched-fence')) {
+    content = `\`\`\`json\n${content}\n${STRICT_CONTENT_PROSE_SENTINEL}`;
+  }
+  let selectedProvider;
+  let openRouterMetadata = {
+    strategy: 'direct',
+    attempt: 1,
+    endpoints: {
+      total: 1,
+      available: [{
+        provider: 'OpenAI',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        selected: true
+      }]
+    },
+    attempts: [
+      {
+        provider: 'OpenAI',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        status: 200
+      }
+    ]
+  };
+  if (criticCall && [
+    'objective-run-job-critic-fallback-provenance',
+    'objective-run-job-critic-fallback-incomplete',
+    'objective-run-job-critic-fallback-missing-model',
+    'objective-run-job-critic-fallback-nonfinal-2xx',
+    'objective-run-job-critic-fallback-final-non-2xx',
+    'objective-run-job-critic-route-mismatch',
+    'objective-run-job-critic-route-extra',
+    'objective-run-job-critic-route-filtered'
+  ].includes(objectiveID)) {
+    openRouterMetadata = {
+      strategy: 'fallback',
+      attempt: 2,
       endpoints: {
-        total: 1,
+        total: 2,
         available: [{
           provider: 'OpenAI',
+          model: 'deepseek/deepseek-v4-flash-0731',
+          selected: false
+        }, {
+          provider: 'Azure',
           model: 'deepseek/deepseek-v4-flash-0731',
           selected: true
         }]
       },
       attempts: [
-        { provider: 'OpenAI', status: 200 }
+        {
+          provider: 'OpenAI',
+          model: 'deepseek/deepseek-v4-flash-0731',
+          status: 502
+        },
+        {
+          provider: 'Azure',
+          model: 'deepseek/deepseek-v4-flash-0731',
+          status: 200
+        }
       ]
+    };
+    if (objectiveID ===
+        'objective-run-job-critic-fallback-incomplete') {
+      delete openRouterMetadata.attempts;
     }
+    if (objectiveID ===
+        'objective-run-job-critic-fallback-missing-model') {
+      delete openRouterMetadata.attempts[0].model;
+    }
+    if (objectiveID ===
+        'objective-run-job-critic-fallback-nonfinal-2xx') {
+      openRouterMetadata.attempts[0].status = 200;
+    }
+    if (objectiveID ===
+        'objective-run-job-critic-fallback-final-non-2xx') {
+      openRouterMetadata.attempts[1].status = 502;
+    }
+    if (objectiveID ===
+        'objective-run-job-critic-route-mismatch') {
+      openRouterMetadata.endpoints.available[1].provider =
+        'Mismatched Provider';
+    }
+    if (objectiveID ===
+        'objective-run-job-critic-route-extra') {
+      openRouterMetadata.attempts.push({
+        provider: 'Unexpected Provider',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        status: 503
+      });
+    }
+    if (objectiveID ===
+        'objective-run-job-critic-route-filtered') {
+      openRouterMetadata.attempts.splice(1, 0, {
+        provider: 'Malformed Provider',
+        model: 'deepseek/deepseek-v4-flash-0731',
+        status: 'not-a-status'
+      });
+    }
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-direct-reconstructed') {
+    delete openRouterMetadata.attempts;
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-direct-missing-model') {
+    delete openRouterMetadata.attempts[0].model;
+    openRouterMetadata.attempts[0].status = 201;
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-direct-unevidenced') {
+    openRouterMetadata.endpoints.available[0].selected = false;
+    delete openRouterMetadata.attempts;
+    selectedProvider = 'OpenAI';
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-direct-permaslug') {
+    openRouterMetadata.endpoints.available[0].model =
+      'deepseek/deepseek-v4-flash-20260731';
+    openRouterMetadata.attempts[0].model =
+      'deepseek/deepseek-v4-flash-20260731';
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-foreign-model') {
+    openRouterMetadata.endpoints.available[0].model =
+      'foreign/vendor-model';
+    openRouterMetadata.attempts[0].model = 'foreign/vendor-model';
+  }
+  if (!criticCall && objectiveID ===
+      'objective-run-job-generator-foreign-model') {
+    openRouterMetadata.endpoints.available[0].model =
+      'foreign/vendor-model';
+    openRouterMetadata.attempts[0].model = 'foreign/vendor-model';
+  }
+  if (!criticCall && objectiveID ===
+      'objective-run-job-generator-numeric-string-route') {
+    openRouterMetadata.attempt = '1';
+    openRouterMetadata.endpoints.total = '1';
+    openRouterMetadata.attempts[0].status = '200';
+  }
+  if (!criticCall && objectiveID ===
+      'objective-run-job-repair-foreign-model' &&
+      generatorCallsByObjective.get(objectiveID) === 2) {
+    openRouterMetadata.endpoints.available[0].model =
+      'foreign/vendor-model';
+    openRouterMetadata.attempts[0].model = 'foreign/vendor-model';
+  }
+  let responseUsage = { ...usage };
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-missing-usage') {
+    responseUsage = {};
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-string-usage') {
+    responseUsage = Object.fromEntries(Object.entries(usage).map(
+      ([key, value]) => [key, String(value)]
+    ));
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-inconsistent-usage') {
+    responseUsage.total_tokens += 1;
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-call-spend-exceeded') {
+    responseUsage.cost = 0.148;
+  }
+  let finishReason = 'stop';
+  let nativeFinishReason = 'stop';
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-length-finish') {
+    finishReason = 'length';
+    nativeFinishReason = 'length';
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-unsafe-finish') {
+    finishReason = 'raw finish reason secret sentinel !';
+    nativeFinishReason = 'raw native finish secret sentinel !';
+  }
+  const finishFields = criticCall && objectiveID ===
+      'objective-run-job-critic-missing-finish'
+    ? {}
+    : {
+        finish_reason: finishReason,
+        native_finish_reason: nativeFinishReason
+      };
+  response.writeHead(200, { 'Content-Type': 'application/json' });
+  response.end(JSON.stringify({
+    id: `gen-run-job-${providerCalls.length}`,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    provider: selectedProvider,
+    choices: [{
+      ...finishFields,
+      message: { content }
+    }],
+    usage: responseUsage,
+    openrouter_metadata: openRouterMetadata
   }));
 });
 
@@ -268,6 +466,194 @@ try {
   const successCalls = providerCalls.slice(successCallOffset);
   verifySuccessfulTournament(success, successJob, successCalls);
 
+  for (const scenario of [{
+    label: 'generator-foreign-model',
+    issue: 'selected_model_not_requested'
+  }, {
+    label: 'generator-numeric-string-route',
+    issue: 'attempt_count_invalid'
+  }]) {
+    const job = tournamentJob(
+      scenario.label,
+      `objective-run-job-${scenario.label}`
+    );
+    const file = writeJob(scenario.label, job);
+    const callOffset = providerCalls.length;
+    const receipt = await runJob(file, port);
+    verifyGeneratorRouteProvenance(
+      receipt,
+      providerCalls.slice(callOffset),
+      scenario
+    );
+  }
+
+  for (const scenario of [{
+    label: 'critic-fallback-provenance',
+    issue: ''
+  }, {
+    label: 'critic-direct-reconstructed',
+    issue: ''
+  }, {
+    label: 'critic-direct-missing-model',
+    issue: ''
+  }, {
+    label: 'critic-direct-permaslug',
+    issue: ''
+  }, {
+    label: 'critic-foreign-model',
+    issue: 'selected_model_not_requested'
+  }, {
+    label: 'critic-fallback-incomplete',
+    issue: 'attempt_sequence_incomplete'
+  }, {
+    label: 'critic-direct-unevidenced',
+    issue: 'attempt_sequence_incomplete'
+  }, {
+    label: 'critic-fallback-missing-model',
+    issue: 'attempt_model_missing'
+  }, {
+    label: 'critic-fallback-nonfinal-2xx',
+    issue: 'nonfinal_attempt_is_2xx'
+  }, {
+    label: 'critic-fallback-final-non-2xx',
+    issue: 'final_attempt_not_2xx'
+  }, {
+    label: 'critic-route-mismatch',
+    issue: 'selected_provider_not_final_attempt'
+  }, {
+    label: 'critic-route-extra',
+    issue: 'attempt_sequence_incomplete'
+  }, {
+    label: 'critic-route-filtered',
+    issue: 'fallback_attempt_sequence_not_reported'
+  }]) {
+    const job = tournamentJob(
+      scenario.label,
+      `objective-run-job-${scenario.label}`
+    );
+    const file = writeJob(scenario.label, job);
+    const callOffset = providerCalls.length;
+    const receipt = await runJob(file, port);
+    verifyCriticRouteProvenance(
+      receipt,
+      providerCalls.slice(callOffset),
+      scenario
+    );
+  }
+
+  for (const scenario of [{
+    label: 'critic-missing-usage',
+    usageIssue: 'usage_tokens_missing_or_not_exact_positive_integers'
+  }, {
+    label: 'critic-string-usage',
+    usageIssue: 'usage_tokens_missing_or_not_exact_positive_integers'
+  }, {
+    label: 'critic-inconsistent-usage',
+    usageIssue: 'usage_total_tokens_inconsistent'
+  }]) {
+    const job = tournamentJob(
+      scenario.label,
+      `objective-run-job-${scenario.label}`
+    );
+    const file = writeJob(scenario.label, job);
+    const callOffset = providerCalls.length;
+    const receipt = await runJob(file, port);
+    verifyCriticUsageGate(
+      receipt,
+      providerCalls.slice(callOffset),
+      scenario
+    );
+  }
+
+  {
+    const label = 'critic-call-spend-exceeded';
+    const job = tournamentJob(label, `objective-run-job-${label}`);
+    const file = writeJob(label, job);
+    const callOffset = providerCalls.length;
+    const receipt = await runJob(file, port);
+    verifyCriticCallSpendGate(
+      receipt,
+      providerCalls.slice(callOffset)
+    );
+  }
+
+  for (const scenario of [{
+    label: 'critic-missing-finish',
+    finishIssue: 'finish_reason_missing'
+  }, {
+    label: 'critic-length-finish',
+    finishIssue: 'finish_reason_not_stop',
+    successfulCalls: 1,
+    providerStatus: 'incomplete'
+  }, {
+    label: 'critic-unsafe-finish',
+    finishIssue: 'finish_reason_missing'
+  }]) {
+    const job = tournamentJob(
+      scenario.label,
+      `objective-run-job-${scenario.label}`
+    );
+    const file = writeJob(scenario.label, job);
+    const callOffset = providerCalls.length;
+    const receipt = await runJob(file, port);
+    verifyCriticFinishGate(
+      receipt,
+      providerCalls.slice(callOffset),
+      scenario
+    );
+  }
+
+  for (const scenario of [{
+    label: 'invalid-critic-bound',
+    objective: 'objective-run-job-invalid-critic-bound'
+  }, {
+    label: 'invalid-critic-whitespace',
+    objective: 'objective-run-job-invalid-critic-whitespace'
+  }]) {
+    const invalidCriticJob = tournamentJob(
+      scenario.label,
+      scenario.objective
+    );
+    const invalidCriticFile = writeJob(
+      scenario.label,
+      invalidCriticJob
+    );
+    const invalidCriticCallOffset = providerCalls.length;
+    const invalidCritic = await runJob(invalidCriticFile, port);
+    verifyInvalidCriticBound(
+      invalidCritic,
+      providerCalls.slice(invalidCriticCallOffset),
+      scenario.label
+    );
+  }
+
+  for (const scenario of [{
+    label: 'generator-prefix-prose',
+    stage: 'generator'
+  }, {
+    label: 'critic-suffix-prose',
+    stage: 'critic'
+  }, {
+    label: 'generator-unmatched-fence',
+    stage: 'generator'
+  }, {
+    label: 'critic-unmatched-fence',
+    stage: 'critic'
+  }]) {
+    const job = tournamentJob(
+      scenario.label,
+      `objective-run-job-${scenario.label}`
+    );
+    const file = writeJob(scenario.label, job);
+    const callOffset = providerCalls.length;
+    const receipt = await runJob(file, port);
+    verifyStrictContentProseRejected(
+      receipt,
+      providerCalls.slice(callOffset),
+      scenario
+    );
+  }
+
   const repairJob = tournamentJob(
     'repair',
     'objective-run-job-repair'
@@ -277,6 +663,22 @@ try {
   const repair = await runJob(repairFile, port);
   const repairCalls = providerCalls.slice(repairCallOffset);
   verifyRepairDisplacesCritic(repair, repairCalls);
+
+  const repairForeignJob = tournamentJob(
+    'repair-foreign-model',
+    'objective-run-job-repair-foreign-model'
+  );
+  const repairForeignFile = writeJob(
+    'repair-foreign-model',
+    repairForeignJob
+  );
+  const repairForeignCallOffset = providerCalls.length;
+  const repairForeign = await runJob(repairForeignFile, port);
+  verifyRepairRouteProvenance(
+    repairForeign,
+    providerCalls.slice(repairForeignCallOffset),
+    'selected_model_not_requested'
+  );
 
   const dryRunJob = tournamentJob(
     'dry-run',
@@ -815,10 +1217,26 @@ function verifySuccessfulTournament(receipt, job, calls) {
     ),
     'trace did not distinguish generator plus critic'
   );
+  assert(
+    !/folded_exa|upstream_generator_search|outside_target_discovery_completed_upstream/i.test(
+      JSON.stringify(metadata.trace?.notes || [])
+    ),
+    'trace claimed an Exa/plugin search that was not serialized'
+  );
   assertEqual(
     traceStep(metadata, 'run_commercial_critic')?.status,
     'completed',
     'trace did not record the completed critic'
+  );
+  assertEqual(
+    traceStep(metadata, 'generate_semantic_strategy_seeds')?.status,
+    'completed',
+    'trace did not record the current-job generator call'
+  );
+  assertEqual(
+    traceStep(metadata, 'generate_semantic_strategy_seeds')?.source,
+    'current_job_generator_call',
+    'trace did not bind generation to its actual current-job source'
   );
   assertEqual(calls.length, 2, 'success path made the wrong call count');
   verifyGeneratorCall(calls[0], 8000);
@@ -902,6 +1320,313 @@ function verifyRepairDisplacesCritic(receipt, calls) {
       !JSON.stringify(calls[1].input).includes('unsupported_seed_contract"}'),
     'repair call embedded or continued the invalid response'
   );
+}
+
+function verifyInvalidCriticBound(receipt, calls, label) {
+  const metadata = receipt.metadata || {};
+  const critic = metadata.searchSpace?.commercialCritic || {};
+  const providerReceipt = metadata.llm?.commercialCritic || {};
+  assertEqual(
+    receipt.status,
+    'skipped',
+    `${label}: schema-invalid critic response did not stop safely`
+  );
+  assertEqual(calls.length, 2, `${label}: invalid critic caused an extra model call`);
+  assertEqual(metadata.usage?.calls, 2, 'invalid critic lost call accounting');
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    2,
+    'invalid critic provider completion was not accounted'
+  );
+  assertEqual(critic.attempted, true, 'invalid critic was not recorded');
+  assertEqual(critic.valid, false, 'invalid critic passed local validation');
+  assertEqual(
+    critic.cause,
+    'critic_strict_schema_mismatch',
+    `${label}: invalid critic lost its exact local schema cause`
+  );
+  assertEqual(
+    providerReceipt.status,
+    'completed',
+    'schema-invalid JSON was misclassified as provider transport failure'
+  );
+  assertEqual(
+    metadata.result?.resultType,
+    'technical_recovery',
+    'invalid critic was mislabeled as a market-evidence result'
+  );
+  assert(
+    !JSON.stringify(receipt).includes(
+      'Leading critic reason with  rewritten whitespace'
+    ),
+    `${label}: schema-invalid authored critic reason survived acceptance`
+  );
+  verifyNoExecution(metadata);
+}
+
+function verifyStrictContentProseRejected(receipt, calls, scenario) {
+  const metadata = receipt.metadata || {};
+  const generatorReceipt = metadata.llm?.strategyGeneratorJudge;
+  const criticReceipt = metadata.llm?.commercialCritic;
+  assertEqual(
+    receipt.status,
+    'skipped',
+    `${scenario.label}: prose-wrapped strict JSON was accepted`
+  );
+  assertEqual(
+    calls.length,
+    scenario.stage === 'generator' ? 1 : 2,
+    `${scenario.label}: strict root rejection changed the call count`
+  );
+  assertEqual(
+    metadata.usage?.calls,
+    calls.length,
+    `${scenario.label}: strict root rejection lost call accounting`
+  );
+  assertEqual(
+    metadata.usage?.reportedCostMicros,
+    calls.length * 4_200,
+    `${scenario.label}: strict root rejection lost exact provider cost`
+  );
+  const rejectedReceipt = scenario.stage === 'generator'
+    ? generatorReceipt
+    : criticReceipt;
+  assertEqual(
+    rejectedReceipt?.status,
+    'failed',
+    `${scenario.label}: malformed strict content was not rejected`
+  );
+  assertEqual(
+    rejectedReceipt?.error,
+    'openrouter_invalid_response',
+    `${scenario.label}: malformed strict content lost its safe cause`
+  );
+  assertEqual(
+    rejectedReceipt?.openRouterUsage?.cost,
+    usage.cost,
+    `${scenario.label}: rejected completion lost exact usage`
+  );
+  assertEqual(
+    rejectedReceipt?.responseDiagnostics?.routerAttempt,
+    1,
+    `${scenario.label}: rejected completion lost its route receipt`
+  );
+  assertEqual(
+    rejectedReceipt?.responseDiagnostics?.routerSelectedProvider,
+    'OpenAI',
+    `${scenario.label}: rejected completion lost its selected provider`
+  );
+  assert(
+    !JSON.stringify(receipt).includes(STRICT_CONTENT_PROSE_SENTINEL),
+    `${scenario.label}: rejected raw model content leaked into the receipt`
+  );
+  assertEqual(
+    metadata.result?.resultType,
+    'technical_recovery',
+    `${scenario.label}: malformed strict content became business evidence`
+  );
+  if (scenario.stage === 'critic') {
+    assertEqual(
+      metadata.searchSpace?.commercialCritic?.cause,
+      'critic_provider_failure',
+      'critic suffix prose was accepted by substring extraction'
+    );
+    assertEqual(
+      metadata.usage?.successfulCalls,
+      1,
+      'critic suffix prose changed the generator completion accounting'
+    );
+  } else {
+    assertEqual(
+      metadata.usage?.successfulCalls,
+      0,
+      'generator prefix prose was counted as a successful strict completion'
+    );
+    assert(
+      criticReceipt === undefined,
+      'critic ran after generator strict-root rejection'
+    );
+  }
+  verifyNoExecution(metadata);
+}
+
+function verifyCriticRouteProvenance(receipt, calls, scenario) {
+  const metadata = receipt.metadata || {};
+  const critic = metadata.searchSpace?.commercialCritic || {};
+  const providerReceipt = metadata.llm?.commercialCritic || {};
+  const diagnostics = providerReceipt.responseDiagnostics || {};
+  assertEqual(
+    calls.length,
+    2,
+    `${scenario.label}: critic provenance caused an extra model call`
+  );
+  assertEqual(
+    metadata.usage?.calls,
+    2,
+    `${scenario.label}: critic provenance lost call accounting`
+  );
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    2,
+    `${scenario.label}: completed HTTP critic usage was not accounted`
+  );
+  assertEqual(
+    providerReceipt.status,
+    'completed',
+    `${scenario.label}: local route rejection rewrote provider completion`
+  );
+  assertEqual(
+    providerReceipt.openRouterUsage?.cost,
+    usage.cost,
+    `${scenario.label}: local route gate lost exact provider cost`
+  );
+  assert(
+    !JSON.stringify(providerReceipt).includes('raw-provider-secret-sentinel'),
+    `${scenario.label}: route diagnostics leaked a raw provider response`
+  );
+  if (!scenario.issue) {
+    assertEqual(
+      receipt.status,
+      'completed',
+      `${scenario.label}: complete route provenance blocked the critic`
+    );
+    assertEqual(
+      critic.valid,
+      true,
+      `${scenario.label}: valid critic route was not accepted`
+    );
+    assertEqual(
+      critic.routeProvenanceValidated,
+      true,
+      `${scenario.label}: accepted critic lacks provenance validation`
+    );
+    if (scenario.label === 'critic-fallback-provenance') {
+      assertEqual(
+        diagnostics.routerAttemptSequenceSource,
+        'reported',
+        'fallback critic did not retain its reported attempt source'
+      );
+      assertEqual(
+        diagnostics.routerAttempt,
+        2,
+        'fallback critic lost its exact attempt count'
+      );
+      assertEqual(
+        diagnostics.routerFallbackUsed,
+        true,
+        'fallback critic lost its fallback marker'
+      );
+      assertEqual(
+        JSON.stringify(diagnostics.routerAttempts),
+        JSON.stringify([{
+          provider: 'OpenAI',
+          model: 'deepseek/deepseek-v4-flash-0731',
+          status: 502
+        }, {
+          provider: 'Azure',
+          model: 'deepseek/deepseek-v4-flash-0731',
+          status: 200
+        }]),
+        'fallback critic lost its complete ordered route'
+      );
+    } else if ([
+      'critic-direct-reconstructed',
+      'critic-direct-missing-model'
+    ].includes(scenario.label)) {
+      assertEqual(
+        diagnostics.routerAttemptSequenceSource,
+        'selected_endpoint_reconstructed',
+        'direct critic did not record bounded reconstruction provenance'
+      );
+      assertEqual(
+        diagnostics.routerSelectedEndpointEvidenced,
+        true,
+        'direct reconstruction was not bound to a selected endpoint'
+      );
+      assertEqual(
+        diagnostics.routerAttempt,
+        1,
+        'direct reconstructed critic lost its exact attempt count'
+      );
+      if (scenario.label === 'critic-direct-missing-model') {
+        assertEqual(
+          diagnostics.routerAttempts?.[0]?.status,
+          201,
+          'direct reconstruction changed the reported successful status'
+        );
+        assertEqual(
+          diagnostics.routerAttemptStatuses?.[0],
+          201,
+          'direct reconstruction changed the reported status sequence'
+        );
+      }
+    } else {
+      assertEqual(
+        diagnostics.routerAttemptSequenceSource,
+        'reported',
+        'complete direct critic did not retain its reported attempt source'
+      );
+      assertEqual(
+        diagnostics.routerAttempt,
+        1,
+        'reported direct critic lost its exact attempt count'
+      );
+    }
+  } else {
+    assertEqual(
+      receipt.status,
+      'skipped',
+      `${scenario.label}: incomplete route provenance accepted a winner: ${JSON.stringify({ critic, providerReceipt, objectiveIds: calls.map((call) => call.input?.objective?.id) })}`
+    );
+    assertEqual(
+      metadata.result?.resultType,
+      'technical_recovery',
+      `${scenario.label}: route failure became a business result`
+    );
+    assertEqual(
+      metadata.nextExperiment?.kind,
+      'strategy_generation_critic_route_provenance_recovery',
+      `${scenario.label}: route failure lost its cause-matched recovery`
+    );
+    assert(
+      metadata.nextExperiment?.missingEvidence?.includes(
+        'commercial_critic_route_provenance_recovery'
+      ) &&
+      /selected provider and model.*complete ordered attempt sequence/i.test(
+        metadata.nextExperiment?.action || ''
+      ) &&
+      /new business evidence is not required/i.test(
+        metadata.nextExperiment?.rerunPolicy?.trigger || ''
+      ),
+      `${scenario.label}: route recovery changed business evidence or omitted the route contract`
+    );
+    assertEqual(
+      critic.valid,
+      false,
+      `${scenario.label}: invalid route passed the critic gate`
+    );
+    assertEqual(
+      critic.cause,
+      'critic_route_provenance_invalid',
+      `${scenario.label}: invalid route lost its technical cause`
+    );
+    assertEqual(
+      critic.routeProvenanceIssue,
+      scenario.issue,
+      `${scenario.label}: invalid route lost its exact diagnostic`
+    );
+    assertEqual(
+      critic.routeProvenanceValidated,
+      false,
+      `${scenario.label}: invalid route claimed provenance validation`
+    );
+    assertEqual(
+      critic.comparisons?.length || 0,
+      0,
+      `${scenario.label}: rejected critic content survived the route gate`
+    );
+  }
+  verifyNoExecution(metadata);
 }
 
 function verifyDryRun(receipt) {
@@ -1026,6 +1751,283 @@ function verifyMissingKeyPreflight(receipt) {
   verifyNoExecution(metadata);
 }
 
+function verifyGeneratorRouteProvenance(receipt, calls, scenario) {
+  const metadata = receipt.metadata || {};
+  const route = metadata.searchSpace?.strategyGeneratorRoute || {};
+  const providerReceipt = metadata.llm?.strategyGeneratorJudge || {};
+  assertEqual(
+    calls.length,
+    1,
+    `${scenario.label}: invalid generator route caused another model call`
+  );
+  assertEqual(
+    receipt.status,
+    'skipped',
+    `${scenario.label}: invalid generator route accepted a result`
+  );
+  assertEqual(
+    metadata.usage?.calls,
+    1,
+    `${scenario.label}: generator route lost call accounting`
+  );
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    1,
+    `${scenario.label}: local route rejection rewrote HTTP completion`
+  );
+  assertEqual(
+    providerReceipt.status,
+    'completed',
+    `${scenario.label}: completed generator became provider failure`
+  );
+  assertEqual(
+    route.routeProvenanceIssue,
+    scenario.issue,
+    `${scenario.label}: generator route lost its exact diagnostic`
+  );
+  assertEqual(
+    route.routeProvenanceValidated,
+    false,
+    `${scenario.label}: invalid generator route claimed validation`
+  );
+  assertEqual(
+    metadata.nextExperiment?.kind,
+    'strategy_generation_route_provenance_recovery',
+    `${scenario.label}: invalid generator route lost technical recovery`
+  );
+  assertEqual(
+    metadata.result?.resultType,
+    'technical_recovery',
+    `${scenario.label}: invalid generator route became business evidence`
+  );
+  verifyNoExecution(metadata);
+}
+
+function verifyRepairRouteProvenance(receipt, calls, expectedIssue) {
+  const metadata = receipt.metadata || {};
+  const repair = metadata.searchSpace?.structuredRepair || {};
+  const providerReceipt = metadata.llm?.strategyFamilyRepair || {};
+  assertEqual(calls.length, 2, 'repair route changed the two-call ceiling');
+  assertEqual(receipt.status, 'skipped', 'invalid repair route was accepted');
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    2,
+    'local repair route rejection rewrote completed usage'
+  );
+  assertEqual(
+    providerReceipt.status,
+    'completed',
+    'completed repair route became provider failure'
+  );
+  assertEqual(
+    repair.failure,
+    'structured_repair_route_provenance_invalid',
+    'repair route lost its bounded failure code'
+  );
+  assertEqual(
+    repair.routeProvenanceIssue,
+    expectedIssue,
+    'repair route lost its exact diagnostic'
+  );
+  assertEqual(
+    repair.routeProvenanceValidated,
+    false,
+    'invalid repair route claimed validation'
+  );
+  assertEqual(
+    metadata.nextExperiment?.kind,
+    'strategy_generation_route_provenance_recovery',
+    'invalid repair route lost cause-matched recovery'
+  );
+  assertEqual(
+    metadata.result?.resultType,
+    'technical_recovery',
+    'invalid repair route became business evidence'
+  );
+  verifyNoExecution(metadata);
+}
+
+function verifyCriticUsageGate(receipt, calls, scenario) {
+  const metadata = receipt.metadata || {};
+  const critic = metadata.searchSpace?.commercialCritic || {};
+  const providerReceipt = metadata.llm?.commercialCritic || {};
+  const diagnostics = providerReceipt.responseDiagnostics || {};
+  assertEqual(
+    calls.length,
+    2,
+    `${scenario.label}: invalid usage changed the exact two-call contract`
+  );
+  assertEqual(
+    receipt.status,
+    'skipped',
+    `${scenario.label}: incomplete/coerced usage accepted a winner`
+  );
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    2,
+    `${scenario.label}: local usage rejection rewrote HTTP completion`
+  );
+  assertEqual(
+    providerReceipt.status,
+    'completed',
+    `${scenario.label}: completed critic receipt became provider failure`
+  );
+  assertEqual(
+    diagnostics.httpStatus,
+    200,
+    `${scenario.label}: safe completed HTTP diagnostic was lost`
+  );
+  assertEqual(
+    critic.cause,
+    'critic_provider_usage_invalid',
+    `${scenario.label}: invalid usage lost its bounded trace cause`
+  );
+  assertEqual(
+    critic.usageIssue,
+    scenario.usageIssue,
+    `${scenario.label}: invalid usage lost its exact machine diagnostic`
+  );
+  assertEqual(
+    critic.routeProvenanceValidated,
+    false,
+    `${scenario.label}: route was claimed before usage acceptance`
+  );
+  assertEqual(
+    critic.exactSchemaValidated,
+    false,
+    `${scenario.label}: AJV ran before usage acceptance`
+  );
+  assertEqual(
+    metadata.nextExperiment?.kind,
+    'strategy_generation_critic_contract_recovery',
+    `${scenario.label}: invalid usage lost cause-matched recovery`
+  );
+  assertEqual(
+    metadata.result?.resultType,
+    'technical_recovery',
+    `${scenario.label}: invalid usage became business evidence`
+  );
+  verifyNoExecution(metadata);
+}
+
+function verifyCriticCallSpendGate(receipt, calls) {
+  const metadata = receipt.metadata || {};
+  const critic = metadata.searchSpace?.commercialCritic || {};
+  const providerReceipt = metadata.llm?.commercialCritic || {};
+  assertEqual(
+    calls.length,
+    2,
+    'critic per-call spend rejection changed the exact two-call contract'
+  );
+  assertEqual(
+    receipt.status,
+    'skipped',
+    'critic cost above its proved request ceiling was accepted'
+  );
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    2,
+    'critic per-call spend rejection rewrote completed provider usage'
+  );
+  assertEqual(
+    providerReceipt.status,
+    'completed',
+    'critic per-call spend rejection rewrote the provider completion'
+  );
+  assertEqual(
+    critic.cause,
+    'critic_reported_budget_exceeded',
+    'critic per-call spend rejection lost its bounded cause'
+  );
+  assert(
+    critic.preflight?.callSpendCeilingMicros < 148_000,
+    'critic cost fixture did not exceed the request-specific ceiling'
+  );
+  assertEqual(
+    critic.routeProvenanceValidated,
+    false,
+    'critic route was claimed before the request-specific cost gate'
+  );
+  assertEqual(
+    critic.exactSchemaValidated,
+    false,
+    'critic AJV ran before the request-specific cost gate'
+  );
+  assertEqual(
+    metadata.nextExperiment?.kind,
+    'strategy_generation_critic_budget_recovery',
+    'critic per-call spend rejection lost cause-matched recovery'
+  );
+  assertEqual(
+    metadata.result?.resultType,
+    'technical_recovery',
+    'critic per-call spend rejection became business evidence'
+  );
+  verifyNoExecution(metadata);
+}
+
+function verifyCriticFinishGate(receipt, calls, scenario) {
+  const metadata = receipt.metadata || {};
+  const critic = metadata.searchSpace?.commercialCritic || {};
+  const providerReceipt = metadata.llm?.commercialCritic || {};
+  assertEqual(
+    calls.length,
+    2,
+    `${scenario.label}: invalid finish changed the exact two-call contract`
+  );
+  assertEqual(
+    receipt.status,
+    'skipped',
+    `${scenario.label}: incomplete finish accepted a winner`
+  );
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    scenario.successfulCalls ?? 2,
+    `${scenario.label}: local finish rejection rewrote HTTP completion`
+  );
+  assertEqual(
+    providerReceipt.status,
+    scenario.providerStatus ?? 'completed',
+    `${scenario.label}: completed critic receipt became provider failure`
+  );
+  assertEqual(
+    critic.cause,
+    'critic_finish_reason_invalid',
+    `${scenario.label}: invalid finish lost its bounded trace cause`
+  );
+  assertEqual(
+    critic.finishIssue,
+    scenario.finishIssue,
+    `${scenario.label}: invalid finish lost its exact machine diagnostic`
+  );
+  assertEqual(
+    critic.routeProvenanceValidated,
+    false,
+    `${scenario.label}: route was claimed before finish acceptance`
+  );
+  assertEqual(
+    critic.exactSchemaValidated,
+    false,
+    `${scenario.label}: AJV ran before finish acceptance`
+  );
+  assertEqual(
+    metadata.nextExperiment?.kind,
+    'strategy_generation_critic_contract_recovery',
+    `${scenario.label}: invalid finish lost cause-matched recovery`
+  );
+  assertEqual(
+    metadata.result?.resultType,
+    'technical_recovery',
+    `${scenario.label}: invalid finish became business evidence`
+  );
+  assert(
+    !JSON.stringify(receipt).includes('raw finish reason secret sentinel') &&
+      !JSON.stringify(receipt).includes('raw native finish secret sentinel'),
+    `${scenario.label}: unsafe finish reason leaked into the durable receipt`
+  );
+  verifyNoExecution(metadata);
+}
+
 function verifyProvider502Failure(receipt, calls) {
   const metadata = receipt.metadata || {};
   const providerReceipt = metadata.llm?.strategyGeneratorJudge || {};
@@ -1087,7 +2089,7 @@ function verifyProvider502Failure(receipt, calls) {
 
 function verifySlowResponseBodyTimeout(receipt, calls) {
   const metadata = receipt.metadata || {};
-  const providerReceipt = metadata.llm?.strategyGeneratorJudge || {};
+  const providerReceipt = metadata.llm?.commercialCritic || {};
   const diagnostics = providerReceipt.responseDiagnostics || {};
   assertEqual(
     receipt.status,
@@ -1096,18 +2098,18 @@ function verifySlowResponseBodyTimeout(receipt, calls) {
   );
   assertEqual(
     calls.length,
-    1,
+    2,
     `slow response body caused an application redispatch: ${JSON.stringify(receipt)}`
   );
   assertEqual(
     metadata.usage?.calls,
-    1,
+    2,
     'slow response body lost its call count'
   );
   assertEqual(
     metadata.usage?.successfulCalls,
-    0,
-    'slow response body was counted as a successful call'
+    1,
+    'slow critic response lost the completed generator call'
   );
   assertEqual(
     providerReceipt.status,
@@ -1245,7 +2247,7 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
     'generator replaced default routing with a provider allowlist');
   assertEqual(
     JSON.stringify(call.envelope.provider?.ignore),
-    JSON.stringify(['cloudflare', 'deepinfra', 'inceptron/fp4', 'io-net']),
+    JSON.stringify(['cloudflare']),
     'generator lost its evidence-backed provider quarantine'
   );
   assertEqual(
@@ -1273,7 +2275,36 @@ function verifyCriticCall(call) {
     'opportunity_tournament_critic_v1',
     'critic used the wrong structured contract'
   );
-  assertEqual(call.envelope.max_tokens, 6000, 'critic output was not bounded');
+  assertEqual(call.envelope.max_tokens, 2000, 'critic output was not bounded');
+  assertEqual(call.envelope.stream, undefined, 'critic must stay buffered');
+  assertEqual(
+    JSON.stringify(call.envelope.plugins),
+    JSON.stringify([{ id: 'response-healing' }]),
+    'critic lost bounded response healing'
+  );
+  const schemaEnvelope = call.envelope.response_format?.json_schema || {};
+  const schema = schemaEnvelope.schema || {};
+  const comparison = schema.properties?.comparisons?.items || {};
+  assertEqual(schemaEnvelope.strict, true, 'critic schema was not strict');
+  assertEqual(
+    comparison.properties?.reason?.maxLength,
+    240,
+    'critic comparison reason was unbounded'
+  );
+  assertEqual(
+    schema.properties?.reason?.maxLength,
+    360,
+    'critic ordering reason was unbounded'
+  );
+  const maximumResponse = maximumJSONSchemaValue(schema);
+  const maximumResponseBytes = Buffer.byteLength(
+    JSON.stringify(maximumResponse),
+    'utf8'
+  );
+  assert(
+    maximumResponseBytes > 14_000 && maximumResponseBytes <= 16 * 1_024,
+    `critic schema response bound drifted: ${maximumResponseBytes}`
+  );
   assertEqual(
     call.input?.criticContract,
     'opportunity_tournament_critic_v1',
@@ -1290,6 +2321,44 @@ function verifyCriticCall(call) {
     ),
     'critic prompt lost its independent role'
   );
+}
+
+function maximumJSONSchemaValue(schemaValue) {
+  const schema = schemaValue || {};
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return schema.enum.reduce((longest, candidate) =>
+      Buffer.byteLength(JSON.stringify(candidate), 'utf8') >
+        Buffer.byteLength(JSON.stringify(longest), 'utf8')
+        ? candidate
+        : longest
+    );
+  }
+  if (schema.type === 'object') {
+    return Object.fromEntries((schema.required || []).map((key) => [
+      key,
+      maximumJSONSchemaValue(schema.properties?.[key])
+    ]));
+  }
+  if (schema.type === 'array') {
+    return Array.from(
+      { length: schema.maxItems },
+      () => maximumJSONSchemaValue(schema.items)
+    );
+  }
+  if (schema.type === 'string') {
+    return '\0'.repeat(schema.maxLength);
+  }
+  if (schema.type === 'boolean') return false;
+  if (schema.type === 'integer' || schema.type === 'number') {
+    const candidates = [schema.minimum, schema.maximum]
+      .filter((value) => Number.isFinite(value));
+    return candidates.reduce((longest, candidate) =>
+      JSON.stringify(candidate).length > JSON.stringify(longest).length
+        ? candidate
+        : longest
+    );
+  }
+  throw new Error(`unsupported critic schema node: ${JSON.stringify(schema)}`);
 }
 
 function verifyNoExecution(metadata) {

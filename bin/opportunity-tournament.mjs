@@ -88,122 +88,24 @@ const CONTINGENT_CONVERSION_ACTION_PROJECTION =
   'project_selected_tactic_action';
 const CONTINGENT_PRIMARY_ACTION_DIVERSITY_ISSUE =
   'must retain at least two distinct active commercial primary-action variants across both families.';
-const CONTINGENT_PLANNER_ACTION_FIELD_BY_COMMERCIAL_ROLE = Object.freeze({
-  referral_partner: 'rp',
-  buyer: 'by',
-  paid_demand: 'pd'
-});
-const CONTINGENT_PLANNER_BUYERS_BY_COMMERCIAL_ROLE = Object.freeze({
-  referral_partner: Object.freeze([
-    'Qualified buyer for the current paid offer',
-    'Prospective buyer eligible for the current paid offer'
-  ]),
-  buyer: Object.freeze([
-    '{{TARGET_NAME}}: validated commercial buyer',
-    '{{TARGET_NAME}}: prospective buyer of the current paid offer'
-  ]),
-  paid_demand: Object.freeze([
-    '{{TARGET_NAME}}: employer with current compensated demand',
-    '{{TARGET_NAME}}: buyer issuing a current paid engagement'
-  ])
-});
-const CONTINGENT_PROVISIONAL_BUYERS_BY_COMMERCIAL_ROLE = Object.freeze({
-  referral_partner: Object.freeze([
-    'Qualified buyer for the proposed paid offer',
-    'Prospective buyer for the proposed paid offer'
-  ]),
-  buyer: Object.freeze([
-    '{{TARGET_NAME}}: prospective buyer for the proposed paid offer',
-    '{{TARGET_NAME}}: candidate buyer for the proposed paid offer'
-  ]),
-  paid_demand: CONTINGENT_PLANNER_BUYERS_BY_COMMERCIAL_ROLE.paid_demand
-});
-const CONTINGENT_PLANNER_CHANNELS_BY_COMMERCIAL_ROLE = Object.freeze({
-  referral_partner: Object.freeze([
-    'Review-first public professional profile {{TARGET_URL}} for referral fit verification',
-    'Review-first public professional profile {{TARGET_URL}} for partner-channel verification'
-  ]),
-  buyer: Object.freeze([
-    'Review-first public professional profile {{TARGET_URL}} for buyer fit verification',
-    'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification'
-  ]),
-  paid_demand: Object.freeze([
-    'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification',
-    'Review-first official paid-demand page {{TARGET_URL}} for paid-engagement verification'
-  ])
-});
-const CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE = Object.freeze({
-  referral_partner: Object.freeze([
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to purchase the current paid offer',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to buy the current paid offer',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to sign up for the current paid offer'
-  ]),
-  buyer: Object.freeze([
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid service package',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
-  ]),
-  paid_demand: Object.freeze([
-    'After review via official paid-demand page {{TARGET_URL}}, apply a compensated application to {{TARGET_NAME}}',
-    'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
-    'After review via official paid-demand page {{TARGET_URL}}, bid one paid proposal to {{TARGET_NAME}}',
-    'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
-  ])
-});
-const CONTINGENT_PROVISIONAL_OFFER_ACTIONS_BY_COMMERCIAL_ROLE = Object.freeze({
-  referral_partner: Object.freeze([
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to validate the proposed paid offer',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to evaluate the proposed paid offer',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to test the proposed paid offer',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to assess the proposed paid offer'
-  ]),
-  buyer: Object.freeze([
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one proposed paid consultation pilot',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to evaluate one proposed paid service pilot',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to assess one proposed paid service proposal',
-    'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one proposed paid service contract'
-  ]),
-  paid_demand: CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE.paid_demand
-});
-
-function contingentPlannerActionsForCommercialRole(
-  commercialRole,
-  provisionalOfferExperiment = false
-) {
-  const catalog = provisionalOfferExperiment
-    ? CONTINGENT_PROVISIONAL_OFFER_ACTIONS_BY_COMMERCIAL_ROLE
-    : CONTINGENT_PLANNER_ACTIONS_BY_COMMERCIAL_ROLE;
-  return catalog[firstText(commercialRole)] || [];
-}
-
-function contingentPlannerBuyerLabelsForCommercialRole(
-  commercialRole,
-  provisionalOfferExperiment = false
-) {
-  const catalog = provisionalOfferExperiment
-    ? CONTINGENT_PROVISIONAL_BUYERS_BY_COMMERCIAL_ROLE
-    : CONTINGENT_PLANNER_BUYERS_BY_COMMERCIAL_ROLE;
-  return catalog[firstText(commercialRole)] || [];
-}
-
-function contingentPlannerChannelLabelsForCommercialRole(commercialRole) {
-  return CONTINGENT_PLANNER_CHANNELS_BY_COMMERCIAL_ROLE[
-    firstText(commercialRole)
-  ] || [];
-}
-
 function provisionalOfferValidationAction(value, commercialRole = '') {
-  const label = firstText(value);
-  if (!label) return false;
+  const text = primaryActionSemanticText(value);
+  if (!/\bproposed paid\b/.test(text)) return false;
   const roles = commercialRole
     ? [firstText(commercialRole)]
     : ['referral_partner', 'buyer'];
-  return roles.some((role) =>
-    asArray(CONTINGENT_PROVISIONAL_OFFER_ACTIONS_BY_COMMERCIAL_ROLE[role])
-      .includes(label)
-  );
+  if (roles.includes('referral_partner') &&
+      /\b(?:refer|introduce|recommend)\w*\b/.test(text) &&
+      /\b(?:assess|evaluate|test|validate)\w*\b/.test(text)) {
+    return true;
+  }
+  if (roles.includes('buyer')) {
+    return /\b(?:assess|evaluate|review|test|validate)\w*\b/.test(text) &&
+      /\b(?:consultation|contract|offer|pilot|proposal|service)\w*\b/.test(
+        text
+      );
+  }
+  return false;
 }
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_PROVIDER =
   'openrouter_exa_web_search';
@@ -215,6 +117,15 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
   'deepseek/deepseek-v4-flash-0731';
+const REVIEWED_OPENROUTER_MODEL_EQUIVALENTS = new Map([
+  [
+    OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
+    new Set([
+      OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
+      'deepseek/deepseek-v4-flash-20260731'
+    ])
+  ]
+]);
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
@@ -276,13 +187,12 @@ const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
   // Preserve OpenRouter's default health/price load balancing and automatic
   // fallbacks across every endpoint that natively supports the strict request.
-  // Quarantine only endpoints with durable production evidence of failing this
-  // exact contract: Cloudflare returned empty HTTP-200 bodies, DeepInfra and
-  // Inceptron exhausted the former oversized output ceiling, and Io Net kept
-  // an actively streaming strict response open through the local 300-second
-  // hard deadline. OpenRouter still owns ordering, balancing, and fallback
-  // across every other compatible endpoint.
-  ignore: ['cloudflare', 'deepinfra', 'inceptron/fp4', 'io-net'],
+  // Quarantine only the endpoint with durable evidence independent of the old
+  // oversized schema: Cloudflare returned empty HTTP-200 provider envelopes.
+  // Historical DeepInfra, Inceptron, and Io Net failures occurred under the
+  // retired 64k/192-KiB contract, so they remain eligible for OpenRouter's
+  // default ordering, balancing, and fallback under this compact contract.
+  ignore: ['cloudflare'],
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
@@ -581,33 +491,53 @@ const PROVIDER_PROMPT_ENVELOPE_PROFILES = [
   }
 ];
 const MAX_REPAIR_OUTPUT_TOKENS = 4_000;
-// A production critic spent several thousand output tokens on provider-side
-// reasoning before emitting its small strict verdict. A 1,200-token ceiling
-// produced a length stop after 4,718 billed completion tokens in production.
-// Six thousand remains below the $1 tournament envelope while allowing the
-// second and final model stage to finish its bounded schema.
-const MAX_CRITIC_OUTPUT_TOKENS = 6_000;
+// The independent critic emits only a comparison table and a short ordering
+// rationale. Bound both prose fields in its strict schema, reserve the output
+// budget for that JSON by disabling reasoning, and keep the compact response
+// below a separately proved local byte ceiling. Current v6 runs compare two
+// finalists; the same envelope still covers the legacy six-finalist replay.
+const MAX_CRITIC_OUTPUT_TOKENS = 2_000;
+const MAX_COMMERCIAL_CRITIC_COMPARISON_REASON_CODEPOINTS = 240;
+const MAX_COMMERCIAL_CRITIC_REASON_CODEPOINTS = 360;
+const MAX_COMMERCIAL_CRITIC_RESPONSE_BYTES = 16 * 1_024;
+const MAX_COMMERCIAL_CRITIC_TIMEOUT_MS = 120_000;
 const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
-// Call 1 now emits only the selected route fields for each of two motions and
-// shares pathBase across its two tactic deltas. The strict grammar has an
-// independently proved <=32 KiB serialized upper bound; 10,000 output tokens
+// Call 1 emits one bounded model-authored role-selected path for each motion and
+// shares pathBase across its two tactic deltas. Local code selects, but never
+// composes, the branch fixed by the typed motion. The strict grammar has an
+// independently proved <40 KiB serialized upper bound; 10,000 output tokens
 // leave transport-format headroom while fitting inside the 300-second total
 // deadline even at the observed slow-route throughput. Length termination
 // remains incomplete and fails closed.
 const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 10_000;
 // Stream the large strict-schema generator response so a healthy model can
 // continue past the former 120-second buffered-response deadline. Silence is
-// bounded independently from total execution time, and the total leaves five
-// minutes of the worker's ten-minute job window for deterministic discovery,
-// the independent critic, persistence, and shutdown.
+// bounded independently from total execution time. The end-to-end deadline
+// also reserves two six-second app-owned interstage discovery reads, then
+// leaves 168 seconds of the worker's ten-minute window for deterministic
+// postprocessing, persistence, and shutdown.
 const MAX_DISCOVERY_PLANNER_STREAM_START_TIMEOUT_MS = 180_000;
 const MAX_DISCOVERY_PLANNER_STREAM_IDLE_TIMEOUT_MS = 60_000;
 const MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS = 300_000;
+const MAX_COMMERCIAL_DISCOVERY_CALLS = 2;
+const MAX_COMMERCIAL_DISCOVERY_CALL_TIMEOUT_MS = 6_000;
+const MAX_COMMERCIAL_DISCOVERY_INTERSTAGE_ALLOWANCE_MS =
+  MAX_COMMERCIAL_DISCOVERY_CALLS *
+    MAX_COMMERCIAL_DISCOVERY_CALL_TIMEOUT_MS;
+const OPPORTUNITY_TOURNAMENT_WORKER_WINDOW_MS = 10 * 60_000;
+const MIN_OPPORTUNITY_TOURNAMENT_LOCAL_MARGIN_MS = 168_000;
+if (MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS +
+    MAX_COMMERCIAL_DISCOVERY_INTERSTAGE_ALLOWANCE_MS +
+    MAX_COMMERCIAL_CRITIC_TIMEOUT_MS >
+      OPPORTUNITY_TOURNAMENT_WORKER_WINDOW_MS -
+        MIN_OPPORTUNITY_TOURNAMENT_LOCAL_MARGIN_MS) {
+  throw new Error('opportunity tournament provider deadlines exceed worker window');
+}
 const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 152_160;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE;
-const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 171_168;
+const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 147_168;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
     OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING *
@@ -658,15 +588,21 @@ const OPPORTUNITY_DISCOVERY_UNSUPPORTED_SCALAR_RE =
 // The smoke proof walks every required schema branch, multiplies every array
 // maximum, prices every authored code point as four UTF-8 bytes, and prices
 // every canonical evidence reference at its full encoded-byte ceiling.
-const MAX_DISCOVERY_PLANNER_SCHEMA_TEXT_CODEPOINTS = 5_200;
-const MAX_DISCOVERY_PLANNER_SCHEMA_EVIDENCE_REF_OCCURRENCES = 112;
-const MAX_DISCOVERY_PLANNER_SCHEMA_FIXED_BYTES = 4_800;
+const MAX_DISCOVERY_PLANNER_SCHEMA_TEXT_CODEPOINTS = 5_216;
+// The selected buyer/channel/action strings are schema-restricted to safe
+// printable ASCII. Pricing those authored strings at one byte per code point
+// preserves a sub-40-KiB proof without turning their commercial prose into a
+// code-authored enum.
+const MAX_DISCOVERY_PLANNER_SCHEMA_ASCII_CODEPOINTS = 2_784;
+const MAX_DISCOVERY_PLANNER_SCHEMA_EVIDENCE_REF_OCCURRENCES = 56;
+const MAX_DISCOVERY_PLANNER_SCHEMA_FIXED_BYTES = 7 * 1_024;
 const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES =
   MAX_DISCOVERY_PLANNER_SCHEMA_TEXT_CODEPOINTS * 4 +
+  MAX_DISCOVERY_PLANNER_SCHEMA_ASCII_CODEPOINTS +
   MAX_DISCOVERY_PLANNER_SCHEMA_EVIDENCE_REF_OCCURRENCES *
     MAX_DISCOVERY_PLANNER_EVIDENCE_REF_UTF8_BYTES +
   MAX_DISCOVERY_PLANNER_SCHEMA_FIXED_BYTES;
-const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 32 * 1_024;
+const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 40 * 1_024;
 const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 24 * 1_024;
 // Existing durable v2 receipts contain the locally materialized two-family
 // shape, which is intentionally larger than the compact provider wire shape.
@@ -829,17 +765,7 @@ const DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION =
   'Review-first public professional profile';
 const DISCOVERY_PAID_DEMAND_ACQUISITION =
   'Review-first official paid-demand page';
-const DISCOVERY_COMPENSATED_JOB_PAID_OFFER =
-  'A current compensated role matching verified professional skills';
-const DISCOVERY_COMPENSATED_JOB_CONVERSION_DESTINATION =
-  'The exact public application page for the researched compensated role';
-const DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION =
-  'The profile owner accepts the researched compensated role';
-const DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL =
-  'The accepted role records the exact researched job posting';
 const DISCOVERY_SELLER_ATTRIBUTION_METHOD = 'crm_source';
-const DISCOVERY_SELLER_ATTRIBUTION_SIGNAL =
-  'ProfileScribe source field records the tournament action';
 const DISCOVERY_PLAN_ACQUISITION_MECHANISMS = new Set([
   DISCOVERY_PUBLIC_PROFESSIONAL_ACQUISITION,
   DISCOVERY_PAID_DEMAND_ACQUISITION
@@ -1444,11 +1370,20 @@ export function opportunityCommercialDiscoveryCapabilities() {
         promptTokenCeiling:
           MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING,
         outputTokenCeiling: MAX_CRITIC_OUTPUT_TOKENS,
+        timeoutMs: MAX_COMMERCIAL_CRITIC_TIMEOUT_MS,
+        runtimeParsedResponseMaxBytes:
+          MAX_COMMERCIAL_CRITIC_RESPONSE_BYTES,
         framingTokenReserve:
           COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE,
         fixedToolFeeMicros: 0,
         callSpendCeilingMicros:
           MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS
+      },
+      interstageCommercialDiscovery: {
+        providerCalls: MAX_COMMERCIAL_DISCOVERY_CALLS,
+        perCallTimeoutMs: MAX_COMMERCIAL_DISCOVERY_CALL_TIMEOUT_MS,
+        totalAllowanceMs:
+          MAX_COMMERCIAL_DISCOVERY_INTERSTAGE_ALLOWANCE_MS
       }
     },
     limits: {
@@ -1552,25 +1487,27 @@ export function serializeOpenRouterJSONRequestBody(request) {
 }
 
 const MAX_LOCAL_JSON_REPAIR_INPUT_BYTES = 196_608;
+const MAX_LOCAL_STRUCTURED_OUTPUT_VALIDATORS = 16;
 const localStructuredOutputValidators = new Map();
+const LOCAL_SCHEMA_DIAGNOSTIC_KEYWORDS = new Set([
+  'required',
+  'additionalProperties',
+  'type',
+  'enum',
+  'const',
+  'pattern',
+  'minLength',
+  'maxLength',
+  'minItems',
+  'maxItems',
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'format'
+]);
 
-export function repairAndValidateOpenRouterJSONMessage(
-  raw,
-  responseFormat
-) {
-  const extracted = extractOpportunityDiscoveryJSONObject(raw);
-  if (!extracted ||
-      Buffer.byteLength(extracted, 'utf8') >
-        MAX_LOCAL_JSON_REPAIR_INPUT_BYTES) {
-    throw new Error('OpenRouter JSON message is outside the repair envelope');
-  }
-  const repaired = jsonrepair(extracted);
-  let data = JSON.parse(repaired);
-  if (Array.isArray(data) && data.length === 1 &&
-      data[0] && typeof data[0] === 'object' &&
-      !Array.isArray(data[0])) {
-    data = data[0];
-  }
+function exactLocalStructuredOutputValidator(responseFormat) {
   const schema = asObject(asObject(responseFormat).json_schema).schema;
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
     throw new Error('OpenRouter JSON repair requires an exact local schema');
@@ -1579,66 +1516,89 @@ export function repairAndValidateOpenRouterJSONMessage(
     .update(JSON.stringify(schema))
     .digest('hex');
   let validate = localStructuredOutputValidators.get(schemaHash);
-  if (!validate) {
+  if (validate) {
+    // Map insertion order is the LRU order. Refresh a hit without retaining a
+    // second compiler instance.
+    localStructuredOutputValidators.delete(schemaHash);
+    localStructuredOutputValidators.set(schemaHash, validate);
+  } else {
     validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
     localStructuredOutputValidators.set(schemaHash, validate);
-  }
-  let projectedRootSchemaIssues;
-  if (Array.isArray(data) && data.length === MAX_DISCOVERY_PLANNER_PLANS &&
-      data.every((item) => item && typeof item === 'object' &&
-        !Array.isArray(item)) &&
-      firstText(asObject(responseFormat).json_schema?.name) ===
-        OPPORTUNITY_DISCOVERY_PLAN_CONTRACT) {
-    const exactRootKeys = [
-      'contractVersion', 'plans', 'reason', 'status'
-    ];
-    const splitRoots = data.filter((item) => {
-      const keys = Object.keys(asObject(item)).sort();
-      return JSON.stringify(keys) === JSON.stringify(exactRootKeys) &&
-        Array.isArray(item.plans) && item.plans.length === 1 &&
-        item.plans[0] && typeof item.plans[0] === 'object' &&
-        !Array.isArray(item.plans[0]);
-    });
-    if (splitRoots.length === 1) {
-      const loosePlans = data.filter((item) => item !== splitRoots[0]);
-      if (loosePlans.length === 1) {
-        const joinedRoot = {
-          ...splitRoots[0],
-          plans: [...splitRoots[0].plans, loosePlans[0]]
-        };
-        if (validate(joinedRoot)) data = joinedRoot;
-      }
+    while (localStructuredOutputValidators.size >
+        MAX_LOCAL_STRUCTURED_OUTPUT_VALIDATORS) {
+      const oldest = localStructuredOutputValidators.keys().next().value;
+      localStructuredOutputValidators.delete(oldest);
     }
   }
-  if (Array.isArray(data) && data.length === MAX_DISCOVERY_PLANNER_PLANS &&
-      data.every((item) => item && typeof item === 'object' &&
-        !Array.isArray(item)) &&
-      firstText(asObject(responseFormat).json_schema?.name) ===
-        OPPORTUNITY_DISCOVERY_PLAN_CONTRACT) {
-    const exactRootCandidates = data.filter((item) => validate(item));
-    if (exactRootCandidates.length === 1) {
-      data = exactRootCandidates[0];
-    } else {
-      const projectedRoot = {
-        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-        status: 'planned',
-        reason: '',
-        plans: data
-      };
-      if (exactRootCandidates.length === 0 && validate(projectedRoot)) {
-        data = projectedRoot;
-      } else if (exactRootCandidates.length === 0) {
-        projectedRootSchemaIssues = structuredClone(validate.errors || []);
-      }
-    }
+  return validate;
+}
+
+// Provider-free smoke visibility for the bounded per-process AJV cache. It
+// exposes counts only—never schemas, evidence refs, markets, or seller text.
+export function localStructuredOutputValidatorCacheStats() {
+  return {
+    size: localStructuredOutputValidators.size,
+    maximum: MAX_LOCAL_STRUCTURED_OUTPUT_VALIDATORS
+  };
+}
+
+function boundedLocalSchemaDiagnosticIssues(value) {
+  const retained = [];
+  const seen = new Set();
+  for (const issue of asArray(value)) {
+    const keyword = firstText(issue?.keyword);
+    if (!LOCAL_SCHEMA_DIAGNOSTIC_KEYWORDS.has(keyword)) continue;
+    const rawInstancePath = typeof issue?.instancePath === 'string'
+      ? issue.instancePath
+      : '';
+    // AJV paths can reflect returned property names. Retain a path only when
+    // it is a bounded, plain JSON pointer; otherwise use the non-identifying
+    // root path. Never persist AJV messages, returned values, schema values,
+    // or arbitrary params from a model completion.
+    const instancePath = rawInstancePath.length <= 160 &&
+      /^(?:\/(?:[A-Za-z0-9_-]|~0|~1)*)*$/u.test(rawInstancePath)
+      ? rawInstancePath
+      : '';
+    const rawMissingProperty = keyword === 'required' &&
+      typeof issue?.params?.missingProperty === 'string'
+      ? issue.params.missingProperty
+      : '';
+    const missingProperty =
+      /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(rawMissingProperty)
+        ? rawMissingProperty
+        : '';
+    const retainedIssue = {
+      keyword,
+      instancePath,
+      ...(missingProperty ? { missingProperty } : {})
+    };
+    const signature = JSON.stringify(retainedIssue);
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    retained.push(retainedIssue);
+    if (retained.length === 8) break;
   }
+  return retained;
+}
+
+export function repairAndValidateOpenRouterJSONMessage(
+  raw,
+  responseFormat
+) {
+  const extracted = extractOpportunityDiscoveryJSONPayload(raw);
+  if (!extracted ||
+      Buffer.byteLength(extracted, 'utf8') >
+        MAX_LOCAL_JSON_REPAIR_INPUT_BYTES) {
+    throw new Error('OpenRouter JSON message is outside the repair envelope');
+  }
+  const repaired = jsonrepair(extracted);
+  const data = JSON.parse(repaired);
+  const validate = exactLocalStructuredOutputValidator(responseFormat);
   if (!validate(data)) {
     const error = new Error(
       'Repaired OpenRouter JSON message failed exact schema validation'
     );
-    error.localJSONRepairSchemaIssues = (
-      projectedRootSchemaIssues || validate.errors || []
-    )
+    error.localJSONRepairSchemaIssues = (validate.errors || [])
       .slice(0, 64)
       .map((issue) => ({
         keyword: String(issue?.keyword || '').slice(0, 32),
@@ -1663,29 +1623,27 @@ export function repairAndValidateOpenRouterJSONMessage(
   return data;
 }
 
-function extractOpportunityDiscoveryJSONObject(raw) {
-  let value = firstText(raw);
-  if (value.startsWith('```')) {
-    value = value
-      .replace(/^```(?:json)?/i, '')
-      .replace(/```$/i, '')
-      .trim();
+function extractOpportunityDiscoveryJSONPayload(raw) {
+  const value = firstText(raw);
+  const wholeFence = value.match(
+    /^```(?:json)?[ \t]*(?:\r?\n)?([\s\S]*?)(?:\r?\n)?```$/i
+  );
+  if (wholeFence && !wholeFence[1].includes('```')) {
+    return wholeFence[1].trim();
   }
-  const start = value.indexOf('{');
-  const end = value.lastIndexOf('}');
-  if (start !== -1 && end !== -1 && end > start) {
-    return value.slice(start, end + 1);
-  }
-  return value;
+  // Local repair may fix JSON syntax only. It may not turn unmatched,
+  // duplicated, or prose-adjacent Markdown fences into a structured root.
+  // Accept either a fence-free whole message or exactly one matched fence.
+  return value.includes('```') ? '' : value;
 }
 
 /**
- * Plans profession-neutral commercial motions while performing the one
- * bounded, read-only search folded into call 1. The model may infer motions and
+ * Plans profession-neutral commercial motions with typed unresolved target
+ * slots. This model call has no search plugin. The model may infer motions and
  * counterpart roles from verified supply evidence, but it cannot attest that
  * an outside target, demand signal, relationship, or permission exists. Only
- * separately normalized provider citations and records can establish those
- * facts before the control plane validates and binds the target slot.
+ * separately budgeted and normalized provider records can establish those
+ * facts after plan acceptance and before the control plane binds the target slot.
  */
 export async function runOpportunityDiscoveryPlanner({
   job,
@@ -2064,7 +2022,7 @@ export async function runOpportunityDiscoveryPlanner({
       ),
       constraints: [
         RESEARCH_ONLY_CONSTRAINT,
-        'Forced Exa returns <=5 sanitized URL citations; app adapters may make only separately budgeted bounded provider reads.'
+        'This model call has no search plugin. Exact outside targets and demand are resolved only after plan acceptance through separately budgeted bounded provider reads.'
       ]
     });
     request = {
@@ -2186,11 +2144,13 @@ export async function runOpportunityDiscoveryPlanner({
     completion = await completeJSON(request);
   } catch (error) {
     const failureCode = openRouterFailureCode(error);
+    const incomplete =
+      failureCode === 'openrouter_truncated_structured_output';
     const providerMetadata = openRouterMetadata({
       model,
       purpose: 'opportunity_tournament_discovery_planning',
       structuredOutputContract: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
-      status: 'failed',
+      status: incomplete ? 'incomplete' : 'failed',
       usage: error?.openRouterUsage,
       generationId: error?.openRouterGenerationId,
       diagnostics: error?.openRouterDiagnostics,
@@ -2232,6 +2192,142 @@ export async function runOpportunityDiscoveryPlanner({
     preflight,
     providerMetadata.openRouterUsage
   );
+  const usageIssue = exactCompletedOpenRouterUsageIssue(
+    completion?.usage,
+    preflight,
+    request.maxTokens
+  );
+  const finishIssue = completedStructuredFinishIssue(completion);
+  // An out-of-envelope body has no structured-output acceptance surface.
+  // Classify the byte/token/cost boundary before inspecting route provenance
+  // or the returned structured value.
+  if (usageIssue || finishIssue ||
+      promptTokenCanary.withinCeiling === false ||
+      responseBodyByteCount > MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
+      usage.reportedCostMicros > budget.maxLLMSpendMicros) {
+    return {
+      ...base,
+      reason: usageIssue
+        ? 'The completed discovery-planner response lacked exact, internally consistent provider usage.'
+        : finishIssue
+          ? 'The completed discovery-planner response did not end with an exact successful structured-output finish reason.'
+        : promptTokenCanary.withinCeiling === false
+          ? 'Discovery planner prompt-token usage exceeded its serialized-request ceiling.'
+        : responseBodyByteCount > MAX_DISCOVERY_PLANNER_RESPONSE_BYTES
+          ? 'Discovery planner response exceeded its bounded structured-output envelope.'
+          : 'Discovery planner exceeded its bounded LLM budget.',
+      recoveryCause: usageIssue
+        ? 'commercial_discovery_planner_provider_usage_recovery'
+        : finishIssue
+          ? 'commercial_discovery_planner_completion_recovery'
+        : undefined,
+      failureCode: usageIssue
+        ? 'planner_provider_usage_invalid'
+        : finishIssue
+          ? 'planner_finish_reason_invalid'
+        : undefined,
+      preflight: {
+        ...preflight,
+        authorized: true,
+        cause: usageIssue
+          ? 'commercial_discovery_planner_provider_usage_recovery'
+          : finishIssue
+            ? 'commercial_discovery_planner_completion_recovery'
+          : undefined,
+        failureCode: usageIssue
+          ? 'planner_provider_usage_invalid'
+          : finishIssue
+            ? 'planner_finish_reason_invalid'
+          : undefined,
+        usageIssue: usageIssue || undefined,
+        finishIssue: finishIssue || undefined,
+        routeProvenanceValidated:
+          usageIssue || finishIssue ? false : undefined,
+        responseBodyByteCount,
+        maxResponseBodyByteCount: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
+        promptTokenCanary
+      },
+      usage,
+      llm: { discoveryPlanner: providerMetadata }
+    };
+  }
+  // `completeJSON` is an injected transport boundary in tests, repair runs,
+  // and production. Require the same complete route receipt here that the
+  // production transport enforces: otherwise an injected adapter could bypass
+  // the selected-endpoint and ordered-attempt trust boundary. The completed
+  // provider usage remains accounted even when local acceptance fails.
+  const routeProvenanceIssue =
+    completedOpenRouterRouteProvenanceIssue(completion, [model]);
+  if (routeProvenanceIssue) {
+    return {
+      ...base,
+      reason:
+        'The completed discovery-planner response lacked a complete, internally consistent OpenRouter route receipt.',
+      recoveryCause:
+        'commercial_discovery_planner_route_provenance_recovery',
+      failureCode: 'planner_route_provenance_invalid',
+      preflight: {
+        ...preflight,
+        authorized: true,
+        cause:
+          'commercial_discovery_planner_route_provenance_recovery',
+        failureCode: 'planner_route_provenance_invalid',
+        routeProvenanceIssue,
+        routeProvenanceValidated: false,
+        responseBodyByteCount,
+        maxResponseBodyByteCount: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
+        promptTokenCanary
+      },
+      usage,
+      llm: { discoveryPlanner: providerMetadata }
+    };
+  }
+  preflight = {
+    ...preflight,
+    routeProvenanceValidated: true
+  };
+  // Never trust the injected transport to have enforced response_format.
+  // Only after byte/token/cost and route acceptance may exact AJV inspect the
+  // returned object, before cardinality, normalization, projection, or citation
+  // handling. Retain only bounded machine diagnostics on rejection.
+  const validateCompletion = exactLocalStructuredOutputValidator(
+    request.responseFormat
+  );
+  const completionMatchesStrictSchema = validateCompletion(completion?.data);
+  if (!completionMatchesStrictSchema) {
+    const schemaIssues = asArray(validateCompletion.errors);
+    const boundedSchemaIssues = boundedLocalSchemaDiagnosticIssues(
+      schemaIssues
+    );
+    const failedMotionIndexes = new Set(schemaIssues.flatMap((issue) => {
+      const match = String(issue?.instancePath || '').match(
+        /^\/plans\/([01])(?:\/|$)/
+      );
+      return match ? [Number(match[1])] : [];
+    }));
+    return {
+      ...base,
+      reason:
+        'The discovery planner response failed exact local structured-output validation.',
+      preflight: {
+        ...preflight,
+        authorized: true,
+        responseBodyByteCount,
+        maxResponseBodyByteCount: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
+        promptTokenCanary
+      },
+      usage,
+      llm: { discoveryPlanner: providerMetadata },
+      normalizationDiagnostic: {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT,
+        code: 'strict_schema_mismatch',
+        failedMotionCount: failedMotionIndexes.size > 0
+          ? failedMotionIndexes.size
+          : MAX_DISCOVERY_PLANNER_PLANS,
+        issues: boundedSchemaIssues
+      }
+    };
+  }
   const rawCardinalityIssue = opportunityDiscoveryRawPlanCardinalityIssue(
     completion?.data
   );
@@ -2275,19 +2371,10 @@ export async function runOpportunityDiscoveryPlanner({
   const webSearchIssue = opportunityDiscoveryWebSearchReceiptIssue(
     webSearchReceipt
   );
-  if (promptTokenCanary.withinCeiling === false ||
-      responseBodyByteCount > MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
-      usage.reportedCostMicros > budget.maxLLMSpendMicros || issue ||
-      webSearchIssue) {
+  if (issue || webSearchIssue) {
     return {
       ...base,
-      reason: promptTokenCanary.withinCeiling === false
-        ? 'Discovery planner prompt-token usage exceeded its serialized-request ceiling.'
-        : responseBodyByteCount > MAX_DISCOVERY_PLANNER_RESPONSE_BYTES
-          ? 'Discovery planner response exceeded its bounded structured-output envelope.'
-        : usage.reportedCostMicros > budget.maxLLMSpendMicros
-          ? 'Discovery planner exceeded its bounded LLM budget.'
-          : issue || webSearchIssue,
+      reason: issue || webSearchIssue,
       preflight: {
         ...preflight,
         authorized: true,
@@ -2568,6 +2655,27 @@ function opportunityDiscoveryPlannerResponseFormat(
         '[Bb]ooking|[Ss]ubscription|[Cc]ommission|[Ss]alary|' +
         '[Rr]evenue|[Pp]ayout|[Rr]eimbursement'
     ),
+    compensatedJobPaidOfferText140: {
+      type: 'string',
+      minLength: 8,
+      maxLength: 140,
+      // Keep both semantic words as complete space-delimited tokens. This
+      // remains within native structured-output regex subsets and prevents
+      // the positive token "paid" from matching inside "unpaid". The local
+      // semantic gate separately rejects explicit volunteer/pro-bono or
+      // other negated compensation prose before it gains plan authority.
+      pattern: (() => {
+        const income =
+          '(?:[Cc]ompensated|[Cc]ontract|[Ee]mployment|[Pp]aid|' +
+          '[Ss]alary|[Ww]age)';
+        const role = '(?:[Ee]ngagement|[Jj]ob|[Rr]ole)';
+        const before = `(?:${canonicalAuthoredToken} )*`;
+        const between = `(?: ${canonicalAuthoredToken})* `;
+        const after = `(?: ${canonicalAuthoredToken})*`;
+        return `^(?:${before}${income}${between}${role}${after}|` +
+          `${before}${role}${between}${income}${after})$`;
+      })()
+    },
     conversionDestinationText180: commercialSemanticTextContaining(
       180,
       '[Bb]ooking|[Cc]heckout|[Pp]ricing|[Pp]roposal|' +
@@ -2605,6 +2713,49 @@ function opportunityDiscoveryPlannerResponseFormat(
     }
     return { $ref: `#/$defs/${name}` };
   };
+  // These three strings remain authored by the model. Their finite grammar
+  // admits only printable ASCII plus the exact protocol placeholders, so a
+  // provider cannot add another template token or hide control text. The
+  // typed post-AJV gates below still enforce the motion-specific placeholder
+  // count, route, and cash-advancing semantics; local code never rewrites the
+  // selected prose.
+  const compactRoleASCIIText =
+    `[A-Za-z0-9][A-Za-z0-9 ,.'()&/+!?_:-]*`;
+  const compactBuyerLabel = {
+    type: 'string',
+    minLength: 16,
+    maxLength: 96,
+    pattern:
+      `^(?:${compactRoleASCIIText}|` +
+      `${compactRoleASCIIText} \\{\\{TARGET_NAME\\}\\}` +
+      `(?: ${compactRoleASCIIText})?|` +
+      `\\{\\{TARGET_NAME\\}\\}(?::| is)? ${compactRoleASCIIText})$`
+  };
+  const compactChannelLabel = {
+    type: 'string',
+    minLength: 48,
+    maxLength: 120,
+    pattern:
+      `^Review-first (?:public professional profile|` +
+      `verified professional profile|official paid-demand page) ` +
+      `\\{\\{TARGET_URL\\}\\}(?: for ${compactRoleASCIIText})?$`
+  };
+  const compactActionLabel = {
+    type: 'string',
+    minLength: 72,
+    maxLength: 180,
+    pattern:
+      `^(?:After review|After approval|Once approved|Review first) via ` +
+      `(?:(?:public professional profile|verified professional profile) ` +
+      `\\{\\{TARGET_URL\\}\\}, (?:ask|invite|request) ` +
+      `\\{\\{TARGET_NAME\\}\\} to ` +
+      `(?:assess|book|buy|contract|evaluate|hire|introduce|purchase|` +
+      `recommend|refer|review|sign|subscribe|test|validate) ` +
+      `${compactRoleASCIIText}|official paid-demand page ` +
+      `\\{\\{TARGET_URL\\}\\}, (?:apply|bid|respond|submit) ` +
+      `${compactRoleASCIIText} (?:to|for) ` +
+      `\\{\\{TARGET_NAME\\}\\})$`
+  };
   const paidOutcomeText = (maxLength) =>
     commercialSemanticConstraint(`paidOutcomeText${maxLength}`);
   const conversionDestinationTextSchema = (maxLength) =>
@@ -2615,23 +2766,30 @@ function opportunityDiscoveryPlannerResponseFormat(
     /[.*+?^${}()|[\]\\]/g,
     '\\$&'
   );
-  const sellerPaidOfferPattern = requiredSellerFocus
-    ? provisionalOfferExperiment
-      ? `Proposed paid ${regexLiteral(requiredSellerFocus)}` +
-        `(?: ${canonicalAuthoredText})?`
-      : `(?:${canonicalAuthoredText} )?` +
-        `${regexLiteral(requiredSellerFocus)}` +
-        `(?: ${canonicalAuthoredText})?`
-    : canonicalAuthoredText;
-  // The model emits only the paid offer selected by motionKind. A single
-  // regex union keeps mixed seller/job routes native-structured-output safe;
-  // the local motion gate below prevents a route from selecting its sibling's
-  // branch.
-  const selectedPaidOffer = {
-    type: 'string',
-    maxLength: 140,
-    pattern: `^(?:${sellerPaidOfferPattern}|` +
-      `${regexLiteral(DISCOVERY_COMPENSATED_JOB_PAID_OFFER)})$`
+  const sellerPaidOffer = requiredSellerFocus
+    ? {
+        type: 'string',
+        maxLength: 140,
+        pattern: provisionalOfferExperiment
+          ? `^Proposed paid ${regexLiteral(requiredSellerFocus)}` +
+            `(?: ${canonicalAuthoredText})?$`
+          : `^(?:${canonicalAuthoredText} )?` +
+            `${regexLiteral(requiredSellerFocus)}` +
+            `(?: ${canonicalAuthoredText})?$`
+      }
+    : targetTokenFreeText(140);
+  const paidOfferAlternatives = {
+    type: 'object',
+    properties: {
+      seller: sellerPaidOffer,
+      compensatedJob: commercialSemanticConstraint(
+        'compensatedJobPaidOfferText140'
+      )
+    },
+    required: ['seller', 'compensatedJob'],
+    additionalProperties: false,
+    description:
+      'Author both paid-offer branches; code selects the model-authored branch fixed by motionKind.'
   };
   const targetTokenFreeStringArray = (maxItems, maxLength = 80) => ({
     type: 'array',
@@ -2758,14 +2916,28 @@ function opportunityDiscoveryPlannerResponseFormat(
       maxItems: 1
     },
     revenueMechanism,
-    selectedRevenueMechanism: {
-      type: 'string',
-      enum: [...SELLER_REVENUE_MECHANISMS, 'compensated_role'],
+    revenueMechanismChoice: {
+      type: 'object',
+      properties: {
+        seller: {
+          type: 'string',
+          enum: [...SELLER_REVENUE_MECHANISMS]
+        },
+        compensatedJob: {
+          type: 'string',
+          enum: ['compensated_role']
+        }
+      },
+      required: ['seller', 'compensatedJob'],
+      additionalProperties: false,
       description:
-        'Emit only the mechanism selected by motionKind; local route validation rejects a crossed role.'
+        'Author both revenue-mechanism branches; code selects the model-authored branch fixed by motionKind.'
     },
     attributionMethod,
     scores: boundedScores,
+    compactBuyerLabel,
+    compactChannelLabel,
+    compactActionLabel,
     offerItem: {
       ...boundedItemDefinition('offerItem', 96),
       properties: {
@@ -2776,65 +2948,35 @@ function opportunityDiscoveryPlannerResponseFormat(
     buyerItem: {
       type: 'object',
       properties: {
-        l: {
-          type: 'string',
-          enum: [...new Set([
-            ...Object.keys(CONTINGENT_PLANNER_BUYERS_BY_COMMERCIAL_ROLE)
-              .flatMap((role) =>
-                contingentPlannerBuyerLabelsForCommercialRole(
-                  role,
-                  provisionalOfferExperiment
-                )
-              )
-          ])]
-        },
+        l: { $ref: '#/$defs/compactBuyerLabel' },
         e: { $ref: '#/$defs/singleEvidenceRefs' }
       },
       required: ['l', 'e'],
       additionalProperties: false,
       description:
-        'One selected buyer label; code verifies exact membership in motionKind commercialRole.'
+        'One bounded model-authored buyer label; typed local validation checks the motion-specific placeholder role and preserves the text byte-for-byte.'
     },
     channelItem: {
       type: 'object',
       properties: {
-        l: {
-          type: 'string',
-          enum: [...new Set(
-            Object.values(CONTINGENT_PLANNER_CHANNELS_BY_COMMERCIAL_ROLE)
-              .flat()
-          )]
-        },
+        l: { $ref: '#/$defs/compactChannelLabel' },
         e: { $ref: '#/$defs/compactObservationEvidenceRefs' }
       },
       required: ['l', 'e'],
       additionalProperties: false,
       description:
-        'One selected review-only route; code verifies exact membership in motionKind commercialRole.'
+        'One bounded model-authored review route with exactly one target URL token; typed local validation checks the route and preserves the text byte-for-byte.'
     },
     actionItem: {
       type: 'object',
       properties: {
-        l: {
-          type: 'string',
-          enum: [...new Set([
-            ...contingentPlannerActionsForCommercialRole(
-              'referral_partner', provisionalOfferExperiment
-            ),
-            ...contingentPlannerActionsForCommercialRole(
-              'buyer', provisionalOfferExperiment
-            ),
-            ...contingentPlannerActionsForCommercialRole(
-              'paid_demand', provisionalOfferExperiment
-            )
-          ])]
-        },
+        l: { $ref: '#/$defs/compactActionLabel' },
         e: { $ref: '#/$defs/compactObservationEvidenceRefs' }
       },
       required: ['l', 'e'],
       additionalProperties: false,
       description:
-        'One selected closed action; code verifies exact membership in motionKind commercialRole and never composes action prose.'
+        'One bounded model-authored review-first commercial action with exact target tokens; typed local validation checks its motion role and local code never composes or rewrites it.'
     },
     timingItem: {
       ...boundedItemDefinition('timingItem', 100),
@@ -2869,7 +3011,7 @@ function opportunityDiscoveryPlannerResponseFormat(
       properties: {
         ...authoredRevenuePathProperties,
         e: { $ref: '#/$defs/compactEvidenceRefs' },
-        rm: { $ref: '#/$defs/selectedRevenueMechanism' },
+        rm: { $ref: '#/$defs/revenueMechanismChoice' },
         l: commercialSemanticText(96),
         io: paidOutcomeText(120),
         atm: { $ref: '#/$defs/attributionMethod' },
@@ -2877,7 +3019,7 @@ function opportunityDiscoveryPlannerResponseFormat(
         cd: conversionDestinationTextSchema(120),
         st: commercialSemanticText(120),
         k: { $ref: '#/$defs/causalWitness' },
-        sb: commercialSemanticText(100, true),
+        sb: commercialSemanticText(100),
         vm: {
           type: 'integer',
           minimum: 1,
@@ -2973,7 +3115,7 @@ function opportunityDiscoveryPlannerResponseFormat(
                   type: 'string',
                   enum: [...allowedMotionKinds]
                 },
-                paidOffer: selectedPaidOffer,
+                paidOffer: paidOfferAlternatives,
                 market: {
                   type: 'string',
                   enum: [...allowedMarketValues],
@@ -3069,11 +3211,13 @@ function compactOpportunityDiscoveryOutputContract(
     finalists:
       `{seedContract:${SEED_CONTRACT_VERSION},pathBase,tacticA,tacticB,w}; pathBase={r,o,b,t,p}; tactic={s,c,a,f}; code rebuilds family evidence containment from children and derives m, family labels, and positional tacticKey`,
     dimensions:
-      `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}; b.l has ${CONTINGENT_TARGET_NAME_TOKEN} once for buyer/paid_demand and zero times for referral_partner`,
+      `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; each tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}; each b/c/a has one model-authored l; b.l has ${CONTINGENT_TARGET_NAME_TOKEN} once for buyer/paid_demand and none for referral_partner`,
     item:
-      '{l,e}; b/c/a each contain only one selected closed role label; local motionKind validation rejects crossed-role labels; t={l,e,q}; exact evidence IDs',
+      '{l,e}; b/c/a each contain one bounded model-authored l selected for motionKind; local code preserves l byte-for-byte and never composes recommendation prose; t={l,e,q}; exact evidence IDs',
     revenuePath:
-      '{l,e,rm,io,atm,ats,cd,st,k:{n,u},g:{b,o,a,d:{l,e},c,t},sb,vm}; rm is the one selected mechanism; local motionKind validation permits compensated_role only for compensated_job and seller mechanisms otherwise, then derives v/a/c/o and the complete causal witness; g binds evidence',
+      '{l,e,rm:{seller,compensatedJob},io,atm,ats,cd,st,k:{n,u},g:{b,o,a,d:{l,e},c,t},sb,vm}; code selects the motionKind branch, then derives v/a/c/o and the complete causal witness; g binds evidence',
+    missingEvidence:
+      'sb names one factual unknown or unobserved causal revenue proof; it is never an instruction, artifact, verification task, or operational step',
     evidence:
       `base+tactic e has observation:* and all child refs; returned e arrays use only approved plan refs and never ${CONTINGENT_TARGET_EVIDENCE_REF}; code binds that sentinel after typed-role validation`,
     offerAuthority: provisionalOfferExperiment
@@ -3089,15 +3233,15 @@ function compactOpportunityDiscoveryHardRules(
     'Exactly 2 distinct motions: each pathBase+2 causal tactics. Unknown outside identities require the declared target slot and bounded read-only discovery; never return 0 plans or treat a missing exact target as missing supply evidence.',
     provisionalOfferExperiment
       ? 'sellerContract.requiredPrimaryFocus is the verified seller capability whose revenue the objective names, but offerEvidenceStatus says no current paid offer is proven. Author paidOffer.seller in the exact schema-required Proposed paid form and bind its offer/destination/conversion claims only to sellerContract.requiredEvidenceRefs as proposal basis. Do not call it current, available, priced, purchasable, or verified. The result can only become a review-first validation experiment.'
-      : 'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names. Author only the paidOffer selected by motionKind: the seller focus for buyer/referral routes or the exact compensated-job enum for compensated_job. Local route validation rejects a crossed selection. Code exact-filters evidence refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
-    `top-level buyer is the payer/end-buyer archetype and contains no target token. Contingent b.l has {{TARGET_NAME}} once for buyer/paid_demand and zero times for referral_partner; action/channel use typed target tokens. Never return ${CONTINGENT_TARGET_EVIDENCE_REF} in an e array; code allocates the target slot and binds that sentinel after typed-role validation.`,
+      : 'sellerContract.requiredPrimaryFocus, when present, is the seller whose revenue the objective names. Author paidOffer.seller with that exact focus and paidOffer.compensatedJob as a bounded paid role; code selects the motionKind branch and preserves its text. Code exact-filters evidence refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
+    `top-level buyer is the payer/end-buyer archetype and contains no target token. Each contingent b/c/a item authors one l for the selected motionKind. b.l has {{TARGET_NAME}} exactly once for buyer/paid_demand and none for referral_partner; every c.l has {{TARGET_URL}} exactly once; every a.l has both tokens exactly once. Never return ${CONTINGENT_TARGET_EVIDENCE_REF} in an e array; code allocates the target slot and binds that sentinel after typed-role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     provisionalOfferExperiment
-      ? 'a:2/tactic; each a has one selected l/e. For buyer/referral routes, use only schema-enumerated review-first proposed-offer validation actions. They recommend a bounded human-reviewed test and authorize no outreach. Paid demand remains a compensated-demand action. Prefer 4 distinct selected actions; >=2 across both tactics must be distinct+viable.'
-      : 'a:2/tactic; each a has one selected l/e. Referral actions introduce a qualified buyer to the current paid offer and paid booking/payment; buyer actions ask the target to book/buy/sign; paid-demand actions submit a paid application/proposal response. Local motionKind validation rejects crossed-role labels. Prefer 4 distinct selected actions; >=2 across both tactics must be distinct+viable. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
-    `Code validates the one selected r.rm against motionKind, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
-    'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0.',
+      ? 'a:2/tactic; each a has one model-authored l/e. For referral/buyer routes, author a review-first proposed-paid-offer validation action. A compensated-job action submits a paid application/proposal response. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
+      : 'a:2/tactic; each a has one model-authored l/e selected for motionKind. referral_partner introduces a qualified buyer to the current paid offer and paid booking/payment; buyer asks the target to book/buy/sign; paid_demand submits a paid application/proposal response. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
+    `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
+    'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0. sb must state one factual unknown or not-yet-observed causal proof about demand, acquisition, conversion, attribution, or paid outcome. Never put an imperative, research/verification task, artifact, setup, tracking instruction, or other operational step in sb.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. Fresh paid demand requires a structured PDL employer_job_posting; public snippets/RFP/RFQ/tender/procurement prose has no live-demand authority. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional compensated job.',
     'Adapters: professional=person/single; local_org=person/org->decision-maker; never terminal org; select one exact canonical PDL targetRoleSubrole; code derives its PDL role and drops role intent for non-person routes; organizationTerms=context.',
@@ -3542,19 +3686,8 @@ function normalizeOpportunityDiscoveryPlan(
       'compensated_job';
     const normalizedPaidOffer = deriveFreshPlannerAuthority
       ? compensatedJob
-        ? firstText(
-            rawPaidOffer.compensatedJob,
-            typeof routedPlan.paidOffer === 'string'
-              ? routedPlan.paidOffer
-              : '',
-            DISCOVERY_COMPENSATED_JOB_PAID_OFFER
-          )
-        : firstText(
-            rawPaidOffer.seller,
-            typeof routedPlan.paidOffer === 'string'
-              ? routedPlan.paidOffer
-              : ''
-          )
+        ? firstText(rawPaidOffer.compensatedJob)
+        : firstText(rawPaidOffer.seller)
       : firstText(routedPlan.paidOffer);
     const evidenceRefs = normalizedDiscoveryPlanEvidenceRefs(
       deriveFreshPlannerAuthority
@@ -3621,35 +3754,22 @@ function normalizeOpportunityDiscoveryPlan(
       }
       return '';
     };
-    // Some OpenRouter routes can return a JSON object that reaches the local
-    // decoder with a missing or normalization-invalid duplicate top-level
-    // causal field even though the same model-authored value is present in
-    // the strict compact revenue path. Treat that validated nested path as the
-    // fallback authority instead of discarding both otherwise-complete plans
-    // before target research. No prose is composed here.
+    // The compact strict schema authors each causal field once inside the
+    // shared revenue path. Preserve those exact strings as the fresh plan's
+    // authority; do not replace compensated-job or seller text with local
+    // recommendation prose.
     const canonicalConversionDestination = deriveFreshPlannerAuthority
-      ? compensatedJob
-        ? DISCOVERY_COMPENSATED_JOB_CONVERSION_DESTINATION
-        : firstFreshCausalText(
-            180,
-            routedPlan.conversionDestination,
-            compactRevenuePath.cd,
-            compactDestinationGrounding.l
-          )
+      ? firstFreshCausalText(
+          180,
+          compactRevenuePath.cd,
+          compactDestinationGrounding.l
+        )
       : truncate(firstText(routedPlan.conversionDestination), 220);
     const canonicalPaidConversion = deriveFreshPlannerAuthority
-      ? compensatedJob
-        ? DISCOVERY_COMPENSATED_JOB_PAID_CONVERSION
-        : firstFreshCausalText(
-            140,
-            routedPlan.paidConversion,
-            compactRevenuePath.io
-          )
+      ? firstFreshCausalText(140, compactRevenuePath.io)
       : truncate(firstText(routedPlan.paidConversion), 180);
     const canonicalAttributionSignal = deriveFreshPlannerAuthority
-      ? compensatedJob
-        ? DISCOVERY_COMPENSATED_JOB_ATTRIBUTION_SIGNAL
-        : DISCOVERY_SELLER_ATTRIBUTION_SIGNAL
+      ? firstFreshCausalText(180, compactRevenuePath.ats)
       : truncate(firstText(routedPlan.attributionSignal), 220);
     const planWithCanonicalAuthority = {
       ...planWithCanonicalEvidence,
@@ -4053,10 +4173,6 @@ function normalizeContingentFinalistBundle(
     return {};
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
-  if (compactPlannerBundle && allowPlannerProjection === true &&
-      compactPlannerSelectedRoleIssue(clone, planValue)) {
-    return {};
-  }
   clone = materializePlannerContingentFinalistBundle(clone, planValue);
   if (Object.keys(asObject(clone)).length === 0) return {};
   clone = canonicalizeContingentTargetEvidence(clone, planValue);
@@ -4104,58 +4220,6 @@ function normalizeContingentFinalistBundle(
   }
   if (contingentJSONShapeUnsafe(clone, knownEvidence)) return {};
   return clone;
-}
-
-function compactPlannerSelectedRoleIssue(value, planValue) {
-  const raw = asObject(value);
-  const plan = asObject(planValue);
-  const commercialRole = firstText(plan.commercialRole);
-  const provisionalOfferExperiment = /^Proposed paid\b/.test(
-    firstText(plan.paidOffer)
-  );
-  const allowedBuyerLabels = new Set(
-    contingentPlannerBuyerLabelsForCommercialRole(
-      commercialRole,
-      provisionalOfferExperiment
-    )
-  );
-  const allowedChannelLabels = new Set(
-    contingentPlannerChannelLabelsForCommercialRole(commercialRole)
-  );
-  const allowedActionLabels = new Set(
-    contingentPlannerActionsForCommercialRole(
-      commercialRole,
-      provisionalOfferExperiment
-    )
-  );
-  const labelsAreSelected = (itemsValue, allowed) => {
-    const items = asArray(itemsValue);
-    return items.length === INITIAL_FAMILY_VARIANT_COUNT &&
-      items.every((item) => allowed.has(firstText(asObject(item).l)));
-  };
-  const pathBase = asObject(raw.pathBase);
-  const tactics = [asObject(raw.tacticA), asObject(raw.tacticB)];
-  if (!labelsAreSelected(pathBase.b, allowedBuyerLabels)) {
-    return 'selected_buyer_role';
-  }
-  if (tactics.some((tactic) =>
-    !labelsAreSelected(tactic.c, allowedChannelLabels)
-  )) {
-    return 'selected_channel_role';
-  }
-  if (tactics.some((tactic) =>
-    !labelsAreSelected(tactic.a, allowedActionLabels)
-  )) {
-    return 'selected_action_role';
-  }
-  const revenueMechanism = firstText(asObject(asArray(pathBase.r)[0]).rm);
-  return firstText(plan.motionKind) === 'compensated_job'
-    ? revenueMechanism === 'compensated_role'
-      ? ''
-      : 'selected_revenue_mechanism'
-    : SELLER_REVENUE_MECHANISMS.includes(revenueMechanism)
-      ? ''
-      : 'selected_revenue_mechanism';
 }
 
 function canonicalizeContingentProposalGrounding(
@@ -4227,14 +4291,8 @@ function canonicalizeContingentRevenueStructure(value, planValue) {
       const revenue = asObject(revenueValue);
       const authoredMechanisms = asObject(revenue.rm);
       const mechanism = compensatedRole
-        ? contractEnum(firstText(
-            authoredMechanisms.compensatedJob,
-            typeof revenue.rm === 'string' ? revenue.rm : ''
-          ))
-        : contractEnum(firstText(
-            authoredMechanisms.seller,
-            typeof revenue.rm === 'string' ? revenue.rm : ''
-          ));
+        ? contractEnum(firstText(authoredMechanisms.compensatedJob))
+        : contractEnum(firstText(authoredMechanisms.seller));
       const attributionMethod = compensatedRole
         ? contractEnum(firstText(revenue.atm))
         : DISCOVERY_SELLER_ATTRIBUTION_METHOD;
@@ -4305,7 +4363,7 @@ function canonicalizeContingentConversionActions(value, planValue) {
     }
     const action = asArray(dimensions.a)
       .map(asObject)
-      .find((item) => contingentViableActionItem(
+      .find((item) => contingentProjectableActionItem(
         item,
         family,
         planValue
@@ -4335,6 +4393,20 @@ function canonicalizeContingentAcquisitionRoute(value, planValue) {
 }
 
 function contingentViableActionItem(itemValue, familyValue, planValue) {
+  return contingentProjectableActionItem(
+    itemValue,
+    familyValue,
+    planValue
+  ) && !linkedTournamentRecoveryInstruction(
+    firstText(asObject(itemValue).l)
+  );
+}
+
+function contingentProjectableActionItem(
+  itemValue,
+  familyValue,
+  planValue
+) {
   const item = asObject(itemValue);
   const family = asObject(familyValue);
   const plan = asObject(planValue);
@@ -4542,13 +4614,54 @@ function neutralContingentFollowUp(value) {
   return Boolean(match) && Number(match[1]) <= 30;
 }
 
+function contingentBuyerLabelRoleIssue(value, planValue) {
+  const plan = asObject(planValue);
+  const text = primaryActionSemanticText(value);
+  const role = firstText(plan.commercialRole);
+  const buyerNoun =
+    /\b(?:buyer|client|customer|family|organization|parent|patient|practice)\w*\b/.test(
+      text
+    );
+  const paidOffer =
+    /\b(?:book|buy|contract|current paid|paid offer|paid service|purchase|reimburs|subscription)\w*\b/.test(
+      text
+    );
+  if (role === 'referral_partner') {
+    return buyerNoun && paidOffer ? '' : 'selected_buyer_role';
+  }
+  if (role === 'buyer') {
+    return buyerNoun && paidOffer ? '' : 'selected_buyer_role';
+  }
+  if (role === 'paid_demand') {
+    const payer =
+      /\b(?:buyer|company|employer|organization|purchaser)\w*\b/.test(text);
+    const compensated =
+      /\b(?:compensated|contract|engagement|paid|salary|wage)\w*\b/.test(
+        text
+      );
+    return payer && compensated ? '' : 'selected_buyer_role';
+  }
+  return 'selected_buyer_role';
+}
+
+function contingentChannelLabelRoleIssue(value, planValue) {
+  const text = primaryActionSemanticText(value);
+  return firstText(asObject(planValue).commercialRole) === 'paid_demand'
+    ? /\bofficial paid demand page\b/.test(text)
+      ? ''
+      : 'selected_channel_role'
+    : /\b(?:public|verified) professional profile\b/.test(text)
+      ? ''
+      : 'selected_channel_role';
+}
+
 /**
  * Call 1 authors the common paid path once and only the three tactic-local
  * dimensions twice. Downstream validation, target binding, persistence, and
  * the independent critic deliberately continue to consume the established
- * familyA/familyB contract. This is structural copying plus positional
- * selection from the schema's closed action enum: no commercial prose,
- * evidence reference, or score is synthesized here.
+ * familyA/familyB contract. This is structural copying plus selection of the
+ * exact model-authored selected item: no commercial prose, evidence
+ * reference, or score is synthesized or reordered here.
  *
  * Previously persisted planner receipts already contain materialized
  * familyA/familyB values. Canonicalizing that shape to its supported keys
@@ -4578,42 +4691,18 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
     return raw;
   }
   const copy = (item) => JSON.parse(JSON.stringify(item));
-  const roleField =
-    CONTINGENT_PLANNER_ACTION_FIELD_BY_COMMERCIAL_ROLE[
-      firstText(asObject(planValue).commercialRole)
-    ] || '';
-  const roleItems = (items, labels = []) => asArray(items).map((itemValue, index) => {
+  const roleItems = (items) => asArray(items).map((itemValue) => {
     const item = asObject(itemValue);
     return {
-      l: typeof labels[index] === 'string'
-        ? labels[index]
-        : firstText(item.l, item[roleField]),
+      l: typeof item.l === 'string' ? item.l : '',
       e: copy(asArray(item.e))
     };
   });
-  const approvedActionLabels =
-    contingentPlannerActionsForCommercialRole(
-      firstText(asObject(planValue).commercialRole),
-      /^Proposed paid\b/.test(firstText(asObject(planValue).paidOffer))
-    );
-  // Some OpenRouter structured-output routes preserve the complete, valid
-  // singleton revenue object but collapse its exact-one array wrapper. The
-  // revenue path is still wholly model-authored; restoring only that uniquely
-  // implied container does not invent or repair any causal field.
+  // Exact AJV has already proved the required one-item array. Preserve that
+  // model-authored container verbatim; never promote a schema-invalid singleton
+  // object into compliance during materialization.
   const sharedRevenuePaths = Array.isArray(pathBase.r)
     ? pathBase.r
-    : Object.keys(asObject(pathBase.r)).length > 0
-      ? [pathBase.r]
-      : [];
-  const authoredActionLabels = [tacticA, tacticB].flatMap((tactic) =>
-    asArray(tactic.a).map((item) => firstText(
-      asObject(item).l,
-      asObject(item)[roleField]
-    ))
-  );
-  const selectedActionLabels = authoredActionLabels.length === 4 &&
-    authoredActionLabels.every((label) => approvedActionLabels.includes(label))
-    ? approvedActionLabels
     : [];
   const family = (tactic, tacticIndex) => ({
     // Family labels are internal provenance identifiers, not commercial
@@ -4632,10 +4721,7 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
       o: copy(asArray(pathBase.o)),
       b: roleItems(pathBase.b),
       c: roleItems(tactic.c),
-      a: roleItems(
-        tactic.a,
-        selectedActionLabels.slice(tacticIndex * 2, tacticIndex * 2 + 2)
-      ),
+      a: roleItems(tactic.a),
       t: copy(asArray(pathBase.t)),
       p: copy(asArray(pathBase.p)),
       f: copy(asArray(tactic.f))
@@ -5133,14 +5219,8 @@ function opportunityDiscoveryPlanIssue(
       return `Discovery plan ${item.id} paidOffer must remain bound to the objective's primary seller focus "${truncate(requiredSellerFocus, 120)}".`;
     }
     if (requireTypedRoute && item.motionKind === 'compensated_job' &&
-        firstText(item.paidOffer) !==
-          DISCOVERY_COMPENSATED_JOB_PAID_OFFER) {
-      return `Discovery plan ${item.id} paidOffer must use the exact compensated-role contract.`;
-    }
-    if (requireTypedRoute && item.motionKind !== 'compensated_job' &&
-        firstText(item.paidOffer) ===
-          DISCOVERY_COMPENSATED_JOB_PAID_OFFER) {
-      return `Discovery plan ${item.id} seller route cannot use the compensated-role paidOffer contract.`;
+        !compensatedJobPaidOfferText(item.paidOffer)) {
+      return `Discovery plan ${item.id} paidOffer must describe the model-authored paid compensated role.`;
     }
     const requiredSellerEvidenceRefs = new Set(
       compactStrings(sellerEvidenceRefsValue)
@@ -6229,6 +6309,13 @@ function contingentFinalistBundleIssue(planValue) {
       return `has contingent family ${familyIndex + 1} outside its approved supply evidence.`;
     }
     const dimensions = asObject(family.d);
+    const revenuePath = asObject(asArray(dimensions.r)[0]);
+    if (!factualMissingRevenueEvidence(firstText(
+      revenuePath.sb,
+      revenuePath.supportingBottleneck
+    ))) {
+      return `family ${familyIndex + 1} revenue path [supporting_bottleneck_not_evidence_gap]: must state one factual unknown or unobserved causal revenue proof, never an instruction or operational step.`;
+    }
     for (const [dimension, count] of [
       ['r', 1],
       ['o', INITIAL_FAMILY_VARIANT_COUNT],
@@ -6266,22 +6353,27 @@ function contingentFinalistBundleIssue(planValue) {
         ? 'must keep the prospective referral target out of its buyer finalists.'
         : 'must bind each buyer finalist to exactly one unresolved payer target.';
     }
-    if (['buyer', 'referral_partner'].includes(plan.commercialRole)) {
-      for (const [channelIndex, channelValue] of
-        asArray(dimensions.c).entries()) {
-        const channel = firstText(asObject(channelValue).l);
-        const targetURLCount = countExactToken(
-          channel,
-          CONTINGENT_TARGET_URL_TOKEN
-        );
-        if (targetURLCount !== 1) {
-          return `family ${familyIndex + 1} channel ${channelIndex + 1} [channel_target_url_token]: must contain exactly one target-url token (url_count=${targetURLCount}).`;
-        }
-        if (!/\b(?:linkedin|public professional profile|verified professional profile)\b/i.test(
-          channel
-        )) {
-          return `family ${familyIndex + 1} channel ${channelIndex + 1} [channel_public_professional_route]: must name the review-first public professional profile route.`;
-        }
+    for (const [buyerIndex, buyerValue] of
+      asArray(dimensions.b).entries()) {
+      if (contingentBuyerLabelRoleIssue(
+        firstText(asObject(buyerValue).l),
+        plan
+      )) {
+        return `family ${familyIndex + 1} buyer ${buyerIndex + 1} [selected_buyer_role]: must describe the typed role's paid buyer without inventing a target.`;
+      }
+    }
+    for (const [channelIndex, channelValue] of
+      asArray(dimensions.c).entries()) {
+      const channel = firstText(asObject(channelValue).l);
+      const targetURLCount = countExactToken(
+        channel,
+        CONTINGENT_TARGET_URL_TOKEN
+      );
+      if (targetURLCount !== 1) {
+        return `family ${familyIndex + 1} channel ${channelIndex + 1} [channel_target_url_token]: must contain exactly one target-url token (url_count=${targetURLCount}).`;
+      }
+      if (contingentChannelLabelRoleIssue(channel, plan)) {
+        return `family ${familyIndex + 1} channel ${channelIndex + 1} [selected_channel_role]: must use the typed role's review-first public route.`;
       }
     }
     const unsupportedFollowUpIndex = asArray(dimensions.f).findIndex(
@@ -6315,6 +6407,10 @@ function contingentFinalistBundleIssue(planValue) {
       );
       if (contingentViableActionItem(actionValue, family, plan)) {
         familyViableActionSignatures.add(signature);
+      } else if (linkedTournamentRecoveryInstruction(action)) {
+        rejectedActionIssues.push(
+          `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_linked_recovery]: must be the review-first commercial experiment itself, never an instruction to retry or rerun the tournament.`
+        );
       } else if (passiveOrObservationalPrimaryAction(action)) {
         rejectedActionIssues.push(
           `family ${familyIndex + 1} action ${actionIndex + 1} [primary_action_passive]: must be active rather than observational.`
@@ -6520,6 +6616,16 @@ function typedDiscoveryAcquisitionMechanismIssue(planValue) {
   return mechanism === expected
     ? ''
     : 'uses the canonical public acquisition route for the wrong commercial role.';
+}
+
+function compensatedJobPaidOfferText(value) {
+  const text = comparable(firstText(value));
+  if (/\b(?:unpaid|uncompensated|volunteer)\w*\b|\bpro bono\b|\b(?:no|without) compensation\b/.test(
+    text
+  )) return false;
+  return /\b(?:compensated|contract|employment|paid|salary|wage)\w*\b/.test(
+    text
+  ) && /\b(?:engagement|job|role)\w*\b/.test(text);
 }
 
 function discoveryPlanSensitiveEndBuyer(value) {
@@ -8095,6 +8201,8 @@ async function runOpportunityTournamentCore({
     payload.algorithmVersion,
     OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION
   );
+  const currentAlgorithm =
+    algorithmVersion === OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION;
   const objective = normalizeObjective(payload.objective, payload);
   const budget = normalizeBudget(payload.budget);
   const constraints = normalizeConstraints(objective, payload);
@@ -8248,8 +8356,13 @@ async function runOpportunityTournamentCore({
     }
   };
   let generatedEvidenceExperiment = null;
-  const nextExperimentFor = (missingEvidence) =>
-    revenueEvidenceExperiment({
+  const nextExperimentFor = (missingEvidence) => currentAlgorithm
+    ? strategyGenerationRecoveryExperiment({
+        objective,
+        evidenceHash,
+        missingEvidence
+      })
+    : revenueEvidenceExperiment({
       objective,
       evidenceCatalog,
       evidenceHash,
@@ -8337,8 +8450,6 @@ async function runOpportunityTournamentCore({
   base.searchSpace.contingentFinalistSource = useContingentFinalists
     ? 'discovery_planner_call_1'
     : 'not_materialized';
-  const currentAlgorithm =
-    algorithmVersion === OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION;
   const explicitLegacyAlgorithm =
     LEGACY_OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSIONS.has(
       algorithmVersion
@@ -8634,47 +8745,14 @@ async function runOpportunityTournamentCore({
       )
     };
   }
-
-  let seedSet = normalizeSeedSet(
-    completion?.data,
-    useContingentFinalists
-      ? evidenceCatalog.filter((item) =>
-          !/^source:/i.test(firstText(item.id))
-        )
-      : providerValidationEvidenceCatalog,
-    timestamp
-  );
-  const activeValidationEvidenceCatalog = useContingentFinalists
-    ? evidenceCatalog.filter((item) =>
-        !/^source:/i.test(firstText(item.id))
-      )
-    : providerValidationEvidenceCatalog;
-  generatedEvidenceExperiment = rehydrateGeneratedExperimentAsset(
-    normalizeGeneratedEvidenceExperiment(
-      completion?.data?.evidenceExperiment,
-      providerValidationEvidenceCatalog,
-      timestamp
-    ),
-    evidenceCatalog,
-    timestamp
-  );
-  const initialShapeIssue = initialCompletionTruncated
-    ? structuredOutputLengthIssue(
-        initialTruncationError?.openRouterDiagnostics ??
-          completion?.diagnostics
-      )
-    : structuredSeedSetShapeIssue(seedSet);
-  let terminalStructuredIssue = initialShapeIssue;
-  const structuredRepair = {
+  const initialStructuredRepairBoundary = {
     authorized: !useContingentFinalists && budget.maxLLMCalls >= 2,
     attempted: false,
     succeeded: false,
-    initialIssue: initialShapeIssue?.code || '',
-    initialSeedContract: firstText(seedSet.seedContract),
-    initialFamilyWrapperCount:
-      nonNegativeInteger(seedSet.familyWrapperCount) || 0,
-    initialValidStrategyFamilyCount:
-      nonNegativeInteger(seedSet.validStrategyFamilyCount) || 0,
+    initialIssue: '',
+    initialSeedContract: '',
+    initialFamilyWrapperCount: 0,
+    initialValidStrategyFamilyCount: 0,
     initialCallSpendCeilingMicros: useContingentFinalists
       ? 0
       : initialCallSpendCeilingMicros,
@@ -8683,8 +8761,11 @@ async function runOpportunityTournamentCore({
     initialPromptTokenCanary
   };
   if (initialPromptTokenCanary.withinCeiling === false) {
-    structuredRepair.failure = 'prompt_token_ceiling_exceeded';
-    structuredRepair.finalIssue = structuredRepair.initialIssue;
+    const structuredRepair = {
+      ...initialStructuredRepairBoundary,
+      failure: 'prompt_token_ceiling_exceeded',
+      finalIssue: ''
+    };
     return {
       status: 'skipped',
       summary:
@@ -8697,7 +8778,6 @@ async function runOpportunityTournamentCore({
       usage,
       searchSpace: {
         ...base.searchSpace,
-        ...seedSetShapeSearchTrace(seedSet),
         modelCalls: usage.calls,
         structuredRepair
       },
@@ -8707,6 +8787,188 @@ async function runOpportunityTournamentCore({
       )
     };
   }
+
+  let initialResponseByteCount = 0;
+  try {
+    initialResponseByteCount = Buffer.byteLength(
+      JSON.stringify(completion?.data ?? null),
+      'utf8'
+    );
+  } catch {
+    initialResponseByteCount = MAX_LOCAL_JSON_REPAIR_INPUT_BYTES + 1;
+  }
+  const initialUsageIssue = !useContingentFinalists &&
+      !initialCompletionTruncated
+    ? exactCompletedOpenRouterUsageIssue(
+        completion?.usage,
+        initialProviderSpendPreflight,
+        initialCompletionRequest.maxTokens
+      )
+    : '';
+  const initialFinishIssue = !useContingentFinalists &&
+      !initialCompletionTruncated
+    ? completedStructuredFinishIssue(completion)
+    : '';
+  const initialReportedCostMicros =
+    typeof completion?.usage?.cost === 'number' &&
+      Number.isFinite(completion.usage.cost) &&
+      completion.usage.cost >= 0
+      ? Math.ceil(completion.usage.cost * 1_000_000)
+      : undefined;
+  const initialCallCostExceeded = !useContingentFinalists &&
+    initialReportedCostMicros !== undefined &&
+    initialReportedCostMicros >
+      initialProviderSpendPreflight.callSpendCeilingMicros;
+  const initialResponseByteIssue = !useContingentFinalists &&
+    !initialCompletionTruncated &&
+    initialResponseByteCount > MAX_LOCAL_JSON_REPAIR_INPUT_BYTES;
+  if (initialResponseByteIssue || initialUsageIssue ||
+      initialFinishIssue || initialCallCostExceeded) {
+    const cause = initialResponseByteIssue
+      ? 'generator_response_byte_ceiling_exceeded'
+      : initialUsageIssue
+        ? 'generator_provider_usage_invalid'
+        : initialFinishIssue
+          ? 'generator_finish_reason_invalid'
+          : 'generator_reported_call_spend_exceeded';
+    return {
+      status: 'skipped',
+      summary:
+        'The completed strategy-generator response failed its bounded local provider-envelope contract.',
+      ...base,
+      nextExperiment: nextExperimentFor([
+        initialCallCostExceeded
+          ? 'within_budget_strategy_generation'
+          : 'usable_strategy_generation'
+      ]),
+      llm: llmTrace,
+      usage,
+      searchSpace: {
+        ...base.searchSpace,
+        modelCalls: usage.calls,
+        strategyGeneratorContract: compact({
+          cause,
+          responseByteCount: initialResponseByteCount,
+          responseByteCeiling: MAX_LOCAL_JSON_REPAIR_INPUT_BYTES,
+          usageIssue: initialUsageIssue || undefined,
+          finishIssue: initialFinishIssue || undefined,
+          routeProvenanceValidated: false,
+          exactSchemaValidated: false,
+          preflight: initialProviderSpendPreflight
+        })
+      },
+      gate: researchOnlyGate(
+        'technical_recovery',
+        'No generated strategy was accepted before exact route and schema validation.'
+      )
+    };
+  }
+
+  // The explicit v5 replay still obtains its generator (and, when needed,
+  // its one repair) directly from OpenRouter. Apply the same reviewed-model
+  // and complete ordered-route trust boundary used by the current planner and
+  // critic before any model-authored business fields are normalized. A local
+  // route rejection does not rewrite a completed provider receipt or discard
+  // its exact usage.
+  const initialRouteProvenanceIssue = !useContingentFinalists &&
+    !initialTruncationError
+    ? completedOpenRouterRouteProvenanceIssue(completion, [model])
+    : '';
+  if (initialRouteProvenanceIssue) {
+    return {
+      status: 'skipped',
+      summary:
+        'The completed strategy-generator response lacked a complete, internally consistent OpenRouter route receipt.',
+      ...base,
+      nextExperiment: nextExperimentFor([
+        'strategy_generation_route_provenance_recovery'
+      ]),
+      llm: llmTrace,
+      usage,
+      searchSpace: {
+        ...base.searchSpace,
+        modelCalls: usage.calls,
+        strategyGeneratorRoute: {
+          failureCode: 'strategy_generator_route_provenance_invalid',
+          routeProvenanceIssue: initialRouteProvenanceIssue,
+          routeProvenanceValidated: false
+        }
+      },
+      gate: researchOnlyGate(
+        'technical_recovery',
+        'No generated strategy was accepted because its selected provider/model or ordered OpenRouter attempt receipt failed local provenance validation.'
+      )
+    };
+  }
+
+  // Explicit v5 replay completions are still direct provider ingress. Apply
+  // their exact request schema only after usage/route acceptance and before
+  // any model-authored field reaches a normalizer. AJV diagnostics retain
+  // only bounded machine structure; completed provider usage remains intact.
+  let initialStrictSchemaIssue = null;
+  if (explicitLegacyAlgorithm && !initialCompletionTruncated) {
+    const validateInitial = exactLocalStructuredOutputValidator(
+      initialCompletionRequest.responseFormat
+    );
+    if (!validateInitial(completion?.data)) {
+      initialStrictSchemaIssue = {
+        code: 'strict_schema_mismatch',
+        issues: boundedLocalSchemaDiagnosticIssues(
+          validateInitial.errors
+        )
+      };
+    }
+  }
+  let seedSet = initialCompletionTruncated || initialStrictSchemaIssue
+    ? normalizeSeedSet({}, providerValidationEvidenceCatalog, timestamp)
+    : normalizeSeedSet(
+        completion?.data,
+        useContingentFinalists
+          ? evidenceCatalog.filter((item) =>
+              !/^source:/i.test(firstText(item.id))
+            )
+          : providerValidationEvidenceCatalog,
+        timestamp
+      );
+  const activeValidationEvidenceCatalog = useContingentFinalists
+    ? evidenceCatalog.filter((item) =>
+        !/^source:/i.test(firstText(item.id))
+      )
+    : providerValidationEvidenceCatalog;
+  generatedEvidenceExperiment = rehydrateGeneratedExperimentAsset(
+    normalizeGeneratedEvidenceExperiment(
+      initialCompletionTruncated || initialStrictSchemaIssue
+        ? undefined
+        : completion?.data?.evidenceExperiment,
+      providerValidationEvidenceCatalog,
+      timestamp
+    ),
+    evidenceCatalog,
+    timestamp
+  );
+  const initialShapeIssue = initialCompletionTruncated
+    ? structuredOutputLengthIssue(
+        initialTruncationError?.openRouterDiagnostics ??
+          completion?.diagnostics
+      )
+    : initialStrictSchemaIssue || structuredSeedSetShapeIssue(seedSet);
+  let terminalStructuredIssue = initialShapeIssue;
+  const structuredRepair = {
+    ...initialStructuredRepairBoundary,
+    initialIssue: initialShapeIssue?.code || '',
+    initialSchemaIssues:
+      initialStrictSchemaIssue?.issues || undefined,
+    initialSeedContract: firstText(seedSet.seedContract),
+    initialFamilyWrapperCount:
+      nonNegativeInteger(seedSet.familyWrapperCount) || 0,
+    initialValidStrategyFamilyCount:
+      nonNegativeInteger(seedSet.validStrategyFamilyCount) || 0,
+    initialCallSpendCeilingMicros: useContingentFinalists
+      ? 0
+      : initialCallSpendCeilingMicros,
+    initialFixedRequestFeeCeilingMicros:
+      initialProviderSpendPreflight.fixedRequestFeeCeilingMicros
+  };
   if (initialShapeIssue && structuredRepair.authorized) {
     const remainingSpendMicros = remainingRepairSpendMicros(
       budget,
@@ -8909,36 +9171,10 @@ async function runOpportunityTournamentCore({
       providerMetadataEntries.push(repairMetadata);
       llmTrace.strategyFamilyRepair = repairMetadata;
       usage = aggregateUsage(providerMetadataEntries, budget);
-      const repairedSeedSet = normalizeSeedSet(
-        repairCompletion?.data,
-        providerValidationEvidenceCatalog,
-        timestamp
-      );
-      const repairedEvidenceExperiment =
-        rehydrateGeneratedExperimentAsset(
-          normalizeGeneratedEvidenceExperiment(
-            repairCompletion?.data?.evidenceExperiment,
-            providerValidationEvidenceCatalog,
-            timestamp
-          ),
-          evidenceCatalog,
-          timestamp
-        );
-      const repairedIssue = repairCompletionTruncated
-        ? structuredOutputLengthIssue(repairCompletion?.diagnostics)
-        : structuredSeedSetShapeIssue(repairedSeedSet);
       if (budget.hardStop &&
           usage.reportedCostMicros > budget.maxLLMSpendMicros) {
-        // A provider-reported hard-budget breach takes precedence over any
-        // simultaneous accounting canary drift. Preserve the repaired shape
-        // trace, but never select its recommendation.
-        completion = repairCompletion;
-        seedSet = repairedSeedSet;
-        generatedEvidenceExperiment = repairedEvidenceExperiment;
-        structuredRepair.succeeded = !repairedIssue;
-        structuredRepair.finalIssue = repairedIssue?.code || '';
-        terminalStructuredIssue = repairedIssue;
         structuredRepair.failure = 'repair_budget_exceeded';
+        structuredRepair.finalIssue = initialShapeIssue.code;
         return {
           status: 'skipped',
           summary:
@@ -8988,11 +9224,157 @@ async function runOpportunityTournamentCore({
           )
         };
       }
+      let repairResponseByteCount = 0;
+      try {
+        repairResponseByteCount = Buffer.byteLength(
+          JSON.stringify(repairCompletion?.data ?? null),
+          'utf8'
+        );
+      } catch {
+        repairResponseByteCount = MAX_LOCAL_JSON_REPAIR_INPUT_BYTES + 1;
+      }
+      const repairUsageIssue = !repairCompletionTruncated
+        ? exactCompletedOpenRouterUsageIssue(
+            repairCompletion?.usage,
+            repairProviderSpendPreflight,
+            repairCompletionRequest.maxTokens
+          )
+        : '';
+      const repairFinishIssue = !repairCompletionTruncated
+        ? completedStructuredFinishIssue(repairCompletion)
+        : '';
+      const repairReportedCostMicros =
+        typeof repairCompletion?.usage?.cost === 'number' &&
+          Number.isFinite(repairCompletion.usage.cost) &&
+          repairCompletion.usage.cost >= 0
+          ? Math.ceil(repairCompletion.usage.cost * 1_000_000)
+          : undefined;
+      const repairCallCostExceeded =
+        repairReportedCostMicros !== undefined &&
+        repairReportedCostMicros >
+          repairProviderSpendPreflight.callSpendCeilingMicros;
+      const repairResponseByteIssue = repairResponseByteCount >
+        MAX_LOCAL_JSON_REPAIR_INPUT_BYTES;
+      if (repairResponseByteIssue || repairUsageIssue ||
+          repairFinishIssue || repairCallCostExceeded) {
+        structuredRepair.failure = repairResponseByteIssue
+          ? 'repair_response_byte_ceiling_exceeded'
+          : repairUsageIssue
+            ? 'repair_provider_usage_invalid'
+            : repairFinishIssue
+              ? 'repair_finish_reason_invalid'
+              : 'repair_reported_call_spend_exceeded';
+        structuredRepair.finalIssue = initialShapeIssue.code;
+        structuredRepair.responseByteCount = repairResponseByteCount;
+        structuredRepair.responseByteCeiling =
+          MAX_LOCAL_JSON_REPAIR_INPUT_BYTES;
+        structuredRepair.usageIssue = repairUsageIssue || undefined;
+        structuredRepair.finishIssue = repairFinishIssue || undefined;
+        structuredRepair.routeProvenanceValidated = false;
+        structuredRepair.exactSchemaValidated = false;
+        return {
+          status: 'skipped',
+          summary:
+            'The completed strategy-repair response failed its bounded local provider-envelope contract.',
+          ...base,
+          nextExperiment: nextExperimentFor([
+            repairCallCostExceeded
+              ? 'within_budget_strategy_generation'
+              : 'usable_strategy_generation'
+          ]),
+          llm: llmTrace,
+          usage,
+          searchSpace: {
+            ...base.searchSpace,
+            ...seedSetShapeSearchTrace(seedSet),
+            modelCalls: usage.calls,
+            structuredRepair
+          },
+          gate: researchOnlyGate(
+            'technical_recovery',
+            'No repaired strategy was accepted before exact route and schema validation.'
+          )
+        };
+      }
+      const repairRouteProvenanceIssue =
+        completedOpenRouterRouteProvenanceIssue(
+          repairCompletion,
+          [model]
+        );
+      if (repairRouteProvenanceIssue) {
+        structuredRepair.failure =
+          'structured_repair_route_provenance_invalid';
+        structuredRepair.finalIssue = initialShapeIssue.code;
+        structuredRepair.routeProvenanceIssue =
+          repairRouteProvenanceIssue;
+        structuredRepair.routeProvenanceValidated = false;
+        return {
+          status: 'skipped',
+          summary:
+            'The completed strategy-repair response lacked a complete, internally consistent OpenRouter route receipt.',
+          ...base,
+          nextExperiment: nextExperimentFor([
+            'strategy_generation_route_provenance_recovery'
+          ]),
+          llm: llmTrace,
+          usage,
+          searchSpace: {
+            ...base.searchSpace,
+            ...seedSetShapeSearchTrace(seedSet),
+            modelCalls: usage.calls,
+            structuredRepair
+          },
+          gate: researchOnlyGate(
+            'technical_recovery',
+            'No repaired strategy was accepted because its selected provider/model or ordered OpenRouter attempt receipt failed local provenance validation.'
+          )
+        };
+      }
+      structuredRepair.routeProvenanceValidated = true;
+      let repairStrictSchemaIssue = null;
+      if (!repairCompletionTruncated) {
+        const validateRepair = exactLocalStructuredOutputValidator(
+          repairCompletionRequest.responseFormat
+        );
+        if (!validateRepair(repairCompletion?.data)) {
+          repairStrictSchemaIssue = {
+            code: 'strict_schema_mismatch',
+            issues: boundedLocalSchemaDiagnosticIssues(
+              validateRepair.errors
+            )
+          };
+        }
+      }
+      const repairedSeedSet = repairStrictSchemaIssue
+        ? normalizeSeedSet({}, providerValidationEvidenceCatalog, timestamp)
+        : normalizeSeedSet(
+            repairCompletion?.data,
+            providerValidationEvidenceCatalog,
+            timestamp
+          );
+      const repairedEvidenceExperiment =
+        rehydrateGeneratedExperimentAsset(
+          normalizeGeneratedEvidenceExperiment(
+            repairStrictSchemaIssue
+              ? undefined
+              : repairCompletion?.data?.evidenceExperiment,
+            providerValidationEvidenceCatalog,
+            timestamp
+          ),
+          evidenceCatalog,
+          timestamp
+        );
+      const repairedIssue = repairCompletionTruncated
+        ? structuredOutputLengthIssue(repairCompletion?.diagnostics)
+        : repairStrictSchemaIssue ||
+          structuredSeedSetShapeIssue(repairedSeedSet);
       completion = repairCompletion;
       seedSet = repairedSeedSet;
       generatedEvidenceExperiment = repairedEvidenceExperiment;
       structuredRepair.succeeded = !repairedIssue;
       structuredRepair.finalIssue = repairedIssue?.code || '';
+      structuredRepair.repairSchemaIssues =
+        repairStrictSchemaIssue?.issues || undefined;
       terminalStructuredIssue = repairedIssue;
     } else {
       structuredRepair.failure = 'repair_budget_unavailable';
@@ -9552,16 +9934,39 @@ async function runOpportunityTournamentCore({
       }));
     if (commercialCritic.verdict !== 'accepted' ||
         initialHypotheses.length < 1) {
+      const selectedRejectedHypothesis = criticOrderedHypotheses[0];
+      const selectedRejectedBottleneck = firstText(
+        asObject(selectedRejectedHypothesis?.revenuePath)
+          .supportingBottleneck
+      );
+      const retainedCriticHypotheses = criticOrderedHypotheses.map(
+        (hypothesis, index) => ({
+          ...hypothesis,
+          rank: index + 1,
+          status: 'critic_rejected'
+        })
+      );
+      const criticRejectedExperiment =
+        modelAuthoredRevenueEvidenceExperiment({
+          winner: retainedCriticHypotheses[0],
+          evidenceHash,
+          // The critic may accept or reject, but it may not author a missing
+          // business fact. The only experiment gap is the exact nonempty
+          // supporting bottleneck already authored in call 1.
+          missingEvidence: [selectedRejectedBottleneck]
+        }) || strategyGenerationRecoveryExperiment({
+          objective,
+          evidenceHash,
+          missingEvidence: ['structured_strategy_family_repair']
+        });
       return {
         status: 'skipped',
         summary:
           'The independent commercial critic did not accept a causal revenue finalist after comparing the bounded pair.',
         ...base,
-        hypotheses: initialHypotheses.map(publicHypothesis),
-        nextExperiment: nextExperimentFor([
-          'critic_rejected_commercial_motion'
-        ]),
-        searchSpace: searchSpaceFor(initialHypotheses),
+        hypotheses: retainedCriticHypotheses.map(publicHypothesis),
+        nextExperiment: criticRejectedExperiment,
+        searchSpace: searchSpaceFor(retainedCriticHypotheses),
         llm: llmTrace,
         usage,
         gate: researchOnlyGate(
@@ -9654,21 +10059,31 @@ async function runOpportunityTournamentCore({
     ? undefined
     : actionableHypotheses[0];
   if (!winningHypothesis) {
+    const retainedValidCriticHypotheses = requiresCommercialCritic
+      ? [...initialHypotheses, ...criticRejectedHypotheses]
+          .sort((left, right) => left.rank - right.rank)
+      : initialHypotheses;
+    const retainedAuthoredExperiment =
+      modelAuthoredRevenueEvidenceExperiment({
+        winner: initialHypotheses[0],
+        evidenceHash,
+        missingEvidence: [firstText(
+          asObject(initialHypotheses[0]?.revenuePath)
+            .supportingBottleneck
+        )]
+      }) || strategyGenerationRecoveryExperiment({
+        objective,
+        evidenceHash,
+        missingEvidence: ['structured_strategy_family_repair']
+      });
     return {
       status: 'skipped',
       summary: 'No source-backed revenue target grounded a retained strategy.',
       ...base,
-      hypotheses: initialHypotheses.map(publicHypothesis),
+      hypotheses: retainedValidCriticHypotheses.map(publicHypothesis),
       candidates: provisionalCandidates,
-      nextExperiment: nextExperimentFor([
-        ...Object.keys(expanded.revenueRejectionReasons),
-        initialHypotheses.some((hypothesis) =>
-          hypothesis.revenuePath?.acquisitionMode === 'inbound'
-        )
-          ? 'approved_inbound_asset'
-          : 'named_revenue_target'
-      ]),
-      searchSpace: searchSpaceFor(initialHypotheses),
+      nextExperiment: retainedAuthoredExperiment,
+      searchSpace: searchSpaceFor(retainedValidCriticHypotheses),
       llm: llmTrace,
       usage,
       gate: researchOnlyGate(
@@ -9788,6 +10203,7 @@ async function runOpportunityTournamentCore({
     candidates,
     evidenceCatalog,
     commercialCritic,
+    exactModelAuthoredProjection: currentAlgorithm,
     eligibleCount: expanded.eligibleCount,
     exploredCount: expanded.expandedCount
   });
@@ -12384,39 +12800,62 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
           ) === OPPORTUNITY_DISCOVERY_PLAN_CONTRACT
       }
     );
-    const fallbackExperiment =
-      !criticTechnicalFailure &&
-      winnerHypothesis?.provisionalOfferExperiment === true &&
-      criticAccepted
-        ? provisionalOfferValidationExperiment({
-            winner: winnerHypothesis,
-            acquisitionMechanism: firstText(
-              discoveryReviewChannel,
-              winnerHypothesis?.channel
-            ),
-            evidenceHash: firstText(
-              raw.evidenceHash,
-              stableHash(evidenceCatalog)
-            )
-          })
-        : revenueEvidenceExperiment({
+    const technicalFallbackCauses = criticTechnicalFailure
+      ? [firstText(critic.cause) ===
+          'critic_route_provenance_invalid'
+        ? 'commercial_critic_route_provenance_recovery'
+        : 'commercial_critic_contract_recovery']
+      : [];
+    const authoredMissingEvidence = firstText(
+      path.supportingBottleneck
+    );
+    const currentMeteredAlgorithm = firstText(
+      payload.algorithmVersion,
+      OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION
+    ) === OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION;
+    let fallbackExperiment = null;
+    if (currentMeteredAlgorithm && !criticTechnicalFailure && criticAccepted) {
+      fallbackExperiment = modelAuthoredRevenueEvidenceExperiment({
+        winner: winnerHypothesis,
+        evidenceHash: firstText(
+          raw.evidenceHash,
+          stableHash(evidenceCatalog)
+        ),
+        missingEvidence: [authoredMissingEvidence]
+      });
+    } else if (!currentMeteredAlgorithm) {
+      // Historical and explicitly legacy receipts retain their prior
+      // deterministic evidence-gap compatibility. Current metered v6 never
+      // composes user-facing business recommendations after its model calls.
+      fallbackExperiment = revenueEvidenceExperiment({
             objective,
             evidenceCatalog,
             evidenceHash: firstText(
               raw.evidenceHash,
               stableHash(evidenceCatalog)
             ),
-            missingEvidence: criticTechnicalFailure
-              ? ['commercial_critic_contract_recovery']
-              : requiredPositive
-                  .filter((field) => gate[field] !== true)
-                  .concat(criticAccepted
-                    ? []
-                    : ['critic_rejected_commercial_motion']),
+            missingEvidence: requiredPositive
+              .filter((field) => gate[field] !== true),
             referenceTime: validDate(args.now || new Date()).toISOString(),
             commercialContext,
             commercialEvidenceGraph: raw.commercialEvidenceGraph
           });
+    }
+    if (!fallbackExperiment) {
+      fallbackExperiment = strategyGenerationRecoveryExperiment({
+        objective,
+        evidenceHash: firstText(
+          raw.evidenceHash,
+          stableHash(evidenceCatalog)
+        ),
+        missingEvidence: criticTechnicalFailure
+          ? technicalFallbackCauses
+          : ['structured_strategy_family_repair']
+      });
+    }
+    const fallbackIsTechnical = /^strategy_generation_/i.test(
+      firstText(asObject(fallbackExperiment).kind)
+    );
     coherent = {
       ...raw,
       status: 'skipped',
@@ -12431,8 +12870,8 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
       runnerUp: null,
       nextExperiment: fallbackExperiment,
       gate: researchOnlyGate(
-        criticTechnicalFailure
-          ? 'commercial_critic_failed'
+        fallbackIsTechnical
+          ? 'technical_recovery'
           : 'needs_more_approved_evidence',
         gate.reason
       )
@@ -12503,65 +12942,63 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
   };
 }
 
-function provisionalOfferValidationExperiment({
+function modelAuthoredRevenueEvidenceExperiment({
   winner: winnerValue,
-  acquisitionMechanism,
-  evidenceHash
+  evidenceHash,
+  missingEvidence: missingEvidenceValue
 }) {
   const winner = asObject(winnerValue);
   const revenuePath = asObject(winner.revenuePath);
   const offer = firstText(winner.offer);
   const buyer = firstText(winner.buyerSegment);
+  const channel = firstText(winner.channel);
   const action = firstText(winner.action);
+  const proofPoint = firstText(winner.proofPoint);
   const destination = firstText(revenuePath.conversionDestination);
-  const paidConversion = firstText(
-    revenuePath.observableRevenueOutcome
+  const authoredIncomeOutcome = firstText(
+    revenuePath.incrementalIncomeOutcome
   );
   const attribution = firstText(revenuePath.attributionSignal);
   const stopCondition = firstText(revenuePath.stopCondition);
-  const knownFact = firstText(
-    winner.proofPoint,
-    asObject(winner.provenance).strategyFamilyLabel,
-    offer
+  const evidenceRefs = asArray(winner.evidenceRefs).filter((ref) =>
+    typeof ref === 'string' &&
+    /^observation:[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$/.test(ref)
   );
+  const missingEvidence = asArray(missingEvidenceValue).filter((value) =>
+    typeof value === 'string' && value.length > 0
+  );
+  if (!offer || !buyer || !channel || !action || !proofPoint ||
+      !destination || !authoredIncomeOutcome || !attribution ||
+      !stopCondition ||
+      evidenceRefs.length === 0 || missingEvidence.length === 0) {
+    return null;
+  }
   return {
     contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
     id: `experiment-${stableHash({
-      kind: 'provisional_offer_validation',
+      kind: 'model_authored_revenue_path_validation',
       evidenceHash,
       finalistId: winner.id
     }).slice(0, 24)}`,
     kind: 'revenue_path_grounding',
-    title: truncate(`Validate ${offer}`, 240),
-    knownFact: truncate(knownFact, 320),
-    buyer: truncate(buyer, 240),
-    paidOffer: truncate(offer, 240),
-    acquisitionMechanism: truncate(firstText(
-      acquisitionMechanism,
-      winner.channel
-    ), 240),
-    conversionDestination: truncate(destination, 240),
-    paidConversion: truncate(paidConversion, 240),
-    attributionSignal: truncate(attribution, 320),
-    // The authored current-route action already starts with an "After review"
-    // presentation preamble. Move that boundary into the canonical leading
-    // marker so downstream classifiers see the actual bounded revenue action,
-    // rather than misclassifying the repeated word "review" as passive
-    // observation. No target, channel, offer, or action prose is synthesized.
-    action: truncate(
-      `Review first: ${action.replace(/^After review(?: via)?\s+/i, '')}`,
-      700
-    ),
-    missingEvidence: [
-      'a user-confirmed current paid offer and price',
-      'a live conversion destination for that offer',
-      'an attributable paid outcome from the proposed buyer path'
-    ],
-    paidOutcome: truncate(paidConversion, 360),
-    successSignal: truncate(paidConversion, 360),
-    stopCondition: truncate(stopCondition, 360),
+    // Every user-facing commercial field is copied from the selected
+    // source-bound call-1 finalist. IDs, cause codes, and rerun policy remain
+    // structural protocol metadata; no local business prose is composed.
+    title: offer,
+    knownFact: proofPoint,
+    buyer,
+    paidOffer: offer,
+    acquisitionMechanism: channel,
+    conversionDestination: destination,
+    paidConversion: authoredIncomeOutcome,
+    attributionSignal: attribution,
+    action,
+    missingEvidence: structuredClone(missingEvidence),
+    paidOutcome: authoredIncomeOutcome,
+    successSignal: authoredIncomeOutcome,
+    stopCondition,
     asset: null,
-    evidenceRefs: compactStrings(winner.evidenceRefs).slice(0, 14),
+    evidenceRefs: structuredClone(evidenceRefs),
     requiresReview: true,
     rerunPolicy: {
       maxReruns: 1,
@@ -15795,14 +16232,31 @@ function openRouterDiagnosticsIndicateTruncation(value) {
   );
 }
 
+function safeOpenRouterFinishReason(value) {
+  const reason = firstText(value).toLowerCase();
+  return new Set([
+    'stop',
+    'length',
+    'error',
+    'content_filter',
+    'tool_calls',
+    'function_call',
+    'cancelled',
+    'canceled',
+    'max_tokens',
+    'max_output_tokens',
+    'refusal',
+    'planner_materialized'
+  ]).has(reason) ? reason : '';
+}
+
 function structuredOutputLengthIssue(value) {
   const diagnostics = asObject(value);
   return {
     code: 'output_length_truncated',
-    finishReason: truncate(firstText(diagnostics.finishReason), 64),
-    nativeFinishReason: truncate(
-      firstText(diagnostics.nativeFinishReason),
-      64
+    finishReason: safeOpenRouterFinishReason(diagnostics.finishReason),
+    nativeFinishReason: safeOpenRouterFinishReason(
+      diagnostics.nativeFinishReason
     )
   };
 }
@@ -16058,6 +16512,73 @@ function providerPromptTokenCanary(preflightValue, usageValue) {
       ? undefined
       : reportedPromptTokens <= promptTokenCeiling
   });
+}
+
+function exactCompletedOpenRouterUsageIssue(
+  usageValue,
+  preflightValue,
+  outputTokenCeilingValue
+) {
+  const usage = asObject(usageValue);
+  const exactToken = (snakeName, camelName) => {
+    const snakePresent = Object.prototype.hasOwnProperty.call(
+      usage,
+      snakeName
+    );
+    const camelPresent = Object.prototype.hasOwnProperty.call(
+      usage,
+      camelName
+    );
+    const snake = usage[snakeName];
+    const camel = usage[camelName];
+    if (snakePresent && camelPresent && snake !== camel) return undefined;
+    const value = snakePresent ? snake : camel;
+    return typeof value === 'number' && Number.isInteger(value) && value > 0
+      ? value
+      : undefined;
+  };
+  const promptTokens = exactToken('prompt_tokens', 'promptTokens');
+  const completionTokens = exactToken(
+    'completion_tokens',
+    'completionTokens'
+  );
+  const totalTokens = exactToken('total_tokens', 'totalTokens');
+  if (promptTokens === undefined || completionTokens === undefined ||
+      totalTokens === undefined) {
+    return 'usage_tokens_missing_or_not_exact_positive_integers';
+  }
+  if (totalTokens !== promptTokens + completionTokens) {
+    return 'usage_total_tokens_inconsistent';
+  }
+  const promptTokenCeiling = asObject(preflightValue).promptTokenCeiling;
+  if (!Number.isInteger(promptTokenCeiling) || promptTokenCeiling < 1 ||
+      promptTokens > promptTokenCeiling) {
+    return 'usage_prompt_tokens_exceed_ceiling';
+  }
+  if (!Number.isInteger(outputTokenCeilingValue) ||
+      outputTokenCeilingValue < 1 ||
+      completionTokens > outputTokenCeilingValue) {
+    return 'usage_completion_tokens_exceed_ceiling';
+  }
+  if (typeof usage.cost !== 'number' || !Number.isFinite(usage.cost) ||
+      usage.cost < 0) {
+    return 'usage_cost_missing_or_not_exact_number';
+  }
+  return '';
+}
+
+function completedStructuredFinishIssue(completionValue) {
+  const diagnostics = asObject(asObject(completionValue).diagnostics);
+  if (diagnostics.finishReason !== 'stop') {
+    return diagnostics.finishReason === undefined
+      ? 'finish_reason_missing'
+      : 'finish_reason_not_stop';
+  }
+  if (diagnostics.nativeFinishReason !== undefined &&
+      diagnostics.nativeFinishReason !== 'stop') {
+    return 'native_finish_reason_not_stop';
+  }
+  return '';
 }
 
 function tournamentStructuredResponseFormat(
@@ -16902,7 +17423,13 @@ function commercialCriticResponseFormat(finalistsValue) {
           'unsupported_evidence'
         ]
       },
-      reason: { type: 'string' }
+      reason: {
+        type: 'string',
+        minLength: 1,
+        maxLength:
+          MAX_COMMERCIAL_CRITIC_COMPARISON_REASON_CODEPOINTS,
+        pattern: '^\\S+(?: \\S+)*$'
+      }
     },
     required: [
       'finalistId',
@@ -16953,7 +17480,12 @@ function commercialCriticResponseFormat(finalistsValue) {
             minItems: finalistIDs.length,
             maxItems: finalistIDs.length
           },
-          reason: { type: 'string' }
+          reason: {
+            type: 'string',
+            minLength: 1,
+            maxLength: MAX_COMMERCIAL_CRITIC_REASON_CODEPOINTS,
+            pattern: '^\\S+(?: \\S+)*$'
+          }
         },
         required: [
           'criticContract',
@@ -17241,11 +17773,14 @@ function commercialCriticNearestCashDecisivePriority(
     ?.[0] || 'an exact nearest-cash tie resolved by critic judgment';
 }
 
-function normalizeCommercialCritic(
+function normalizeSchemaValidatedCommercialCritic(
   value,
   finalistsValue,
   commercialEvidenceGraphValue = {}
 ) {
+  // The caller must apply byte/token/cost and route gates followed by exact
+  // AJV before invoking this semantic projection. Keeping normalization free
+  // of schema work makes that authority order auditable.
   const raw = asObject(value);
   const finalists = asArray(finalistsValue).map(asObject);
   const finalistByID = new Map(
@@ -17330,7 +17865,10 @@ function normalizeCommercialCritic(
           ? 'accept'
           : 'reject',
         reasonCode: firstText(item.reasonCode),
-        reason: truncate(firstText(item.reason), 280),
+        // Exact AJV has already proved canonical nonempty whitespace and the
+        // byte-authority bound. Preserve the critic's authored reason exactly;
+        // never trim, collapse, or recompose model text after acceptance.
+        reason: item.reason,
         incrementalRevenue: firstText(item.incrementalRevenue),
         evidenceStrength: firstText(item.evidenceStrength),
         reachability: firstText(item.reachability),
@@ -17374,7 +17912,7 @@ function normalizeCommercialCritic(
     selectedOrdering: ordering,
     selectedFinalistId: firstText(raw.selectedFinalistId),
     comparisons,
-    reason: truncate(firstText(raw.reason), 360)
+    reason: raw.reason
   };
 }
 
@@ -17439,7 +17977,7 @@ async function runCommercialCritic({
         ))
       }
     },
-    timeoutMs: 60_000
+    timeoutMs: MAX_COMMERCIAL_CRITIC_TIMEOUT_MS
   };
   const preflight = providerCallSpendPreflight(request, budget, {
     maxRequestBodyByteCount: MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES,
@@ -17495,17 +18033,55 @@ async function runCommercialCritic({
   try {
     completion = await completeJSON(request);
   } catch (error) {
+    const failureCode = openRouterFailureCode(error);
+    const incomplete =
+      failureCode === 'openrouter_truncated_structured_output';
     const metadata = openRouterMetadata({
       model,
       purpose: 'opportunity_tournament_commercial_critic',
       structuredOutputContract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
-      status: 'failed',
+      // A provider-declared output-limit termination is a completed-but-
+      // incomplete model attempt. Keep that distinct from transport/provider
+      // failure while still rejecting the critic locally.
+      status: incomplete ? 'incomplete' : 'failed',
       usage: error?.openRouterUsage,
       generationId: error?.openRouterGenerationId,
       diagnostics: error?.openRouterDiagnostics,
       promptHash,
-      error: openRouterFailureCode(error)
+      error: failureCode
     });
+    if (incomplete) {
+      return {
+        status: 'failed',
+        cause: 'commercial_critic_contract_recovery',
+        request,
+        preflight,
+        metadata,
+        trace: {
+          contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+          contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+          attempted: true,
+          valid: false,
+          verdict: 'rejected',
+          acceptedFamilyIds: [],
+          acceptedFinalistIds: [],
+          selectedOrdering: [],
+          rejectedFinalistCount:
+            commercialCriticFinalists(finalists).length,
+          reason:
+            'The critic output ended at the provider token limit and was not accepted.',
+          cause: 'critic_finish_reason_invalid',
+          finishIssue: 'finish_reason_not_stop',
+          routeProvenanceValidated: false,
+          exactSchemaValidated: false,
+          promptTokenCanary: providerPromptTokenCanary(
+            preflight,
+            metadata.openRouterUsage
+          ),
+          preflight
+        }
+      };
+    }
     return {
       status: 'failed',
       cause: 'commercial_critic_provider_recovery',
@@ -17551,17 +18127,77 @@ async function runCommercialCritic({
     preflight,
     metadata.openRouterUsage
   );
-  const normalized = normalizeCommercialCritic(
-    completion?.data,
-    finalists,
-    commercialEvidenceGraph
+  const usageIssue = exactCompletedOpenRouterUsageIssue(
+    completion?.usage,
+    preflight,
+    request.maxTokens
   );
-  const valid = !truncated &&
-    promptTokenCanary.withinCeiling !== false &&
-    normalized.valid;
+  const finishIssue = completedStructuredFinishIssue(completion);
+  let parsedResponseByteCount;
+  try {
+    parsedResponseByteCount = Buffer.byteLength(
+      JSON.stringify(completion?.data ?? null),
+      'utf8'
+    );
+  } catch {
+    parsedResponseByteCount = MAX_COMMERCIAL_CRITIC_RESPONSE_BYTES + 1;
+  }
+  const responseWithinByteCeiling =
+    parsedResponseByteCount <= MAX_COMMERCIAL_CRITIC_RESPONSE_BYTES;
+  const reportedCostMicros = typeof completion?.usage?.cost === 'number' &&
+      Number.isFinite(completion.usage.cost) && completion.usage.cost >= 0
+    ? Math.ceil(completion.usage.cost * 1_000_000)
+    : undefined;
+  const reportedCostExceeded = reportedCostMicros !== undefined &&
+    (reportedCostMicros > preflight.callSpendCeilingMicros ||
+     reportedCostMicros > remainingSpendMicros ||
+     usage.reportedCostMicros + reportedCostMicros >
+       budget.maxLLMSpendMicros);
+  const preRouteBoundaryPassed = !truncated &&
+    responseWithinByteCeiling &&
+    !usageIssue &&
+    !finishIssue &&
+    !reportedCostExceeded;
+  const routeProvenanceIssue = preRouteBoundaryPassed
+    ? completedOpenRouterRouteProvenanceIssue(completion, [model])
+    : '';
+  const routeProvenanceValidated = preRouteBoundaryPassed
+    ? !routeProvenanceIssue
+    : false;
+  let exactSchemaValid = false;
+  if (preRouteBoundaryPassed && !routeProvenanceIssue) {
+    const validate = exactLocalStructuredOutputValidator(
+      request.responseFormat
+    );
+    exactSchemaValid = validate(completion?.data);
+  }
+  const normalized = exactSchemaValid
+    ? normalizeSchemaValidatedCommercialCritic(
+        completion?.data,
+        finalists,
+        commercialEvidenceGraph
+      )
+    : {
+        valid: false,
+        acceptedFamilyIds: [],
+        acceptedFinalistIds: [],
+        selectedOrdering: [],
+        comparisons: [],
+        verdict: 'rejected',
+        reason:
+          'The critic response did not satisfy the exact comparison contract.'
+      };
+  const valid = preRouteBoundaryPassed &&
+    !routeProvenanceIssue && exactSchemaValid && normalized.valid;
   return {
     status: valid ? 'completed' : 'failed',
-    cause: valid ? '' : 'commercial_critic_contract_recovery',
+    cause: valid
+      ? ''
+      : reportedCostExceeded
+        ? 'commercial_critic_budget_recovery'
+        : routeProvenanceIssue
+        ? 'commercial_critic_route_provenance_recovery'
+        : 'commercial_critic_contract_recovery',
     request,
     preflight,
     metadata,
@@ -17590,13 +18226,157 @@ async function runCommercialCritic({
         ? ''
         : truncated
           ? 'critic_output_truncated'
-          : promptTokenCanary.withinCeiling === false
-            ? 'critic_prompt_token_ceiling_exceeded'
-            : 'critic_contract_invalid',
+          : !responseWithinByteCeiling
+              ? 'critic_response_byte_ceiling_exceeded'
+              : usageIssue
+                ? 'critic_provider_usage_invalid'
+                : finishIssue
+                  ? 'critic_finish_reason_invalid'
+                : reportedCostExceeded
+                  ? 'critic_reported_budget_exceeded'
+              : routeProvenanceIssue
+                ? 'critic_route_provenance_invalid'
+                : !exactSchemaValid
+                  ? 'critic_strict_schema_mismatch'
+                : 'critic_contract_invalid',
+      usageIssue: usageIssue || undefined,
+      finishIssue: finishIssue || undefined,
+      routeProvenanceIssue: routeProvenanceIssue || undefined,
+      routeProvenanceValidated,
+      exactSchemaValidated: exactSchemaValid,
+      parsedResponseByteCount,
+      parsedResponseByteCeiling:
+        MAX_COMMERCIAL_CRITIC_RESPONSE_BYTES,
       promptTokenCanary,
       preflight
     }
   };
+}
+
+// Every accepted completion in the current two-stage planner/critic workflow
+// must prove which OpenRouter endpoint won and preserve the complete ordered
+// route. A direct attempt may be
+// reconstructed only from one safely evidenced selected endpoint. A fallback
+// route must report every failed prefix and its final successful attempt.
+// Provider HTTP completion and usage remain accounted even when this local
+// provenance contract fails.
+function completedOpenRouterRouteProvenanceIssue(
+  completionValue,
+  allowedModelsValue = []
+) {
+  const completion = asObject(completionValue);
+  const diagnostics = asObject(completion.diagnostics);
+  const httpStatus = diagnostics.httpStatus;
+  if (!Number.isInteger(httpStatus) ||
+      httpStatus < 200 || httpStatus >= 300) {
+    return 'completed_http_status_not_2xx';
+  }
+  const selectedProvider = firstText(
+    diagnostics.routerSelectedProvider
+  );
+  const selectedModel = firstText(
+    diagnostics.routerSelectedModel
+  ).toLowerCase();
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(selectedProvider)) {
+    return 'selected_provider_missing';
+  }
+  if (!/^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(selectedModel)) {
+    return 'selected_model_missing';
+  }
+  const allowedModels = new Set(compactStrings(allowedModelsValue)
+    .map((value) => value.toLowerCase())
+    .flatMap((requestedModel) => [
+      ...(REVIEWED_OPENROUTER_MODEL_EQUIVALENTS.get(requestedModel) ||
+        new Set([requestedModel]))
+    ]));
+  if (allowedModels.size === 0 || !allowedModels.has(selectedModel)) {
+    return 'selected_model_not_requested';
+  }
+
+  const attemptCount = diagnostics.routerAttempt;
+  if (!Number.isInteger(attemptCount) ||
+      attemptCount < 1 || attemptCount > 64) {
+    return 'attempt_count_invalid';
+  }
+  const rawAttempts = diagnostics.routerAttempts;
+  if (!Array.isArray(rawAttempts) || rawAttempts.length !== attemptCount) {
+    return 'attempt_sequence_incomplete';
+  }
+  const statuses = diagnostics.routerAttemptStatuses;
+  if (!Array.isArray(statuses) || statuses.length !== attemptCount ||
+      statuses.some((status, index) =>
+        !Number.isInteger(status) ||
+        status < 100 || status > 599 ||
+        status !== asObject(rawAttempts[index]).status
+      )) {
+    return 'attempt_status_sequence_mismatch';
+  }
+  const sequenceSource = firstText(
+    diagnostics.routerAttemptSequenceSource
+  );
+  if (attemptCount === 1) {
+    if (!['reported', 'selected_endpoint_reconstructed'].includes(
+      sequenceSource
+    )) {
+      return 'direct_attempt_source_missing';
+    }
+    if (sequenceSource === 'selected_endpoint_reconstructed' &&
+        diagnostics.routerSelectedEndpointEvidenced !== true) {
+      return 'direct_reconstruction_not_endpoint_evidenced';
+    }
+    if (diagnostics.routerFallbackUsed === true) {
+      return 'direct_attempt_marked_as_fallback';
+    }
+  } else {
+    if (sequenceSource !== 'reported') {
+      return 'fallback_attempt_sequence_not_reported';
+    }
+    if (diagnostics.routerFallbackUsed !== true) {
+      return 'fallback_marker_missing';
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(
+    diagnostics,
+    'routerCandidateCount'
+  )) {
+    const candidateCount = diagnostics.routerCandidateCount;
+    if (!Number.isInteger(candidateCount) || candidateCount < attemptCount) {
+      return 'candidate_count_below_attempt_count';
+    }
+  }
+  const attempts = rawAttempts.map(asObject);
+  for (const [index, attempt] of attempts.entries()) {
+    const provider = firstText(attempt.provider);
+    const model = firstText(attempt.model).toLowerCase();
+    if (!/^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)) {
+      return 'attempt_provider_missing';
+    }
+    if (!/^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(model)) {
+      return 'attempt_model_missing';
+    }
+    if (!allowedModels.has(model)) {
+      return 'attempt_model_not_requested';
+    }
+    const status = attempt.status;
+    if (!Number.isInteger(status) || status < 100 || status > 599) {
+      return 'attempt_status_sequence_mismatch';
+    }
+    const finalAttempt = index === attempts.length - 1;
+    if (finalAttempt ? status < 200 || status >= 300
+      : status >= 200 && status < 300) {
+      return finalAttempt
+        ? 'final_attempt_not_2xx'
+        : 'nonfinal_attempt_is_2xx';
+    }
+  }
+  const finalAttempt = attempts[attempts.length - 1];
+  if (firstText(finalAttempt.provider) !== selectedProvider) {
+    return 'selected_provider_not_final_attempt';
+  }
+  if (firstText(finalAttempt.model).toLowerCase() !== selectedModel) {
+    return 'selected_model_not_final_attempt';
+  }
+  return '';
 }
 
 function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
@@ -18706,6 +19486,7 @@ function selectWinner({
   candidates,
   evidenceCatalog,
   commercialCritic,
+  exactModelAuthoredProjection = false,
   eligibleCount,
   exploredCount
 }) {
@@ -18745,6 +19526,7 @@ function selectWinner({
     candidate: selectedCandidate,
     evidenceCatalog,
     commercialCritic,
+    exactModelAuthoredProjection,
     eligibleCount,
     exploredCount
   });
@@ -18756,6 +19538,7 @@ function selectWinner({
       candidate: normalizedCandidates.find((candidate) => candidate.hypothesisId === runnerHypothesis.id),
       evidenceCatalog,
       commercialCritic,
+      exactModelAuthoredProjection,
       eligibleCount,
       exploredCount
     })
@@ -18777,6 +19560,7 @@ function recommendationFor({
   candidate,
   evidenceCatalog,
   commercialCritic,
+  exactModelAuthoredProjection = false,
   eligibleCount,
   exploredCount
 }) {
@@ -18813,17 +19597,31 @@ function recommendationFor({
   const candidateCopyLabel = candidateIsContextAnchor ? '' : candidateLabel;
   const timingLabel = firstText(tuple?.timingTriggers?.label);
   const timingSupport = firstText(tuple?.timingTriggers?.supportPhrase);
-  const whyNow = timingLabel && timingSupport
+  const criticComparison = asArray(
+    asObject(commercialCritic).comparisons
+  ).map(asObject).find((comparison) =>
+    firstText(comparison.finalistId) === firstText(hypothesis.id)
+  );
+  // A current-v6 recommendation is a selection-only projection of the two
+  // completed model receipts.  The finalist supplies offer/action/proof/timing
+  // text and its critic comparison supplies the bounded uncertainty/reason.
+  // Copy those fields byte-for-byte; only historical algorithms retain the
+  // presentation templates below.
+  const whyNow = exactModelAuthoredProjection
+    ? hypothesis.timingTrigger
+    : timingLabel && timingSupport
     ? timingIsVerificationStep(timingLabel)
       ? `Timing is unverified; ${timingLabel}. Source relevance: ${timingSupport}`
       : `${timingLabel} Source support: ${timingSupport}`
     : 'The timing remains a hypothesis and should be verified before acting.';
-  const uncertainty = compactStrings([
-    tuple?.buyerSegments?.uncertainty,
-    tuple?.timingTriggers?.uncertainty,
-    tuple?.channels?.uncertainty,
-    'No real-world outcome has been observed yet; this is a review-first research recommendation.'
-  ]).slice(0, 2).join(' ');
+  const uncertainty = exactModelAuthoredProjection
+    ? criticComparison?.uncertainty
+    : compactStrings([
+        tuple?.buyerSegments?.uncertainty,
+        tuple?.timingTriggers?.uncertainty,
+        tuple?.channels?.uncertainty,
+        'No real-world outcome has been observed yet; this is a review-first research recommendation.'
+      ]).slice(0, 2).join(' ');
   const actionNamesCandidate = opportunityDiscoveryUnicodeIdentityContains(
     hypothesis.action,
     candidateCopyLabel
@@ -18836,12 +19634,16 @@ function recommendationFor({
     candidateCopyLabel && !actionNamesCandidate
       ? `${hypothesis.action} for ${candidateCopyLabel} through ${hypothesis.channel}; prepare only the singular, reviewable next step.`
       : `${hypothesis.action} through ${hypothesis.channel}; prepare only the singular, reviewable next step.`;
-  const action = currentRevenuePath &&
+  const action = exactModelAuthoredProjection
+    ? hypothesis.action
+    : currentRevenuePath &&
       unicodeRuneLength(hypothesis.action) <=
         TARGET_BINDING_LIMITS.boundActionLabelMaxChars
     ? firstText(hypothesis.action)
     : truncate(explicitApprovalBoundedAction(unboundedAction), 600);
-  const title = currentRevenuePath ? truncateUnicodeRunes(
+  const title = exactModelAuthoredProjection
+    ? hypothesis.offer
+    : currentRevenuePath ? truncateUnicodeRunes(
     candidateCopyLabel && !offerNamesCandidate
       ? `${hypothesis.offer} with ${candidateCopyLabel}`
       : hypothesis.offer,
@@ -18866,7 +19668,9 @@ function recommendationFor({
     `Incremental-income target: ${hypothesis.revenuePath.incrementalIncomeOutcome} ` +
     `Observable proof: ${hypothesis.revenuePath.observableRevenueOutcome} ` +
     `Attribution: ${hypothesis.revenuePath.attributionSignal}.`;
-  const why = candidateLabel
+  const why = exactModelAuthoredProjection
+    ? hypothesis.proofPoint
+    : candidateLabel
     ? `${revenueWhy} ${candidateLabel} is the ${candidateIsOwnedInboundAsset ? 'approved owned inbound execution asset' : candidateIsContextAnchor ? 'exact named evidence anchor' : 'exact named candidate'} attached to this strategy. ${grounding} It led ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations on objective fit, evidence strength, buyer authority, timing, incremental expected value, effort, cost, risk, and uncertainty.`
     : `${revenueWhy} ${grounding} This was one of ${eligibleCount.toLocaleString('en-US')} coherent, evidence-grounded strategies retained from ${exploredCount.toLocaleString('en-US')} evaluated combinations.`;
   const comparedRunnerUp = runnerUp || compactStrings(
@@ -18874,19 +19678,21 @@ function recommendationFor({
   ).map((id) => ({ id })).find((item) =>
     item.id !== firstText(hypothesis.id)
   );
-  const whyOverRunnerUp = comparedRunnerUp
-    ? comparisonReason(
-        hypothesis,
-        comparedRunnerUp,
-        commercialCritic,
-        objective.currency
-      )
-    : '';
-  const criticComparison = asArray(
-    asObject(commercialCritic).comparisons
-  ).map(asObject).find((comparison) =>
-    firstText(comparison.finalistId) === firstText(hypothesis.id)
-  );
+  const whyOverRunnerUp = exactModelAuthoredProjection
+    ? asObject(commercialCritic).valid === true &&
+        firstText(asObject(commercialCritic).verdict) === 'accepted' &&
+        compactStrings(asObject(commercialCritic).selectedOrdering)[0] ===
+          firstText(hypothesis.id)
+      ? criticComparison?.reason
+      : ''
+    : comparedRunnerUp
+      ? comparisonReason(
+          hypothesis,
+          comparedRunnerUp,
+          commercialCritic,
+          objective.currency
+        )
+      : '';
   const paidOutcomeProbability = criticComparison?.paidOutcomeProbability;
   const expectedGrossIncomeMicros =
     criticComparison?.expectedGrossIncomeMicros;
@@ -21103,6 +21909,10 @@ function strategyGenerationRecoveryExperiment({
 }) {
   const missing = compactStrings(missingEvidence);
   const recoveryCause = [
+    'commercial_discovery_planner_route_provenance_recovery',
+    'commercial_discovery_planner_provider_usage_recovery',
+    'commercial_discovery_planner_completion_recovery',
+    'strategy_generation_route_provenance_recovery',
     'read_only_commercial_discovery_health',
     'commercial_discovery_exact_target_resolution',
     'commercial_discovery_target_source_binding',
@@ -21116,10 +21926,55 @@ function strategyGenerationRecoveryExperiment({
     'commercial_critic_prompt_recovery',
     'commercial_critic_budget_recovery',
     'commercial_critic_provider_recovery',
+    'commercial_critic_route_provenance_recovery',
     'commercial_critic_contract_recovery'
   ].find((cause) => missing.includes(cause));
   if (!recoveryCause) return null;
   const recoveryByCause = {
+    commercial_discovery_planner_completion_recovery: {
+      kind: 'commercial_discovery_planner_completion_recovery',
+      title:
+        'Retry once after the discovery planner completes its structured response',
+      action:
+        'Preserve the objective and approved evidence and make no business, outreach, publishing, or provider-write changes. Verify that one discovery-planner fixture ends with the exact successful stop finish reason and no incompatible native finish reason, then retry the same bounded planner exactly once.',
+      stopCondition:
+        'Stop after 1 non-billable planner completion fixture and 1 linked retry; if the structured response still ends incompletely, preserve the bounded diagnostic and do not spend again automatically.',
+      trigger:
+        'Rerun once only after the planner completion fixture proves an exact successful structured-output stop; new business evidence is not required.'
+    },
+    commercial_discovery_planner_provider_usage_recovery: {
+      kind: 'commercial_discovery_planner_provider_usage_recovery',
+      title:
+        'Retry once after the discovery-planner usage receipt is exact',
+      action:
+        'Preserve the objective and approved evidence and make no business, outreach, publishing, or provider-write changes. Verify that one completed discovery-planner fixture returns exact numeric prompt, completion, total-token, and cost fields whose totals and request ceilings agree, then retry the same bounded planner exactly once.',
+      stopCondition:
+        'Stop after 1 non-billable planner usage-receipt fixture check and 1 linked retry; if exact usage remains missing or inconsistent, preserve the bounded diagnostic and do not spend again automatically.',
+      trigger:
+        'Rerun once only after the planner usage fixture proves exact internally consistent usage within the serialized request, output, and spend ceilings; new business evidence is not required.'
+    },
+    commercial_discovery_planner_route_provenance_recovery: {
+      kind: 'commercial_discovery_planner_route_provenance_recovery',
+      title:
+        'Retry once after the discovery-planner route receipt is complete',
+      action:
+        'Preserve the objective and approved evidence and make no business, evidence, outreach, publishing, or provider-write changes. Verify that one OpenRouter discovery-planner completion records the selected provider and model plus its complete ordered attempt sequence, with every nonfinal attempt non-2xx and the final matching attempt 2xx; reconstruct a direct attempt only from one safely selected endpoint. Then retry the same bounded planner exactly once.',
+      stopCondition:
+        'Stop after 1 non-billable planner route-receipt fixture check and 1 linked retry; if route provenance is still incomplete or inconsistent, preserve the exact bounded diagnostic and do not spend again automatically.',
+      trigger:
+        'Rerun once only after the planner route fixture proves the selected provider/model and complete ordered attempt sequence; new business evidence is not required.'
+    },
+    strategy_generation_route_provenance_recovery: {
+      kind: 'strategy_generation_route_provenance_recovery',
+      title:
+        'Retry once after the strategy-generator route receipt is complete',
+      action:
+        'Preserve the objective and approved evidence and make no business, outreach, publishing, or provider-write changes. Verify that every completed OpenRouter strategy-generation or structured-repair call records the reviewed requested model (or its exact reviewed immutable permaslug), selected provider, and complete ordered attempt sequence, then retry the same bounded tournament exactly once.',
+      stopCondition:
+        'Stop after 1 non-billable generator route-receipt fixture check and 1 linked retry; if route provenance is still incomplete or inconsistent, preserve the exact bounded diagnostic and do not spend again automatically.',
+      trigger:
+        'Rerun once only after the generator and repair route fixtures prove their selected provider/model and complete ordered attempt sequences; new business evidence is not required.'
+    },
     read_only_commercial_discovery_health: {
       kind: 'commercial_discovery_provider_recovery',
       title: 'Retry once after read-only commercial discovery recovers',
@@ -21257,6 +22112,17 @@ function strategyGenerationRecoveryExperiment({
         'Stop after 1 critic-provider recovery retry; if it fails again, surface the technical failure.',
       trigger:
         'Rerun once only after the critic provider route supports the exact strict contract.'
+    },
+    commercial_critic_route_provenance_recovery: {
+      kind: 'strategy_generation_critic_route_provenance_recovery',
+      title:
+        'Retry once after the commercial critic route receipt is complete',
+      action:
+        'Preserve the generated families, objective, and approved evidence and make no business, outreach, publishing, or provider-write changes. Verify that one buffered OpenRouter critic completion records the selected provider and model plus its complete ordered attempt sequence, with every nonfinal attempt non-2xx and the final matching attempt 2xx; reconstruct a direct attempt only from one safely selected endpoint. Then retry the same bounded tournament exactly once.',
+      stopCondition:
+        'Stop after 1 non-billable critic route-receipt fixture check and 1 linked retry; if route provenance is still incomplete or inconsistent, preserve the exact diagnostic and do not spend again automatically.',
+      trigger:
+        'Rerun once only after the buffered critic route fixture proves the selected provider/model and complete ordered attempt sequence; new business evidence is not required.'
     },
     commercial_critic_contract_recovery: {
       kind: 'strategy_generation_critic_contract_recovery',
@@ -22832,6 +23698,10 @@ function revenueAdvancingAction(value) {
     );
 }
 
+function linkedTournamentRecoveryInstruction(value) {
+  return /\b(?:rerun|retry)\b/i.test(firstText(value));
+}
+
 function qualifiedReferralCashAction(value) {
   const text = primaryActionSemanticText(value);
   if (!text || negatedPrimaryRevenueAction(text) ||
@@ -22924,6 +23794,36 @@ function operationOnlyAction(value) {
       text
     );
   return !namesPaidCommitment && !namesBoundedAcquisitionStep;
+}
+
+function factualMissingRevenueEvidence(value) {
+  const raw = typeof value === 'string' ? value : '';
+  if (!raw || !opportunityDiscoveryCanonicalSchemaWhitespace(raw)) {
+    return false;
+  }
+  const text = comparable(raw);
+  const namesUnknownState =
+    /\b(?:no|not yet|unknown|unobserved|unproven|missing|lacks?|has not|have not|without)\b/.test(
+      text
+    );
+  const namesCausalRevenueFact =
+    /\b(?:attribut(?:e|ed|ion)|bookings?|buyers?|contracts?|conversions?|demand|income|inquiries|payments?|purchases?|referrals?|replies|revenue|sales?)\b/.test(
+      text
+    );
+  const namesEvidenceState =
+    /\b(?:confirmed|evidence|known|measured|observ(?:ed|ation)|outcomes?|proof|records?|results?|signals?|unknown|unobserved|unproven|verified)\b/.test(
+      text
+    );
+  const namesInstructionOrOperation =
+    /^(?:analy[sz]e|attach|audit|build|check|collect|configure|contact|create|document|find|identify|map|measure|monitor|prepare|publish|record|research|review|run|send|set up|submit|test|track|verify)\b/.test(
+      text
+    ) ||
+    /\b(?:must|need to|please|should)\b/.test(text) ||
+    /\b(?:prepare|create|build|set up|configure) (?:an? |the )?(?:artifact|dashboard|document|process|report|tracker|tracking|workflow)\b/.test(
+      text
+    );
+  return namesUnknownState && namesCausalRevenueFact &&
+    namesEvidenceState && !namesInstructionOrOperation;
 }
 
 function viablePrimaryRevenueAction(value) {
@@ -24508,11 +25408,13 @@ function normalizeOpenRouterResponseDiagnostics(value) {
   const timeoutPhase = firstText(
     diagnostics.timeoutPhase
   ).toLowerCase();
+  const routerAttemptSequenceSource = firstText(
+    diagnostics.routerAttemptSequenceSource
+  ).toLowerCase();
   return compact({
-    finishReason: truncate(firstText(diagnostics.finishReason), 64),
-    nativeFinishReason: truncate(
-      firstText(diagnostics.nativeFinishReason),
-      64
+    finishReason: safeOpenRouterFinishReason(diagnostics.finishReason),
+    nativeFinishReason: safeOpenRouterFinishReason(
+      diagnostics.nativeFinishReason
     ),
     contentByteCount: nonNegativeInteger(diagnostics.contentByteCount),
     contentSha256: /^[a-f0-9]{64}$/.test(contentSha256)
@@ -24548,28 +25450,43 @@ function normalizeOpenRouterResponseDiagnostics(value) {
     )
       ? providerErrorCode
       : undefined,
-    httpStatus: Number.isInteger(Number(diagnostics.httpStatus)) &&
-        Number(diagnostics.httpStatus) >= 100 &&
-        Number(diagnostics.httpStatus) <= 599
-      ? Number(diagnostics.httpStatus)
+    httpStatus: Number.isInteger(diagnostics.httpStatus) &&
+        diagnostics.httpStatus >= 100 &&
+        diagnostics.httpStatus <= 599
+      ? diagnostics.httpStatus
       : undefined,
     routerStrategy: /^[a-z][a-z0-9_-]{0,31}$/.test(
       firstText(diagnostics.routerStrategy).toLowerCase()
     )
       ? firstText(diagnostics.routerStrategy).toLowerCase()
       : undefined,
-    routerAttempt: nonNegativeInteger(diagnostics.routerAttempt),
-    routerCandidateCount: nonNegativeInteger(
-      diagnostics.routerCandidateCount
-    ),
+    routerAttempt: Number.isInteger(diagnostics.routerAttempt) &&
+        diagnostics.routerAttempt >= 1 && diagnostics.routerAttempt <= 64
+      ? diagnostics.routerAttempt
+      : undefined,
+    routerCandidateCount:
+      Number.isInteger(diagnostics.routerCandidateCount) &&
+        diagnostics.routerCandidateCount >= 1 &&
+        diagnostics.routerCandidateCount <= 64
+        ? diagnostics.routerCandidateCount
+        : undefined,
     routerAttemptStatuses: asArray(diagnostics.routerAttemptStatuses)
       .slice(0, 64)
-      .map((status) => Number(status))
       .filter((status) => Number.isInteger(status) &&
         status >= 100 && status <= 599),
     routerAttempts: normalizeOpenRouterRouterAttempts(
       diagnostics.routerAttempts
     ),
+    routerAttemptSequenceSource: [
+      'reported',
+      'selected_endpoint_reconstructed'
+    ].includes(routerAttemptSequenceSource)
+      ? routerAttemptSequenceSource
+      : undefined,
+    routerSelectedEndpointEvidenced:
+      diagnostics.routerSelectedEndpointEvidenced === true
+        ? true
+        : undefined,
     routerFallbackUsed:
       diagnostics.routerFallbackUsed === true ? true : undefined,
     routerSelectedProvider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(
@@ -24629,7 +25546,7 @@ function normalizeOpenRouterRouterAttempts(value) {
     const attempt = asObject(raw);
     const provider = firstText(attempt.provider);
     const model = firstText(attempt.model).toLowerCase();
-    const status = Number(attempt.status);
+    const status = attempt.status;
     if (!Number.isInteger(status) || status < 100 || status > 599) {
       return undefined;
     }
@@ -24746,13 +25663,13 @@ function aggregateUsage(entries, budget) {
     completionTokens: Math.round(completionTokens),
     totalTokens: Math.round(totalTokens),
     reportedCostUsd: roundMoney(reportedCostUsd),
-    reportedCostMicros: Math.round(reportedCostUsd * 1_000_000),
+    reportedCostMicros: Math.ceil(reportedCostUsd * 1_000_000),
     costReporting: costs.length === entries.length
       ? 'complete'
       : costs.length > 0 ? 'partial' : 'unavailable',
     maxLLMSpendMicros: budget.maxLLMSpendMicros,
     providerMaxPrice: { ...budget.providerMaxPrice },
-    withinBudget: costs.length === 0 || Math.round(reportedCostUsd * 1_000_000) <= budget.maxLLMSpendMicros,
+    withinBudget: costs.length === 0 || Math.ceil(reportedCostUsd * 1_000_000) <= budget.maxLLMSpendMicros,
     maxOutputTokens: budget.maxOutputTokens
   };
 }
@@ -24780,16 +25697,33 @@ function emptyUsage(model, budget) {
 function normalizeUsage(value) {
   const raw = asObject(value);
   const nested = asObject(raw.raw);
+  const exactPositiveInteger = (candidate) =>
+    typeof candidate === 'number' && Number.isInteger(candidate) &&
+      candidate > 0
+      ? candidate
+      : undefined;
   const costValue = Object.prototype.hasOwnProperty.call(raw, 'cost')
     ? raw.cost
     : nested.cost;
   return compact({
-    prompt_tokens: positiveInteger(raw.prompt_tokens ?? nested.prompt_tokens),
-    completion_tokens: positiveInteger(raw.completion_tokens ?? nested.completion_tokens),
-    total_tokens: positiveInteger(raw.total_tokens ?? nested.total_tokens),
-    promptTokens: positiveInteger(raw.promptTokens ?? nested.promptTokens),
-    completionTokens: positiveInteger(raw.completionTokens ?? nested.completionTokens),
-    totalTokens: positiveInteger(raw.totalTokens ?? nested.totalTokens),
+    prompt_tokens: exactPositiveInteger(
+      raw.prompt_tokens ?? nested.prompt_tokens
+    ),
+    completion_tokens: exactPositiveInteger(
+      raw.completion_tokens ?? nested.completion_tokens
+    ),
+    total_tokens: exactPositiveInteger(
+      raw.total_tokens ?? nested.total_tokens
+    ),
+    promptTokens: exactPositiveInteger(
+      raw.promptTokens ?? nested.promptTokens
+    ),
+    completionTokens: exactPositiveInteger(
+      raw.completionTokens ?? nested.completionTokens
+    ),
+    totalTokens: exactPositiveInteger(
+      raw.totalTokens ?? nested.totalTokens
+    ),
     cost: providerCost(costValue)
   });
 }
