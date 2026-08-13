@@ -3012,7 +3012,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
       'ambient',
       'baidu',
       'fireworks',
-      'morph'
+      'morph',
+      'atlas-cloud'
     ]),
     'generator lost its evidence-backed provider quarantine'
   );

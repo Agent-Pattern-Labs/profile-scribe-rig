@@ -221,6 +221,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // four exact pattern constraints across both returned motions, and Morph
   // returned the same terminal envelope while violating the compensated-job
   // maximum length and one causal-path minimum length in its sole motion.
+  // AtlasCloud then exceeded the exact 160-KiB raw streaming-content ceiling
+  // before it could return a terminal structured response or usable usage.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
   ignore: [
@@ -234,7 +236,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'ambient',
     'baidu',
     'fireworks',
-    'morph'
+    'morph',
+    'atlas-cloud'
   ],
   sort: 'throughput',
   allow_fallbacks: true,

@@ -1983,6 +1983,7 @@ await verifyAmbientProductionTimeoutFailsOnce(unsafeJob);
 await verifyBaiduProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyFireworksProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyMorphProductionStrictSchemaMismatchFailsOnce(unsafeJob);
+await verifyAtlasCloudProductionRawOverflowFailsOnce(unsafeJob);
 await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
@@ -5156,7 +5157,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'ambient',
             'baidu',
             'fireworks',
-            'morph'
+            'morph',
+            'atlas-cloud'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7677,7 +7679,8 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'ambient',
     'baidu',
     'fireworks',
-    'morph'
+    'morph',
+    'atlas-cloud'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
@@ -7788,7 +7791,8 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
     'ambient',
     'baidu',
     'fireworks',
-    'morph'
+    'morph',
+    'atlas-cloud'
   ];
   const capabilityRouting =
     opportunityCommercialDiscoveryCapabilities()
@@ -7991,7 +7995,8 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
     'ambient',
     'baidu',
     'fireworks',
-    'morph'
+    'morph',
+    'atlas-cloud'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8202,7 +8207,8 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
     'ambient',
     'baidu',
     'fireworks',
-    'morph'
+    'morph',
+    'atlas-cloud'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8450,7 +8456,8 @@ async function verifyMorphProductionStrictSchemaMismatchFailsOnce(job) {
     'ambient',
     'baidu',
     'fireworks',
-    'morph'
+    'morph',
+    'atlas-cloud'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8582,6 +8589,159 @@ async function verifyMorphProductionStrictSchemaMismatchFailsOnce(job) {
   }
 }
 
+async function verifyAtlasCloudProductionRawOverflowFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  const rawSentinel = 'raw-atlascloud-overflow-secret-sentinel';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      const error = new Error(
+        'OpenRouter streaming response exceeded its bounded content envelope'
+      );
+      error.openRouterFailureCode =
+        'openrouter_truncated_structured_output';
+      error.openRouterGenerationId =
+        'gen-1786640051-rFPzS5HHzyK3hLtVAlJX';
+      error.openRouterDiagnostics = {
+        httpStatus: 200,
+        routerSelectedProvider: 'AtlasCloud',
+        routerSelectedModel: 'deepseek/deepseek-v4-flash-0731',
+        routerEnvelopeProvider: 'AtlasCloud',
+        routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+        contentByteCount: 163_850,
+        maxContentByteCount: 163_840,
+        contentSha256:
+          'b63153ab3afc24a65ad6863b15735660a5443d0bf64c34444652dac6182a8200',
+        streaming: true,
+        streamEventCount: 6_889,
+        streamWireByteCount: 2_141_202,
+        streamFirstDataLatencyMs: 3_203,
+        streamDurationMs: 178_486,
+        streamCompleted: false,
+        responseHeadersReceived: true,
+        structuredOutputEnvelopeExceeded: true,
+        rawProviderBody: rawSentinel
+      };
+      throw error;
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer',
+    'ambient',
+    'baidu',
+    'fireworks',
+    'morph',
+    'atlas-cloud'
+  ];
+  if (calls !== 1 ||
+      requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
+      JSON.stringify(requestSeen?.models) !==
+        JSON.stringify(['deepseek/deepseek-v4-flash-0731']) ||
+      requestSeen?.maxTokens !== 42_000 ||
+      requestSeen?.stream !== true ||
+      requestSeen?.streamMaxContentBytes !== 163_840 ||
+      requestSeen?.streamStartTimeoutMs !== 180_000 ||
+      requestSeen?.streamIdleTimeoutMs !== 60_000 ||
+      requestSeen?.streamTotalTimeoutMs !== 300_000 ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 2, completion: 6, request: 0 }
+      }) ||
+      result.status !== 'blocked' ||
+      result.reason !==
+        'The discovery planner exceeded its finite raw streaming-content ceiling before completing the structured plan.' ||
+      result.recoveryCause !==
+        'commercial_discovery_planner_output_envelope_recovery' ||
+      result.failureCode !== 'planner_output_envelope_exceeded' ||
+      result.plans.length !== 0 ||
+      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.acceptedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(result.planSelection?.rejectedPlans) !== '[]' ||
+      result.webSearchReceipt !== null ||
+      result.usage?.calls !== 1 ||
+      result.usage?.successfulCalls !== 0 ||
+      result.usage?.promptTokens !== 0 ||
+      result.usage?.completionTokens !== 0 ||
+      result.usage?.totalTokens !== 0 ||
+      result.usage?.reportedCostMicros !== 0 ||
+      result.usage?.reportedCostUsd !== 0 ||
+      result.usage?.costReporting !== 'unavailable' ||
+      result.usage?.withinBudget !== true ||
+      receipt?.status !== 'incomplete' ||
+      receipt?.error !== 'openrouter_truncated_structured_output' ||
+      receipt?.generationId !==
+        'gen-1786640051-rFPzS5HHzyK3hLtVAlJX' ||
+      receipt?.model !== 'deepseek/deepseek-v4-flash-0731' ||
+      receipt?.requestedModel !== 'deepseek/deepseek-v4-flash-0731' ||
+      JSON.stringify(receipt?.openRouterUsage) !== '{}' ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerSelectedProvider !== 'AtlasCloud' ||
+      diagnostics?.routerSelectedModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.routerEnvelopeProvider !== 'AtlasCloud' ||
+      diagnostics?.routerEnvelopeModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.contentByteCount !== 163_850 ||
+      diagnostics?.maxContentByteCount !== 163_840 ||
+      diagnostics?.contentSha256 !==
+        'b63153ab3afc24a65ad6863b15735660a5443d0bf64c34444652dac6182a8200' ||
+      diagnostics?.streaming !== true ||
+      diagnostics?.streamEventCount !== 6_889 ||
+      diagnostics?.streamWireByteCount !== 2_141_202 ||
+      diagnostics?.streamFirstDataLatencyMs !== 3_203 ||
+      diagnostics?.streamDurationMs !== 178_486 ||
+      diagnostics?.streamCompleted !== false ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.structuredOutputEnvelopeExceeded !== true ||
+      diagnostics?.finishReason !== undefined ||
+      diagnostics?.nativeFinishReason !== undefined ||
+      diagnostics?.localJSONRepairApplied !== undefined ||
+      diagnostics?.localJSONRepairFailure !== undefined ||
+      result.preflight?.authorized !== true ||
+      result.preflight?.cause !==
+        'commercial_discovery_planner_output_envelope_recovery' ||
+      result.preflight?.failureCode !==
+        'planner_output_envelope_exceeded' ||
+      result.preflight?.routeProvenanceValidated !== false ||
+      result.preflight?.rawStreamingContentByteCount !== 163_850 ||
+      result.preflight?.rawStreamingContentMaxBytes !== 163_840 ||
+      result.preflight?.responseBodyByteCount !== undefined ||
+      result.preflight?.maxResponseBodyByteCount !== 40_960 ||
+      result.normalizationDiagnostic !== undefined ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.commercialDiscoveryEvidence !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(rawSentinel)) {
+    throw new Error(
+      `AtlasCloud production raw overflow did not fail once with bounded diagnostics: ${JSON.stringify({
+        calls,
+        request: requestSeen,
+        result,
+        rawSentinelPresent: JSON.stringify(result).includes(rawSentinel)
+      })}`
+    );
+  }
+}
+
 async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
   const expectedIgnore = [
     'cloudflare',
@@ -8594,7 +8754,8 @@ async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
     'ambient',
     'baidu',
     'fireworks',
-    'morph'
+    'morph',
+    'atlas-cloud'
   ];
   for (const scenario of [{
     provider: 'Wafer',
