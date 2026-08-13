@@ -1136,16 +1136,19 @@ async function verifyHangingCancelCannotDefeatDeadline() {
 
 function verifyStreamingRequestIsInsideExactSerializedPreflight() {
   const serialized = serializeOpenRouterJSONRequestBody({
-    models: ['deepseek/deepseek-v4-flash-0731'],
+    models: ['openai/gpt-5.6-luna'],
     system: 'system',
     user: 'user',
-    maxTokens: 64_000,
-    reasoning: { enabled: false, exclude: true },
+    maxTokens: 42_000,
+    reasoning: { effort: 'none', exclude: true },
     provider: {
-      allow_fallbacks: true,
+      order: ['openai'],
+      only: ['openai'],
+      ignore: [],
+      allow_fallbacks: false,
       require_parameters: true,
       data_collection: 'deny',
-      max_price: { prompt: 2, completion: 6, request: 0 }
+      max_price: { prompt: 0.2, completion: 1.2, request: 0 }
     },
     responseFormat: {
       type: 'json_schema',
@@ -1161,6 +1164,27 @@ function verifyStreamingRequestIsInsideExactSerializedPreflight() {
   });
   const request = JSON.parse(serialized);
   assert(request.stream === true, 'stream flag missing from serialized body');
+  assert(
+    JSON.stringify(request.models) ===
+      JSON.stringify(['openai/gpt-5.6-luna']) &&
+      JSON.stringify(request.reasoning) ===
+        JSON.stringify({ effort: 'none', exclude: true }) &&
+      JSON.stringify(request.provider) === JSON.stringify({
+        order: ['openai'],
+        only: ['openai'],
+        ignore: [],
+        allow_fallbacks: false,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 0.2, completion: 1.2, request: 0 }
+      }),
+    'serialized current request lost the direct OpenAI route'
+  );
+  assert(
+    request.service_tier === undefined &&
+      !serialized.includes('service_tier'),
+    'serialized current request leaked a service tier'
+  );
   assert(
     request.stream_options === undefined,
     'deprecated stream_options leaked into serialized body'
@@ -1267,8 +1291,8 @@ async function verifyRunJobUsesStreamingTransport() {
         WHITESPACE_HEAVY_RAW_CONTENT_BYTES -
           splitCanonicalContentByteCount
       )}${canonicalContent}`;
-      const model = 'deepseek/deepseek-v4-flash-0731';
-      const provider = 'Whitespace Fixture Provider';
+      const model = 'openai/gpt-5.6-luna-20260709';
+      const provider = 'OpenAI';
       response.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'X-Generation-Id': 'gen-stream-raw-canonical-split',
@@ -1287,7 +1311,7 @@ async function verifyRunJobUsesStreamingTransport() {
         choices: [{
           delta: {},
           finish_reason: 'stop',
-          native_finish_reason: 'stop'
+          native_finish_reason: 'completed'
         }],
         usage: {
           prompt_tokens: 2_961,
@@ -1299,7 +1323,7 @@ async function verifyRunJobUsesStreamingTransport() {
           strategy: 'direct',
           attempt: 1,
           endpoints: {
-            total: 1,
+            total: 10,
             available: [{ provider, model, selected: true }]
           },
           attempts: [{ provider, model, status: 200 }]
@@ -1588,6 +1612,24 @@ async function verifyRunJobUsesStreamingTransport() {
       'raw/canonical split dispatched an unauthorized repair or critic call'
     );
     assertEqual(
+      JSON.stringify(providerRequest?.provider),
+      JSON.stringify({
+        order: ['openai'],
+        only: ['openai'],
+        ignore: [],
+        allow_fallbacks: false,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 0.2, completion: 1.2, request: 0 }
+      }),
+      'raw/canonical split lost the direct OpenAI route'
+    );
+    assertEqual(
+      providerRequest?.service_tier,
+      undefined,
+      'raw/canonical split leaked a service tier'
+    );
+    assertEqual(
       splitPlan?.status,
       'planned',
       `raw/canonical split did not survive schema and semantic acceptance: ${JSON.stringify(splitPlan)}`
@@ -1619,6 +1661,11 @@ async function verifyRunJobUsesStreamingTransport() {
       'raw/canonical split lost the exact raw SSE content count'
     );
     assertEqual(splitDiagnostics?.finishReason, 'stop', 'split finish reason');
+    assertEqual(
+      splitDiagnostics?.nativeFinishReason,
+      'completed',
+      'split OpenAI Luna native finish reason'
+    );
     assertEqual(
       splitDiagnostics?.streamCompleted,
       true,
@@ -1701,8 +1748,23 @@ async function verifyRunJobUsesStreamingTransport() {
     );
     assertEqual(
       providerRequest?.provider?.sort,
-      'throughput',
-      'overflow fixture did not prioritize provider throughput'
+      undefined,
+      'overflow fixture leaked a router sort outside the hard route'
+    );
+    assertEqual(
+      JSON.stringify(providerRequest?.provider?.order),
+      JSON.stringify(['openai']),
+      'overflow request lost the exact provider order'
+    );
+    assertEqual(
+      JSON.stringify(providerRequest?.provider?.only),
+      JSON.stringify(['openai']),
+      'overflow request lost the exact provider allowlist'
+    );
+    assertEqual(
+      providerRequest?.provider?.allow_fallbacks,
+      false,
+      'overflow request re-enabled provider fallback'
     );
     assertEqual(overflowPlan?.status, 'blocked', 'overflow plan status');
     assertEqual(overflowPlan?.plans?.length, 0, 'overflow accepted plans');
@@ -1869,8 +1931,8 @@ async function verifyRunJobUsesStreamingTransport() {
     );
     assertEqual(
       providerRequest?.provider?.ignore?.join(','),
-      'cloudflare,open-inference,decart,digitalocean,akashml,siliconflow,wafer,ambient,baidu,fireworks,morph,atlas-cloud,parasail,together,deepinfra,mancer,io-net,phala',
-      'overflow request lost the evidence-backed route quarantine'
+      '',
+      'overflow request did not serialize the exact empty ignore set'
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));

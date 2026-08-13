@@ -34,7 +34,7 @@ Environment:
   PROFILESCRIBE_RIG_OPENROUTER_MODEL   Optional OpenRouter model override for non-draft native tasks
   PROFILESCRIBE_RIG_OPENROUTER_RESPONSES_URL Optional Responses endpoint for @openrouter/agent workflows
   PROFILESCRIBE_RIG_DRAFT_MODEL        Optional OpenRouter model override for final post drafting
-  PROFILESCRIBE_RIG_TOURNAMENT_MODEL   Must be deepseek/deepseek-v4-flash-0731 when set; vendor fallback is managed internally
+  PROFILESCRIBE_RIG_TOURNAMENT_MODEL   Must be exactly openai/gpt-5.6-luna when set; provider-returned dated identity is receipt-only
   PROFILESCRIBE_APP_URL                Optional public ProfileScribe base URL for internal profile candidates
   PROFILESCRIBE_RIG_DRAFTER_COMMAND    Optional command that receives context JSON and returns draft JSON
   PROFILESCRIBE_RIG_REWRITE_COMMAND    Optional command that receives rewrite context JSON and returns draft JSON
@@ -44,7 +44,7 @@ Environment:
 
 const DEFAULT_OPENROUTER_MODEL = 'deepseek/deepseek-v4-pro';
 const DEFAULT_OPENROUTER_TOURNAMENT_MODEL =
-  'deepseek/deepseek-v4-flash-0731';
+  'openai/gpt-5.6-luna';
 const DEFAULT_OPENROUTER_DRAFT_MODEL = 'anthropic/claude-opus-5';
 const DEFAULT_OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_OPENROUTER_RESPONSES_URL = 'https://openrouter.ai/api/v1/responses';
@@ -3880,6 +3880,10 @@ function safeOpenRouterFinishReason(value) {
   const reason = typeof value === 'string' ? value : '';
   return new Set([
     'stop',
+    // OpenAI Luna uses `completed` as its native successful terminal while
+    // OpenRouter normalizes finish_reason to `stop`. Retain the native value;
+    // opportunity-tournament applies the model-qualified acceptance rule.
+    'completed',
     'length',
     'error',
     'content_filter',
@@ -4091,11 +4095,16 @@ function reviewedOpenRouterModelEquivalent(leftValue, rightValue) {
   const right = safeOpenRouterModelName(rightValue);
   if (!left || !right) return false;
   if (left === right) return true;
-  const reviewedAliases = new Set([
+  return [[
+    'openai/gpt-5.6-luna',
+    'openai/gpt-5.6-luna-20260709'
+  ], [
     'deepseek/deepseek-v4-flash-0731',
     'deepseek/deepseek-v4-flash-20260731'
-  ]);
-  return reviewedAliases.has(left) && reviewedAliases.has(right);
+  ]].some((aliases) => {
+    const reviewed = new Set(aliases);
+    return reviewed.has(left) && reviewed.has(right);
+  });
 }
 
 function safeOpenRouterGenerationId(value) {

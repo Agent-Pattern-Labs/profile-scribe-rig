@@ -117,16 +117,44 @@ const OPPORTUNITY_DISCOVERY_WEB_SEARCH_MAX_RESULTS = 5;
 const OPPORTUNITY_DISCOVERY_WEB_SEARCH_FIXED_FEE_MICROS = 5_000;
 const OPENROUTER_RESPONSE_HEALING_PLUGIN = 'response-healing';
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL =
+  'openai/gpt-5.6-luna';
+const OPPORTUNITY_DISCOVERY_PLANNER_PERMASLUG =
+  'openai/gpt-5.6-luna-20260709';
+const HISTORICAL_DISCOVERY_PLANNER_MODEL =
   'deepseek/deepseek-v4-flash-0731';
-const REVIEWED_OPENROUTER_MODEL_EQUIVALENTS = new Map([
-  [
-    OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    new Set([
-      OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-      'deepseek/deepseek-v4-flash-20260731'
-    ])
-  ]
+const HISTORICAL_DISCOVERY_PLANNER_PERMASLUG =
+  'deepseek/deepseek-v4-flash-20260731';
+const CURRENT_DISCOVERY_PLANNER_MODEL_EQUIVALENTS = new Set([
+  OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
+  OPPORTUNITY_DISCOVERY_PLANNER_PERMASLUG
 ]);
+const HISTORICAL_DISCOVERY_PLANNER_MODEL_EQUIVALENTS = new Set([
+  HISTORICAL_DISCOVERY_PLANNER_MODEL,
+  HISTORICAL_DISCOVERY_PLANNER_PERMASLUG
+]);
+const REVIEWED_OPENROUTER_MODEL_EQUIVALENTS = new Map([
+  ...[...CURRENT_DISCOVERY_PLANNER_MODEL_EQUIVALENTS].map((model) => [
+    model,
+    CURRENT_DISCOVERY_PLANNER_MODEL_EQUIVALENTS
+  ]),
+  ...[...HISTORICAL_DISCOVERY_PLANNER_MODEL_EQUIVALENTS].map((model) => [
+    model,
+    HISTORICAL_DISCOVERY_PLANNER_MODEL_EQUIVALENTS
+  ])
+]);
+const OPPORTUNITY_DISCOVERY_REVIEWED_PROVIDER_NAMES = Object.freeze([
+  'OpenAI'
+]);
+function opportunityDiscoveryReviewedProvidersForModel(model) {
+  const requested = firstText(model).toLowerCase();
+  const currentAliases =
+    REVIEWED_OPENROUTER_MODEL_EQUIVALENTS.get(
+      OPPORTUNITY_DISCOVERY_PLANNER_MODEL
+    );
+  return currentAliases?.has(requested)
+    ? OPPORTUNITY_DISCOVERY_REVIEWED_PROVIDER_NAMES
+    : [];
+}
 const OPENROUTER_ROUTE_OBSERVATION_CONFLICT_KINDS = new Set([
   'envelope_model_changed',
   'envelope_provider_changed',
@@ -144,11 +172,11 @@ const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
-    family: 'deepseek',
-    minimumContextTokens: 1_000_000,
+    family: 'openai',
+    minimumContextTokens: 1_050_000,
     minimumOutputTokens: 42_000,
-    maximumPromptPrice: 2,
-    maximumCompletionPrice: 6
+    maximumPromptPrice: 0.2,
+    maximumCompletionPrice: 1.2
   })
 ]);
 if (1 + OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS.length > 3) {
@@ -185,58 +213,31 @@ const MAX_INBOUND_ASSET_OBSERVATION_AGE_MS =
 // spend or the total price of a generation. Callers may tighten, but never
 // loosen, these tournament-specific caps.
 //
-// Both bounded stages use the exact qualified multi-vendor route caps. Callers may
-// tighten these values but cannot silently widen production model spend.
+// Both bounded stages use the exact qualified direct-OpenAI route caps. Callers
+// may tighten these values but cannot silently widen production model spend.
 const MAX_PROVIDER_PRICE = {
-  prompt: 2,
-  completion: 6,
+  prompt: 0.2,
+  completion: 1.2,
   request: 0
 };
 const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
-  prompt: 2,
-  completion: 6,
+  prompt: 0.2,
+  completion: 1.2,
   request: 0
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  // This five-minute structured planner is throughput-bound, not price-bound.
-  // Rank qualified endpoints by OpenRouter's rolling throughput measurements
-  // while preserving automatic fallbacks and every strict capability filter.
-  // Quarantine only endpoints with durable evidence under the applicable
-  // transport contract: Cloudflare returned empty HTTP-200 envelopes,
-  // OpenInference exceeded the compact 40-KiB structured-output envelope,
-  // Decart returned HTTP 200/stop while violating eight strict-schema
-  // minLength constraints with empty compact fields, DigitalOcean emitted only
-  // 3,014 content bytes before the exact 300-second planner deadline, and
-  // AkashML streamed only 13,787 bytes before that same current-contract limit,
-  // SiliconFlow's HTTP-200 stream reached 37,767 bytes but never returned
-  // finish or usage before the exact 300-second local total deadline, and
-  // Wafer emitted 40,965 bytes without finish or usage, crossing the exact
-  // 40-KiB structured-output envelope after 59,126 ms. Ambient's HTTP-200
-  // stream later reached 19,990 bytes and 6,235 events without finish or usage
-  // before the exact 300-second local total deadline. Baidu returned a
-  // completed HTTP-200/stop response that violated the exact strict schema in
-  // eight independently validated fields across both returned motions, and
-  // Fireworks later returned a completed HTTP-200/stop response that violated
-  // four exact pattern constraints across both returned motions, and Morph
-  // returned the same terminal envelope while violating the compensated-job
-  // maximum length and one causal-path minimum length in its sole motion.
-  // AtlasCloud then exceeded the exact 160-KiB raw streaming-content ceiling
-  // before it could return a terminal structured response or usable usage.
-  // Parasail subsequently returned HTTP 200 and streamed 66,008 content bytes
-  // but did not finish or report usage before the same exact total deadline.
-  // Together then returned the same incomplete HTTP-200 condition after
-  // streaming 91,338 content bytes for that full bounded interval.
-  // DeepInfra subsequently returned HTTP 200 and streamed 44,681 content
-  // bytes without finish or usage before the same exact total deadline.
-  // Mancer 2 then returned a completed HTTP-200/stop response whose root
-  // object violated the exact strict structured-output envelope.
-  // Io Net subsequently returned HTTP 200 and streamed 9,184 content bytes
-  // without finish or usage before the same exact total deadline.
-  // Phala then returned HTTP 200 and streamed 12,180 content bytes without
-  // finish or usage before that same bounded total deadline.
-  // Other historical failures occurred under the retired 64k/192-KiB
-  // contract, so they remain eligible for OpenRouter's default routing.
+  // The multi-vendor DeepSeek route is exhausted under the current strict
+  // planner envelope. Pin both bounded model stages to OpenAI's reviewed Luna
+  // endpoint and fail closed instead of silently selecting another provider.
+  order: ['openai'],
+  only: ['openai'],
+  ignore: [],
+  allow_fallbacks: false,
+  require_parameters: true,
+  data_collection: 'deny'
+};
+const HISTORICAL_TOURNAMENT_PROVIDER_ROUTING = Object.freeze({
   ignore: [
     'cloudflare',
     'open-inference',
@@ -261,17 +262,50 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
-};
-// DeepSeek defaults to reasoning even though it is optional. Earlier
-// pre-compaction strict-schema calls exhausted both 16k and 32k token ceilings
-// before completing the larger JSON shape. Disable reasoning so the current
-// bounded output budget is reserved for the validated compact result; this
-// exact route was verified with zero reasoning tokens across the qualified
-// vendor fallback set.
+});
+function opportunityDiscoveryProviderRoutingForModel(model) {
+  // These model-conditioned branches exist only for injected, provider-free
+  // historical replay compatibility. The credentialed production boundary is
+  // bin/run-job.mjs, whose exact environment gate authorizes only current Luna.
+  const requested = firstText(model).toLowerCase();
+  const current =
+    REVIEWED_OPENROUTER_MODEL_EQUIVALENTS.get(
+      OPPORTUNITY_DISCOVERY_PLANNER_MODEL
+    );
+  return current?.has(requested)
+    ? TOURNAMENT_PROVIDER_ROUTING
+    : HISTORICAL_TOURNAMENT_PROVIDER_ROUTING;
+}
+function opportunityDiscoveryProviderPriceForModel(model) {
+  const requested = firstText(model).toLowerCase();
+  const current =
+    REVIEWED_OPENROUTER_MODEL_EQUIVALENTS.get(
+      OPPORTUNITY_DISCOVERY_PLANNER_MODEL
+    );
+  return current?.has(requested)
+    ? MAX_PROVIDER_PRICE
+    : { prompt: 2, completion: 6, request: 0 };
+}
+// Reserve the bounded output budget for the validated compact result. The
+// reviewed Luna route supports reasoning:none and excludes reasoning output.
 const TOURNAMENT_REASONING = Object.freeze({
+  effort: 'none',
+  exclude: true
+});
+const HISTORICAL_TOURNAMENT_REASONING = Object.freeze({
   enabled: false,
   exclude: true
 });
+function opportunityDiscoveryReasoningForModel(model) {
+  const requested = firstText(model).toLowerCase();
+  const current =
+    REVIEWED_OPENROUTER_MODEL_EQUIVALENTS.get(
+      OPPORTUNITY_DISCOVERY_PLANNER_MODEL
+    );
+  return current?.has(requested)
+    ? TOURNAMENT_REASONING
+    : HISTORICAL_TOURNAMENT_REASONING;
+}
 const OPENROUTER_ROUTER_METADATA_LEVEL = 'enabled';
 const RESEARCH_ONLY_CONSTRAINT =
   'Research and recommendation only; do not contact, message, publish, purchase ads, or submit forms.';
@@ -613,12 +647,12 @@ if (MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS +
         MIN_OPPORTUNITY_TOURNAMENT_LOCAL_MARGIN_MS) {
   throw new Error('opportunity tournament provider deadlines exceed worker window');
 }
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 344_160;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 59_616;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE;
-const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 147_168;
-const MAX_OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 491_328;
+const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 15_917;
+const MAX_OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 75_533;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
     OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING *
@@ -1546,9 +1580,8 @@ export function buildOpenRouterJSONRequestBody({
   responseFormat,
   plugins,
   stream
-  // Temperature is intentionally not sent so the exact request remains
-  // portable across every qualified multi-vendor endpoint under
-  // OpenRouter require_parameters:true.
+  // Temperature is intentionally not sent so each model-qualified request
+  // retains the reviewed endpoint's exact parameter contract.
 }) {
   const requestedPlugins = asArray(plugins)
     .filter((item) =>
@@ -1766,7 +1799,7 @@ export async function runOpportunityDiscoveryPlanner({
   const budget = {
     ...normalizedBudget,
     providerMaxPrice: {
-      ...MAX_DISCOVERY_PLANNER_PROVIDER_PRICE
+      ...opportunityDiscoveryProviderPriceForModel(model)
     }
   };
   const discoveryCapabilities =
@@ -2141,9 +2174,9 @@ export async function runOpportunityDiscoveryPlanner({
         MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS,
         Math.max(600, budget.maxOutputTokens)
       ),
-      reasoning: { ...TOURNAMENT_REASONING },
+      reasoning: { ...opportunityDiscoveryReasoningForModel(model) },
       provider: {
-        ...TOURNAMENT_PROVIDER_ROUTING,
+        ...opportunityDiscoveryProviderRoutingForModel(model),
         max_price: { ...budget.providerMaxPrice }
       },
       responseFormat: opportunityDiscoveryPlannerResponseFormat(
@@ -2154,10 +2187,9 @@ export async function runOpportunityDiscoveryPlanner({
         provisionalOfferExperiment
       ),
       plugins: [],
-      // Terra occasionally returns a complete strict-schema object with a
-      // recoverable JSON punctuation/escaping defect. The transport may repair
-      // syntax locally only when the repaired value passes this exact response
-      // schema; all planner semantic and evidence gates still run afterward.
+      // The transport may repair JSON syntax locally only when the repaired
+      // value passes this exact response schema; all planner semantic and
+      // evidence gates still run afterward.
       allowLocalJSONRepair: true,
       stream: true,
       streamStartTimeoutMs:
@@ -2269,6 +2301,11 @@ export async function runOpportunityDiscoveryPlanner({
       promptHash,
       error: failureCode
     });
+    const observedRouteProvenanceIssue =
+      observedOpenRouterRouteProvenanceIssue(
+        providerMetadata.responseDiagnostics,
+        model
+      );
     const promptTokenCanary = incomplete
       ? providerPromptTokenCanary(
           preflight,
@@ -2279,27 +2316,40 @@ export async function runOpportunityDiscoveryPlanner({
       ...base,
       reason: outputEnvelopeExceeded
         ? 'The discovery planner exceeded its finite raw streaming-content ceiling before completing the structured plan.'
+        : observedRouteProvenanceIssue
+          ? 'The discovery-planner failure named a provider or model outside the exact reviewed route.'
         : failureCode === 'openrouter_truncated_structured_output'
           ? 'The discovery planner did not produce a complete terminal structured plan.'
         : 'The bounded discovery planner did not return a usable plan.',
       recoveryCause: outputEnvelopeExceeded
         ? 'commercial_discovery_planner_output_envelope_recovery'
-        : undefined,
+        : observedRouteProvenanceIssue
+          ? 'commercial_discovery_planner_route_provenance_recovery'
+          : undefined,
       failureCode: outputEnvelopeExceeded
         ? 'planner_output_envelope_exceeded'
-        : undefined,
+        : observedRouteProvenanceIssue
+          ? 'planner_route_provenance_invalid'
+          : undefined,
       preflight: {
         ...preflight,
         authorized: true,
         cause: outputEnvelopeExceeded
           ? 'commercial_discovery_planner_output_envelope_recovery'
-          : undefined,
+          : observedRouteProvenanceIssue
+            ? 'commercial_discovery_planner_route_provenance_recovery'
+            : undefined,
         failureCode: outputEnvelopeExceeded
           ? 'planner_output_envelope_exceeded'
-          : undefined,
-        routeProvenanceValidated: outputEnvelopeExceeded
-          ? false
-          : undefined,
+          : observedRouteProvenanceIssue
+            ? 'planner_route_provenance_invalid'
+            : undefined,
+        routeProvenanceIssue:
+          observedRouteProvenanceIssue || undefined,
+        routeProvenanceValidated:
+          observedRouteProvenanceIssue || outputEnvelopeExceeded
+            ? false
+            : undefined,
         // No parsed value exists on raw-stream overflow, so do not populate
         // the canonical response byte count with transport bytes.
         maxResponseBodyByteCount: outputEnvelopeExceeded
@@ -2347,7 +2397,7 @@ export async function runOpportunityDiscoveryPlanner({
     preflight,
     request.maxTokens
   );
-  const finishIssue = completedStructuredFinishIssue(completion);
+  const finishIssue = completedStructuredFinishIssue(completion, model);
   // An out-of-envelope body has no structured-output acceptance surface.
   // Classify the byte/token/cost boundary before inspecting route provenance
   // or the returned structured value.
@@ -2407,7 +2457,11 @@ export async function runOpportunityDiscoveryPlanner({
   // the selected-endpoint and ordered-attempt trust boundary. The completed
   // provider usage remains accounted even when local acceptance fails.
   const routeProvenanceIssue =
-    completedOpenRouterRouteProvenanceIssue(completion, [model]);
+    completedOpenRouterRouteProvenanceIssue(
+      completion,
+      [model],
+      opportunityDiscoveryReviewedProvidersForModel(model)
+    );
   if (routeProvenanceIssue) {
     return {
       ...base,
@@ -8354,7 +8408,13 @@ async function runOpportunityTournamentCore({
   const currentAlgorithm =
     algorithmVersion === OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION;
   const objective = normalizeObjective(payload.objective, payload);
-  const budget = normalizeBudget(payload.budget);
+  const normalizedBudget = normalizeBudget(payload.budget);
+  const budget = {
+    ...normalizedBudget,
+    providerMaxPrice: {
+      ...opportunityDiscoveryProviderPriceForModel(model)
+    }
+  };
   const constraints = normalizeConstraints(objective, payload);
   const unvalidatedCommercialContext = normalizeCommercialContext(
     payload,
@@ -8957,7 +9017,7 @@ async function runOpportunityTournamentCore({
     : '';
   const initialFinishIssue = !useContingentFinalists &&
       !initialCompletionTruncated
-    ? completedStructuredFinishIssue(completion)
+    ? completedStructuredFinishIssue(completion, model)
     : '';
   const initialReportedCostMicros =
     typeof completion?.usage?.cost === 'number' &&
@@ -9144,7 +9204,7 @@ async function runOpportunityTournamentCore({
           budget.maxOutputTokens,
           MAX_REPAIR_OUTPUT_TOKENS
         ),
-        reasoning: { ...TOURNAMENT_REASONING },
+        reasoning: { ...opportunityDiscoveryReasoningForModel(model) },
         responseFormat:
           tournamentStructuredResponseFormat(
             promptEvidenceCatalog,
@@ -9152,7 +9212,7 @@ async function runOpportunityTournamentCore({
           ),
         plugins: [{ id: 'response-healing' }],
         provider: {
-          ...TOURNAMENT_PROVIDER_ROUTING,
+          ...opportunityDiscoveryProviderRoutingForModel(model),
           max_price: {
             ...budget.providerMaxPrice,
             // This only tightens a possible fixed provider fee. The explicit
@@ -9391,7 +9451,7 @@ async function runOpportunityTournamentCore({
           )
         : '';
       const repairFinishIssue = !repairCompletionTruncated
-        ? completedStructuredFinishIssue(repairCompletion)
+        ? completedStructuredFinishIssue(repairCompletion, model)
         : '';
       const repairReportedCostMicros =
         typeof repairCompletion?.usage?.cost === 'number' &&
@@ -15109,14 +15169,14 @@ function boundedStrategyGenerationRequest({
       system: prompt.system,
       user: prompt.user,
       maxTokens: budget.maxOutputTokens,
-      reasoning: { ...TOURNAMENT_REASONING },
+      reasoning: { ...opportunityDiscoveryReasoningForModel(model) },
       responseFormat: tournamentStructuredResponseFormat(
         promptEvidenceCatalog,
         INITIAL_FAMILY_VARIANT_COUNT
       ),
       plugins: [{ id: 'response-healing' }],
       provider: {
-        ...TOURNAMENT_PROVIDER_ROUTING,
+        ...opportunityDiscoveryProviderRoutingForModel(model),
         max_price: budget.providerMaxPrice
       },
       timeoutMs: 90_000
@@ -16393,6 +16453,11 @@ function safeOpenRouterFinishReason(value) {
   const reason = typeof value === 'string' ? value : '';
   return new Set([
     'stop',
+    // OpenAI Luna's successful native terminal is `completed` even though the
+    // normalized OpenRouter finish remains `stop`. Preserve it here; the
+    // model-qualified completedStructuredFinishIssue gate decides whether it
+    // is authoritative for the requested model.
+    'completed',
     'length',
     'error',
     'content_filter',
@@ -16724,15 +16789,28 @@ function exactCompletedOpenRouterUsageIssue(
   return '';
 }
 
-function completedStructuredFinishIssue(completionValue) {
+function completedStructuredFinishIssue(completionValue, modelValue) {
   const diagnostics = asObject(asObject(completionValue).diagnostics);
   if (diagnostics.finishReason !== 'stop') {
     return diagnostics.finishReason === undefined
       ? 'finish_reason_missing'
       : 'finish_reason_not_stop';
   }
-  if (diagnostics.nativeFinishReason !== undefined &&
-      diagnostics.nativeFinishReason !== 'stop') {
+  const nativeFinishReason = diagnostics.nativeFinishReason;
+  const selectedProvider = firstText(
+    diagnostics.routerSelectedProvider
+  );
+  const currentLunaNativeCompleted =
+    nativeFinishReason === 'completed' &&
+    reviewedOpenRouterModelsEquivalent(
+      modelValue,
+      OPPORTUNITY_DISCOVERY_PLANNER_MODEL
+    ) && opportunityDiscoveryReviewedProvidersForModel(
+      modelValue
+    ).includes(selectedProvider) &&
+    firstText(diagnostics.routerStrategy).toLowerCase() === 'direct';
+  if (nativeFinishReason !== undefined &&
+      nativeFinishReason !== 'stop' && !currentLunaNativeCompleted) {
     return 'native_finish_reason_not_stop';
   }
   return '';
@@ -18121,11 +18199,11 @@ async function runCommercialCritic({
       budget.maxOutputTokens,
       MAX_CRITIC_OUTPUT_TOKENS
     ),
-    reasoning: { ...TOURNAMENT_REASONING },
+    reasoning: { ...opportunityDiscoveryReasoningForModel(model) },
     responseFormat: commercialCriticResponseFormat(finalists),
     plugins: [{ id: OPENROUTER_RESPONSE_HEALING_PLUGIN }],
     provider: {
-      ...TOURNAMENT_PROVIDER_ROUTING,
+      ...opportunityDiscoveryProviderRoutingForModel(model),
       max_price: {
         ...budget.providerMaxPrice,
         request: roundMoney(Math.min(
@@ -18214,6 +18292,11 @@ async function runCommercialCritic({
       promptHash,
       error: failureCode
     });
+    const observedRouteProvenanceIssue =
+      observedOpenRouterRouteProvenanceIssue(
+        metadata.responseDiagnostics,
+        model
+      );
     if (incomplete) {
       return {
         status: 'failed',
@@ -18235,6 +18318,8 @@ async function runCommercialCritic({
           reason:
             'The critic output ended at the provider token limit and was not accepted.',
           cause: 'critic_finish_reason_invalid',
+          routeProvenanceIssue:
+            observedRouteProvenanceIssue || undefined,
           finishIssue: 'finish_reason_not_stop',
           routeProvenanceValidated: false,
           exactSchemaValidated: false,
@@ -18267,6 +18352,73 @@ async function runCommercialCritic({
           reason:
             'The buffered critic provider envelope exceeded its local wire-byte contract and was not accepted.',
           cause: 'critic_contract_invalid',
+          routeProvenanceIssue:
+            observedRouteProvenanceIssue || undefined,
+          routeProvenanceValidated: false,
+          exactSchemaValidated: false,
+          promptTokenCanary: providerPromptTokenCanary(
+            preflight,
+            metadata.openRouterUsage
+          ),
+          preflight
+        }
+      };
+    }
+    // A non-2xx provider failure remains a provider recovery even when its
+    // bounded diagnostic provider lies outside the requested route: no
+    // completion exists to accept, and the transport cause is more specific.
+    if (Number.isInteger(failureHTTPStatus) &&
+        (failureHTTPStatus < 200 || failureHTTPStatus >= 300)) {
+      return {
+        status: 'failed',
+        cause: 'commercial_critic_provider_recovery',
+        request,
+        preflight,
+        metadata,
+        trace: {
+          contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+          contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+          attempted: true,
+          valid: false,
+          verdict: 'rejected',
+          acceptedFamilyIds: [],
+          acceptedFinalistIds: [],
+          selectedOrdering: [],
+          reason: 'The commercial critic provider call failed.',
+          cause: 'critic_provider_failure',
+          routeProvenanceIssue:
+            observedRouteProvenanceIssue || undefined,
+          routeProvenanceValidated: false,
+          promptTokenCanary: providerPromptTokenCanary(
+            preflight,
+            metadata.openRouterUsage
+          ),
+          preflight
+        }
+      };
+    }
+    if (observedRouteProvenanceIssue) {
+      return {
+        status: 'failed',
+        cause: 'commercial_critic_route_provenance_recovery',
+        request,
+        preflight,
+        metadata,
+        trace: {
+          contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+          contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+          attempted: true,
+          valid: false,
+          verdict: 'rejected',
+          acceptedFamilyIds: [],
+          acceptedFinalistIds: [],
+          selectedOrdering: [],
+          rejectedFinalistCount:
+            commercialCriticFinalists(finalists).length,
+          reason:
+            'The critic failure named a provider or model outside the exact reviewed route.',
+          cause: 'critic_route_provenance_invalid',
+          routeProvenanceIssue: observedRouteProvenanceIssue,
           routeProvenanceValidated: false,
           exactSchemaValidated: false,
           promptTokenCanary: providerPromptTokenCanary(
@@ -18334,7 +18486,7 @@ async function runCommercialCritic({
     preflight,
     request.maxTokens
   );
-  const finishIssue = completedStructuredFinishIssue(completion);
+  const finishIssue = completedStructuredFinishIssue(completion, model);
   let parsedResponseByteCount;
   try {
     parsedResponseByteCount = Buffer.byteLength(
@@ -18362,7 +18514,11 @@ async function runCommercialCritic({
     !reportedCostExceeded;
   const routeProvenanceIssue = preRouteBoundaryPassed
     ? generationIdentityValid
-      ? completedOpenRouterRouteProvenanceIssue(completion, [model])
+      ? completedOpenRouterRouteProvenanceIssue(
+          completion,
+          [model],
+          opportunityDiscoveryReviewedProvidersForModel(model)
+        )
       : 'generation_id_missing'
     : '';
   const routeProvenanceValidated = preRouteBoundaryPassed
@@ -18457,6 +18613,54 @@ async function runCommercialCritic({
   };
 }
 
+// A failed or incomplete current-route call may still expose bounded endpoint
+// observations. Those observations cannot authorize acceptance or the next
+// stage when they name anything outside the exact OpenAI/Luna route.
+function observedOpenRouterRouteProvenanceIssue(
+  diagnosticsValue,
+  requestedModelValue
+) {
+  const allowedProviders = new Set(
+    opportunityDiscoveryReviewedProvidersForModel(requestedModelValue)
+  );
+  if (allowedProviders.size === 0) return '';
+  const diagnostics = asObject(diagnosticsValue);
+  if (diagnostics.routerRouteObservationConflict === true ||
+      asArray(diagnostics.routerRouteObservationConflictKinds).length > 0) {
+    return 'route_observation_conflict';
+  }
+  const providerObservations = [
+    diagnostics.routerSelectedProvider,
+    diagnostics.routerEnvelopeProvider,
+    diagnostics.routerHeaderProvider,
+    diagnostics.routerFinalAttemptProvider,
+    ...asArray(diagnostics.routerAttempts).map((attempt) =>
+      asObject(attempt).provider
+    )
+  ].map((value) => firstText(value)).filter(Boolean);
+  if (providerObservations.some((provider) =>
+    !allowedProviders.has(provider)
+  )) {
+    return 'observed_provider_not_requested';
+  }
+  const requestedModel = firstText(requestedModelValue).toLowerCase();
+  const modelObservations = [
+    diagnostics.routerSelectedModel,
+    diagnostics.routerEnvelopeModel,
+    diagnostics.routerHeaderModel,
+    diagnostics.routerFinalAttemptModel,
+    ...asArray(diagnostics.routerAttempts).map((attempt) =>
+      asObject(attempt).model
+    )
+  ].map((value) => firstText(value).toLowerCase()).filter(Boolean);
+  if (modelObservations.some((model) =>
+    !reviewedOpenRouterModelsEquivalent(model, requestedModel)
+  )) {
+    return 'observed_model_not_requested';
+  }
+  return '';
+}
+
 // Every accepted completion in the current two-stage planner/critic workflow
 // must prove which OpenRouter endpoint won and preserve the complete ordered
 // route. A direct attempt may be
@@ -18466,7 +18670,8 @@ async function runCommercialCritic({
 // provenance contract fails.
 function completedOpenRouterRouteProvenanceIssue(
   completionValue,
-  allowedModelsValue = []
+  allowedModelsValue = [],
+  allowedProvidersValue = []
 ) {
   const completion = asObject(completionValue);
   const diagnostics = asObject(completion.diagnostics);
@@ -18483,6 +18688,15 @@ function completedOpenRouterRouteProvenanceIssue(
   ).toLowerCase();
   if (!/^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(selectedProvider)) {
     return 'selected_provider_missing';
+  }
+  const allowedProviders = new Set(compactStrings(allowedProvidersValue));
+  if (allowedProviders.size > 0 &&
+      !allowedProviders.has(selectedProvider)) {
+    return 'selected_provider_not_requested';
+  }
+  if (allowedProviders.size > 0 &&
+      firstText(diagnostics.routerStrategy).toLowerCase() !== 'direct') {
+    return 'router_strategy_not_direct';
   }
   if (!/^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(selectedModel)) {
     return 'selected_model_missing';
@@ -18549,6 +18763,13 @@ function completedOpenRouterRouteProvenanceIssue(
       attemptCount < 1 || attemptCount > 64) {
     return 'attempt_count_invalid';
   }
+  if (allowedProviders.size > 0 && attemptCount !== 1) {
+    return 'direct_attempt_count_invalid';
+  }
+  if (allowedProviders.size > 0 &&
+      diagnostics.routerFallbackUsed === true) {
+    return 'direct_attempt_marked_as_fallback';
+  }
   const rawAttempts = diagnostics.routerAttempts;
   if (!Array.isArray(rawAttempts) || rawAttempts.length !== attemptCount) {
     return 'attempt_sequence_incomplete';
@@ -18586,14 +18807,19 @@ function completedOpenRouterRouteProvenanceIssue(
       return 'fallback_marker_missing';
     }
   }
-  if (Object.prototype.hasOwnProperty.call(
+  const candidateCountPresent = Object.prototype.hasOwnProperty.call(
     diagnostics,
     'routerCandidateCount'
-  )) {
-    const candidateCount = diagnostics.routerCandidateCount;
-    if (!Number.isInteger(candidateCount) || candidateCount < attemptCount) {
-      return 'candidate_count_below_attempt_count';
-    }
+  );
+  const candidateCount = diagnostics.routerCandidateCount;
+  if (allowedProviders.size > 0 &&
+      (!candidateCountPresent || !Number.isInteger(candidateCount) ||
+       candidateCount < attemptCount || candidateCount > 64)) {
+    return 'candidate_count_missing_or_invalid';
+  }
+  if (allowedProviders.size === 0 && candidateCountPresent &&
+      (!Number.isInteger(candidateCount) || candidateCount < attemptCount)) {
+    return 'candidate_count_below_attempt_count';
   }
   const attempts = rawAttempts.map(asObject);
   for (const [index, attempt] of attempts.entries()) {
@@ -18601,6 +18827,9 @@ function completedOpenRouterRouteProvenanceIssue(
     const model = firstText(attempt.model).toLowerCase();
     if (!/^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)) {
       return 'attempt_provider_missing';
+    }
+    if (allowedProviders.size > 0 && !allowedProviders.has(provider)) {
+      return 'attempt_provider_not_requested';
     }
     if (!/^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(model)) {
       return 'attempt_model_missing';

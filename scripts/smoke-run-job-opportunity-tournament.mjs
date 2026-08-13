@@ -379,22 +379,23 @@ const server = createServer(async (request, response) => {
         'objective-run-job-critic-unmatched-fence')) {
     content = `\`\`\`json\n${content}\n${STRICT_CONTENT_PROSE_SENTINEL}`;
   }
-  let selectedProvider;
+  let selectedProvider = 'OpenAI';
   let openRouterMetadata = {
     strategy: 'direct',
     attempt: 1,
     endpoints: {
-      total: 1,
+      // OpenRouter reports catalog metadata here, not allowlist cardinality.
+      total: 10,
       available: [{
         provider: 'OpenAI',
-        model: 'deepseek/deepseek-v4-flash-0731',
+        model: 'openai/gpt-5.6-luna-20260709',
         selected: true
       }]
     },
     attempts: [
       {
         provider: 'OpenAI',
-        model: 'deepseek/deepseek-v4-flash-0731',
+        model: 'openai/gpt-5.6-luna-20260709',
         status: 200
       }
     ]
@@ -493,9 +494,21 @@ const server = createServer(async (request, response) => {
   if (criticCall && objectiveID ===
       'objective-run-job-critic-direct-permaslug') {
     openRouterMetadata.endpoints.available[0].model =
-      'deepseek/deepseek-v4-flash-20260731';
+      'openai/gpt-5.6-luna-20260709';
     openRouterMetadata.attempts[0].model =
-      'deepseek/deepseek-v4-flash-20260731';
+      'openai/gpt-5.6-luna-20260709';
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-candidate-count-missing') {
+    delete openRouterMetadata.endpoints.total;
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-candidate-count-zero') {
+    openRouterMetadata.endpoints.total = 0;
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-candidate-count-high') {
+    openRouterMetadata.endpoints.total = 65;
   }
   if (criticCall && objectiveID ===
       'objective-run-job-critic-foreign-model') {
@@ -546,7 +559,17 @@ const server = createServer(async (request, response) => {
     responseUsage.cost = 0.148;
   }
   let finishReason = 'stop';
-  let nativeFinishReason = 'stop';
+  // The exact current OpenAI/Luna endpoint normalizes finish_reason to stop
+  // and reports its native successful terminal as completed. Synthetic route
+  // failures keep the portable stop terminal so this fixture isolates the
+  // route-provenance rejection instead of also violating the model-qualified
+  // OpenAI native-terminal contract.
+  let nativeFinishReason =
+    openRouterMetadata.endpoints.available.find(
+      (endpoint) => endpoint.selected
+    )?.provider === 'OpenAI'
+      ? 'completed'
+      : 'stop';
   if (criticCall && objectiveID ===
       'objective-run-job-critic-length-finish') {
     finishReason = 'length';
@@ -596,7 +619,7 @@ const server = createServer(async (request, response) => {
   const envelopeModel = criticCall && objectiveID ===
       'objective-run-job-critic-env-model-conflict'
     ? 'foreign/contradictory-model'
-    : 'deepseek/deepseek-v4-flash-0731';
+    : 'openai/gpt-5.6-luna';
   const responseGenerationId = criticCall && objectiveID ===
       'objective-run-job-critic-generation-missing'
     ? undefined
@@ -635,6 +658,38 @@ try {
     server.listen(0, '127.0.0.1', resolveListen)
   );
   const port = server.address().port;
+
+  for (const rejectedModel of [
+    'openai/gpt-5.6-luna-20260709',
+    'deepseek/deepseek-v4-flash-0731',
+    'deepseek/deepseek-v4-flash-20260731',
+    'openai/gpt-5.6-terra',
+    'openai/gpt-5.6-terra-20260709',
+    'openai/gpt-5.6-terra-pro',
+    'openai/gpt-5.6-terra-pro-20260709',
+    'openai/gpt-5.6-luna-pro',
+    'openai/gpt-5.6-luna-pro-20260709'
+  ]) {
+    const label = `rejected-model-${rejectedModel.replace(/[^a-z0-9]+/gi, '-')}`;
+    const file = writeJob(label, tournamentJob(label, `objective-${label}`));
+    const callOffset = providerCalls.length;
+    let rejected = false;
+    try {
+      await runJob(file, port, {
+        env: { PROFILESCRIBE_RIG_TOURNAMENT_MODEL: rejectedModel }
+      });
+    } catch (error) {
+      rejected = /Unsupported opportunity tournament model/.test(
+        String(error?.message || error)
+      );
+    }
+    assert(rejected, `${rejectedModel} escaped the exact Luna env gate`);
+    assertEqual(
+      providerCalls.length,
+      callOffset,
+      `${rejectedModel} reached /openrouter before rejection`
+    );
+  }
 
   const successJob = tournamentJob(
     'success',
@@ -745,7 +800,7 @@ try {
 
   for (const scenario of [{
     label: 'critic-fallback-provenance',
-    issue: ''
+    issue: 'selected_provider_not_requested'
   }, {
     label: 'critic-direct-reconstructed',
     issue: ''
@@ -756,32 +811,41 @@ try {
     label: 'critic-direct-permaslug',
     issue: ''
   }, {
+    label: 'critic-candidate-count-missing',
+    issue: 'candidate_count_missing_or_invalid'
+  }, {
+    label: 'critic-candidate-count-zero',
+    issue: 'candidate_count_missing_or_invalid'
+  }, {
+    label: 'critic-candidate-count-high',
+    issue: 'candidate_count_missing_or_invalid'
+  }, {
     label: 'critic-foreign-model',
     issue: 'selected_model_not_requested'
   }, {
     label: 'critic-fallback-incomplete',
-    issue: 'attempt_sequence_incomplete'
+    issue: 'selected_provider_not_requested'
   }, {
     label: 'critic-direct-unevidenced',
     issue: 'attempt_sequence_incomplete'
   }, {
     label: 'critic-fallback-missing-model',
-    issue: 'attempt_model_missing'
+    issue: 'selected_provider_not_requested'
   }, {
     label: 'critic-fallback-nonfinal-2xx',
-    issue: 'nonfinal_attempt_is_2xx'
+    issue: 'selected_provider_not_requested'
   }, {
     label: 'critic-fallback-final-non-2xx',
-    issue: 'final_attempt_not_2xx'
+    issue: 'selected_provider_not_requested'
   }, {
     label: 'critic-route-mismatch',
-    issue: 'route_observation_conflict'
+    issue: 'selected_provider_not_requested'
   }, {
     label: 'critic-route-extra',
-    issue: 'route_observation_conflict'
+    issue: 'selected_provider_not_requested'
   }, {
     label: 'critic-route-filtered',
-    issue: 'fallback_attempt_sequence_not_reported'
+    issue: 'selected_provider_not_requested'
   }, {
     label: 'critic-env-provider-conflict',
     issue: 'route_observation_conflict',
@@ -1636,6 +1700,11 @@ function verifySuccessfulTournament(receipt, job, calls) {
       'successful call lost its router attempt count'
     );
     assertEqual(
+      providerReceipt?.responseDiagnostics?.routerCandidateCount,
+      10,
+      'successful call treated endpoint-catalog metadata as route cardinality'
+    );
+    assertEqual(
       providerReceipt?.responseDiagnostics?.routerFallbackUsed,
       undefined,
       'successful direct call incorrectly recorded fallback use'
@@ -1646,18 +1715,28 @@ function verifySuccessfulTournament(receipt, job, calls) {
       'successful call lost its selected provider'
     );
     assertEqual(
+      providerReceipt?.responseDiagnostics?.finishReason,
+      'stop',
+      'successful Luna call lost its normalized stop terminal'
+    );
+    assertEqual(
+      providerReceipt?.responseDiagnostics?.nativeFinishReason,
+      'completed',
+      'successful Luna call lost its native completed terminal'
+    );
+    assertEqual(
       providerReceipt?.responseDiagnostics?.routerSelectedModel,
-      'deepseek/deepseek-v4-flash-0731',
+      'openai/gpt-5.6-luna-20260709',
       'successful call lost its selected model'
     );
     assertEqual(
       providerReceipt?.model,
-      'deepseek/deepseek-v4-flash-0731',
+      'openai/gpt-5.6-luna-20260709',
       'successful receipt did not account against the selected model'
     );
     assertEqual(
       providerReceipt?.requestedModel,
-      'deepseek/deepseek-v4-flash-0731',
+      'openai/gpt-5.6-luna',
       'successful receipt lost the requested primary model'
     );
     assertEqual(
@@ -1671,7 +1750,7 @@ function verifySuccessfulTournament(receipt, job, calls) {
       JSON.stringify(providerReceipt?.responseDiagnostics?.routerAttempts),
       JSON.stringify([{
         provider: 'OpenAI',
-        model: 'deepseek/deepseek-v4-flash-0731',
+        model: 'openai/gpt-5.6-luna-20260709',
         status: 200
       }]),
       'successful call lost its bounded provider attempt trace'
@@ -2269,7 +2348,7 @@ function verifyGeneratorDirectMissingModelCanonicalization(receipt, calls) {
     JSON.stringify(diagnostics.routerAttempts),
     JSON.stringify([{
       provider: 'OpenAI',
-      model: 'deepseek/deepseek-v4-flash-0731',
+      model: 'openai/gpt-5.6-luna-20260709',
       status: 200
     }]),
     'direct generator missing-model sequence reached the receipt without its reviewed model'
@@ -2977,13 +3056,13 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   assertEqual(call.envelope.model, undefined, 'generator must use the ordered OpenRouter models contract');
   assertEqual(
     JSON.stringify(call.envelope.reasoning),
-    JSON.stringify({ enabled: false, exclude: true }),
+    JSON.stringify({ effort: 'none', exclude: true }),
     'generator lost the bounded reasoning-disabled contract'
   );
   assertEqual(
     JSON.stringify(call.envelope.models),
-    JSON.stringify(['deepseek/deepseek-v4-flash-0731']),
-    'generator lost the bounded multi-vendor model route'
+    JSON.stringify(['openai/gpt-5.6-luna']),
+    'generator lost the bounded direct-OpenAI model route'
   );
   assertEqual(
     call.envelope.provider?.data_collection,
@@ -2992,37 +3071,22 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   );
   assertEqual(
     call.envelope.provider?.allow_fallbacks,
-    true,
-    'generator disabled compatible multi-vendor fallback'
+    false,
+    'generator re-enabled provider fallback'
   );
-  assertEqual(call.envelope.provider?.order, undefined,
-    'generator unexpectedly pinned a provider order');
-  assertEqual(call.envelope.provider?.only, undefined,
-    'generator replaced default routing with a provider allowlist');
+  assertEqual(JSON.stringify(call.envelope.provider?.order),
+    JSON.stringify(['openai']),
+    'generator lost its exact provider order');
+  assertEqual(JSON.stringify(call.envelope.provider?.only),
+    JSON.stringify(['openai']),
+    'generator lost its exact provider allowlist');
   assertEqual(
     JSON.stringify(call.envelope.provider?.ignore),
-    JSON.stringify([
-      'cloudflare',
-      'open-inference',
-      'decart',
-      'digitalocean',
-      'akashml',
-      'siliconflow',
-      'wafer',
-      'ambient',
-      'baidu',
-      'fireworks',
-      'morph',
-      'atlas-cloud',
-      'parasail',
-      'together',
-      'deepinfra',
-      'mancer',
-      'io-net',
-      'phala'
-    ]),
-    'generator lost its evidence-backed provider quarantine'
+    JSON.stringify([]),
+    'generator did not serialize the exact empty ignore set'
   );
+  assertEqual(call.envelope.service_tier, undefined,
+    'generator leaked an unauthorized service tier');
   assertEqual(
     call.envelope.provider?.require_parameters,
     true,
@@ -3030,9 +3094,13 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
   );
   assertEqual(
     call.envelope.provider?.sort,
-    'throughput',
-    'generator did not prioritize deadline-compatible throughput'
+    undefined,
+    'generator leaked a router sort outside the hard provider route'
   );
+  assertEqual(call.envelope.provider?.max_price?.prompt, 0.2,
+    'generator prompt price cap drifted');
+  assertEqual(call.envelope.provider?.max_price?.completion, 1.2,
+    'generator completion price cap drifted');
   assertEqual(
     call.routerMetadataHeader,
     'enabled',
@@ -3055,6 +3123,35 @@ function verifyCriticCall(call) {
   );
   assertEqual(call.envelope.max_tokens, 2000, 'critic output was not bounded');
   assertEqual(call.envelope.stream, undefined, 'critic must stay buffered');
+  assertEqual(JSON.stringify(call.envelope.models),
+    JSON.stringify(['openai/gpt-5.6-luna']),
+    'critic lost the bounded direct-OpenAI model route');
+  assertEqual(JSON.stringify(call.envelope.reasoning),
+    JSON.stringify({ effort: 'none', exclude: true }),
+    'critic lost explicit reasoning none');
+  assertEqual(JSON.stringify(call.envelope.provider?.order),
+    JSON.stringify(['openai']),
+    'critic lost its exact provider order');
+  assertEqual(JSON.stringify(call.envelope.provider?.only),
+    JSON.stringify(['openai']),
+    'critic lost its exact provider allowlist');
+  assertEqual(JSON.stringify(call.envelope.provider?.ignore),
+    JSON.stringify([]),
+    'critic did not serialize the exact empty ignore set');
+  assertEqual(call.envelope.provider?.allow_fallbacks, false,
+    'critic re-enabled provider fallback');
+  assertEqual(call.envelope.provider?.require_parameters, true,
+    'critic lost strict parameter filtering');
+  assertEqual(call.envelope.provider?.data_collection, 'deny',
+    'critic lost the privacy route');
+  assertEqual(call.envelope.provider?.sort, undefined,
+    'critic leaked a router sort outside the hard provider route');
+  assertEqual(call.envelope.provider?.max_price?.prompt, 0.2,
+    'critic prompt price cap drifted');
+  assertEqual(call.envelope.provider?.max_price?.completion, 1.2,
+    'critic completion price cap drifted');
+  assertEqual(call.envelope.service_tier, undefined,
+    'critic leaked an unauthorized service tier');
   assertEqual(
     JSON.stringify(call.envelope.plugins),
     JSON.stringify([{ id: 'response-healing' }]),
@@ -3190,7 +3287,7 @@ function runJob(jobFile, port, options = {}) {
         PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
           `http://127.0.0.1:${port}/openrouter`,
         PROFILESCRIBE_RIG_TOURNAMENT_MODEL:
-          'deepseek/deepseek-v4-flash-0731',
+          'openai/gpt-5.6-luna',
         PROFILESCRIBE_APP_URL: 'https://profilescribe.test',
         PROFILESCRIBE_AGENT_TOKEN: 'test-token',
         ...(options.mcpURL

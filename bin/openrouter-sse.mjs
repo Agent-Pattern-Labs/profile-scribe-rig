@@ -505,6 +505,11 @@ function safeFinishReason(value) {
   const reason = typeof value === 'string' ? value : '';
   return new Set([
     'stop',
+    // OpenAI's GPT-5.6 endpoints report the normalized OpenRouter finish as
+    // `stop` while retaining their native successful terminal as `completed`.
+    // Preserve that exact observation for the model-qualified acceptance gate;
+    // it is not an output-limit reason and does not by itself complete a stream.
+    'completed',
     'length',
     'error',
     'content_filter',
@@ -715,13 +720,16 @@ function reviewedModelEquivalent(leftValue, rightValue) {
   const right = safeModelName(rightValue);
   if (!left || !right) return false;
   if (left === right) return true;
-  return new Set([
+  return [[
+    'openai/gpt-5.6-luna',
+    'openai/gpt-5.6-luna-20260709'
+  ], [
     'deepseek/deepseek-v4-flash-0731',
     'deepseek/deepseek-v4-flash-20260731'
-  ]).has(left) && new Set([
-    'deepseek/deepseek-v4-flash-0731',
-    'deepseek/deepseek-v4-flash-20260731'
-  ]).has(right);
+  ]].some((aliases) => {
+    const reviewed = new Set(aliases);
+    return reviewed.has(left) && reviewed.has(right);
+  });
 }
 
 function positiveMilliseconds(value, fallback) {

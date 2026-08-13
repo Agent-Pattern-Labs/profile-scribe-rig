@@ -309,8 +309,8 @@ function productionCitation(url, title, content) {
   };
 }
 const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 42_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 344_160;
-const OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 491_328;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 59_616;
+const OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 75_533;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
@@ -757,9 +757,16 @@ for (const scenario of cases) {
         'streamMaxContentBytes'
       ) ||
       JSON.stringify(requestSeen.reasoning) !==
-        JSON.stringify({ enabled: false, exclude: true }) ||
+        JSON.stringify(requestSeen.model === 'openai/gpt-5.6-luna'
+          ? { effort: 'none', exclude: true }
+          : { enabled: false, exclude: true }) ||
       !serializeOpenRouterJSONRequestBody(requestSeen).includes(
-        '"reasoning":{"enabled":false,"exclude":true}'
+        requestSeen.model === 'openai/gpt-5.6-luna'
+          ? '"reasoning":{"effort":"none","exclude":true}'
+          : '"reasoning":{"enabled":false,"exclude":true}'
+      ) ||
+      serializeOpenRouterJSONRequestBody(requestSeen).includes(
+        'service_tier'
       ) ||
       requestSeen.maxTokens !== DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
       !requestSeen.system?.includes(
@@ -808,7 +815,9 @@ for (const scenario of cases) {
       result.preflight?.fixedToolFeeMicros !== 0 ||
       !(result.preflight?.callSpendCeilingMicros > 0) ||
       result.preflight?.callSpendCeilingMicros >
-        DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS ||
+        (requestSeen.model === 'openai/gpt-5.6-luna'
+          ? DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS
+          : 344_160) ||
       !(result.preflight?.responseBodyByteCount > 0) ||
       result.preflight?.responseBodyByteCount >
         DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES ||
@@ -1977,6 +1986,7 @@ await verifyCausalPathDiagnosticsAreFieldSpecific(unsafeJob, unsafeRef);
 await verifyTypedCausalWitnessContract(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyMaximumFamilyEvidenceContainment();
+await verifyCurrentLunaGeneratorRouteQualification(unsafeJob, unsafeRef);
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
 await verifyAmbientProductionTimeoutFailsOnce(unsafeJob);
@@ -5128,16 +5138,16 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         evidenceRefMaxBytes: 64
       }) ||
       JSON.stringify(capabilities.plannerCallEnvelope) !== JSON.stringify({
-        model: 'deepseek/deepseek-v4-flash-0731',
-        models: ['deepseek/deepseek-v4-flash-0731'],
+        model: 'openai/gpt-5.6-luna',
+        models: ['openai/gpt-5.6-luna'],
         modelRoutes: [
           {
-            id: 'deepseek/deepseek-v4-flash-0731',
-            family: 'deepseek',
-            minimumContextTokens: 1_000_000,
+            id: 'openai/gpt-5.6-luna',
+            family: 'openai',
+            minimumContextTokens: 1_050_000,
             minimumOutputTokens: 42_000,
-            maximumPromptPrice: 2,
-            maximumCompletionPrice: 6,
+            maximumPromptPrice: 0.2,
+            maximumCompletionPrice: 1.2,
             requiredParameters: [
               'max_tokens',
               'reasoning',
@@ -5147,33 +5157,15 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           }
         ],
         providerPriceCaps: {
-          prompt: 2,
-          completion: 6,
+          prompt: 0.2,
+          completion: 1.2,
           request: 0
         },
         providerRouting: {
-          ignore: [
-            'cloudflare',
-            'open-inference',
-            'decart',
-            'digitalocean',
-            'akashml',
-            'siliconflow',
-            'wafer',
-            'ambient',
-            'baidu',
-            'fireworks',
-            'morph',
-            'atlas-cloud',
-            'parasail',
-            'together',
-            'deepinfra',
-            'mancer',
-            'io-net',
-            'phala'
-          ],
-          sort: 'throughput',
-          allow_fallbacks: true,
+          order: ['openai'],
+          only: ['openai'],
+          ignore: [],
+          allow_fallbacks: false,
           require_parameters: true,
           data_collection: 'deny',
           routerMetadata: 'enabled'
@@ -5181,11 +5173,11 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         framingTokenReserve: 1_024,
         generator: {
           providerPriceCaps: {
-            prompt: 2,
-            completion: 6,
+            prompt: 0.2,
+            completion: 1.2,
             request: 0
           },
-          reasoning: { enabled: false, exclude: true },
+          reasoning: { effort: 'none', exclude: true },
           pluginIds: [],
           requestMaxBytes: 44 * 1_024,
           promptTokenCeiling: DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING,
@@ -5205,11 +5197,11 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
         },
         critic: {
           providerPriceCaps: {
-            prompt: 2,
-            completion: 6,
+            prompt: 0.2,
+            completion: 1.2,
             request: 0
           },
-          reasoning: { enabled: false, exclude: true },
+          reasoning: { effort: 'none', exclude: true },
           pluginIds: ['response-healing'],
           requestMaxBytes: 64 * 1_024,
           promptTokenCeiling: 65_536 + 2_048,
@@ -5219,7 +5211,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           bufferedWireResponseMaxBytes: 160 * 1_024,
           framingTokenReserve: 2_048,
           fixedToolFeeMicros: 0,
-          callSpendCeilingMicros: 147_168
+          callSpendCeilingMicros: 15_917
         },
         interstageCommercialDiscovery: {
           providerCalls: 2,
@@ -7546,6 +7538,316 @@ async function verifyRawOverCardinalityFailsClosed(job, evidenceRef) {
   }
 }
 
+async function verifyCurrentLunaGeneratorRouteQualification(
+  job,
+  evidenceRef
+) {
+  let requestSeen;
+  const result = await runOpportunityDiscoveryPlannerRaw({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      requestSeen = request;
+      const plans = compactFreshPlannerPlans(twoPlannerMotions(
+        cases[0].plans(evidenceRef)[0],
+        evidenceRef
+      ));
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const planValue of plans) planValue.market = exactMarket;
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage: {
+          prompt_tokens: 900,
+          completion_tokens: 650,
+          total_tokens: 1_550,
+          cost: 0.001
+        },
+        generationId: 'generation-luna-generator-qualification',
+        diagnostics: {
+          ...acceptedCurrentLunaRouteDiagnostics(),
+          finishReason: 'stop',
+          nativeFinishReason: 'completed',
+          contentByteCount: 8_000,
+          contentSha256: '1'.repeat(64)
+        }
+      };
+    }
+  });
+  const serialized = serializeOpenRouterJSONRequestBody(requestSeen);
+  if (result.status !== 'planned' ||
+      result.usage?.calls !== 1 ||
+      result.usage?.successfulCalls !== 1 ||
+      result.preflight?.callSpendCeilingMicros > 59_616 ||
+      requestSeen?.model !== 'openai/gpt-5.6-luna' ||
+      JSON.stringify(requestSeen?.models) !==
+        JSON.stringify(['openai/gpt-5.6-luna']) ||
+      JSON.stringify(requestSeen?.reasoning) !== JSON.stringify({
+        effort: 'none',
+        exclude: true
+      }) ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        order: ['openai'],
+        only: ['openai'],
+        ignore: [],
+        allow_fallbacks: false,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 0.2, completion: 1.2, request: 0 }
+      }) ||
+      serialized.includes('service_tier') ||
+      !serialized.includes(
+        '"reasoning":{"effort":"none","exclude":true}'
+      ) ||
+      result.llm?.discoveryPlanner?.requestedModel !==
+        'openai/gpt-5.6-luna' ||
+      result.llm?.discoveryPlanner?.model !==
+        'openai/gpt-5.6-luna-20260709' ||
+      result.llm?.discoveryPlanner?.responseDiagnostics
+        ?.routerSelectedProvider !== 'OpenAI' ||
+      result.llm?.discoveryPlanner?.responseDiagnostics
+        ?.routerCandidateCount !== 10 ||
+      result.llm?.discoveryPlanner?.responseDiagnostics
+        ?.nativeFinishReason !== 'completed' ||
+      result.preflight?.routeProvenanceValidated !== true ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `current Luna generator route qualification failed: ${JSON.stringify({ requestSeen, result })}`
+    );
+  }
+
+  // Current direct-route acceptance requires bounded endpoint-catalog
+  // metadata. It is not an allowlist cardinality, but omission, zero, or a
+  // value beyond the durable diagnostic cap cannot prove the reviewed route.
+  for (const [label, candidateCount] of [
+    ['missing-candidate-count', undefined],
+    ['zero-candidate-count', 0],
+    ['oversized-candidate-count', 65]
+  ]) {
+    const diagnostics = {
+      ...acceptedCurrentLunaRouteDiagnostics(),
+      finishReason: 'stop',
+      nativeFinishReason: 'completed'
+    };
+    if (candidateCount === undefined) {
+      delete diagnostics.routerCandidateCount;
+    } else {
+      diagnostics.routerCandidateCount = candidateCount;
+    }
+    const blocked = await runOpportunityDiscoveryPlannerRaw({
+      job,
+      model: 'openai/gpt-5.6-luna',
+      now,
+      completeJSON: async (request) => {
+        const plans = compactFreshPlannerPlans(twoPlannerMotions(
+          cases[0].plans(evidenceRef)[0],
+          evidenceRef
+        ));
+        const exactMarket = request.responseFormat?.json_schema?.schema
+          ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+        for (const planValue of plans) planValue.market = exactMarket;
+        return {
+          data: {
+            contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+            status: 'planned',
+            reason: '',
+            plans
+          },
+          usage: {
+            prompt_tokens: 900,
+            completion_tokens: 650,
+            total_tokens: 1_550,
+            cost: 0.001
+          },
+          generationId: `generation-${label}`,
+          diagnostics: {
+            ...diagnostics,
+            contentByteCount: 8_000,
+            contentSha256: '3'.repeat(64)
+          }
+        };
+      }
+    });
+    if (blocked.status !== 'blocked' || blocked.plans.length !== 0 ||
+        blocked.preflight?.routeProvenanceIssue !==
+          'candidate_count_missing_or_invalid' ||
+        blocked.preflight?.routeProvenanceValidated !== false ||
+        blocked.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${label} escaped current route candidate metadata: ${JSON.stringify(blocked)}`
+      );
+    }
+  }
+
+  // `completed` is OpenAI Luna's reviewed native success terminal, not a
+  // generic synonym for stop. A legacy model or a non-OpenAI endpoint must
+  // never use it to cross the completed structured-output gate.
+  for (const [label, model, diagnostics] of [[
+    'legacy-native-completed',
+    'deepseek/deepseek-v4-flash-0731',
+    {
+      ...acceptedPlannerRouteDiagnostics(),
+      finishReason: 'stop',
+      nativeFinishReason: 'completed'
+    }
+  ], [
+    'foreign-provider-native-completed',
+    'openai/gpt-5.6-luna',
+    {
+      ...acceptedCurrentLunaRouteDiagnostics(),
+      routerSelectedProvider: 'Azure',
+      routerEnvelopeProvider: 'Azure',
+      routerAttempts: [{
+        provider: 'Azure',
+        model: 'openai/gpt-5.6-luna-20260709',
+        status: 200
+      }],
+      finishReason: 'stop',
+      nativeFinishReason: 'completed'
+    }
+  ], [
+    'non-direct-native-completed',
+    'openai/gpt-5.6-luna',
+    {
+      ...acceptedCurrentLunaRouteDiagnostics(),
+      routerStrategy: 'fallback',
+      finishReason: 'stop',
+      nativeFinishReason: 'completed'
+    }
+  ]]) {
+    const blocked = await runOpportunityDiscoveryPlannerRaw({
+      job,
+      model,
+      now,
+      completeJSON: async (request) => {
+        const plans = compactFreshPlannerPlans(twoPlannerMotions(
+          cases[0].plans(evidenceRef)[0],
+          evidenceRef
+        ));
+        const exactMarket = request.responseFormat?.json_schema?.schema
+          ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+        for (const planValue of plans) planValue.market = exactMarket;
+        return {
+          data: {
+            contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+            status: 'planned',
+            reason: '',
+            plans
+          },
+          usage: {
+            prompt_tokens: 900,
+            completion_tokens: 650,
+            total_tokens: 1_550,
+            cost: 0.001
+          },
+          generationId: `generation-${label}`,
+          diagnostics: {
+            ...diagnostics,
+            contentByteCount: 8_000,
+            contentSha256: '2'.repeat(64)
+          }
+        };
+      }
+    });
+    if (blocked.status !== 'blocked' || blocked.plans.length !== 0 ||
+        blocked.preflight?.finishIssue !==
+          'native_finish_reason_not_stop' ||
+        blocked.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${label} treated native completed as a generic success: ${JSON.stringify(blocked)}`
+      );
+    }
+  }
+
+  for (const [label, selectedProvider, selectedModel, expectedIssue] of [
+    [
+      'azure-provider',
+      'Azure',
+      'openai/gpt-5.6-luna-20260709',
+      'observed_provider_not_requested'
+    ],
+    [
+      'priority-provider',
+      'openai/priority',
+      'openai/gpt-5.6-luna-20260709',
+      'observed_provider_not_requested'
+    ],
+    [
+      'priority-model',
+      'OpenAI',
+      'openai/gpt-5.6-luna:priority',
+      'observed_model_not_requested'
+    ]
+  ]) {
+    let calls = 0;
+    let failureRequest;
+    const failed = await runOpportunityDiscoveryPlannerRaw({
+      job,
+      model: 'openai/gpt-5.6-luna',
+      now,
+      completeJSON: async (request) => {
+        calls += 1;
+        failureRequest = request;
+        const error = new Error('bounded current-route failure');
+        error.openRouterFailureCode = 'openrouter_timeout';
+        error.openRouterGenerationId = `generation-luna-${label}`;
+        error.openRouterDiagnostics = {
+          httpStatus: 200,
+          routerSelectedProvider: selectedProvider,
+          routerSelectedModel: selectedModel,
+          routerEnvelopeProvider: selectedProvider,
+          routerEnvelopeModel: selectedModel,
+          streaming: true,
+          streamEventCount: 1,
+          streamWireByteCount: 1,
+          streamFirstDataLatencyMs: 1,
+          streamDurationMs: 300_001,
+          streamCompleted: false,
+          timeoutKind: 'total',
+          timeoutOrigin: 'profilescribe_local_deadline',
+          timeoutDeadlineMs: 300_000,
+          timeoutElapsedMs: 300_001,
+          timeoutPhase: 'response_stream',
+          responseHeadersReceived: true
+        };
+        throw error;
+      }
+    });
+    if (calls !== 1 ||
+        failed.status !== 'blocked' ||
+        failed.failureCode !== 'planner_route_provenance_invalid' ||
+        failed.recoveryCause !==
+          'commercial_discovery_planner_route_provenance_recovery' ||
+        failed.preflight?.routeProvenanceIssue !== expectedIssue ||
+        failed.preflight?.routeProvenanceValidated !== false ||
+        failed.planSelection?.acceptedPlanCount !== 0 ||
+        failed.llm?.commercialCritic !== undefined ||
+        failed.sideEffectsPerformed !== 0 ||
+        JSON.stringify(failureRequest?.provider) !== JSON.stringify({
+          order: ['openai'],
+          only: ['openai'],
+          ignore: [],
+          allow_fallbacks: false,
+          require_parameters: true,
+          data_collection: 'deny',
+          max_price: { prompt: 0.2, completion: 1.2, request: 0 }
+        }) ||
+        serializeOpenRouterJSONRequestBody(failureRequest).includes(
+          'service_tier'
+        )) {
+      throw new Error(
+        `${label} escaped current Luna generator route quarantine: ${JSON.stringify(failed)}`
+      );
+    }
+  }
+}
+
 async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
   const liveTruncatedCompletionTokens = 16_000;
   let calls = 0;
@@ -7843,9 +8145,10 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
       requestSeen?.provider?.order !== undefined ||
       requestSeen?.provider?.only !== undefined ||
       JSON.stringify(capabilityRouting) !== JSON.stringify({
-        ignore: expectedIgnore,
-        sort: 'throughput',
-        allow_fallbacks: true,
+        order: ['openai'],
+        only: ['openai'],
+        ignore: [],
+        allow_fallbacks: false,
         require_parameters: true,
         data_collection: 'deny',
         routerMetadata: 'enabled'
@@ -16790,6 +17093,29 @@ function acceptedCriticRouteDiagnostics() {
     routerSelectedEndpointEvidenced: true,
     routerSelectedProvider: 'Fixture Provider',
     routerSelectedModel: 'deepseek/deepseek-v4-flash-0731'
+  };
+}
+
+function acceptedCurrentLunaRouteDiagnostics() {
+  return {
+    httpStatus: 200,
+    routerStrategy: 'direct',
+    routerAttempt: 1,
+    // This is endpoint-catalog metadata, not an allowlist cardinality.
+    routerCandidateCount: 10,
+    routerAttemptStatuses: [200],
+    routerAttempts: [{
+      provider: 'OpenAI',
+      model: 'openai/gpt-5.6-luna-20260709',
+      status: 200
+    }],
+    routerAttemptSequenceSource: 'reported',
+    routerSelectedEndpointEvidenced: true,
+    routerFallbackUsed: false,
+    routerSelectedProvider: 'OpenAI',
+    routerSelectedModel: 'openai/gpt-5.6-luna-20260709',
+    routerEnvelopeProvider: 'OpenAI',
+    routerEnvelopeModel: 'openai/gpt-5.6-luna'
   };
 }
 
