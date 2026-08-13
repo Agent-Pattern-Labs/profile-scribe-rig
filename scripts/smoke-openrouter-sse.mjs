@@ -1466,7 +1466,7 @@ async function verifyRunJobUsesStreamingTransport() {
     );
     assertEqual(
       providerRequest?.provider?.ignore?.join(','),
-      'cloudflare,open-inference',
+      'cloudflare,open-inference,decart',
       'overflow request lost the evidence-backed route quarantine'
     );
   } finally {

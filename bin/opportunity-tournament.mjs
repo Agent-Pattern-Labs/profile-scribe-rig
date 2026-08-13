@@ -201,11 +201,13 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // Preserve OpenRouter's default health/price load balancing and automatic
   // fallbacks across every endpoint that natively supports the strict request.
   // Quarantine only endpoints with durable evidence under the applicable
-  // transport contract: Cloudflare returned empty HTTP-200 envelopes, and
-  // OpenInference exceeded the compact 40-KiB structured-output envelope.
+  // transport contract: Cloudflare returned empty HTTP-200 envelopes,
+  // OpenInference exceeded the compact 40-KiB structured-output envelope,
+  // and Decart returned HTTP 200/stop while violating eight strict-schema
+  // minLength constraints with empty compact fields.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
-  ignore: ['cloudflare', 'open-inference'],
+  ignore: ['cloudflare', 'open-inference', 'decart'],
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
