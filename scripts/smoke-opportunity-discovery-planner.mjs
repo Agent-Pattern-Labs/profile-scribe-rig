@@ -307,8 +307,9 @@ function productionCitation(url, title, content) {
     contentHash
   };
 }
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 14_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 176_160;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 18_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 200_160;
+const OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 347_328;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
@@ -1904,19 +1905,34 @@ await verifyProviderAttestedBuyerReviewRoute();
 await verifyPaidDemandTargetProtocolEndToEnd();
 await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
-// The 2026-08-13 DeepInfra production trace reached the former 10k-token
-// ceiling after 190,846 ms with 24,695 content bytes. Prove the current exact
-// schema maximum fits the replacement ceiling at that observed encoding rate,
-// and that the projected provider time remains inside the 300-second deadline.
-const observedPlannerBytesPerOutputToken = 24_695 / 10_000;
+// The 2026-08-13 Wafer production trace reached the former 14k-token ceiling
+// after 58,521 ms with 33,904 content bytes and finish=length. Prove both the
+// exact schema maximum and the 40 KiB runtime ceiling fit the replacement
+// envelope at that observed encoding rate, and that the projected provider
+// time remains inside the 300-second deadline.
+const observedPlannerCompletionTokens = 14_000;
+const observedPlannerContentBytes = 33_904;
+const observedPlannerDurationMs = 58_521;
+const observedPlannerFinishReason = 'length';
+const observedPlannerBytesPerOutputToken =
+  observedPlannerContentBytes / observedPlannerCompletionTokens;
 const projectedSchemaMaximumOutputTokens = Math.ceil(
   computedPlannerSchemaResponseBoundBytes / observedPlannerBytesPerOutputToken
 );
-const projectedPlannerDurationMs = Math.ceil(190_846 * 14_000 / 10_000);
-if (projectedSchemaMaximumOutputTokens > DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
+const projectedRuntimeMaximumOutputTokens = Math.ceil(
+  MAX_DISCOVERY_PLANNER_RESPONSE_BYTES / observedPlannerBytesPerOutputToken
+);
+const projectedPlannerDurationMs = Math.ceil(
+  observedPlannerDurationMs * DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS /
+    observedPlannerCompletionTokens
+);
+if (observedPlannerFinishReason !== 'length' ||
+    projectedSchemaMaximumOutputTokens > DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
+    projectedRuntimeMaximumOutputTokens >
+      DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
     projectedPlannerDurationMs > 300_000) {
   throw new Error(
-    `current planner ceiling is not supported by the production trace: ${JSON.stringify({ computedPlannerSchemaResponseBoundBytes, projectedSchemaMaximumOutputTokens, projectedPlannerDurationMs, outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS })}`
+    `current planner ceiling is not supported by the production trace: ${JSON.stringify({ observedPlannerCompletionTokens, observedPlannerContentBytes, observedPlannerDurationMs, observedPlannerFinishReason, computedPlannerSchemaResponseBoundBytes, projectedSchemaMaximumOutputTokens, projectedRuntimeMaximumOutputTokens, projectedPlannerDurationMs, outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS })}`
   );
 }
 
@@ -5013,7 +5029,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'deepseek/deepseek-v4-flash-0731',
             family: 'deepseek',
             minimumContextTokens: 1_000_000,
-            minimumOutputTokens: 14_000,
+            minimumOutputTokens: 18_000,
             maximumPromptPrice: 2,
             maximumCompletionPrice: 6,
             requiredParameters: [
@@ -5126,6 +5142,11 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
   if (recomputedCriticCallSpendCeilingMicros !==
       callEnvelope.critic.callSpendCeilingMicros) {
     throw new Error('critic call-spend capability derivation drifted');
+  }
+  if (recomputedPlannerCallSpendCeilingMicros +
+      recomputedCriticCallSpendCeilingMicros !==
+        OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS) {
+    throw new Error('opportunity tournament LLM spend reserve drifted');
   }
   if (callEnvelope.generator.streaming.totalTimeoutMs +
       callEnvelope.interstageCommercialDiscovery.totalAllowanceMs +
@@ -7452,6 +7473,16 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
       receipt?.responseDiagnostics?.contentByteCount !== 21_600 ||
       receipt?.responseDiagnostics?.contentSha256 !== '7'.repeat(64) ||
       result.preflight?.authorized !== true ||
+      result.preflight?.promptTokenCanary?.requestBodyByteCount !==
+        result.preflight?.requestBodyByteCount ||
+      result.preflight?.promptTokenCanary?.framingTokenReserve !== 1_024 ||
+      result.preflight?.promptTokenCanary?.injectedContextTokenReserve !== 0 ||
+      result.preflight?.promptTokenCanary?.serializedPromptTokenCeiling !==
+        result.preflight?.serializedPromptTokenCeiling ||
+      result.preflight?.promptTokenCanary?.promptTokenCeiling !==
+        result.preflight?.promptTokenCeiling ||
+      result.preflight?.promptTokenCanary?.reportedPromptTokens !== 9_700 ||
+      result.preflight?.promptTokenCanary?.withinCeiling !== true ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `truncated planner did not fail once with a safe cause-matched receipt: ${JSON.stringify({ calls, requestMaxTokens: requestSeen?.maxTokens, result })}`

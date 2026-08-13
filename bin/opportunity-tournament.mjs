@@ -145,7 +145,7 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
     family: 'deepseek',
     minimumContextTokens: 1_000_000,
-    minimumOutputTokens: 14_000,
+    minimumOutputTokens: 18_000,
     maximumPromptPrice: 2,
     maximumCompletionPrice: 6
   })
@@ -536,13 +536,14 @@ const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // Call 1 emits one bounded model-authored role-selected path for each motion and
 // shares pathBase across its two tactic deltas. Local code selects, but never
 // composes, the branch fixed by the typed motion. The strict grammar has an
-// independently proved <40 KiB serialized upper bound. A production DeepInfra
-// trace emitted 24,695 bytes in exactly 10,000 tokens and terminated for
-// length after 190,846 ms. At that observed 2.47-byte/token ratio the proved
-// 31,552-byte schema maximum needs fewer than 12,800 tokens; 14,000 preserves
-// explicit headroom and projects below the existing 300-second total deadline.
-// Length termination remains incomplete and fails closed.
-const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 14_000;
+// independently proved <40 KiB serialized upper bound. A production Wafer
+// trace emitted 33,904 bytes in exactly 14,000 tokens and terminated for
+// length after 58,521 ms. At that observed 2.42-byte/token ratio the 40,960-byte
+// runtime ceiling needs fewer than 17,000 tokens; 18,000 preserves explicit
+// headroom and projects well below the existing 300-second total deadline.
+// Historical 10k/14k receipts remain durable in the app; fresh calls use this
+// exact envelope. Length termination remains incomplete and fails closed.
+const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 18_000;
 // Stream the large strict-schema generator response so a healthy model can
 // continue past the former 120-second buffered-response deadline. Silence is
 // bounded independently from total execution time. The end-to-end deadline
@@ -566,11 +567,12 @@ if (MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS +
         MIN_OPPORTUNITY_TOURNAMENT_LOCAL_MARGIN_MS) {
   throw new Error('opportunity tournament provider deadlines exceed worker window');
 }
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 176_160;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 200_160;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE;
 const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 147_168;
+const MAX_OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 347_328;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
     OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING *
@@ -594,6 +596,11 @@ const computedCommercialCriticCallSpendCeilingMicros =
 if (computedCommercialCriticCallSpendCeilingMicros !==
     MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS) {
   throw new Error('commercial critic call-spend envelope drifted');
+}
+if (MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS +
+    MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS !==
+      MAX_OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS) {
+  throw new Error('opportunity tournament LLM spend reserve drifted');
 }
 // Call 1 must retain two economically distinct outside-world motions until
 // provider evidence can bind or reject them. Prematurely collapsing to one
@@ -2196,6 +2203,12 @@ export async function runOpportunityDiscoveryPlanner({
       promptHash,
       error: failureCode
     });
+    const promptTokenCanary = incomplete
+      ? providerPromptTokenCanary(
+          preflight,
+          providerMetadata.openRouterUsage
+        )
+      : undefined;
     return {
       ...base,
       reason: failureCode === 'openrouter_truncated_structured_output'
@@ -2224,7 +2237,8 @@ export async function runOpportunityDiscoveryPlanner({
           : undefined,
         maxResponseBodyByteCount: outputEnvelopeExceeded
           ? MAX_DISCOVERY_PLANNER_RESPONSE_BYTES
-          : undefined
+          : undefined,
+        promptTokenCanary
       },
       usage: aggregateUsage([providerMetadata], budget),
       llm: { discoveryPlanner: providerMetadata }
