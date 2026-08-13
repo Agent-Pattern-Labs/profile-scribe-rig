@@ -1979,6 +1979,7 @@ await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyMaximumFamilyEvidenceContainment();
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
+await verifyAmbientProductionTimeoutFailsOnce(unsafeJob);
 await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
@@ -5148,7 +5149,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'digitalocean',
             'akashml',
             'siliconflow',
-            'wafer'
+            'wafer',
+            'ambient'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7665,13 +7667,22 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'digitalocean',
     'akashml',
     'siliconflow',
-    'wafer'
+    'wafer',
+    'ambient'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
       requestSeen?.streamTotalTimeoutMs !== 300_000 ||
       JSON.stringify(requestSeen?.provider?.ignore) !==
         JSON.stringify(expectedIgnore) ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 2, completion: 6, request: 0 }
+      }) ||
       requestSeen?.provider?.sort !== 'throughput' ||
       requestSeen?.provider?.allow_fallbacks !== true ||
       requestSeen?.provider?.require_parameters !== true ||
@@ -7709,6 +7720,143 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
   }
 }
 
+async function verifyAmbientProductionTimeoutFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  const rawSentinel = 'raw-ambient-timeout-secret-sentinel';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      const error = new Error(
+        'OpenRouter streaming request exceeded its bounded total deadline'
+      );
+      error.openRouterFailureCode = 'openrouter_timeout';
+      error.openRouterGenerationId =
+        'gen-1786632170-nWj2gO8B2X7MDoFKgflA';
+      error.openRouterDiagnostics = {
+        httpStatus: 200,
+        routerSelectedProvider: 'Ambient',
+        routerSelectedModel: 'deepseek/deepseek-v4-flash-0731',
+        routerEnvelopeProvider: 'Ambient',
+        routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+        contentByteCount: 19_990,
+        contentSha256:
+          'b4fc80db45ba2194e2b325d3126890aa105fa8c6d8a2f6696f51503d11db24d0',
+        streaming: true,
+        streamEventCount: 6_235,
+        streamWireByteCount: 1_796_266,
+        streamFirstDataLatencyMs: 1_645,
+        streamDurationMs: 300_008,
+        streamCompleted: false,
+        timeoutKind: 'total',
+        timeoutOrigin: 'profilescribe_local_deadline',
+        timeoutDeadlineMs: 300_000,
+        timeoutElapsedMs: 300_008,
+        timeoutPhase: 'response_stream',
+        responseHeadersReceived: true,
+        rawProviderBody: rawSentinel
+      };
+      // The production generation-detail lookup returned HTTP 404. It
+      // supplied no usage or terminal evidence and cannot authorize another
+      // planner, repair, or critic call.
+      throw error;
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer',
+    'ambient'
+  ];
+  const capabilityRouting =
+    opportunityCommercialDiscoveryCapabilities()
+      .plannerCallEnvelope.providerRouting;
+  if (calls !== 1 ||
+      requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
+      JSON.stringify(requestSeen?.models) !==
+        JSON.stringify(['deepseek/deepseek-v4-flash-0731']) ||
+      requestSeen?.maxTokens !== 42_000 ||
+      requestSeen?.stream !== true ||
+      requestSeen?.streamStartTimeoutMs !== 180_000 ||
+      requestSeen?.streamIdleTimeoutMs !== 60_000 ||
+      requestSeen?.streamTotalTimeoutMs !== 300_000 ||
+      requestSeen?.streamMaxContentBytes !==
+        MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES ||
+      JSON.stringify(requestSeen?.provider?.ignore) !==
+        JSON.stringify(expectedIgnore) ||
+      requestSeen?.provider?.sort !== 'throughput' ||
+      requestSeen?.provider?.allow_fallbacks !== true ||
+      requestSeen?.provider?.require_parameters !== true ||
+      requestSeen?.provider?.data_collection !== 'deny' ||
+      JSON.stringify(requestSeen?.provider?.max_price) !==
+        JSON.stringify({ prompt: 2, completion: 6, request: 0 }) ||
+      requestSeen?.provider?.order !== undefined ||
+      requestSeen?.provider?.only !== undefined ||
+      JSON.stringify(capabilityRouting) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        routerMetadata: 'enabled'
+      }) ||
+      result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.acceptedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(result.planSelection?.rejectedPlans) !== '[]' ||
+      result.webSearchReceipt !== null ||
+      result.preflight?.responseBodyByteCount !== undefined ||
+      result.preflight?.routeProvenanceValidated !== undefined ||
+      result.usage?.calls !== 1 || result.usage?.successfulCalls !== 0 ||
+      result.usage?.promptTokens !== 0 ||
+      result.usage?.completionTokens !== 0 ||
+      receipt?.status !== 'failed' ||
+      receipt?.error !== 'openrouter_timeout' ||
+      receipt?.generationId !==
+        'gen-1786632170-nWj2gO8B2X7MDoFKgflA' ||
+      JSON.stringify(receipt?.openRouterUsage) !== '{}' ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerSelectedProvider !== 'Ambient' ||
+      diagnostics?.contentByteCount !== 19_990 ||
+      diagnostics?.contentSha256 !==
+        'b4fc80db45ba2194e2b325d3126890aa105fa8c6d8a2f6696f51503d11db24d0' ||
+      diagnostics?.streamEventCount !== 6_235 ||
+      diagnostics?.streamWireByteCount !== 1_796_266 ||
+      diagnostics?.streamFirstDataLatencyMs !== 1_645 ||
+      diagnostics?.streamDurationMs !== 300_008 ||
+      diagnostics?.streamCompleted !== false ||
+      diagnostics?.timeoutKind !== 'total' ||
+      diagnostics?.timeoutOrigin !== 'profilescribe_local_deadline' ||
+      diagnostics?.timeoutDeadlineMs !== 300_000 ||
+      diagnostics?.timeoutElapsedMs !== 300_008 ||
+      diagnostics?.timeoutPhase !== 'response_stream' ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.finishReason !== undefined ||
+      diagnostics?.nativeFinishReason !== undefined ||
+      diagnostics?.localJSONRepairApplied !== undefined ||
+      diagnostics?.localJSONRepairFailure !== undefined ||
+      result.normalizationDiagnostic !== undefined ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(rawSentinel)) {
+    throw new Error(
+      `Ambient production timeout did not fail once with exact route parity and a safe receipt: ${JSON.stringify({ calls, request: requestSeen, result })}`
+    );
+  }
+}
+
 async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
   const expectedIgnore = [
     'cloudflare',
@@ -7717,7 +7865,8 @@ async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
     'digitalocean',
     'akashml',
     'siliconflow',
-    'wafer'
+    'wafer',
+    'ambient'
   ];
   for (const scenario of [{
     provider: 'Wafer',

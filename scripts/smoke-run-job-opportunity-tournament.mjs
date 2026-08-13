@@ -3008,7 +3008,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
       'digitalocean',
       'akashml',
       'siliconflow',
-      'wafer'
+      'wafer',
+      'ambient'
     ]),
     'generator lost its evidence-backed provider quarantine'
   );

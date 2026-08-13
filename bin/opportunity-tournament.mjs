@@ -212,7 +212,9 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // SiliconFlow's HTTP-200 stream reached 37,767 bytes but never returned
   // finish or usage before the exact 300-second local total deadline, and
   // Wafer emitted 40,965 bytes without finish or usage, crossing the exact
-  // 40-KiB structured-output envelope after 59,126 ms.
+  // 40-KiB structured-output envelope after 59,126 ms. Ambient's HTTP-200
+  // stream later reached 19,990 bytes and 6,235 events without finish or usage
+  // before the exact 300-second local total deadline.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
   ignore: [
@@ -222,7 +224,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'digitalocean',
     'akashml',
     'siliconflow',
-    'wafer'
+    'wafer',
+    'ambient'
   ],
   sort: 'throughput',
   allow_fallbacks: true,
