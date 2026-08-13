@@ -307,8 +307,8 @@ function productionCitation(url, title, content) {
     contentHash
   };
 }
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 10_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 152_160;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 14_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 176_160;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
@@ -1903,6 +1903,22 @@ await verifyTwoStageTargetBinding();
 await verifyProviderAttestedBuyerReviewRoute();
 await verifyPaidDemandTargetProtocolEndToEnd();
 await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
+
+// The 2026-08-13 DeepInfra production trace reached the former 10k-token
+// ceiling after 190,846 ms with 24,695 content bytes. Prove the current exact
+// schema maximum fits the replacement ceiling at that observed encoding rate,
+// and that the projected provider time remains inside the 300-second deadline.
+const observedPlannerBytesPerOutputToken = 24_695 / 10_000;
+const projectedSchemaMaximumOutputTokens = Math.ceil(
+  computedPlannerSchemaResponseBoundBytes / observedPlannerBytesPerOutputToken
+);
+const projectedPlannerDurationMs = Math.ceil(190_846 * 14_000 / 10_000);
+if (projectedSchemaMaximumOutputTokens > DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
+    projectedPlannerDurationMs > 300_000) {
+  throw new Error(
+    `current planner ceiling is not supported by the production trace: ${JSON.stringify({ computedPlannerSchemaResponseBoundBytes, projectedSchemaMaximumOutputTokens, projectedPlannerDurationMs, outputTokenCeiling: DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS })}`
+  );
+}
 
 if (smallestCompactResponseReduction < 0.1 ||
     largestCompactFixtureBytes >= largestMaterializedFixtureBytes) {
@@ -4997,7 +5013,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'deepseek/deepseek-v4-flash-0731',
             family: 'deepseek',
             minimumContextTokens: 1_000_000,
-            minimumOutputTokens: 10_000,
+            minimumOutputTokens: 14_000,
             maximumPromptPrice: 2,
             maximumCompletionPrice: 6,
             requiredParameters: [
