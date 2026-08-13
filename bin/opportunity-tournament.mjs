@@ -208,8 +208,10 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // minLength constraints with empty compact fields, DigitalOcean emitted only
   // 3,014 content bytes before the exact 300-second planner deadline, and
   // AkashML streamed only 13,787 bytes before that same current-contract limit,
-  // and SiliconFlow's HTTP-200 stream reached 37,767 bytes but never returned
-  // finish or usage before the exact 300-second local total deadline.
+  // SiliconFlow's HTTP-200 stream reached 37,767 bytes but never returned
+  // finish or usage before the exact 300-second local total deadline, and
+  // Wafer emitted 40,965 bytes without finish or usage, crossing the exact
+  // 40-KiB structured-output envelope after 59,126 ms.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
   ignore: [
@@ -218,7 +220,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'decart',
     'digitalocean',
     'akashml',
-    'siliconflow'
+    'siliconflow',
+    'wafer'
   ],
   sort: 'throughput',
   allow_fallbacks: true,

@@ -1898,6 +1898,7 @@ await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyMaximumFamilyEvidenceContainment();
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
+await verifyWaferProductionEnvelopeOverflowFailsOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
 verifyCausalPairReservationSurvivesCrowding();
@@ -5063,7 +5064,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'decart',
             'digitalocean',
             'akashml',
-            'siliconflow'
+            'siliconflow',
+            'wafer'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7563,7 +7565,8 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'decart',
     'digitalocean',
     'akashml',
-    'siliconflow'
+    'siliconflow',
+    'wafer'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
@@ -7603,6 +7606,106 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
       )) {
     throw new Error(
       `SiliconFlow production timeout did not fail once with a safe receipt: ${JSON.stringify({ calls, request: requestSeen, result })}`
+    );
+  }
+}
+
+async function verifyWaferProductionEnvelopeOverflowFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      const error = new Error(
+        'OpenRouter streaming content exceeded its bounded structured-output envelope'
+      );
+      error.openRouterFailureCode =
+        'openrouter_truncated_structured_output';
+      error.openRouterGenerationId =
+        'gen-1786614275-eCHzBgip17OWBH4uqJ45';
+      error.openRouterDiagnostics = {
+        httpStatus: 200,
+        routerSelectedProvider: 'Wafer',
+        routerSelectedModel: 'deepseek/deepseek-v4-flash-0731',
+        routerEnvelopeProvider: 'Wafer',
+        routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+        contentByteCount: 40_965,
+        contentSha256:
+          '7116e246720137715dd187dad57cf066957b2879edc2c6ea3381ec112a9cc0c0',
+        structuredOutputEnvelopeExceeded: true,
+        maxContentByteCount: 40_960,
+        streaming: true,
+        streamEventCount: 4_770,
+        streamWireByteCount: 1_387_049,
+        streamFirstDataLatencyMs: 706,
+        streamDurationMs: 59_126,
+        streamCompleted: false,
+        responseHeadersReceived: true,
+        rawProviderBody: 'raw-wafer-overflow-secret-sentinel'
+      };
+      throw error;
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer'
+  ];
+  if (calls !== 1 ||
+      requestSeen?.maxTokens !== 42_000 ||
+      requestSeen?.streamMaxContentBytes !== 40_960 ||
+      JSON.stringify(requestSeen?.provider?.ignore) !==
+        JSON.stringify(expectedIgnore) ||
+      requestSeen?.provider?.sort !== 'throughput' ||
+      requestSeen?.provider?.allow_fallbacks !== true ||
+      requestSeen?.provider?.require_parameters !== true ||
+      requestSeen?.provider?.data_collection !== 'deny' ||
+      result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.recoveryCause !==
+        'commercial_discovery_planner_output_envelope_recovery' ||
+      result.failureCode !== 'planner_output_envelope_exceeded' ||
+      result.preflight?.responseBodyByteCount !== 40_965 ||
+      result.preflight?.maxResponseBodyByteCount !== 40_960 ||
+      result.preflight?.routeProvenanceValidated !== false ||
+      result.usage?.calls !== 1 || result.usage?.successfulCalls !== 0 ||
+      result.usage?.promptTokens !== 0 ||
+      result.usage?.completionTokens !== 0 ||
+      receipt?.status !== 'incomplete' ||
+      receipt?.error !== 'openrouter_truncated_structured_output' ||
+      receipt?.generationId !==
+        'gen-1786614275-eCHzBgip17OWBH4uqJ45' ||
+      JSON.stringify(receipt?.openRouterUsage) !== '{}' ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerSelectedProvider !== 'Wafer' ||
+      diagnostics?.contentByteCount !== 40_965 ||
+      diagnostics?.structuredOutputEnvelopeExceeded !== true ||
+      diagnostics?.maxContentByteCount !== 40_960 ||
+      diagnostics?.streamEventCount !== 4_770 ||
+      diagnostics?.streamWireByteCount !== 1_387_049 ||
+      diagnostics?.streamFirstDataLatencyMs !== 706 ||
+      diagnostics?.streamDurationMs !== 59_126 ||
+      diagnostics?.streamCompleted !== false ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.finishReason !== undefined ||
+      diagnostics?.nativeFinishReason !== undefined ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(
+        'raw-wafer-overflow-secret-sentinel'
+      )) {
+    throw new Error(
+      `Wafer production envelope overflow did not fail once with a safe receipt: ${JSON.stringify({ calls, request: requestSeen, result })}`
     );
   }
 }
