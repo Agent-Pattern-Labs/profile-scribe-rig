@@ -3321,6 +3321,14 @@ async function callOpenRouterJSON({
           streamState.contentByteCount
         ) || 0,
         contentSha256: text(streamState.contentSha256),
+        structuredOutputEnvelopeExceeded:
+          streamState.structuredOutputEnvelopeExceeded === true
+            ? true
+            : undefined,
+        maxContentByteCount:
+          streamState.structuredOutputEnvelopeExceeded === true
+            ? positiveInteger(streamState.maxContentByteCount)
+            : undefined,
         ...openRouterRouterDiagnostics(
           streamState.openrouterMetadata,
           streamState.envelopeModel,

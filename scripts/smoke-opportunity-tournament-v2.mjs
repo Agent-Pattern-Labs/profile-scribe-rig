@@ -2806,7 +2806,7 @@ async function verifyLengthFinishedStructuredRepair() {
         request.provider?.order !== undefined ||
         request.provider?.only !== undefined ||
         JSON.stringify(request.provider?.ignore) !==
-          '["cloudflare"]' ||
+          '["cloudflare","open-inference"]' ||
         request.provider?.allow_fallbacks !== true ||
         request.provider?.require_parameters !== true ||
         request.provider?.max_price?.prompt !== 2 ||

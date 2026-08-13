@@ -2951,7 +2951,7 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
     'generator replaced default routing with a provider allowlist');
   assertEqual(
     JSON.stringify(call.envelope.provider?.ignore),
-    JSON.stringify(['cloudflare']),
+    JSON.stringify(['cloudflare', 'open-inference']),
     'generator lost its evidence-backed provider quarantine'
   );
   assertEqual(

@@ -3,6 +3,7 @@
 import { readOpenRouterChatCompletionSSE } from '../bin/openrouter-sse.mjs';
 import { serializeOpenRouterJSONRequestBody } from '../bin/opportunity-tournament.mjs';
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import { tmpdir } from 'os';
@@ -882,13 +883,23 @@ async function verifyPlannerContentLimitIsEnforced() {
   assert(caught, 'planner content overflow unexpectedly succeeded');
   assertEqual(
     caught.openRouterFailureCode,
-    'openrouter_invalid_response',
+    'openrouter_truncated_structured_output',
     'planner content overflow failure code'
   );
   assertEqual(
     caught.openRouterStreamState?.contentByteCount,
     5,
     'planner content overflow lost safe byte diagnostic'
+  );
+  assertEqual(
+    caught.openRouterStreamState?.structuredOutputEnvelopeExceeded,
+    true,
+    'planner content overflow lost its finite envelope marker'
+  );
+  assertEqual(
+    caught.openRouterStreamState?.maxContentByteCount,
+    4,
+    'planner content overflow lost its exact local ceiling'
   );
 }
 
@@ -959,10 +970,12 @@ function verifyStreamingRequestIsInsideExactSerializedPreflight() {
 
 async function verifyRunJobUsesStreamingTransport() {
   let providerRequest;
+  let providerRequestCount = 0;
   const server = createServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
     providerRequest = JSON.parse(raw || '{}');
+    providerRequestCount += 1;
     const providerInput = JSON.parse(
       providerRequest.messages?.find((message) => message.role === 'user')
         ?.content || '{}'
@@ -978,6 +991,50 @@ async function verifyRunJobUsesStreamingTransport() {
         id: 'gen-sse-chunk-disputed',
         debug_message: 'raw-sse-generation-conflict-secret-sentinel',
         choices: [{ delta: { content: '{}' } }]
+      }));
+      return;
+    }
+    if (providerInput.objective?.id ===
+        'objective-openrouter-sse-content-overflow') {
+      const contentLimit = 40 * 1024;
+      const sentinel = 'raw-stream-overflow-secret-sentinel:';
+      const content = `${sentinel}${'x'.repeat(
+        contentLimit + 1 - Buffer.byteLength(sentinel, 'utf8')
+      )}`;
+      const model = 'deepseek/deepseek-v4-flash-0731';
+      response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'X-Generation-Id': 'gen-stream-compact-overflow',
+        'X-Provider-Name': 'OpenInference'
+      });
+      response.end(event({
+        id: 'gen-stream-compact-overflow',
+        model,
+        provider: 'OpenInference',
+        choices: [{ delta: { content } }],
+        usage: {
+          prompt_tokens: 2961,
+          completion_tokens: 10248,
+          total_tokens: 13209,
+          cost: 0.00208152
+        },
+        openrouter_metadata: {
+          strategy: 'fallback',
+          attempt: 3,
+          endpoints: {
+            total: 3,
+            available: [{
+              provider: 'OpenInference',
+              model,
+              selected: true
+            }]
+          },
+          attempts: [
+            { provider: 'Venice', model, status: 402 },
+            { provider: 'Together', model, status: 503 },
+            { provider: 'OpenInference', model, status: 200 }
+          ]
+        }
       }));
       return;
     }
@@ -1221,6 +1278,196 @@ async function verifyRunJobUsesStreamingTransport() {
       conflictOutput.metadata?.discoveryPlan?.status !== 'planned' &&
         (conflictOutput.metadata?.discoveryPlan?.plans?.length || 0) === 0,
       'streamed planner identity conflict became accepted business evidence'
+    );
+
+    const overflowJobFile = join(temporaryDirectory, 'overflow-job.json');
+    writeFileSync(
+      overflowJobFile,
+      JSON.stringify(streamingPlannerJob('content-overflow')),
+      'utf8'
+    );
+    const overflowRequestOffset = providerRequestCount;
+    const overflowExecution = await runCommand(
+      process.execPath,
+      ['bin/run-job.mjs', '--job-file', overflowJobFile],
+      {
+        ...process.env,
+        OPENROUTER_API_KEY: 'smoke-key',
+        PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
+          `http://127.0.0.1:${server.address().port}/openrouter`,
+        PROFILESCRIBE_RIG_OPENROUTER_STREAM_START_TIMEOUT_MS: '1000',
+        PROFILESCRIBE_RIG_OPENROUTER_STREAM_IDLE_TIMEOUT_MS: '100',
+        PROFILESCRIBE_RIG_OPENROUTER_STREAM_TOTAL_TIMEOUT_MS: '2000'
+      }
+    );
+    assertEqual(
+      overflowExecution.code,
+      0,
+      `overflow run-job integration failed: ${overflowExecution.stderr}`
+    );
+    const overflowOutput = JSON.parse(overflowExecution.stdout);
+    const overflowPlan = overflowOutput.metadata?.discoveryPlan;
+    const overflowPlanner = overflowPlan?.llm?.discoveryPlanner;
+    const overflowDiagnostics = overflowPlanner?.responseDiagnostics;
+    assertEqual(
+      providerRequestCount - overflowRequestOffset,
+      1,
+      'overflow dispatched an unauthorized repair or critic call'
+    );
+    assertEqual(
+      providerRequest?.max_tokens,
+      10_000,
+      'overflow fixture was not bound to the current compact output contract'
+    );
+    assertEqual(
+      providerRequest?.response_format?.json_schema?.strict,
+      true,
+      'overflow fixture lost strict structured output'
+    );
+    assertEqual(
+      providerRequest?.response_format?.json_schema?.name,
+      'opportunity_discovery_plan_v2',
+      'overflow fixture used the wrong structured contract'
+    );
+    assertEqual(
+      providerRequest?.provider?.require_parameters,
+      true,
+      'overflow fixture admitted incompatible provider parameters'
+    );
+    assertEqual(overflowPlan?.status, 'blocked', 'overflow plan status');
+    assertEqual(overflowPlan?.plans?.length, 0, 'overflow accepted plans');
+    assertEqual(
+      overflowPlan?.recoveryCause,
+      'commercial_discovery_planner_output_envelope_recovery',
+      'overflow recovery cause'
+    );
+    assertEqual(
+      overflowPlan?.failureCode,
+      'planner_output_envelope_exceeded',
+      'overflow failure code'
+    );
+    assertEqual(
+      overflowPlan?.preflight?.cause,
+      'commercial_discovery_planner_output_envelope_recovery',
+      'overflow preflight recovery cause'
+    );
+    assertEqual(
+      overflowPlan?.preflight?.failureCode,
+      'planner_output_envelope_exceeded',
+      'overflow preflight failure code'
+    );
+    assertEqual(
+      overflowPlan?.preflight?.routeProvenanceValidated,
+      false,
+      'overflow claimed route acceptance after a partial stream'
+    );
+    assertEqual(overflowPlanner?.status, 'incomplete', 'overflow receipt status');
+    assertEqual(
+      overflowPlanner?.error,
+      'openrouter_truncated_structured_output',
+      'overflow receipt error'
+    );
+    assertEqual(
+      overflowPlanner?.generationId,
+      'gen-stream-compact-overflow',
+      'overflow generation identity'
+    );
+    assertEqual(
+      overflowDiagnostics?.structuredOutputEnvelopeExceeded,
+      true,
+      'overflow diagnostic marker'
+    );
+    assertEqual(
+      overflowDiagnostics?.maxContentByteCount,
+      40 * 1024,
+      'overflow diagnostic ceiling'
+    );
+    assertEqual(
+      overflowDiagnostics?.contentByteCount,
+      40 * 1024 + 1,
+      'overflow observed content bytes'
+    );
+    const overflowSentinel = 'raw-stream-overflow-secret-sentinel:';
+    const overflowContent = `${overflowSentinel}${'x'.repeat(
+      40 * 1024 + 1 - Buffer.byteLength(overflowSentinel, 'utf8')
+    )}`;
+    assertEqual(
+      overflowDiagnostics?.contentSha256,
+      createHash('sha256').update(overflowContent).digest('hex'),
+      'overflow bounded content hash'
+    );
+    assertEqual(overflowDiagnostics?.httpStatus, 200, 'overflow HTTP status');
+    assertEqual(
+      overflowDiagnostics?.streamCompleted,
+      false,
+      'overflow was incorrectly marked as a terminal stream completion'
+    );
+    assertEqual(
+      overflowDiagnostics?.localJSONRepairApplied,
+      undefined,
+      'overflow attempted local JSON repair on a partial response'
+    );
+    assertEqual(
+      overflowDiagnostics?.localJSONRepairFailure,
+      undefined,
+      'overflow recorded JSON repair diagnostics for a partial response'
+    );
+    assertEqual(
+      overflowPlan?.llm?.strategyFamilyRepair,
+      undefined,
+      'overflow fabricated a structured repair receipt'
+    );
+    assertEqual(
+      overflowPlan?.llm?.commercialCritic,
+      undefined,
+      'overflow fabricated a critic receipt'
+    );
+    assertEqual(
+      JSON.stringify(overflowDiagnostics?.routerAttempts),
+      JSON.stringify([
+        {
+          provider: 'Venice',
+          model: 'deepseek/deepseek-v4-flash-0731',
+          status: 402
+        },
+        {
+          provider: 'Together',
+          model: 'deepseek/deepseek-v4-flash-0731',
+          status: 503
+        },
+        {
+          provider: 'OpenInference',
+          model: 'deepseek/deepseek-v4-flash-0731',
+          status: 200
+        }
+      ]),
+      'overflow route attempt receipt'
+    );
+    assertEqual(
+      overflowPlanner?.openRouterUsage?.total_tokens,
+      13209,
+      'overflow partial-stream usage'
+    );
+    assertEqual(
+      overflowPlan?.usage?.calls,
+      1,
+      'overflow model call count'
+    );
+    assertEqual(
+      overflowPlan?.usage?.successfulCalls,
+      0,
+      'overflow was incorrectly accepted as a successful model call'
+    );
+    assert(
+      !JSON.stringify(overflowOutput).includes(
+        'raw-stream-overflow-secret-sentinel'
+      ),
+      'overflow receipt leaked raw model content'
+    );
+    assertEqual(
+      providerRequest?.provider?.ignore?.join(','),
+      'cloudflare,open-inference',
+      'overflow request lost the evidence-backed route quarantine'
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));

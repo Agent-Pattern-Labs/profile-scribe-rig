@@ -200,12 +200,12 @@ const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
   // Preserve OpenRouter's default health/price load balancing and automatic
   // fallbacks across every endpoint that natively supports the strict request.
-  // Quarantine only the endpoint with durable evidence independent of the old
-  // oversized schema: Cloudflare returned empty HTTP-200 provider envelopes.
-  // Historical DeepInfra, Inceptron, and Io Net failures occurred under the
-  // retired 64k/192-KiB contract, so they remain eligible for OpenRouter's
-  // default ordering, balancing, and fallback under this compact contract.
-  ignore: ['cloudflare'],
+  // Quarantine only endpoints with durable evidence under the applicable
+  // transport contract: Cloudflare returned empty HTTP-200 envelopes, and
+  // OpenInference exceeded the compact 40-KiB structured-output envelope.
+  // Other historical failures occurred under the retired 64k/192-KiB
+  // contract, so they remain eligible for OpenRouter's default routing.
+  ignore: ['cloudflare', 'open-inference'],
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'
@@ -2167,6 +2167,10 @@ export async function runOpportunityDiscoveryPlanner({
     const failureCode = openRouterFailureCode(error);
     const incomplete =
       failureCode === 'openrouter_truncated_structured_output';
+    const outputEnvelopeExceeded = incomplete &&
+      error?.openRouterDiagnostics?.structuredOutputEnvelopeExceeded === true &&
+      error?.openRouterDiagnostics?.maxContentByteCount ===
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES;
     const providerMetadata = openRouterMetadata({
       model,
       purpose: 'opportunity_tournament_discovery_planning',
@@ -2183,7 +2187,31 @@ export async function runOpportunityDiscoveryPlanner({
       reason: failureCode === 'openrouter_truncated_structured_output'
         ? 'The discovery planner reached its bounded output limit before completing the structured plan.'
         : 'The bounded discovery planner did not return a usable plan.',
-      preflight: { ...preflight, authorized: true },
+      recoveryCause: outputEnvelopeExceeded
+        ? 'commercial_discovery_planner_output_envelope_recovery'
+        : undefined,
+      failureCode: outputEnvelopeExceeded
+        ? 'planner_output_envelope_exceeded'
+        : undefined,
+      preflight: {
+        ...preflight,
+        authorized: true,
+        cause: outputEnvelopeExceeded
+          ? 'commercial_discovery_planner_output_envelope_recovery'
+          : undefined,
+        failureCode: outputEnvelopeExceeded
+          ? 'planner_output_envelope_exceeded'
+          : undefined,
+        routeProvenanceValidated: outputEnvelopeExceeded
+          ? false
+          : undefined,
+        responseBodyByteCount: outputEnvelopeExceeded
+          ? error?.openRouterDiagnostics?.contentByteCount
+          : undefined,
+        maxResponseBodyByteCount: outputEnvelopeExceeded
+          ? MAX_DISCOVERY_PLANNER_RESPONSE_BYTES
+          : undefined
+      },
       usage: aggregateUsage([providerMetadata], budget),
       llm: { discoveryPlanner: providerMetadata }
     };
@@ -25552,6 +25580,16 @@ function normalizeOpenRouterResponseDiagnostics(value) {
     contentSha256: /^[a-f0-9]{64}$/.test(contentSha256)
       ? contentSha256
       : undefined,
+    structuredOutputEnvelopeExceeded:
+      diagnostics.structuredOutputEnvelopeExceeded === true
+        ? true
+        : undefined,
+    maxContentByteCount:
+      diagnostics.structuredOutputEnvelopeExceeded === true &&
+        positiveInteger(diagnostics.maxContentByteCount) <=
+          MAX_DISCOVERY_PLANNER_RESPONSE_BYTES
+        ? positiveInteger(diagnostics.maxContentByteCount)
+        : undefined,
     localJSONRepairApplied:
       diagnostics.localJSONRepairApplied === true ? true : undefined,
     localJSONRepairFailure:

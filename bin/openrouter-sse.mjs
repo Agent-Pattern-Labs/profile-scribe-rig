@@ -300,16 +300,26 @@ export async function readOpenRouterChatCompletionSSE(
         : {};
     const fragment = typeof delta.content === 'string' ? delta.content : '';
     if (fragment) {
-      content += fragment;
       contentByteCount += Buffer.byteLength(fragment, 'utf8');
       contentHash.update(fragment, 'utf8');
       if (contentByteCount > contentLimit) {
         const error = new Error(
           'OpenRouter streaming content exceeded its bounded structured-output envelope'
         );
-        error.openRouterFailureCode = 'openrouter_invalid_response';
+        // This is an intentionally incomplete local projection of a provider
+        // generation, not an invalid provider envelope. Reuse the established
+        // incomplete structured-output code while retaining a separate finite
+        // marker for the exact local cause. The caller must not parse, repair,
+        // or accept the bounded prefix.
+        error.openRouterFailureCode =
+          'openrouter_truncated_structured_output';
+        error.openRouterStructuredOutputEnvelopeExceeded = true;
+        error.openRouterMaxContentByteCount = contentLimit;
         throw error;
       }
+      // Never retain more than the declared structured-output envelope. The
+      // overflowing fragment is counted and hashed for safe diagnostics only.
+      content += fragment;
     }
     if (Array.isArray(delta.annotations)) {
       annotations.push(...delta.annotations.slice(0, 5 - annotations.length));
@@ -529,7 +539,15 @@ function attachStreamState(error, state) {
   Object.defineProperty(error, 'openRouterStreamState', {
     value: {
       ...state,
-      timeoutKind: safeText(error?.openRouterTimeoutKind) || undefined
+      timeoutKind: safeText(error?.openRouterTimeoutKind) || undefined,
+      structuredOutputEnvelopeExceeded:
+        error?.openRouterStructuredOutputEnvelopeExceeded === true
+          ? true
+          : undefined,
+      maxContentByteCount:
+        error?.openRouterStructuredOutputEnvelopeExceeded === true
+          ? positiveInteger(error?.openRouterMaxContentByteCount, undefined)
+          : undefined
     },
     configurable: true,
     enumerable: false,
