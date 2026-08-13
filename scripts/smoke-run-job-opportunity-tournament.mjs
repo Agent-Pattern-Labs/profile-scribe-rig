@@ -557,6 +557,31 @@ const server = createServer(async (request, response) => {
     finishReason = 'raw finish reason secret sentinel !';
     nativeFinishReason = 'raw native finish secret sentinel !';
   }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-uppercase-finish') {
+    finishReason = 'STOP';
+    nativeFinishReason = 'STOP';
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-padded-finish') {
+    finishReason = ' stop ';
+    nativeFinishReason = ' stop ';
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-non-string-finish') {
+    finishReason = 1;
+    nativeFinishReason = 1;
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-uppercase-length-finish') {
+    finishReason = 'LENGTH';
+    nativeFinishReason = 'MAX_OUTPUT_TOKENS';
+  }
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-padded-length-finish') {
+    finishReason = ' length ';
+    nativeFinishReason = ' max_output_tokens ';
+  }
   const finishFields = criticCall && objectiveID ===
       'objective-run-job-critic-missing-finish'
     ? {}
@@ -827,6 +852,25 @@ try {
   }, {
     label: 'critic-unsafe-finish',
     finishIssue: 'finish_reason_missing'
+  }, {
+    label: 'critic-uppercase-finish',
+    finishIssue: 'finish_reason_missing',
+    unsafeFinish: 'STOP'
+  }, {
+    label: 'critic-padded-finish',
+    finishIssue: 'finish_reason_missing',
+    unsafeFinish: ' stop '
+  }, {
+    label: 'critic-non-string-finish',
+    finishIssue: 'finish_reason_missing'
+  }, {
+    label: 'critic-uppercase-length-finish',
+    finishIssue: 'finish_reason_missing',
+    unsafeFinish: 'LENGTH'
+  }, {
+    label: 'critic-padded-length-finish',
+    finishIssue: 'finish_reason_missing',
+    unsafeFinish: ' length '
   }]) {
     const job = tournamentJob(
       scenario.label,
@@ -2630,6 +2674,12 @@ function verifyCriticFinishGate(receipt, calls, scenario) {
       !JSON.stringify(receipt).includes('raw native finish secret sentinel'),
     `${scenario.label}: unsafe finish reason leaked into the durable receipt`
   );
+  if (scenario.unsafeFinish) {
+    assert(
+      !JSON.stringify(receipt).includes(scenario.unsafeFinish),
+      `${scenario.label}: noncanonical finish reason leaked or became accepted`
+    );
+  }
   verifyNoExecution(metadata);
 }
 

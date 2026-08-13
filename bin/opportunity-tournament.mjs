@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { isIP } from 'net';
 import Ajv from 'ajv';
 import { jsonrepair } from 'jsonrepair';
+import { MAX_OPENROUTER_SSE_WIRE_BYTES } from './openrouter-sse.mjs';
 
 export const OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSION = 'cheap_tournament_v6';
 const LEGACY_OPPORTUNITY_TOURNAMENT_ALGORITHM_VERSIONS = new Set([
@@ -544,10 +545,12 @@ const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // shares pathBase across its two tactic deltas. Local code selects, but never
 // composes, the branch fixed by the typed motion. The strict grammar has an
 // independently proved 31,552-byte serialized upper bound below the separate
-// 40 KiB raw-content cap. A tokenizer using byte fallback cannot need more
+// 40 KiB canonical parsed-content cap. A tokenizer using byte fallback cannot
+// need more
 // output tokens than encoded bytes. The 42,000-token ceiling therefore exceeds
-// the entire 40,960-byte runtime envelope plus 1,024 tokens of explicit
-// headroom, making token exhaustion unreachable before the byte gate. A
+// the entire 40,960-byte canonical runtime envelope plus 1,024 tokens of
+// explicit headroom, making token exhaustion unreachable before that byte
+// gate. A
 // production Atlas trace emitted 27,149 bytes in exactly 18,000 native tokens
 // after 99,271 ms; a 42,000-token response projects to about 231,633 ms, below
 // the existing 300-second deadline. Historical 10k/14k/18k/32k receipts remain
@@ -653,6 +656,14 @@ const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES =
     MAX_DISCOVERY_PLANNER_EVIDENCE_REF_UTF8_BYTES +
   MAX_DISCOVERY_PLANNER_SCHEMA_FIXED_BYTES;
 const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 40 * 1_024;
+// Raw SSE content is a transport-safety envelope, not the semantic response
+// envelope. JSON may contain insignificant whitespace or escape spelling that
+// disappears when the parsed value is canonically serialized. Permit a finite
+// 4x transport allowance, while requiring every completed value to stay under
+// the unchanged 40 KiB canonical gate before exact AJV and semantic handling.
+// Reuse the already-audited 160 KiB in-memory provider ceiling as the absolute
+// upper bound; the independent 16 MiB SSE wire limit remains unchanged.
+const MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES = 160 * 1_024;
 const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 24 * 1_024;
 // Existing durable v2 receipts contain the locally materialized two-family
 // shape, which is intentionally larger than the compact provider wire shape.
@@ -664,6 +675,14 @@ if (MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES >
     MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES >
       MAX_DISCOVERY_PLANNER_RESPONSE_BYTES) {
   throw new Error('discovery planner response bounds are inconsistent');
+}
+if (MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES <
+      MAX_DISCOVERY_PLANNER_RESPONSE_BYTES * 4 ||
+    MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES >
+      MAX_BUFFERED_OPENROUTER_RESPONSE_BODY_BYTES ||
+    MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES >=
+      MAX_OPENROUTER_SSE_WIRE_BYTES) {
+  throw new Error('discovery planner raw-stream bound is inconsistent');
 }
 const DISCOVERY_PLAN_SEARCH_MODES = new Set([
   'active_job_posting',
@@ -1362,6 +1381,8 @@ export function opportunityCommercialDiscoveryCapabilities() {
     plannerResponseBounds: {
       runtimeParsedResponseMaxBytes:
         MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
+      rawStreamingContentMaxBytes:
+        MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES,
       contingentBundleMaxBytes:
         MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES,
       computedSchemaUpperBoundBytes:
@@ -1405,7 +1426,8 @@ export function opportunityCommercialDiscoveryCapabilities() {
           responseStartTimeoutMs:
             MAX_DISCOVERY_PLANNER_STREAM_START_TIMEOUT_MS,
           idleTimeoutMs: MAX_DISCOVERY_PLANNER_STREAM_IDLE_TIMEOUT_MS,
-          totalTimeoutMs: MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS
+          totalTimeoutMs: MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS,
+          wireResponseMaxBytes: MAX_OPENROUTER_SSE_WIRE_BYTES
         },
         framingTokenReserve: OPENAI_PROMPT_FRAMING_TOKEN_RESERVE,
         fixedToolFeeMicros: 0,
@@ -2111,7 +2133,8 @@ export async function runOpportunityDiscoveryPlanner({
         MAX_DISCOVERY_PLANNER_STREAM_IDLE_TIMEOUT_MS,
       streamTotalTimeoutMs:
         MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS,
-      streamMaxContentBytes: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
+      streamMaxContentBytes:
+        MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES,
       additionalPromptTokenReserve: 0,
       fixedToolFeeMicros: 0,
     };
@@ -2201,7 +2224,7 @@ export async function runOpportunityDiscoveryPlanner({
     const outputEnvelopeExceeded = incomplete &&
       error?.openRouterDiagnostics?.structuredOutputEnvelopeExceeded === true &&
       error?.openRouterDiagnostics?.maxContentByteCount ===
-        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES;
+        MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES;
     const providerMetadata = openRouterMetadata({
       model,
       purpose: 'opportunity_tournament_discovery_planning',
@@ -2221,8 +2244,10 @@ export async function runOpportunityDiscoveryPlanner({
       : undefined;
     return {
       ...base,
-      reason: failureCode === 'openrouter_truncated_structured_output'
-        ? 'The discovery planner reached its bounded output limit before completing the structured plan.'
+      reason: outputEnvelopeExceeded
+        ? 'The discovery planner exceeded its finite raw streaming-content ceiling before completing the structured plan.'
+        : failureCode === 'openrouter_truncated_structured_output'
+          ? 'The discovery planner did not produce a complete terminal structured plan.'
         : 'The bounded discovery planner did not return a usable plan.',
       recoveryCause: outputEnvelopeExceeded
         ? 'commercial_discovery_planner_output_envelope_recovery'
@@ -2242,11 +2267,16 @@ export async function runOpportunityDiscoveryPlanner({
         routeProvenanceValidated: outputEnvelopeExceeded
           ? false
           : undefined,
-        responseBodyByteCount: outputEnvelopeExceeded
-          ? error?.openRouterDiagnostics?.contentByteCount
-          : undefined,
+        // No parsed value exists on raw-stream overflow, so do not populate
+        // the canonical response byte count with transport bytes.
         maxResponseBodyByteCount: outputEnvelopeExceeded
           ? MAX_DISCOVERY_PLANNER_RESPONSE_BYTES
+          : undefined,
+        rawStreamingContentByteCount: outputEnvelopeExceeded
+          ? error?.openRouterDiagnostics?.contentByteCount
+          : undefined,
+        rawStreamingContentMaxBytes: outputEnvelopeExceeded
+          ? MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES
           : undefined,
         promptTokenCanary
       },
@@ -16311,16 +16341,23 @@ Return only the strict compact JSON once.`;
 
 function openRouterDiagnosticsIndicateTruncation(value) {
   const diagnostics = asObject(value);
-  const reason = `${firstText(diagnostics.finishReason)} ${
-    firstText(diagnostics.nativeFinishReason)
-  }`.toLowerCase();
-  return /\b(?:length|max(?:imum)?[_ -]?(?:tokens?|output)|token[_ -]?limit)\b/.test(
-    reason
+  const outputLimitReasons = new Set([
+    'length',
+    'max_tokens',
+    'max_output_tokens'
+  ]);
+  return outputLimitReasons.has(
+    safeOpenRouterFinishReason(diagnostics.finishReason)
+  ) || outputLimitReasons.has(
+    safeOpenRouterFinishReason(diagnostics.nativeFinishReason)
   );
 }
 
 function safeOpenRouterFinishReason(value) {
-  const reason = firstText(value).toLowerCase();
+  // Provider finish reasons are exact contract fields. Alternate/injected
+  // transports must not launder whitespace, case, or non-string values before
+  // the durable receipt and local acceptance gates inspect them.
+  const reason = typeof value === 'string' ? value : '';
   return new Set([
     'stop',
     'length',
@@ -25625,7 +25662,7 @@ function normalizeOpenRouterResponseDiagnostics(value) {
     maxContentByteCount:
       diagnostics.structuredOutputEnvelopeExceeded === true &&
         positiveInteger(diagnostics.maxContentByteCount) <=
-          MAX_DISCOVERY_PLANNER_RESPONSE_BYTES
+          MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES
         ? positiveInteger(diagnostics.maxContentByteCount)
         : undefined,
     localJSONRepairApplied:

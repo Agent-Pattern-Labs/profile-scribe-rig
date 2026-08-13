@@ -2,6 +2,7 @@
 
 import { readOpenRouterChatCompletionSSE } from '../bin/openrouter-sse.mjs';
 import { serializeOpenRouterJSONRequestBody } from '../bin/opportunity-tournament.mjs';
+import Ajv from 'ajv';
 import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
@@ -10,6 +11,11 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
+const PLANNER_CANONICAL_RESPONSE_MAX_BYTES = 40 * 1024;
+const PLANNER_RAW_STREAM_CONTENT_MAX_BYTES = 160 * 1024;
+const PLANNER_STREAM_WIRE_MAX_BYTES = 16 * 1024 * 1024;
+const PLANNER_CROSSING_FRAGMENT_CONTENT_BYTES = 1_000_001;
+const WHITESPACE_HEAVY_RAW_CONTENT_BYTES = 48 * 1024;
 
 await verifyActiveGenerationOutlivesFormerWallClock();
 await verifyOpenRouterProcessingKeepalivesPreserveLiveness();
@@ -29,7 +35,7 @@ verifyStreamingRequestIsInsideExactSerializedPreflight();
 await verifyRunJobUsesStreamingTransport();
 
 process.stdout.write(
-  'OpenRouter SSE smoke passed (active progress, idle deadline, hard deadline, exact serialized request)\n'
+  'OpenRouter SSE smoke passed (active progress, idle deadline, hard deadline, exact serialized request, split raw/canonical planner envelope)\n'
 );
 
 async function verifyActiveGenerationOutlivesFormerWallClock() {
@@ -387,6 +393,131 @@ async function verifyIncompleteTerminalAccountingIsRejected() {
       'incomplete stream was marked complete'
     );
   }
+  for (const scenario of [{
+    provider: 'Wafer',
+    contentByteCount: 40_965
+  }, {
+    provider: 'AtlasCloud',
+    contentByteCount: 40_966
+  }]) {
+    const sentinel = `raw-${scenario.provider.toLowerCase()}-partial-secret:`;
+    const content = `${sentinel}${'x'.repeat(
+      scenario.contentByteCount - Buffer.byteLength(sentinel, 'utf8')
+    )}`;
+    const stream = scheduledStream([[0, event({
+      id: `gen-stream-${scenario.provider.toLowerCase()}-partial`,
+      model: 'deepseek/deepseek-v4-flash-0731',
+      provider: scenario.provider,
+      choices: [{ delta: { content } }]
+    })]]);
+    let caught;
+    try {
+      await readOpenRouterChatCompletionSSE(stream, {
+        idleTimeoutMs: 50,
+        totalTimeoutMs: 150,
+        maxContentBytes: PLANNER_RAW_STREAM_CONTENT_MAX_BYTES
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert(caught, `${scenario.provider} partial stream unexpectedly succeeded`);
+    assertEqual(
+      caught.openRouterFailureCode,
+      'openrouter_invalid_response',
+      `${scenario.provider} partial stream failure code`
+    );
+    assertEqual(
+      caught.openRouterStreamState?.contentByteCount,
+      scenario.contentByteCount,
+      `${scenario.provider} partial stream content count`
+    );
+    assertEqual(
+      caught.openRouterStreamState?.structuredOutputEnvelopeExceeded,
+      undefined,
+      `${scenario.provider} former 40 KiB crossing was misclassified as raw overflow`
+    );
+    assertEqual(
+      caught.openRouterStreamState?.maxContentByteCount,
+      undefined,
+      `${scenario.provider} partial stream retained the former raw ceiling`
+    );
+    assertEqual(
+      caught.openRouterStreamState?.streamCompleted,
+      false,
+      `${scenario.provider} partial stream was marked complete`
+    );
+    assert(
+      !JSON.stringify(caught.openRouterStreamState).includes(sentinel),
+      `${scenario.provider} partial stream leaked raw content`
+    );
+  }
+  const lengthProvider = 'Length Fixture Provider';
+  const lengthModel = 'deepseek/deepseek-v4-flash-0731';
+  const lengthStream = scheduledStream([
+    [0, event({
+      id: 'gen-stream-explicit-length',
+      model: lengthModel,
+      provider: lengthProvider,
+      choices: [{
+        delta: { content: '{"partial":true}' },
+        finish_reason: 'length',
+        native_finish_reason: 'max_output_tokens'
+      }]
+    })],
+    [0, event({
+      id: 'gen-stream-explicit-length',
+      choices: [],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 2,
+        total_tokens: 12,
+        cost: 0.0001
+      },
+      openrouter_metadata: {
+        strategy: 'direct',
+        attempt: 1,
+        endpoints: {
+          total: 1,
+          available: [{
+            provider: lengthProvider,
+            model: lengthModel,
+            selected: true
+          }]
+        },
+        attempts: [{
+          provider: lengthProvider,
+          model: lengthModel,
+          status: 200
+        }]
+      }
+    })],
+    [0, 'data: [DONE]\n\n']
+  ]);
+  let lengthCaught;
+  try {
+    await readOpenRouterChatCompletionSSE(lengthStream, {
+      idleTimeoutMs: 50,
+      totalTimeoutMs: 150
+    });
+  } catch (error) {
+    lengthCaught = error;
+  }
+  assert(lengthCaught, 'explicit length stream unexpectedly succeeded');
+  assertEqual(
+    lengthCaught.openRouterFailureCode,
+    'openrouter_truncated_structured_output',
+    'explicit length stream was not cause-matched'
+  );
+  assertEqual(
+    lengthCaught.openRouterStreamState?.finishReason,
+    'length',
+    'explicit length stream lost its finite finish diagnostic'
+  );
+  assertEqual(
+    lengthCaught.openRouterStreamState?.streamCompleted,
+    false,
+    'explicit length stream was marked successfully complete'
+  );
 }
 
 async function verifyInvalidSuccessContractsAreRejected() {
@@ -429,6 +560,24 @@ async function verifyInvalidSuccessContractsAreRejected() {
     {
       name: 'unsafe freeform finish',
       finishReason: 'raw finish reason secret sentinel !',
+      usage: baseUsage,
+      metadata: baseMetadata
+    },
+    {
+      name: 'uppercase stop finish',
+      finishReason: 'STOP',
+      usage: baseUsage,
+      metadata: baseMetadata
+    },
+    {
+      name: 'padded stop finish',
+      finishReason: ' stop ',
+      usage: baseUsage,
+      metadata: baseMetadata
+    },
+    {
+      name: 'non-string stop finish',
+      finishReason: 1,
       usage: baseUsage,
       metadata: baseMetadata
     },
@@ -495,6 +644,15 @@ async function verifyInvalidSuccessContractsAreRejected() {
       ),
       `${testCase.name} leaked a freeform provider finish reason`
     );
+    if (testCase.name === 'uppercase stop finish' ||
+        testCase.name === 'padded stop finish') {
+      assert(
+        !JSON.stringify(caught.openRouterStreamState || {}).includes(
+          testCase.finishReason
+        ),
+        `${testCase.name} leaked or normalized a noncanonical finish reason`
+      );
+    }
   }
 }
 
@@ -901,6 +1059,52 @@ async function verifyPlannerContentLimitIsEnforced() {
     4,
     'planner content overflow lost its exact local ceiling'
   );
+
+  const oversizedWireChunk = event({
+    id: 'gen-stream-wire-limit',
+    choices: [{
+      delta: { content: 'x'.repeat(PLANNER_STREAM_WIRE_MAX_BYTES) }
+    }]
+  });
+  let wireCaught;
+  try {
+    await readOpenRouterChatCompletionSSE(
+      scheduledStream([[0, oversizedWireChunk]]),
+      {
+        idleTimeoutMs: 1_000,
+        totalTimeoutMs: 2_000,
+        maxWireBytes: PLANNER_STREAM_WIRE_MAX_BYTES,
+        maxContentBytes: PLANNER_RAW_STREAM_CONTENT_MAX_BYTES
+      }
+    );
+  } catch (error) {
+    wireCaught = error;
+  }
+  assert(wireCaught, 'planner wire overflow unexpectedly succeeded');
+  assertEqual(
+    wireCaught.openRouterFailureCode,
+    'openrouter_invalid_response',
+    'planner wire overflow failure code'
+  );
+  assert(
+    wireCaught.openRouterStreamState?.streamWireByteCount >
+      PLANNER_STREAM_WIRE_MAX_BYTES,
+    'planner wire overflow lost its finite wire-byte diagnostic'
+  );
+  assertEqual(
+    wireCaught.openRouterStreamState?.contentByteCount,
+    0,
+    'planner wire overflow dispatched or parsed an oversized SSE event'
+  );
+  assertEqual(
+    wireCaught.openRouterStreamState?.structuredOutputEnvelopeExceeded,
+    undefined,
+    'planner wire overflow was mislabeled as a content overflow'
+  );
+  assert(
+    !JSON.stringify(wireCaught.openRouterStreamState).includes('xxxxx'),
+    'planner wire overflow leaked raw content'
+  );
 }
 
 async function verifyHangingCancelCannotDefeatDeadline() {
@@ -971,6 +1175,7 @@ function verifyStreamingRequestIsInsideExactSerializedPreflight() {
 async function verifyRunJobUsesStreamingTransport() {
   let providerRequest;
   let providerRequestCount = 0;
+  let splitCanonicalContentByteCount = 0;
   const server = createServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
@@ -996,10 +1201,10 @@ async function verifyRunJobUsesStreamingTransport() {
     }
     if (providerInput.objective?.id ===
         'objective-openrouter-sse-content-overflow') {
-      const contentLimit = 40 * 1024;
+      const contentByteCount = PLANNER_CROSSING_FRAGMENT_CONTENT_BYTES;
       const sentinel = 'raw-stream-overflow-secret-sentinel:';
       const content = `${sentinel}${'x'.repeat(
-        contentLimit + 1 - Buffer.byteLength(sentinel, 'utf8')
+        contentByteCount - Buffer.byteLength(sentinel, 'utf8')
       )}`;
       const model = 'deepseek/deepseek-v4-flash-0731';
       response.writeHead(200, {
@@ -1036,6 +1241,71 @@ async function verifyRunJobUsesStreamingTransport() {
           ]
         }
       }));
+      return;
+    }
+    if (providerInput.objective?.id ===
+        'objective-openrouter-sse-raw-canonical-split') {
+      const data = schemaValidStreamingPlannerResponse(providerRequest);
+      const validate = new Ajv({ allErrors: true, strict: false }).compile(
+        providerRequest.response_format?.json_schema?.schema
+      );
+      assert(
+        validate(data),
+        `raw/canonical split fixture is not exact-schema valid: ${JSON.stringify(validate.errors)}`
+      );
+      const canonicalContent = JSON.stringify(data);
+      splitCanonicalContentByteCount = Buffer.byteLength(
+        canonicalContent,
+        'utf8'
+      );
+      assert(
+        splitCanonicalContentByteCount <
+          PLANNER_CANONICAL_RESPONSE_MAX_BYTES,
+        'raw/canonical split fixture exceeded the canonical planner gate'
+      );
+      const content = `${' '.repeat(
+        WHITESPACE_HEAVY_RAW_CONTENT_BYTES -
+          splitCanonicalContentByteCount
+      )}${canonicalContent}`;
+      const model = 'deepseek/deepseek-v4-flash-0731';
+      const provider = 'Whitespace Fixture Provider';
+      response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'X-Generation-Id': 'gen-stream-raw-canonical-split',
+        'X-Provider-Name': provider
+      });
+      response.write(event({
+        id: 'gen-stream-raw-canonical-split',
+        model,
+        provider,
+        choices: [{ delta: { content } }]
+      }));
+      response.write(event({
+        id: 'gen-stream-raw-canonical-split',
+        model,
+        provider,
+        choices: [{
+          delta: {},
+          finish_reason: 'stop',
+          native_finish_reason: 'stop'
+        }],
+        usage: {
+          prompt_tokens: 2_961,
+          completion_tokens: 2_000,
+          total_tokens: 4_961,
+          cost: 0.01
+        },
+        openrouter_metadata: {
+          strategy: 'direct',
+          attempt: 1,
+          endpoints: {
+            total: 1,
+            available: [{ provider, model, selected: true }]
+          },
+          attempts: [{ provider, model, status: 200 }]
+        }
+      }));
+      response.end('data: [DONE]\n\n');
       return;
     }
     if (providerInput.objective?.id === 'objective-openrouter-sse-empty') {
@@ -1280,6 +1550,101 @@ async function verifyRunJobUsesStreamingTransport() {
       'streamed planner identity conflict became accepted business evidence'
     );
 
+    const splitJobFile = join(
+      temporaryDirectory,
+      'raw-canonical-split-job.json'
+    );
+    writeFileSync(
+      splitJobFile,
+      JSON.stringify(streamingPlannerJob('raw-canonical-split')),
+      'utf8'
+    );
+    const splitRequestOffset = providerRequestCount;
+    const splitExecution = await runCommand(
+      process.execPath,
+      ['bin/run-job.mjs', '--job-file', splitJobFile],
+      {
+        ...process.env,
+        OPENROUTER_API_KEY: 'smoke-key',
+        PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
+          `http://127.0.0.1:${server.address().port}/openrouter`,
+        PROFILESCRIBE_RIG_OPENROUTER_STREAM_START_TIMEOUT_MS: '1000',
+        PROFILESCRIBE_RIG_OPENROUTER_STREAM_IDLE_TIMEOUT_MS: '100',
+        PROFILESCRIBE_RIG_OPENROUTER_STREAM_TOTAL_TIMEOUT_MS: '2000'
+      }
+    );
+    assertEqual(
+      splitExecution.code,
+      0,
+      `raw/canonical split run-job integration failed: ${splitExecution.stderr}`
+    );
+    const splitOutput = JSON.parse(splitExecution.stdout);
+    const splitPlan = splitOutput.metadata?.discoveryPlan;
+    const splitPlanner = splitPlan?.llm?.discoveryPlanner;
+    const splitDiagnostics = splitPlanner?.responseDiagnostics;
+    assertEqual(
+      providerRequestCount - splitRequestOffset,
+      1,
+      'raw/canonical split dispatched an unauthorized repair or critic call'
+    );
+    assertEqual(
+      splitPlan?.status,
+      'planned',
+      `raw/canonical split did not survive schema and semantic acceptance: ${JSON.stringify(splitPlan)}`
+    );
+    assertEqual(splitPlan?.plans?.length, 2, 'raw/canonical split plan count');
+    assertEqual(
+      splitPlan?.preflight?.routeProvenanceValidated,
+      true,
+      'raw/canonical split bypassed route validation'
+    );
+    assert(
+      splitCanonicalContentByteCount > 0 &&
+        splitPlan?.preflight?.responseBodyByteCount ===
+          splitCanonicalContentByteCount &&
+        splitPlan.preflight.responseBodyByteCount <
+          PLANNER_CANONICAL_RESPONSE_MAX_BYTES &&
+        splitDiagnostics?.contentByteCount >
+          splitPlan.preflight.responseBodyByteCount,
+      'raw/canonical split lost the canonical parsed-byte gate'
+    );
+    assertEqual(
+      splitPlan?.preflight?.maxResponseBodyByteCount,
+      PLANNER_CANONICAL_RESPONSE_MAX_BYTES,
+      'raw/canonical split changed the canonical planner ceiling'
+    );
+    assertEqual(
+      splitDiagnostics?.contentByteCount,
+      WHITESPACE_HEAVY_RAW_CONTENT_BYTES,
+      'raw/canonical split lost the exact raw SSE content count'
+    );
+    assertEqual(splitDiagnostics?.finishReason, 'stop', 'split finish reason');
+    assertEqual(
+      splitDiagnostics?.streamCompleted,
+      true,
+      'raw/canonical split lacked terminal stop, usage, route, or DONE'
+    );
+    assertEqual(
+      splitDiagnostics?.localJSONRepairApplied,
+      undefined,
+      'raw/canonical split invoked local JSON repair'
+    );
+    assertEqual(
+      splitDiagnostics?.localJSONRepairFailure,
+      undefined,
+      'raw/canonical split recorded a local repair failure'
+    );
+    assertEqual(
+      splitPlan?.normalizationDiagnostic,
+      undefined,
+      'raw/canonical split did not reach exact AJV acceptance'
+    );
+    assertEqual(
+      splitPlan?.llm?.commercialCritic,
+      undefined,
+      'planning-only raw/canonical split invoked the critic'
+    );
+
     const overflowJobFile = join(temporaryDirectory, 'overflow-job.json');
     writeFileSync(
       overflowJobFile,
@@ -1366,6 +1731,26 @@ async function verifyRunJobUsesStreamingTransport() {
       false,
       'overflow claimed route acceptance after a partial stream'
     );
+    assertEqual(
+      overflowPlan?.preflight?.responseBodyByteCount,
+      undefined,
+      'raw overflow fabricated a parsed canonical response byte count'
+    );
+    assertEqual(
+      overflowPlan?.preflight?.maxResponseBodyByteCount,
+      PLANNER_CANONICAL_RESPONSE_MAX_BYTES,
+      'raw overflow changed the canonical parsed-response ceiling'
+    );
+    assertEqual(
+      overflowPlan?.preflight?.rawStreamingContentByteCount,
+      PLANNER_CROSSING_FRAGMENT_CONTENT_BYTES,
+      'raw overflow lost its distinct transport byte count'
+    );
+    assertEqual(
+      overflowPlan?.preflight?.rawStreamingContentMaxBytes,
+      PLANNER_RAW_STREAM_CONTENT_MAX_BYTES,
+      'raw overflow lost its distinct transport ceiling'
+    );
     assertEqual(overflowPlanner?.status, 'incomplete', 'overflow receipt status');
     assertEqual(
       overflowPlanner?.error,
@@ -1384,17 +1769,25 @@ async function verifyRunJobUsesStreamingTransport() {
     );
     assertEqual(
       overflowDiagnostics?.maxContentByteCount,
-      40 * 1024,
+      PLANNER_RAW_STREAM_CONTENT_MAX_BYTES,
       'overflow diagnostic ceiling'
     );
     assertEqual(
       overflowDiagnostics?.contentByteCount,
-      40 * 1024 + 1,
+      PLANNER_CROSSING_FRAGMENT_CONTENT_BYTES,
       'overflow observed content bytes'
+    );
+    assert(
+      overflowDiagnostics?.streamWireByteCount >=
+        overflowDiagnostics.contentByteCount &&
+        overflowDiagnostics.streamWireByteCount <=
+          PLANNER_STREAM_WIRE_MAX_BYTES,
+      'overflow did not bind its exact crossing fragment to the finite wire envelope'
     );
     const overflowSentinel = 'raw-stream-overflow-secret-sentinel:';
     const overflowContent = `${overflowSentinel}${'x'.repeat(
-      40 * 1024 + 1 - Buffer.byteLength(overflowSentinel, 'utf8')
+      PLANNER_CROSSING_FRAGMENT_CONTENT_BYTES -
+        Buffer.byteLength(overflowSentinel, 'utf8')
     )}`;
     assertEqual(
       overflowDiagnostics?.contentSha256,
@@ -1421,6 +1814,11 @@ async function verifyRunJobUsesStreamingTransport() {
       overflowPlan?.llm?.strategyFamilyRepair,
       undefined,
       'overflow fabricated a structured repair receipt'
+    );
+    assertEqual(
+      overflowPlan?.normalizationDiagnostic,
+      undefined,
+      'overflow reached local schema parsing after raw transport rejection'
     );
     assertEqual(
       overflowPlan?.llm?.commercialCritic,
@@ -1552,6 +1950,147 @@ function streamingPlannerJob(label = 'integration') {
         }]
       }
     }
+  };
+}
+
+function schemaValidStreamingPlannerResponse(providerRequest) {
+  const schema = providerRequest.response_format?.json_schema?.schema;
+  const definitions = schema?.$defs || {};
+  const planSchema = schema?.properties?.plans?.items;
+  const observationRef = definitions.observationEvidenceRef?.enum?.[0];
+  const attributionRef = definitions.evidenceRef?.enum?.find((item) =>
+    item === 'profile:system_attribution_capability:v1'
+  );
+  const market = planSchema?.properties?.market?.enum?.[0];
+  if (!observationRef || !attributionRef || !market) {
+    throw new Error('raw/canonical split fixture could not bind schema enums');
+  }
+  const scores = {
+    of: 0.82,
+    es: 0.76,
+    ba: 0.72,
+    ti: 0.64,
+    wp: 0.62,
+    re: 0.66,
+    ev: 0.74,
+    ef: 0.32,
+    co: 0.2,
+    ri: 0.28,
+    un: 0.34
+  };
+  const item = (label, refs = [observationRef]) => ({
+    l: label,
+    e: refs
+  });
+  const pathBase = {
+    r: [{
+      l: 'Paid delivery consulting contract outcome',
+      e: [observationRef, attributionRef],
+      rm: {
+        seller: 'signed_contract',
+        compensatedJob: 'compensated_role'
+      },
+      io: 'One additional paid consulting contract is signed.',
+      atm: 'crm_source',
+      ats: 'CRM source stores the target and tournament action identifiers.',
+      cd: 'The verified owner service contract page',
+      st: 'Stop after fourteen calendar days or one paid outcome.',
+      g: {
+        b: [observationRef],
+        o: [observationRef],
+        a: [observationRef],
+        d: {
+          l: 'The verified owner service contract page',
+          e: [observationRef]
+        },
+        c: [observationRef],
+        t: [attributionRef]
+      },
+      sb: 'No attributed paid contract has been observed for this route.',
+      vm: 500_000,
+      k: { n: 14, u: 'calendar_days' }
+    }],
+    o: [
+      item('Paid delivery system consulting engagement'),
+      item('Paid delivery system diagnostic engagement')
+    ],
+    b: [
+      item('{{TARGET_NAME}}: validated commercial buyer'),
+      item('{{TARGET_NAME}}: prospective buyer of the current paid offer')
+    ],
+    t: [{
+      ...item('Current target demand verification'),
+      q: 'current paid operations consulting demand'
+    }, {
+      ...item('Current target authority verification'),
+      q: 'current operations consulting purchase authority'
+    }],
+    p: [
+      item('Verified current paid service evidence'),
+      item('Verified owner conversion destination evidence')
+    ]
+  };
+  const tactic = (variant) => ({
+    s: scores,
+    c: [
+      item(
+        'Review-first public professional profile {{TARGET_URL}} for buyer fit verification'
+      ),
+      item(
+        'Review-first verified professional profile {{TARGET_URL}} for purchase authority verification'
+      )
+    ],
+    a: variant === 'person'
+      ? [
+          item(
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
+          ),
+          item(
+            'After approval via verified professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to buy the current paid consulting engagement'
+          )
+        ]
+      : [
+          item(
+            'Once approved via public professional profile {{TARGET_URL}}, request {{TARGET_NAME}} to review the current paid service contract'
+          ),
+          item(
+            'Review first via verified professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid consulting engagement'
+          )
+        ],
+    f: [
+      item('If no reply after 5 days, one review-first follow-up'),
+      item('If no reply after 10 days, one review-first follow-up')
+    ]
+  });
+  const plan = (motionKind, variant) => ({
+    motionKind,
+    paidOffer: {
+      seller: 'Paid delivery system consulting engagement',
+      compensatedJob: 'Current compensated consulting role'
+    },
+    market,
+    targetRoleSubrole: 'executive',
+    organizationTerms: variant === 'organization'
+      ? ['professional services firm']
+      : [],
+    jobTitle: 'Operations executive',
+    skills: ['operations consulting'],
+    contingentFinalists: {
+      seedContract: 'revenue_family_bundle_v2',
+      pathBase: structuredClone(pathBase),
+      tacticA: tactic(variant),
+      tacticB: tactic(variant === 'person' ? 'organization' : 'person'),
+      w: scores
+    }
+  });
+  return {
+    contractVersion: 'opportunity_discovery_plan_v2',
+    status: 'planned',
+    reason: '',
+    plans: [
+      plan('direct_buyer_person', 'person'),
+      plan('direct_buyer_org_decision_maker', 'organization')
+    ]
   };
 }
 

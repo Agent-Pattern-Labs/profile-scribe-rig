@@ -3874,7 +3874,10 @@ function openRouterResponseDiagnostics(choice, rawContent) {
 }
 
 function safeOpenRouterFinishReason(value) {
-  const reason = text(value).toLowerCase();
+  // This is a provider-enveloped contract field. Do not trim, lowercase, or
+  // stringify it: only an exact typed enum value may cross the transport
+  // trust boundary into planner/critic acceptance or truncation handling.
+  const reason = typeof value === 'string' ? value : '';
   return new Set([
     'stop',
     'length',

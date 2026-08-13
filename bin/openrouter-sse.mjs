@@ -1,7 +1,12 @@
 import { createHash } from 'crypto';
 
-const DEFAULT_MAX_WIRE_BYTES = 16 * 1024 * 1024;
+export const MAX_OPENROUTER_SSE_WIRE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CONTENT_BYTES = 192 * 1024;
+const OUTPUT_LIMIT_FINISH_REASONS = new Set([
+  'length',
+  'max_tokens',
+  'max_output_tokens'
+]);
 
 /**
  * Read one OpenRouter chat-completions SSE response without imposing a short
@@ -15,7 +20,7 @@ export async function readOpenRouterChatCompletionSSE(
   {
     idleTimeoutMs,
     totalTimeoutMs,
-    maxWireBytes = DEFAULT_MAX_WIRE_BYTES,
+    maxWireBytes = MAX_OPENROUTER_SSE_WIRE_BYTES,
     maxContentBytes = DEFAULT_MAX_CONTENT_BYTES,
     abortController,
     initialGenerationId,
@@ -53,7 +58,10 @@ export async function readOpenRouterChatCompletionSSE(
 
   const idleMs = positiveMilliseconds(idleTimeoutMs, 60_000);
   const totalMs = positiveMilliseconds(totalTimeoutMs, 300_000);
-  const wireLimit = positiveInteger(maxWireBytes, DEFAULT_MAX_WIRE_BYTES);
+  const wireLimit = positiveInteger(
+    maxWireBytes,
+    MAX_OPENROUTER_SSE_WIRE_BYTES
+  );
   const contentLimit = positiveInteger(
     maxContentBytes,
     DEFAULT_MAX_CONTENT_BYTES
@@ -447,10 +455,17 @@ export async function readOpenRouterChatCompletionSSE(
   }
 
   if (!topLevelError && !choiceError && !terminalAccountingComplete()) {
+    const incompleteStructuredOutput = contentByteCount > 0 &&
+      (OUTPUT_LIMIT_FINISH_REASONS.has(finishReason) ||
+        OUTPUT_LIMIT_FINISH_REASONS.has(nativeFinishReason));
     const error = new Error(
-      'OpenRouter streaming response ended before its complete terminal accounting event'
+      incompleteStructuredOutput
+        ? 'OpenRouter streaming response ended with incomplete structured output'
+        : 'OpenRouter streaming response ended before its complete terminal accounting event'
     );
-    error.openRouterFailureCode = 'openrouter_invalid_response';
+    error.openRouterFailureCode = incompleteStructuredOutput
+      ? 'openrouter_truncated_structured_output'
+      : 'openrouter_invalid_response';
     attachStreamState(error, state());
     throw error;
   }
@@ -483,7 +498,11 @@ export async function readOpenRouterChatCompletionSSE(
 }
 
 function safeFinishReason(value) {
-  const reason = safeText(value).toLowerCase();
+  // Finish reasons are provider contract fields, not user-facing text. Keep
+  // their raw type and spelling authoritative so whitespace/case coercion
+  // cannot turn a nonconforming terminal event into an accepted `stop` (or a
+  // cause-matched output-limit event).
+  const reason = typeof value === 'string' ? value : '';
   return new Set([
     'stop',
     'length',

@@ -29,6 +29,7 @@ const usage = {
   cost: 0.0065
 };
 const MAX_DISCOVERY_PLANNER_RESPONSE_BYTES = 40 * 1024;
+const MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES = 160 * 1024;
 const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 24 * 1024;
 const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES = 34_400;
 const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 20 * 1024;
@@ -739,7 +740,7 @@ for (const scenario of cases) {
       requestSeen.streamIdleTimeoutMs !== 60_000 ||
       requestSeen.streamTotalTimeoutMs !== 300_000 ||
       requestSeen.streamMaxContentBytes !==
-        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
+        MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES ||
       serializeOpenRouterJSONRequestBody(requestSeen).includes(
         'allowLocalJSONRepair'
       ) ||
@@ -1407,6 +1408,29 @@ async function verifyPlannerFinishGate() {
       nativeFinishReason: unsafeSentinel
     },
     issue: 'finish_reason_not_stop'
+  }, {
+    label: 'uppercase-finish',
+    diagnostics: {
+      finishReason: 'STOP',
+      nativeFinishReason: 'STOP'
+    },
+    issue: 'finish_reason_not_stop',
+    rejectedRawFinish: 'STOP'
+  }, {
+    label: 'padded-finish',
+    diagnostics: {
+      finishReason: ' stop ',
+      nativeFinishReason: ' stop '
+    },
+    issue: 'finish_reason_not_stop',
+    rejectedRawFinish: ' stop '
+  }, {
+    label: 'non-string-finish',
+    diagnostics: {
+      finishReason: 1,
+      nativeFinishReason: 1
+    },
+    issue: 'finish_reason_not_stop'
   }]) {
     const result = await runOpportunityDiscoveryPlannerRaw({
       job: envelopeJob,
@@ -1444,6 +1468,8 @@ async function verifyPlannerFinishGate() {
         result.normalizationDiagnostic != null ||
         result.llm?.discoveryPlanner?.status !== 'completed' ||
         JSON.stringify(result).includes(unsafeSentinel) ||
+        (scenario.rejectedRawFinish &&
+          JSON.stringify(result).includes(scenario.rejectedRawFinish)) ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
         `${scenario.label} planner finish reason did not fail before route/schema normalization: ${JSON.stringify(result)}`
@@ -1747,6 +1773,61 @@ if (withinResponseMargin.status !== 'planned' ||
   );
 }
 
+const whitespaceHeavyRawResponse = await runOpportunityDiscoveryPlanner({
+  job: envelopeJob,
+  model: 'deepseek/deepseek-v4-flash-0731',
+  now,
+  completeJSON: async () => {
+    const data = plannerResponseAtByteCount(0);
+    return {
+      data,
+      usage,
+      generationId: 'generation-raw-canonical-split',
+      diagnostics: {
+        finishReason: 'stop',
+        nativeFinishReason: 'stop',
+        // The production transport counts the exact streamed content bytes;
+        // insignificant JSON whitespace can make that count larger than the
+        // canonical JSON.stringify(data) byte count checked by the planner.
+        contentByteCount: MAX_DISCOVERY_PLANNER_RESPONSE_BYTES + 8_192,
+        contentSha256: '4'.repeat(64),
+        streaming: true,
+        streamCompleted: true,
+        responseHeadersReceived: true
+      },
+      annotations: []
+    };
+  }
+});
+const whitespaceHeavyCanonicalBytes = Buffer.byteLength(
+  JSON.stringify(plannerResponseAtByteCount(0)),
+  'utf8'
+);
+if (whitespaceHeavyRawResponse.status !== 'planned' ||
+    whitespaceHeavyRawResponse.preflight?.responseBodyByteCount !==
+      whitespaceHeavyCanonicalBytes ||
+    whitespaceHeavyRawResponse.preflight?.responseBodyByteCount >=
+      MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
+    whitespaceHeavyRawResponse.preflight?.maxResponseBodyByteCount !==
+      MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
+    whitespaceHeavyRawResponse.preflight?.routeProvenanceValidated !== true ||
+    whitespaceHeavyRawResponse.llm?.discoveryPlanner?.status !== 'completed' ||
+    whitespaceHeavyRawResponse.llm?.discoveryPlanner?.responseDiagnostics
+      ?.contentByteCount !== MAX_DISCOVERY_PLANNER_RESPONSE_BYTES + 8_192 ||
+    whitespaceHeavyRawResponse.llm?.discoveryPlanner?.responseDiagnostics
+      ?.finishReason !== 'stop' ||
+    whitespaceHeavyRawResponse.llm?.discoveryPlanner?.responseDiagnostics
+      ?.streamCompleted !== true ||
+    whitespaceHeavyRawResponse.llm?.discoveryPlanner?.responseDiagnostics
+      ?.localJSONRepairApplied !== undefined ||
+    whitespaceHeavyRawResponse.normalizationDiagnostic != null ||
+    whitespaceHeavyRawResponse.usage?.successfulCalls !== 1 ||
+    whitespaceHeavyRawResponse.sideEffectsPerformed !== 0) {
+  throw new Error(
+    `planner conflated completed raw SSE bytes with its canonical parsed-response gate: ${JSON.stringify(whitespaceHeavyRawResponse)}`
+  );
+}
+
 const overflowResponseBytes = MAX_DISCOVERY_PLANNER_RESPONSE_BYTES + 1;
 const overflowResponse = await runPlannerResponseEnvelopeCase(
   overflowResponseBytes
@@ -1898,7 +1979,7 @@ await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyMaximumFamilyEvidenceContainment();
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
-await verifyWaferProductionEnvelopeOverflowFailsOnce(unsafeJob);
+await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
 verifyCausalPairReservationSurvivesCrowding();
@@ -1956,7 +2037,7 @@ if (smallestCompactResponseReduction < 0.1 ||
 }
 
 process.stdout.write(
-  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + required supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 40 KiB response gate; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${44 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${43 * 1024} 512-byte-headroom floor; joint-worst critic request ${largestCommercialCriticRequestBytes} bytes / <=${65_536 - 512} (${65_536 - largestCommercialCriticRequestBytes} bytes headroom); semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target; schema-derived bound ${computedPlannerSchemaResponseBoundBytes} bytes; concrete joint maximum ${maximumConcretePlannerResponseBytes} bytes)\n`
+  `opportunity discovery planner smoke passed (${cases.length} professions + unsafe adversary + all-span referral-population/private-contact safety + target role/acquisition/adapter guards + exact buyer public-profile route + role-specific model-authored action projection + repeated optional-action pruning/typed diversity diagnostics + child evidence-index canonicalization + target-slot protocol canonicalization + two-motion/shared-path/two-tactic materialization + legacy receipt compatibility + independent family-diverse critic + pre-truncation causal-pair reservation + thrown-length safe receipt + qualified partner-referral/paid-demand response actions + peer-supplier paid-demand rejection + unqualified-introduction/artifact/untyped-listing rejection + required supporting bottleneck + mechanism-specific terminal outcomes/disjunction-attempt rejection + service-payment outcomes + unpaid-service rejection + revenue-stop units + natural booking attribution + field-specific causal diagnostics + raw-cardinality guard + two-stage target binding + production-shaped/max-cardinality prompt headroom + 160 KiB raw/40 KiB canonical response gates; call 1 max ${DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS} tokens / ${DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS} micros; largest request ${largestPlannerRequestBytes} bytes / <=${44 * 1024}; production-shaped request ${productionShapedPlannerRequestBytes} bytes / <=${43 * 1024} 512-byte-headroom floor; joint-worst critic request ${largestCommercialCriticRequestBytes} bytes / <=${65_536 - 512} (${65_536 - largestCommercialCriticRequestBytes} bytes headroom); semantic contract +${largestPlannerContractBytes} bytes; compact finalist fixture ${largestCompactFixtureBytes} bytes vs ${largestMaterializedFixtureBytes} materialized (${Math.round(smallestCompactResponseReduction * 100)}%+ reduction); largest representative two-motion response ${largestPlannerResponseBytes} bytes / <=${DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES} compact target; schema-derived bound ${computedPlannerSchemaResponseBoundBytes} bytes; concrete joint maximum ${maximumConcretePlannerResponseBytes} bytes)\n`
 );
 
 async function verifyApprovedObservationPreflight() {
@@ -5026,6 +5107,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
       JSON.stringify(capabilities.plannerResponseBounds) !== JSON.stringify({
         runtimeParsedResponseMaxBytes:
           MAX_DISCOVERY_PLANNER_RESPONSE_BYTES,
+        rawStreamingContentMaxBytes:
+          MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES,
         contingentBundleMaxBytes:
           MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES,
         computedSchemaUpperBoundBytes:
@@ -5090,7 +5173,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             includeUsage: true,
             responseStartTimeoutMs: 180_000,
             idleTimeoutMs: 60_000,
-            totalTimeoutMs: 300_000
+            totalTimeoutMs: 300_000,
+            wireResponseMaxBytes: 16 * 1024 * 1024
           },
           framingTokenReserve: 1_024,
           fixedToolFeeMicros: 0,
@@ -5126,6 +5210,16 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     );
   }
   const callEnvelope = capabilities.plannerCallEnvelope;
+  if (capabilities.plannerResponseBounds.rawStreamingContentMaxBytes <
+        capabilities.plannerResponseBounds.runtimeParsedResponseMaxBytes * 4 ||
+      capabilities.plannerResponseBounds.rawStreamingContentMaxBytes >
+        callEnvelope.critic.bufferedWireResponseMaxBytes ||
+      callEnvelope.generator.streaming.wireResponseMaxBytes !==
+        16 * 1024 * 1024 ||
+      capabilities.plannerResponseBounds.rawStreamingContentMaxBytes >=
+        callEnvelope.generator.streaming.wireResponseMaxBytes) {
+    throw new Error('planner raw/canonical response bound relation drifted');
+  }
   const recomputedPlannerCallSpendCeilingMicros =
     Math.ceil(
       callEnvelope.generator.promptTokenCeiling *
@@ -7471,7 +7565,7 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
         ?.plans?.maxItems !== 2 ||
       result.status !== 'blocked' ||
       result.reason !==
-        'The discovery planner reached its bounded output limit before completing the structured plan.' ||
+        'The discovery planner did not produce a complete terminal structured plan.' ||
       result.plans.length !== 0 ||
       result.usage?.calls !== 1 ||
       result.usage?.successfulCalls !== 0 ||
@@ -7486,6 +7580,11 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
         'max_output_tokens' ||
       receipt?.responseDiagnostics?.contentByteCount !== 21_600 ||
       receipt?.responseDiagnostics?.contentSha256 !== '7'.repeat(64) ||
+      receipt?.responseDiagnostics?.localJSONRepairApplied !== undefined ||
+      receipt?.responseDiagnostics?.localJSONRepairFailure !== undefined ||
+      result.normalizationDiagnostic !== undefined ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
       result.preflight?.authorized !== true ||
       result.preflight?.promptTokenCanary?.requestBodyByteCount !==
         result.preflight?.requestBodyByteCount ||
@@ -7610,48 +7709,7 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
   }
 }
 
-async function verifyWaferProductionEnvelopeOverflowFailsOnce(job) {
-  let calls = 0;
-  let requestSeen;
-  const result = await runOpportunityDiscoveryPlanner({
-    job,
-    model: 'deepseek/deepseek-v4-flash-0731',
-    now,
-    completeJSON: async (request) => {
-      calls += 1;
-      requestSeen = request;
-      const error = new Error(
-        'OpenRouter streaming content exceeded its bounded structured-output envelope'
-      );
-      error.openRouterFailureCode =
-        'openrouter_truncated_structured_output';
-      error.openRouterGenerationId =
-        'gen-1786614275-eCHzBgip17OWBH4uqJ45';
-      error.openRouterDiagnostics = {
-        httpStatus: 200,
-        routerSelectedProvider: 'Wafer',
-        routerSelectedModel: 'deepseek/deepseek-v4-flash-0731',
-        routerEnvelopeProvider: 'Wafer',
-        routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
-        contentByteCount: 40_965,
-        contentSha256:
-          '7116e246720137715dd187dad57cf066957b2879edc2c6ea3381ec112a9cc0c0',
-        structuredOutputEnvelopeExceeded: true,
-        maxContentByteCount: 40_960,
-        streaming: true,
-        streamEventCount: 4_770,
-        streamWireByteCount: 1_387_049,
-        streamFirstDataLatencyMs: 706,
-        streamDurationMs: 59_126,
-        streamCompleted: false,
-        responseHeadersReceived: true,
-        rawProviderBody: 'raw-wafer-overflow-secret-sentinel'
-      };
-      throw error;
-    }
-  });
-  const receipt = result.llm?.discoveryPlanner;
-  const diagnostics = receipt?.responseDiagnostics;
+async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
   const expectedIgnore = [
     'cloudflare',
     'open-inference',
@@ -7661,52 +7719,113 @@ async function verifyWaferProductionEnvelopeOverflowFailsOnce(job) {
     'siliconflow',
     'wafer'
   ];
-  if (calls !== 1 ||
-      requestSeen?.maxTokens !== 42_000 ||
-      requestSeen?.streamMaxContentBytes !== 40_960 ||
-      JSON.stringify(requestSeen?.provider?.ignore) !==
-        JSON.stringify(expectedIgnore) ||
-      requestSeen?.provider?.sort !== 'throughput' ||
-      requestSeen?.provider?.allow_fallbacks !== true ||
-      requestSeen?.provider?.require_parameters !== true ||
-      requestSeen?.provider?.data_collection !== 'deny' ||
-      result.status !== 'blocked' || result.plans.length !== 0 ||
-      result.recoveryCause !==
-        'commercial_discovery_planner_output_envelope_recovery' ||
-      result.failureCode !== 'planner_output_envelope_exceeded' ||
-      result.preflight?.responseBodyByteCount !== 40_965 ||
-      result.preflight?.maxResponseBodyByteCount !== 40_960 ||
-      result.preflight?.routeProvenanceValidated !== false ||
-      result.usage?.calls !== 1 || result.usage?.successfulCalls !== 0 ||
-      result.usage?.promptTokens !== 0 ||
-      result.usage?.completionTokens !== 0 ||
-      receipt?.status !== 'incomplete' ||
-      receipt?.error !== 'openrouter_truncated_structured_output' ||
-      receipt?.generationId !==
-        'gen-1786614275-eCHzBgip17OWBH4uqJ45' ||
-      JSON.stringify(receipt?.openRouterUsage) !== '{}' ||
-      diagnostics?.httpStatus !== 200 ||
-      diagnostics?.routerSelectedProvider !== 'Wafer' ||
-      diagnostics?.contentByteCount !== 40_965 ||
-      diagnostics?.structuredOutputEnvelopeExceeded !== true ||
-      diagnostics?.maxContentByteCount !== 40_960 ||
-      diagnostics?.streamEventCount !== 4_770 ||
-      diagnostics?.streamWireByteCount !== 1_387_049 ||
-      diagnostics?.streamFirstDataLatencyMs !== 706 ||
-      diagnostics?.streamDurationMs !== 59_126 ||
-      diagnostics?.streamCompleted !== false ||
-      diagnostics?.responseHeadersReceived !== true ||
-      diagnostics?.finishReason !== undefined ||
-      diagnostics?.nativeFinishReason !== undefined ||
-      result.llm?.commercialCritic !== undefined ||
-      result.llm?.strategyFamilyRepair !== undefined ||
-      result.sideEffectsPerformed !== 0 ||
-      JSON.stringify(result).includes(
-        'raw-wafer-overflow-secret-sentinel'
-      )) {
-    throw new Error(
-      `Wafer production envelope overflow did not fail once with a safe receipt: ${JSON.stringify({ calls, request: requestSeen, result })}`
-    );
+  for (const scenario of [{
+    provider: 'Wafer',
+    generationId: 'gen-1786614275-eCHzBgip17OWBH4uqJ45',
+    contentByteCount: 40_965,
+    contentSha256:
+      '7116e246720137715dd187dad57cf066957b2879edc2c6ea3381ec112a9cc0c0',
+    streamEventCount: 4_770,
+    streamWireByteCount: 1_387_049,
+    streamFirstDataLatencyMs: 706,
+    streamDurationMs: 59_126,
+    rawSentinel: 'raw-wafer-partial-secret-sentinel'
+  }, {
+    provider: 'AtlasCloud',
+    generationId: 'gen-atlascloud-production-partial-fixture',
+    contentByteCount: 40_966,
+    contentSha256: '5'.repeat(64),
+    streamEventCount: 6_852,
+    streamWireByteCount: 2_018_649,
+    streamFirstDataLatencyMs: 712,
+    streamDurationMs: 206_501,
+    rawSentinel: 'raw-atlascloud-partial-secret-sentinel'
+  }]) {
+    let calls = 0;
+    let requestSeen;
+    const result = await runOpportunityDiscoveryPlanner({
+      job,
+      model: 'deepseek/deepseek-v4-flash-0731',
+      now,
+      completeJSON: async (request) => {
+        calls += 1;
+        requestSeen = request;
+        const error = new Error(
+          'OpenRouter stream ended without a complete terminal stop, usage, and route event'
+        );
+        error.openRouterFailureCode =
+          'openrouter_invalid_response';
+        error.openRouterGenerationId = scenario.generationId;
+        error.openRouterDiagnostics = {
+          httpStatus: 200,
+          routerSelectedProvider: scenario.provider,
+          routerSelectedModel: 'deepseek/deepseek-v4-flash-0731',
+          routerEnvelopeProvider: scenario.provider,
+          routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+          contentByteCount: scenario.contentByteCount,
+          contentSha256: scenario.contentSha256,
+          streaming: true,
+          streamEventCount: scenario.streamEventCount,
+          streamWireByteCount: scenario.streamWireByteCount,
+          streamFirstDataLatencyMs: scenario.streamFirstDataLatencyMs,
+          streamDurationMs: scenario.streamDurationMs,
+          streamCompleted: false,
+          responseHeadersReceived: true,
+          rawProviderBody: scenario.rawSentinel
+        };
+        throw error;
+      }
+    });
+    const receipt = result.llm?.discoveryPlanner;
+    const diagnostics = receipt?.responseDiagnostics;
+    if (calls !== 1 ||
+        requestSeen?.maxTokens !== 42_000 ||
+        requestSeen?.streamMaxContentBytes !==
+          MAX_DISCOVERY_PLANNER_RAW_STREAM_CONTENT_BYTES ||
+        JSON.stringify(requestSeen?.provider?.ignore) !==
+          JSON.stringify(expectedIgnore) ||
+        requestSeen?.provider?.sort !== 'throughput' ||
+        requestSeen?.provider?.allow_fallbacks !== true ||
+        requestSeen?.provider?.require_parameters !== true ||
+        requestSeen?.provider?.data_collection !== 'deny' ||
+        result.status !== 'blocked' || result.plans.length !== 0 ||
+        result.reason !==
+          'The bounded discovery planner did not return a usable plan.' ||
+        result.recoveryCause !== undefined ||
+        result.failureCode !== undefined ||
+        result.preflight?.responseBodyByteCount !== undefined ||
+        result.preflight?.maxResponseBodyByteCount !== undefined ||
+        result.preflight?.routeProvenanceValidated !== undefined ||
+        result.usage?.calls !== 1 || result.usage?.successfulCalls !== 0 ||
+        result.usage?.promptTokens !== 0 ||
+        result.usage?.completionTokens !== 0 ||
+        receipt?.status !== 'failed' ||
+        receipt?.error !== 'openrouter_invalid_response' ||
+        receipt?.generationId !== scenario.generationId ||
+        JSON.stringify(receipt?.openRouterUsage) !== '{}' ||
+        diagnostics?.httpStatus !== 200 ||
+        diagnostics?.routerSelectedProvider !== scenario.provider ||
+        diagnostics?.contentByteCount !== scenario.contentByteCount ||
+        diagnostics?.structuredOutputEnvelopeExceeded !== undefined ||
+        diagnostics?.maxContentByteCount !== undefined ||
+        diagnostics?.streamEventCount !== scenario.streamEventCount ||
+        diagnostics?.streamWireByteCount !== scenario.streamWireByteCount ||
+        diagnostics?.streamFirstDataLatencyMs !==
+          scenario.streamFirstDataLatencyMs ||
+        diagnostics?.streamDurationMs !== scenario.streamDurationMs ||
+        diagnostics?.streamCompleted !== false ||
+        diagnostics?.responseHeadersReceived !== true ||
+        diagnostics?.finishReason !== undefined ||
+        diagnostics?.nativeFinishReason !== undefined ||
+        diagnostics?.localJSONRepairApplied !== undefined ||
+        result.llm?.commercialCritic !== undefined ||
+        result.llm?.strategyFamilyRepair !== undefined ||
+        result.sideEffectsPerformed !== 0 ||
+        JSON.stringify(result).includes(scenario.rawSentinel)) {
+      throw new Error(
+        `${scenario.provider} production partial trace did not fail once with a safe rejected receipt: ${JSON.stringify({ calls, request: requestSeen, result })}`
+      );
+    }
   }
 }
 
