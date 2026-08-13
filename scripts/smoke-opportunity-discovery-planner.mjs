@@ -1989,6 +1989,7 @@ await verifyParasailProductionTimeoutFailsOnce(unsafeJob);
 await verifyTogetherProductionTimeoutFailsOnce(unsafeJob);
 await verifyDeepInfraProductionTimeoutFailsOnce(unsafeJob);
 await verifyIoNetProductionTimeoutFailsOnce(unsafeJob);
+await verifyPhalaProductionTimeoutFailsOnce(unsafeJob);
 await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
@@ -5168,7 +5169,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'together',
             'deepinfra',
             'mancer',
-            'io-net'
+            'io-net',
+            'phala'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7695,7 +7697,8 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
@@ -7812,7 +7815,8 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   const capabilityRouting =
     opportunityCommercialDiscoveryCapabilities()
@@ -8021,7 +8025,8 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8238,7 +8243,8 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8492,7 +8498,8 @@ async function verifyMorphProductionStrictSchemaMismatchFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8727,7 +8734,8 @@ async function verifyMancerProductionStrictRootSchemaMismatchFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8890,7 +8898,8 @@ async function verifyAtlasCloudProductionRawOverflowFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9050,7 +9059,8 @@ async function verifyParasailProductionTimeoutFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9209,7 +9219,8 @@ async function verifyTogetherProductionTimeoutFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9368,7 +9379,8 @@ async function verifyDeepInfraProductionTimeoutFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9527,7 +9539,8 @@ async function verifyIoNetProductionTimeoutFailsOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9624,6 +9637,166 @@ async function verifyIoNetProductionTimeoutFailsOnce(job) {
   }
 }
 
+async function verifyPhalaProductionTimeoutFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  const rawSentinel = 'raw-phala-timeout-secret-sentinel';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      const error = new Error(
+        'OpenRouter streaming request exceeded its bounded total deadline'
+      );
+      error.openRouterFailureCode = 'openrouter_timeout';
+      error.openRouterGenerationId =
+        'gen-1786650660-GtChCUgjLUPtmEvvUuc5';
+      error.openRouterDiagnostics = {
+        httpStatus: 200,
+        routerSelectedProvider: 'Phala',
+        routerSelectedModel: 'deepseek/deepseek-v4-flash-0731',
+        routerEnvelopeProvider: 'Phala',
+        routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+        contentByteCount: 12_180,
+        contentSha256:
+          '2f40eed05b279dac5f4c3c85c110cf03b1f70f6b722b69062bbf7a29f669dc28',
+        streaming: true,
+        streamEventCount: 6_580,
+        streamWireByteCount: 1_880_210,
+        streamFirstDataLatencyMs: 718,
+        streamDurationMs: 300_009,
+        streamCompleted: false,
+        timeoutKind: 'total',
+        timeoutOrigin: 'profilescribe_local_deadline',
+        timeoutDeadlineMs: 300_000,
+        timeoutElapsedMs: 300_009,
+        timeoutPhase: 'response_stream',
+        responseHeadersReceived: true,
+        rawProviderBody: rawSentinel
+      };
+      throw error;
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer',
+    'ambient',
+    'baidu',
+    'fireworks',
+    'morph',
+    'atlas-cloud',
+    'parasail',
+    'together',
+    'deepinfra',
+    'mancer',
+    'io-net',
+    'phala'
+  ];
+  if (calls !== 1 ||
+      requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
+      JSON.stringify(requestSeen?.models) !==
+        JSON.stringify(['deepseek/deepseek-v4-flash-0731']) ||
+      requestSeen?.maxTokens !== 42_000 ||
+      requestSeen?.stream !== true ||
+      requestSeen?.streamMaxContentBytes !== 163_840 ||
+      requestSeen?.streamStartTimeoutMs !== 180_000 ||
+      requestSeen?.streamIdleTimeoutMs !== 60_000 ||
+      requestSeen?.streamTotalTimeoutMs !== 300_000 ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 2, completion: 6, request: 0 }
+      }) ||
+      result.status !== 'blocked' ||
+      result.plans.length !== 0 ||
+      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.acceptedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(result.planSelection?.rejectedPlans) !== '[]' ||
+      result.webSearchReceipt !== null ||
+      result.usage?.calls !== 1 ||
+      result.usage?.successfulCalls !== 0 ||
+      result.usage?.promptTokens !== 0 ||
+      result.usage?.completionTokens !== 0 ||
+      result.usage?.totalTokens !== 0 ||
+      result.usage?.reportedCostMicros !== 0 ||
+      result.usage?.reportedCostUsd !== 0 ||
+      result.usage?.costReporting !== 'unavailable' ||
+      result.usage?.withinBudget !== true ||
+      receipt?.status !== 'failed' ||
+      receipt?.error !== 'openrouter_timeout' ||
+      receipt?.generationId !==
+        'gen-1786650660-GtChCUgjLUPtmEvvUuc5' ||
+      receipt?.model !== 'deepseek/deepseek-v4-flash-0731' ||
+      receipt?.requestedModel !== 'deepseek/deepseek-v4-flash-0731' ||
+      JSON.stringify(receipt?.openRouterUsage) !== '{}' ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerSelectedProvider !== 'Phala' ||
+      diagnostics?.routerSelectedModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.routerEnvelopeProvider !== 'Phala' ||
+      diagnostics?.routerEnvelopeModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.contentByteCount !== 12_180 ||
+      diagnostics?.contentSha256 !==
+        '2f40eed05b279dac5f4c3c85c110cf03b1f70f6b722b69062bbf7a29f669dc28' ||
+      diagnostics?.streaming !== true ||
+      diagnostics?.streamEventCount !== 6_580 ||
+      diagnostics?.streamWireByteCount !== 1_880_210 ||
+      diagnostics?.streamFirstDataLatencyMs !== 718 ||
+      diagnostics?.streamDurationMs !== 300_009 ||
+      diagnostics?.streamCompleted !== false ||
+      diagnostics?.timeoutKind !== 'total' ||
+      diagnostics?.timeoutOrigin !== 'profilescribe_local_deadline' ||
+      diagnostics?.timeoutDeadlineMs !== 300_000 ||
+      diagnostics?.timeoutElapsedMs !== 300_009 ||
+      diagnostics?.timeoutPhase !== 'response_stream' ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.finishReason !== undefined ||
+      diagnostics?.nativeFinishReason !== undefined ||
+      diagnostics?.localJSONRepairApplied !== undefined ||
+      diagnostics?.localJSONRepairFailure !== undefined ||
+      result.preflight?.authorized !== true ||
+      !Number.isInteger(result.preflight?.requestBodyByteCount) ||
+      result.preflight.requestBodyByteCount <= 0 ||
+      result.preflight.requestBodyByteCount > 45_056 ||
+      !/^[a-f0-9]{64}$/.test(result.preflight?.requestBodySha256 || '') ||
+      result.preflight?.serializedPromptTokenCeiling !==
+        result.preflight.requestBodyByteCount + 1_024 ||
+      result.preflight?.promptTokenCeiling !==
+        result.preflight.serializedPromptTokenCeiling ||
+      result.preflight?.responseBodyByteCount !== undefined ||
+      result.preflight?.routeProvenanceValidated !== undefined ||
+      result.normalizationDiagnostic !== undefined ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.commercialDiscoveryEvidence !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(rawSentinel)) {
+    throw new Error(
+      `Phala production timeout did not fail once with bounded diagnostics: ${JSON.stringify({
+        calls,
+        request: requestSeen,
+        result,
+        rawSentinelPresent: JSON.stringify(result).includes(rawSentinel)
+      })}`
+    );
+  }
+}
+
 async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
   const expectedIgnore = [
     'cloudflare',
@@ -9642,7 +9815,8 @@ async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
     'together',
     'deepinfra',
     'mancer',
-    'io-net'
+    'io-net',
+    'phala'
   ];
   for (const scenario of [{
     provider: 'Wafer',

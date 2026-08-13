@@ -3018,7 +3018,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
       'together',
       'deepinfra',
       'mancer',
-      'io-net'
+      'io-net',
+      'phala'
     ]),
     'generator lost its evidence-backed provider quarantine'
   );
