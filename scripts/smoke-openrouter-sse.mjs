@@ -1334,6 +1334,11 @@ async function verifyRunJobUsesStreamingTransport() {
       true,
       'overflow fixture admitted incompatible provider parameters'
     );
+    assertEqual(
+      providerRequest?.provider?.sort,
+      'throughput',
+      'overflow fixture did not prioritize provider throughput'
+    );
     assertEqual(overflowPlan?.status, 'blocked', 'overflow plan status');
     assertEqual(overflowPlan?.plans?.length, 0, 'overflow accepted plans');
     assertEqual(
@@ -1466,7 +1471,7 @@ async function verifyRunJobUsesStreamingTransport() {
     );
     assertEqual(
       providerRequest?.provider?.ignore?.join(','),
-      'cloudflare,open-inference,decart,digitalocean',
+      'cloudflare,open-inference,decart,digitalocean,akashml',
       'overflow request lost the evidence-backed route quarantine'
     );
   } finally {

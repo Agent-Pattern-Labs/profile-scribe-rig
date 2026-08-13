@@ -2946,18 +2946,29 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
     'generator disabled compatible multi-vendor fallback'
   );
   assertEqual(call.envelope.provider?.order, undefined,
-    'generator disabled OpenRouter default load balancing with an order');
+    'generator unexpectedly pinned a provider order');
   assertEqual(call.envelope.provider?.only, undefined,
     'generator replaced default routing with a provider allowlist');
   assertEqual(
     JSON.stringify(call.envelope.provider?.ignore),
-    JSON.stringify(['cloudflare', 'open-inference', 'decart', 'digitalocean']),
+    JSON.stringify([
+      'cloudflare',
+      'open-inference',
+      'decart',
+      'digitalocean',
+      'akashml'
+    ]),
     'generator lost its evidence-backed provider quarantine'
   );
   assertEqual(
     call.envelope.provider?.require_parameters,
     true,
     'generator allowed a fallback that cannot honor the strict request'
+  );
+  assertEqual(
+    call.envelope.provider?.sort,
+    'throughput',
+    'generator did not prioritize deadline-compatible throughput'
   );
   assertEqual(
     call.routerMetadataHeader,

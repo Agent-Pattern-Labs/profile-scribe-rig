@@ -198,17 +198,26 @@ const MAX_DISCOVERY_PLANNER_PROVIDER_PRICE = {
 };
 const OPENAI_PROMPT_FRAMING_TOKEN_RESERVE = 1_024;
 const TOURNAMENT_PROVIDER_ROUTING = {
-  // Preserve OpenRouter's default health/price load balancing and automatic
-  // fallbacks across every endpoint that natively supports the strict request.
+  // This five-minute structured planner is throughput-bound, not price-bound.
+  // Rank qualified endpoints by OpenRouter's rolling throughput measurements
+  // while preserving automatic fallbacks and every strict capability filter.
   // Quarantine only endpoints with durable evidence under the applicable
   // transport contract: Cloudflare returned empty HTTP-200 envelopes,
   // OpenInference exceeded the compact 40-KiB structured-output envelope,
   // Decart returned HTTP 200/stop while violating eight strict-schema
-  // minLength constraints with empty compact fields, and DigitalOcean emitted
-  // only 3,014 content bytes before the exact 300-second planner deadline.
+  // minLength constraints with empty compact fields, DigitalOcean emitted only
+  // 3,014 content bytes before the exact 300-second planner deadline, and
+  // AkashML streamed only 13,787 bytes before that same current-contract limit.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
-  ignore: ['cloudflare', 'open-inference', 'decart', 'digitalocean'],
+  ignore: [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml'
+  ],
+  sort: 'throughput',
   allow_fallbacks: true,
   require_parameters: true,
   data_collection: 'deny'

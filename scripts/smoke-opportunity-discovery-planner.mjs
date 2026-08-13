@@ -5030,7 +5030,14 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           request: 0
         },
         providerRouting: {
-          ignore: ['cloudflare', 'open-inference', 'decart', 'digitalocean'],
+          ignore: [
+            'cloudflare',
+            'open-inference',
+            'decart',
+            'digitalocean',
+            'akashml'
+          ],
+          sort: 'throughput',
           allow_fallbacks: true,
           require_parameters: true,
           data_collection: 'deny',
