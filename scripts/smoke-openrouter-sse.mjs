@@ -17,6 +17,9 @@ await verifyActiveGenerationStillHitsHardDeadline();
 await verifyMidstreamErrorRemainsAnErrorEnvelope();
 await verifyIncompleteTerminalAccountingIsRejected();
 await verifyInvalidSuccessContractsAreRejected();
+await verifyDisputedGenerationIdentityIsNeverCanonical();
+await verifyConflictingRouteObservationsAreRejected();
+await verifyReviewedPermaslugObservationIsAccepted();
 await verifyRouteAttemptBoundsAndOutcomes();
 await verifyPlannerContentLimitIsEnforced();
 await verifyTerminalAccountingIsBoundToFinalEvent();
@@ -95,7 +98,7 @@ async function verifyActiveGenerationOutlivesFormerWallClock() {
     idleTimeoutMs: 45,
     totalTimeoutMs: 250,
     initialGenerationId: 'gen-stream-success',
-    initialSelectedProvider: 'Header Provider'
+    initialSelectedProvider: 'Provider A'
   });
   const elapsedMs = Date.now() - startedAt;
   assert(
@@ -143,7 +146,7 @@ async function verifyStalledGenerationHitsIdleDeadline() {
   assertEqual(caught.openRouterFailureCode, 'openrouter_timeout', 'idle code');
   assertEqual(caught.openRouterStreamState.timeoutKind, 'idle', 'idle kind');
   assertEqual(
-    caught.openRouterStreamState.selectedProvider,
+    caught.openRouterStreamState.headerProvider,
     'Header Provider',
     'safe selected-provider header was lost on timeout'
   );
@@ -205,6 +208,66 @@ async function verifyOpenRouterProcessingKeepalivesPreserveLiveness() {
     '{}',
     'documented OpenRouter processing keepalive did not preserve liveness'
   );
+}
+
+async function verifyDisputedGenerationIdentityIsNeverCanonical() {
+  for (const scenario of [{
+    name: 'header versus first chunk',
+    initialGenerationId: 'gen-stream-header-disputed',
+    events: [[0, event({
+      id: 'gen-stream-first-chunk-disputed',
+      choices: [{ delta: { content: '{}' } }]
+    })]],
+    forbidden: [
+      'gen-stream-header-disputed',
+      'gen-stream-first-chunk-disputed'
+    ]
+  }, {
+    name: 'first chunk versus later chunk',
+    initialGenerationId: undefined,
+    events: [[0, event({
+      id: 'gen-stream-first-disputed',
+      choices: [{ delta: { content: '{' } }]
+    })], [0, event({
+      id: 'gen-stream-later-disputed',
+      choices: [{ delta: { content: '}' } }]
+    })]],
+    forbidden: [
+      'gen-stream-first-disputed',
+      'gen-stream-later-disputed'
+    ]
+  }]) {
+    let caught;
+    try {
+      await readOpenRouterChatCompletionSSE(
+        scheduledStream(scenario.events),
+        {
+          idleTimeoutMs: 100,
+          totalTimeoutMs: 500,
+          initialGenerationId: scenario.initialGenerationId
+        }
+      );
+    } catch (error) {
+      caught = error;
+    }
+    assert(caught, `${scenario.name} identity conflict unexpectedly succeeded`);
+    assertEqual(
+      caught.openRouterFailureCode,
+      'openrouter_invalid_response',
+      `${scenario.name} identity conflict failure code`
+    );
+    assertEqual(
+      caught.openRouterStreamState?.generationId,
+      '',
+      `${scenario.name} retained a disputed canonical generation ID`
+    );
+    assert(
+      scenario.forbidden.every((value) =>
+        !JSON.stringify(caught.openRouterStreamState).includes(value)
+      ),
+      `${scenario.name} leaked a disputed ID through bounded stream state`
+    );
+  }
 }
 
 async function verifyActiveGenerationStillHitsHardDeadline() {
@@ -432,6 +495,149 @@ async function verifyInvalidSuccessContractsAreRejected() {
       `${testCase.name} leaked a freeform provider finish reason`
     );
   }
+}
+
+async function verifyConflictingRouteObservationsAreRejected() {
+  for (const testCase of [{
+    name: 'provider conflict',
+    envelopeProvider: 'Contradictory Provider',
+    envelopeModel: 'deepseek/deepseek-v4-flash-0731',
+    expectedConflict: 'envelope_provider_conflict'
+  }, {
+    name: 'model conflict',
+    envelopeProvider: 'Selected Provider',
+    envelopeModel: 'foreign/vendor-model',
+    expectedConflict: 'envelope_model_conflict'
+  }]) {
+    const stream = scheduledStream([
+      [0, event({
+        id: `gen-stream-${testCase.name.replaceAll(' ', '-')}`,
+        model: testCase.envelopeModel,
+        provider: testCase.envelopeProvider,
+        choices: [{
+          delta: { content: '{}' },
+          finish_reason: 'stop',
+          native_finish_reason: 'stop'
+        }]
+      })],
+      [0, event({
+        id: `gen-stream-${testCase.name.replaceAll(' ', '-')}`,
+        choices: [],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 2,
+          total_tokens: 12,
+          cost: 0.0001
+        },
+        openrouter_metadata: {
+          strategy: 'direct',
+          attempt: 1,
+          endpoints: {
+            total: 1,
+            available: [{
+              provider: 'Selected Provider',
+              model: 'deepseek/deepseek-v4-flash-0731',
+              selected: true
+            }]
+          },
+          attempts: [{
+            provider: 'Selected Provider',
+            model: 'deepseek/deepseek-v4-flash-0731',
+            status: 200
+          }]
+        }
+      })],
+      [0, 'data: [DONE]\n\n']
+    ]);
+    let caught;
+    try {
+      await readOpenRouterChatCompletionSSE(stream, {
+        idleTimeoutMs: 50,
+        totalTimeoutMs: 150,
+        initialSelectedProvider: 'Selected Provider'
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert(caught, `${testCase.name} unexpectedly succeeded`);
+    assertEqual(
+      caught.openRouterFailureCode,
+      'openrouter_invalid_response',
+      `${testCase.name} failure code`
+    );
+    assert(
+      caught.openRouterStreamState?.routeObservationConflictKinds?.includes(
+        testCase.expectedConflict
+      ),
+      `${testCase.name} lost its finite conflict diagnostic`
+    );
+    assert(
+      caught.openRouterStreamState?.streamCompleted === false,
+      `${testCase.name} was accepted as a complete stream`
+    );
+  }
+}
+
+async function verifyReviewedPermaslugObservationIsAccepted() {
+  const stream = scheduledStream([
+    [0, event({
+      id: 'gen-stream-reviewed-permaslug',
+      model: 'deepseek/deepseek-v4-flash-0731',
+      provider: 'Alias Provider',
+      choices: [{
+        delta: { content: '{}' },
+        finish_reason: 'stop',
+        native_finish_reason: 'stop'
+      }]
+    })],
+    [0, event({
+      id: 'gen-stream-reviewed-permaslug',
+      choices: [],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 2,
+        total_tokens: 12,
+        cost: 0.0001
+      },
+      openrouter_metadata: {
+        strategy: 'direct',
+        attempt: 1,
+        endpoints: {
+          total: 1,
+          available: [{
+            provider: 'Alias Provider',
+            model: 'deepseek/deepseek-v4-flash-20260731',
+            selected: true
+          }]
+        },
+        attempts: [{
+          provider: 'Alias Provider',
+          model: 'deepseek/deepseek-v4-flash-20260731',
+          status: 200
+        }]
+      }
+    })],
+    [0, 'data: [DONE]\n\n']
+  ]);
+  const result = await readOpenRouterChatCompletionSSE(stream, {
+    idleTimeoutMs: 50,
+    totalTimeoutMs: 150,
+    initialSelectedProvider: 'Alias Provider'
+  });
+  assert(
+    result.diagnostics.streamCompleted === true,
+    'reviewed model alias/permaslug equivalence was rejected'
+  );
+  assertEqual(
+    result.envelope.model,
+    'deepseek/deepseek-v4-flash-0731',
+    'top-level reviewed model observation was overwritten'
+  );
+  assertEqual(
+    result.diagnostics.selectedModel,
+    'deepseek/deepseek-v4-flash-20260731',
+    'selected endpoint permaslug was not preserved separately'
+  );
 }
 
 async function verifyTerminalAccountingIsBoundToFinalEvent() {
@@ -761,6 +967,20 @@ async function verifyRunJobUsesStreamingTransport() {
       providerRequest.messages?.find((message) => message.role === 'user')
         ?.content || '{}'
     );
+    if (providerInput.objective?.id ===
+        'objective-openrouter-sse-generation-conflict') {
+      response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'X-Generation-Id': 'gen-sse-header-disputed',
+        'X-Provider-Name': 'Disputed Stream Provider'
+      });
+      response.end(event({
+        id: 'gen-sse-chunk-disputed',
+        debug_message: 'raw-sse-generation-conflict-secret-sentinel',
+        choices: [{ delta: { content: '{}' } }]
+      }));
+      return;
+    }
     if (providerInput.objective?.id === 'objective-openrouter-sse-empty') {
       response.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -773,7 +993,7 @@ async function verifyRunJobUsesStreamingTransport() {
     response.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'X-Generation-Id': 'gen-sse-integration',
-      'X-Provider-Name': 'Integration Header Provider'
+      'X-Provider-Name': 'Integration Provider'
     });
     response.flushHeaders();
     response.write(': OPENROUTER PROCESSING\n\n');
@@ -935,9 +1155,9 @@ async function verifyRunJobUsesStreamingTransport() {
       'empty stream lost its safe generation header'
     );
     assertEqual(
-      emptyDiagnostics?.routerSelectedProvider,
+      emptyDiagnostics?.routerHeaderProvider,
       'Empty Stream Provider',
-      'empty stream lost its safe selected-provider header'
+      'empty stream lost its separate safe provider-header observation'
     );
     assertEqual(emptyDiagnostics?.httpStatus, 200, 'empty stream HTTP status');
     assertEqual(
@@ -950,6 +1170,57 @@ async function verifyRunJobUsesStreamingTransport() {
       emptyDiagnostics?.contentSha256,
       'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
       'empty stream safe body hash'
+    );
+
+    const conflictJobFile = join(temporaryDirectory, 'conflict-job.json');
+    writeFileSync(
+      conflictJobFile,
+      JSON.stringify(streamingPlannerJob('generation-conflict')),
+      'utf8'
+    );
+    const conflictExecution = await runCommand(
+      process.execPath,
+      ['bin/run-job.mjs', '--job-file', conflictJobFile],
+      {
+        ...process.env,
+        OPENROUTER_API_KEY: 'smoke-key',
+        PROFILESCRIBE_RIG_OPENROUTER_CHAT_COMPLETIONS_URL:
+          `http://127.0.0.1:${server.address().port}/openrouter`,
+        PROFILESCRIBE_RIG_OPENROUTER_STREAM_START_TIMEOUT_MS: '1000',
+        PROFILESCRIBE_RIG_OPENROUTER_STREAM_IDLE_TIMEOUT_MS: '100',
+        PROFILESCRIBE_RIG_OPENROUTER_STREAM_TOTAL_TIMEOUT_MS: '2000'
+      }
+    );
+    assertEqual(
+      conflictExecution.code,
+      0,
+      `conflicting-ID run-job integration failed: ${conflictExecution.stderr}`
+    );
+    const conflictOutput = JSON.parse(conflictExecution.stdout);
+    const conflictPlanner =
+      conflictOutput.metadata?.discoveryPlan?.llm?.discoveryPlanner;
+    assertEqual(
+      conflictPlanner?.error,
+      'openrouter_invalid_response',
+      'streamed planner generation conflict lost its finite provider error'
+    );
+    assertEqual(
+      conflictPlanner?.generationId,
+      undefined,
+      'streamed planner persisted one side of a disputed generation ID'
+    );
+    assert(
+      [
+        'gen-sse-header-disputed',
+        'gen-sse-chunk-disputed',
+        'raw-sse-generation-conflict-secret-sentinel'
+      ].every((value) => !JSON.stringify(conflictOutput).includes(value)),
+      'streamed planner receipt leaked disputed IDs or raw provider data'
+    );
+    assert(
+      conflictOutput.metadata?.discoveryPlan?.status !== 'planned' &&
+        (conflictOutput.metadata?.discoveryPlan?.plans?.length || 0) === 0,
+      'streamed planner identity conflict became accepted business evidence'
     );
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));

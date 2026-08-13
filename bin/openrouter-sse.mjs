@@ -29,9 +29,14 @@ export async function readOpenRouterChatCompletionSSE(
     error.openRouterFailureCode = 'openrouter_invalid_response';
     attachStreamState(error, {
       usage: {},
-      generationId: safeText(initialGenerationId),
-      selectedModel: safeText(initialSelectedModel),
-      selectedProvider: safeText(initialSelectedProvider),
+      generationId: safeGenerationId(initialGenerationId),
+      selectedModel: '',
+      selectedProvider: '',
+      envelopeModel: '',
+      envelopeProvider: '',
+      headerModel: safeModelName(initialSelectedModel),
+      headerProvider: safeProviderName(initialSelectedProvider),
+      routeObservationConflictKinds: [],
       openrouterMetadata: {},
       finishReason: '',
       nativeFinishReason: '',
@@ -66,9 +71,17 @@ export async function readOpenRouterChatCompletionSSE(
   let sawDone = false;
   let lastJSONEventWasTerminalAccounting = false;
   let terminalAccountingImmediatelyBeforeDone = false;
-  let generationId = safeText(initialGenerationId);
-  let selectedModel = safeText(initialSelectedModel);
-  let selectedProvider = safeText(initialSelectedProvider);
+  let generationId = safeGenerationId(initialGenerationId);
+  // Keep every safe provenance source separate. In particular, do not let a
+  // selected endpoint overwrite a contradictory top-level chunk observation
+  // before the terminal route contract has compared them.
+  const headerModel = safeModelName(initialSelectedModel);
+  const headerProvider = safeProviderName(initialSelectedProvider);
+  let envelopeModel = '';
+  let envelopeProvider = '';
+  let selectedModel = '';
+  let selectedProvider = '';
+  const routeObservationConflictKinds = new Set();
   let usage = {};
   let openrouterMetadata = {};
   let topLevelError;
@@ -89,7 +102,12 @@ export async function readOpenRouterChatCompletionSSE(
     completeOpenRouterRoute({
       metadata: openrouterMetadata,
       selectedModel,
-      selectedProvider
+      selectedProvider,
+      envelopeModel,
+      envelopeProvider,
+      headerModel,
+      headerProvider,
+      routeObservationConflictKinds
     });
 
   const state = () => ({
@@ -97,6 +115,12 @@ export async function readOpenRouterChatCompletionSSE(
     generationId,
     selectedModel,
     selectedProvider,
+    envelopeModel,
+    envelopeProvider,
+    headerModel,
+    headerProvider,
+    routeObservationConflictKinds:
+      [...routeObservationConflictKinds].slice(0, 8),
     openrouterMetadata,
     finishReason,
     nativeFinishReason,
@@ -156,8 +180,23 @@ export async function readOpenRouterChatCompletionSSE(
     }
     eventCount += 1;
     lastJSONEventWasTerminalAccounting = false;
-    const chunkGenerationId = safeText(chunk.id);
+    const rawChunkGenerationId = safeText(chunk.id);
+    const chunkGenerationId = safeGenerationId(rawChunkGenerationId);
+    if (rawChunkGenerationId && !chunkGenerationId) {
+      // An invalid provider observation makes any earlier header/chunk ID
+      // unsuitable as the canonical generation identity for reconciliation.
+      generationId = '';
+      const error = new Error(
+        'OpenRouter streaming response reported an invalid generation identity'
+      );
+      error.openRouterFailureCode = 'openrouter_invalid_response';
+      throw error;
+    }
     if (chunkGenerationId && generationId && chunkGenerationId !== generationId) {
+      // Do not persist either side of a disputed safe identity. The finite
+      // invalid-response code and bounded stream diagnostics are sufficient;
+      // choosing the header or first chunk would poison later accounting.
+      generationId = '';
       const error = new Error(
         'OpenRouter streaming response changed generation identity midstream'
       );
@@ -165,8 +204,28 @@ export async function readOpenRouterChatCompletionSSE(
       throw error;
     }
     generationId = chunkGenerationId || generationId;
-    selectedModel = safeText(chunk.model) || selectedModel;
-    selectedProvider = safeText(chunk.provider) || selectedProvider;
+    const chunkModel = safeModelName(chunk.model);
+    const chunkProvider = safeProviderName(chunk.provider);
+    if (chunkModel) {
+      if (envelopeModel &&
+          !reviewedModelEquivalent(envelopeModel, chunkModel)) {
+        routeObservationConflictKinds.add('envelope_model_changed');
+      }
+      if (selectedModel &&
+          !reviewedModelEquivalent(selectedModel, chunkModel)) {
+        routeObservationConflictKinds.add('envelope_model_conflict');
+      }
+      envelopeModel ||= chunkModel;
+    }
+    if (chunkProvider) {
+      if (envelopeProvider && envelopeProvider !== chunkProvider) {
+        routeObservationConflictKinds.add('envelope_provider_changed');
+      }
+      if (selectedProvider && selectedProvider !== chunkProvider) {
+        routeObservationConflictKinds.add('envelope_provider_conflict');
+      }
+      envelopeProvider ||= chunkProvider;
+    }
     if (plainObject(chunk.usage)) usage = chunk.usage;
     if (plainObject(chunk.error)) topLevelError = chunk.error;
     const chunkMetadata = plainObject(chunk.openrouter_metadata);
@@ -174,16 +233,61 @@ export async function readOpenRouterChatCompletionSSE(
       openrouterMetadata = chunkMetadata;
       const selectedEndpoint = selectedOpenRouterEndpoint(chunkMetadata);
       const finalAttempt = finalOpenRouterAttempt(chunkMetadata);
-      selectedProvider = safeText(
-        selectedEndpoint?.provider || finalAttempt?.provider || selectedProvider
-      );
-      selectedModel = safeText(
-        selectedEndpoint?.model || finalAttempt?.model || selectedModel
-      );
+      const endpointProvider = safeProviderName(selectedEndpoint?.provider);
+      const endpointModel = safeModelName(selectedEndpoint?.model);
+      const finalProvider = safeProviderName(finalAttempt?.provider);
+      const finalModel = safeModelName(finalAttempt?.model);
+      const nextSelectedProvider = endpointProvider || finalProvider;
+      const nextSelectedModel = endpointModel || finalModel;
+      if (endpointProvider && finalProvider &&
+          endpointProvider !== finalProvider) {
+        routeObservationConflictKinds.add(
+          'selected_endpoint_final_provider_conflict'
+        );
+      }
+      if (endpointModel && finalModel &&
+          !reviewedModelEquivalent(endpointModel, finalModel)) {
+        routeObservationConflictKinds.add(
+          'selected_endpoint_final_model_conflict'
+        );
+      }
+      if (nextSelectedProvider && envelopeProvider &&
+          nextSelectedProvider !== envelopeProvider) {
+        routeObservationConflictKinds.add('envelope_provider_conflict');
+      }
+      if (nextSelectedModel && envelopeModel &&
+          !reviewedModelEquivalent(nextSelectedModel, envelopeModel)) {
+        routeObservationConflictKinds.add('envelope_model_conflict');
+      }
+      if (nextSelectedProvider && headerProvider &&
+          nextSelectedProvider !== headerProvider) {
+        routeObservationConflictKinds.add('header_provider_conflict');
+      }
+      if (nextSelectedModel && headerModel &&
+          !reviewedModelEquivalent(nextSelectedModel, headerModel)) {
+        routeObservationConflictKinds.add('header_model_conflict');
+      }
+      if (nextSelectedProvider) {
+        if (selectedProvider && selectedProvider !== nextSelectedProvider) {
+          routeObservationConflictKinds.add('selected_provider_changed');
+        }
+        selectedProvider ||= nextSelectedProvider;
+      }
+      if (nextSelectedModel) {
+        if (selectedModel &&
+            !reviewedModelEquivalent(selectedModel, nextSelectedModel)) {
+          routeObservationConflictKinds.add('selected_model_changed');
+        }
+        selectedModel ||= nextSelectedModel;
+      }
     }
     const errorMetadata = plainObject(chunk.error?.metadata);
     if (errorMetadata?.provider_name) {
-      selectedProvider = safeText(errorMetadata.provider_name) || selectedProvider;
+      const errorProvider = safeProviderName(errorMetadata.provider_name);
+      if (errorProvider && selectedProvider &&
+          errorProvider !== selectedProvider) {
+        routeObservationConflictKinds.add('error_provider_conflict');
+      }
     }
 
     const choice = Array.isArray(chunk.choices) && plainObject(chunk.choices[0])
@@ -214,7 +318,11 @@ export async function readOpenRouterChatCompletionSSE(
       choiceError = choice.error;
       const metadata = plainObject(choice.error.metadata);
       if (metadata?.provider_name) {
-        selectedProvider = safeText(metadata.provider_name) || selectedProvider;
+        const errorProvider = safeProviderName(metadata.provider_name);
+        if (errorProvider && selectedProvider &&
+            errorProvider !== selectedProvider) {
+          routeObservationConflictKinds.add('error_provider_conflict');
+        }
       }
     }
     finishReason = safeFinishReason(choice.finish_reason) || finishReason;
@@ -226,7 +334,12 @@ export async function readOpenRouterChatCompletionSSE(
       completeOpenRouterRoute({
         metadata: chunkMetadata,
         selectedModel,
-        selectedProvider
+        selectedProvider,
+        envelopeModel,
+        envelopeProvider,
+        headerModel,
+        headerProvider,
+        routeObservationConflictKinds
       });
     return true;
   };
@@ -335,8 +448,11 @@ export async function readOpenRouterChatCompletionSSE(
   return {
     envelope: {
       ...(generationId ? { id: generationId } : {}),
-      ...(selectedModel ? { model: selectedModel } : {}),
-      ...(selectedProvider ? { provider: selectedProvider } : {}),
+      // Preserve only the actual safe top-level observations here. The
+      // selected endpoint/final attempt remains separately available in
+      // openrouter_metadata and diagnostics.
+      ...(envelopeModel ? { model: envelopeModel } : {}),
+      ...(envelopeProvider ? { provider: envelopeProvider } : {}),
       ...(Object.keys(openrouterMetadata).length > 0
         ? { openrouter_metadata: openrouterMetadata }
         : {}),
@@ -461,7 +577,16 @@ function finalOpenRouterAttempt(metadata) {
     : undefined;
 }
 
-function completeOpenRouterRoute({ metadata, selectedModel, selectedProvider }) {
+function completeOpenRouterRoute({
+  metadata,
+  selectedModel,
+  selectedProvider,
+  envelopeModel,
+  envelopeProvider,
+  headerModel,
+  headerProvider,
+  routeObservationConflictKinds
+}) {
   metadata = plainObject(metadata);
   const attemptNumber = metadata?.attempt;
   const attempts = metadata?.attempts;
@@ -475,11 +600,24 @@ function completeOpenRouterRoute({ metadata, selectedModel, selectedProvider }) 
   const endpointModel = safeText(selectedEndpoint?.model).toLowerCase();
   const observedProvider = safeText(selectedProvider);
   const observedModel = safeText(selectedModel).toLowerCase();
+  const topLevelProvider = safeProviderName(envelopeProvider);
+  const topLevelModel = safeModelName(envelopeModel);
+  const responseHeaderProvider = safeProviderName(headerProvider);
+  const responseHeaderModel = safeModelName(headerModel);
   if (selectedEndpointCount !== 1 ||
       !Number.isInteger(attemptNumber) || attemptNumber < 1 ||
       attemptNumber > 64 ||
       !safeProvider(endpointProvider) || !safeModel(endpointModel) ||
-      observedProvider !== endpointProvider || observedModel !== endpointModel) {
+      observedProvider !== endpointProvider ||
+      !reviewedModelEquivalent(observedModel, endpointModel) ||
+      (routeObservationConflictKinds?.size || 0) > 0 ||
+      (topLevelProvider && topLevelProvider !== endpointProvider) ||
+      (topLevelModel &&
+        !reviewedModelEquivalent(topLevelModel, endpointModel)) ||
+      (responseHeaderProvider &&
+        responseHeaderProvider !== endpointProvider) ||
+      (responseHeaderModel &&
+        !reviewedModelEquivalent(responseHeaderModel, endpointModel))) {
     return false;
   }
   // OpenRouter documents attempts as optional on a direct success. That route
@@ -505,8 +643,8 @@ function completeOpenRouterRoute({ metadata, selectedModel, selectedProvider }) 
   const finalModel = safeText(finalAttempt?.model).toLowerCase();
   return safeText(finalAttempt?.provider) === endpointProvider &&
     (attemptNumber === 1
-      ? !finalModel || finalModel === endpointModel
-      : finalModel === endpointModel) &&
+      ? !finalModel || reviewedModelEquivalent(finalModel, endpointModel)
+      : reviewedModelEquivalent(finalModel, endpointModel)) &&
     finalAttempt.status >= 200 && finalAttempt.status <= 299;
 }
 
@@ -516,6 +654,37 @@ function safeProvider(value) {
 
 function safeModel(value) {
   return /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(value);
+}
+
+function safeGenerationId(value) {
+  const generationId = safeText(value);
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(generationId)
+    ? generationId
+    : '';
+}
+
+function safeProviderName(value) {
+  const provider = safeText(value);
+  return safeProvider(provider) ? provider : '';
+}
+
+function safeModelName(value) {
+  const model = safeText(value).toLowerCase();
+  return safeModel(model) ? model : '';
+}
+
+function reviewedModelEquivalent(leftValue, rightValue) {
+  const left = safeModelName(leftValue);
+  const right = safeModelName(rightValue);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return new Set([
+    'deepseek/deepseek-v4-flash-0731',
+    'deepseek/deepseek-v4-flash-20260731'
+  ]).has(left) && new Set([
+    'deepseek/deepseek-v4-flash-0731',
+    'deepseek/deepseek-v4-flash-20260731'
+  ]).has(right);
 }
 
 function positiveMilliseconds(value, fallback) {

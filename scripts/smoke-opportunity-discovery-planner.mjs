@@ -34,6 +34,8 @@ const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES = 34_400;
 const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 20 * 1024;
 const COMPENSATED_JOB_PAID_OFFER =
   'A current compensated role matching verified professional skills';
+const UNSAFE_INJECTED_GENERATION_ID_SENTINEL =
+  `raw-generation-id-secret-sentinel/${'x'.repeat(400)}`;
 
 // Normal planner fixtures exercise business/schema behavior, so give each
 // successful injected completion the same direct-route receipt required at the
@@ -678,7 +680,9 @@ for (const scenario of cases) {
       return {
         data: responseData,
         usage,
-        generationId: `generation-${scenario.name.replace(/\W+/g, '-')}`,
+        generationId: scenario === cases[0]
+          ? UNSAFE_INJECTED_GENERATION_ID_SENTINEL
+          : `generation-${scenario.name.replace(/\W+/g, '-')}`,
         diagnostics: {
           finishReason: 'stop',
           nativeFinishReason: 'stop',
@@ -696,6 +700,17 @@ for (const scenario of cases) {
       };
     }
   });
+  if (scenario === cases[0]) {
+    const plannerReceipt = result.llm?.discoveryPlanner;
+    if (plannerReceipt?.generationId !== undefined ||
+        JSON.stringify(result).includes(
+          'raw-generation-id-secret-sentinel'
+        )) {
+      throw new Error(
+        'injected completeJSON leaked an unsafe generation id through the durable planner receipt'
+      );
+    }
+  }
   const initialPlannerPrompt = JSON.parse(requestSeen?.user || '{}');
   if (!requestSeen ||
       requestSeen.responseFormat?.json_schema?.name !==
@@ -5042,6 +5057,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           outputTokenCeiling: 2_000,
           timeoutMs: 120_000,
           runtimeParsedResponseMaxBytes: 16 * 1_024,
+          bufferedWireResponseMaxBytes: 160 * 1_024,
           framingTokenReserve: 2_048,
           fixedToolFeeMicros: 0,
           callSpendCeilingMicros: 147_168

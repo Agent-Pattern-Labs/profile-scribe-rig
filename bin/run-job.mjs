@@ -11,6 +11,7 @@ import {
   OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
   OPPORTUNITY_TOURNAMENT_GENERATOR_CONTRACT,
   OPPORTUNITY_TOURNAMENT_RESULT_CONTRACT,
+  MAX_BUFFERED_OPENROUTER_RESPONSE_BODY_BYTES,
   REVENUE_GATE_VERSION,
   REVENUE_PATH_CONTRACT_VERSION,
   repairAndValidateOpenRouterJSONMessage,
@@ -3188,6 +3189,7 @@ async function callOpenRouterJSON({
   let response;
   let responseHeadersLatencyMs;
   let body = '';
+  let bufferedWireResponseDiagnostics = {};
   let streamedEnvelope;
   let streamDiagnostics = {};
   try {
@@ -3224,6 +3226,12 @@ async function callOpenRouterJSON({
       );
       streamedEnvelope = streamed.envelope;
       streamDiagnostics = {
+        envelopeModel: streamed.diagnostics.envelopeModel,
+        envelopeProvider: streamed.diagnostics.envelopeProvider,
+        headerModel: streamed.diagnostics.headerModel,
+        headerProvider: streamed.diagnostics.headerProvider,
+        routeObservationConflictKinds:
+          streamed.diagnostics.routeObservationConflictKinds,
         streaming: true,
         streamEventCount: streamed.diagnostics.streamEventCount,
         streamWireByteCount: streamed.diagnostics.streamWireByteCount,
@@ -3250,9 +3258,42 @@ async function callOpenRouterJSON({
         timeoutKind = 'total';
         controller.abort();
       }, remainingMs);
-      body = await response.text();
+      const buffered = await readBoundedOpenRouterResponseBody(
+        response.body,
+        {
+          maxBytes: MAX_BUFFERED_OPENROUTER_RESPONSE_BODY_BYTES,
+          abortController: controller
+        }
+      );
+      body = buffered.body;
+      bufferedWireResponseDiagnostics = {
+        contentByteCount: buffered.byteCount,
+        contentSha256: buffered.sha256
+      };
     }
   } catch (error) {
+    if (Object.keys(object(
+      error?.openRouterBufferedResponseDiagnostics
+    )).length > 0) {
+      const headerGenerationId = safeOpenRouterGenerationId(
+        response?.headers?.get('x-generation-id')
+      );
+      const headerProvider = safeOpenRouterProviderName(
+        response?.headers?.get('x-provider-name')
+      );
+      throw attachOpenRouterResponseMetadata(
+        error,
+        {},
+        {
+          ...object(error?.openRouterBufferedResponseDiagnostics),
+          ...openRouterRouterDiagnostics({}, '', '', {
+            headerProvider
+          }),
+          ...(response ? { httpStatus: response.status } : {})
+        },
+        headerGenerationId
+      );
+    }
     const streamState = object(error?.openRouterStreamState);
     if (streaming && Object.keys(streamState).length > 0) {
       const streamUsage = normalizeOpenRouterUsage(streamState.usage);
@@ -3282,8 +3323,14 @@ async function callOpenRouterJSON({
         contentSha256: text(streamState.contentSha256),
         ...openRouterRouterDiagnostics(
           streamState.openrouterMetadata,
-          streamState.selectedModel,
-          streamState.selectedProvider
+          streamState.envelopeModel,
+          streamState.envelopeProvider,
+          {
+            headerModel: streamState.headerModel,
+            headerProvider: streamState.headerProvider,
+            routeObservationConflictKinds:
+              streamState.routeObservationConflictKinds
+          }
         ),
         streaming: true,
         streamEventCount: nonNegativeInteger(
@@ -3363,7 +3410,8 @@ async function callOpenRouterJSON({
               ...openRouterRouterDiagnostics(
                 {},
                 '',
-                headerProvider
+                '',
+                { headerProvider }
               ),
               streaming: true,
               streamDurationMs:
@@ -3386,7 +3434,8 @@ async function callOpenRouterJSON({
               ...openRouterRouterDiagnostics(
                 {},
                 '',
-                headerProvider
+                '',
+                { headerProvider }
               ),
               timeoutKind: 'total',
               timeoutOrigin: 'profilescribe_local_deadline',
@@ -3415,18 +3464,40 @@ async function callOpenRouterJSON({
       // the error. A bounded hash and byte count are sufficient diagnostics.
     }
     const usage = normalizeOpenRouterUsage(envelope?.usage);
+    const envelopeGenerationId = safeOpenRouterGenerationId(envelope?.id);
+    const headerGenerationId = safeOpenRouterGenerationId(
+      response.headers.get('x-generation-id')
+    );
     const diagnostics = {
-      ...openRouterResponseDiagnostics({}, body),
+      // Preserve diagnostics for the complete HTTP envelope from the raw
+      // bounded wire bytes. TextDecoder intentionally removes a UTF-8 BOM,
+      // so recomputing this digest from `body` would identify different bytes
+      // than OpenRouter actually returned.
+      ...bufferedWireResponseDiagnostics,
       ...openRouterRouterDiagnostics(
         envelope?.openrouter_metadata,
         envelope?.model,
-        envelope?.provider || response.headers.get('x-provider-name')
+        envelope?.provider,
+        {
+          headerProvider: response.headers.get('x-provider-name')
+        }
       ),
       httpStatus: response.status
     };
-    const generationId = text(
-      envelope?.id || response.headers.get('x-generation-id')
-    );
+    if (envelopeGenerationId && headerGenerationId &&
+        envelopeGenerationId !== headerGenerationId) {
+      const error = new Error(
+        'OpenRouter error response reported conflicting generation identities'
+      );
+      error.openRouterFailureCode = 'openrouter_invalid_response';
+      throw attachOpenRouterResponseMetadata(
+        error,
+        usage,
+        diagnostics,
+        undefined
+      );
+    }
+    const generationId = envelopeGenerationId || headerGenerationId;
     if (envelope?.error) {
       throw openRouterProviderError(
         envelope.error,
@@ -3463,12 +3534,19 @@ async function callOpenRouterJSON({
         error,
         {},
         {
-          ...openRouterResponseDiagnostics({}, body),
+          // This is a whole-envelope parse failure, not a message-content
+          // diagnostic. Keep the exact bounded wire count/hash captured
+          // before UTF-8 decoding (including a BOM when present).
+          ...bufferedWireResponseDiagnostics,
           ...openRouterRouterDiagnostics(
             {},
             '',
-            response.headers.get('x-provider-name')
-          )
+            '',
+            {
+              headerProvider: response.headers.get('x-provider-name')
+            }
+          ),
+          httpStatus: response.status
         },
         safeOpenRouterGenerationId(
           response.headers.get('x-generation-id')
@@ -3477,6 +3555,32 @@ async function callOpenRouterJSON({
     }
   }
   const usage = normalizeOpenRouterUsage(envelope?.usage);
+  const envelopeGenerationId = safeOpenRouterGenerationId(envelope?.id);
+  const headerGenerationId = safeOpenRouterGenerationId(
+    response.headers.get('x-generation-id')
+  );
+  if (!streaming && envelopeGenerationId && headerGenerationId &&
+      envelopeGenerationId !== headerGenerationId) {
+    const error = new Error(
+      'OpenRouter response reported conflicting generation identities'
+    );
+    error.openRouterFailureCode = 'openrouter_invalid_response';
+    throw attachOpenRouterResponseMetadata(
+      error,
+      usage,
+      {
+        ...bufferedWireResponseDiagnostics,
+        ...openRouterRouterDiagnostics(
+          envelope?.openrouter_metadata,
+          envelope?.model,
+          envelope?.provider,
+          { headerProvider: response.headers.get('x-provider-name') }
+        ),
+        httpStatus: response.status
+      },
+      undefined
+    );
+  }
   const choice = object(envelope?.choices?.[0]);
   const rawContent = typeof choice?.message?.content === 'string'
     ? choice.message.content
@@ -3499,7 +3603,19 @@ async function callOpenRouterJSON({
     ...openRouterRouterDiagnostics(
       envelope?.openrouter_metadata,
       envelope?.model,
-      envelope?.provider
+      envelope?.provider,
+      streaming
+        ? {
+            envelopeModel: streamDiagnostics.envelopeModel,
+            envelopeProvider: streamDiagnostics.envelopeProvider,
+            headerModel: streamDiagnostics.headerModel,
+            headerProvider: streamDiagnostics.headerProvider,
+            routeObservationConflictKinds:
+              streamDiagnostics.routeObservationConflictKinds
+          }
+        : {
+            headerProvider: response.headers.get('x-provider-name')
+          }
     ),
     ...streamDiagnostics,
     httpStatus: response.status
@@ -3618,6 +3734,96 @@ async function callOpenRouterJSON({
   };
 }
 
+async function readBoundedOpenRouterResponseBody(
+  bodyStream,
+  {
+    maxBytes = MAX_BUFFERED_OPENROUTER_RESPONSE_BODY_BYTES,
+    abortController
+  } = {}
+) {
+  const limit = positiveInteger(maxBytes);
+  if (!limit) {
+    throw new Error('buffered OpenRouter response byte limit is required');
+  }
+  const hash = createHash('sha256');
+  if (!bodyStream) {
+    return {
+      body: '',
+      byteCount: 0,
+      sha256: hash.digest('hex')
+    };
+  }
+  const reader = bodyStream.getReader();
+  // This is the sole retained wire buffer. The extra byte proves overflow
+  // without reading or retaining the rest of an attacker-controlled body.
+  const retained = Buffer.allocUnsafe(limit + 1);
+  let byteCount = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array) || value.byteLength === 0) continue;
+      const available = retained.byteLength - byteCount;
+      const observed = Math.min(available, value.byteLength);
+      if (observed > 0) {
+        const source = Buffer.from(
+          value.buffer,
+          value.byteOffset,
+          observed
+        );
+        source.copy(retained, byteCount);
+        hash.update(retained.subarray(byteCount, byteCount + observed));
+        byteCount += observed;
+      }
+      if (byteCount > limit || value.byteLength > observed) {
+        // Stop network delivery before waiting for stream cancellation. Never
+        // consume, decode, parse, or hash bytes beyond the bounded prefix.
+        abortController?.abort();
+        // Do not wait for a remote stream to acknowledge cancellation. Abort
+        // is already authoritative and the rejected promise is contained.
+        Promise.resolve(reader.cancel()).catch(() => {});
+        const error = new Error(
+          'OpenRouter buffered response exceeded its local byte ceiling'
+        );
+        error.openRouterFailureCode =
+          'openrouter_response_body_too_large';
+        error.openRouterBufferedResponseDiagnostics = {
+          contentByteCount: byteCount,
+          contentSha256: hash.digest('hex')
+        };
+        throw error;
+      }
+    }
+    let decoded;
+    try {
+      decoded = new TextDecoder('utf-8', { fatal: true }).decode(
+        retained.subarray(0, byteCount)
+      );
+    } catch {
+      const error = new Error(
+        'OpenRouter buffered response was not valid UTF-8'
+      );
+      error.openRouterFailureCode = 'openrouter_invalid_response';
+      error.openRouterBufferedResponseDiagnostics = {
+        contentByteCount: byteCount,
+        contentSha256: hash.digest('hex')
+      };
+      throw error;
+    }
+    return {
+      body: decoded,
+      byteCount,
+      sha256: hash.digest('hex')
+    };
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // A cancelled/errored stream may already have released its reader.
+    }
+  }
+}
+
 function localJSONRepairFailureCode(error) {
   const message = String(error?.message || error || '').toLowerCase();
   if (message.includes('outside the repair envelope')) return 'envelope';
@@ -3679,10 +3885,12 @@ function safeOpenRouterFinishReason(value) {
 
 function openRouterRouterDiagnostics(
   value,
-  selectedModelValue,
-  selectedProviderValue
+  envelopeModelValue,
+  envelopeProviderValue,
+  routeObservationsValue = {}
 ) {
   const metadata = object(value);
+  const routeObservations = object(routeObservationsValue);
   const endpoints = object(metadata.endpoints);
   const available = arrayOfObjects(endpoints.available);
   const selectedEndpoints = available.filter(
@@ -3695,6 +3903,25 @@ function openRouterRouterDiagnostics(
     selected.provider
   );
   const selectedEndpointModel = safeOpenRouterModelName(selected.model);
+  const finalAttemptValue = arrayOfObjects(metadata.attempts).at(-1);
+  const finalAttemptProvider = safeOpenRouterProviderName(
+    finalAttemptValue?.provider
+  );
+  const finalAttemptModel = safeOpenRouterModelName(
+    finalAttemptValue?.model
+  );
+  const envelopeProvider = safeOpenRouterProviderName(
+    routeObservations.envelopeProvider ?? envelopeProviderValue
+  );
+  const envelopeModel = safeOpenRouterModelName(
+    routeObservations.envelopeModel ?? envelopeModelValue
+  );
+  const headerProvider = safeOpenRouterProviderName(
+    routeObservations.headerProvider
+  );
+  const headerModel = safeOpenRouterModelName(
+    routeObservations.headerModel
+  );
   const selectedEndpointSafelyEvidenced =
     selectedEndpoints.length === 1 &&
     Boolean(selectedEndpointProvider) &&
@@ -3715,10 +3942,46 @@ function openRouterRouterDiagnostics(
     metadata.attempts.length <= 64 &&
     metadata.attempts.length === attempt &&
     routerAttempts.length === metadata.attempts.length;
-  const provider = selectedEndpointProvider ||
-    safeOpenRouterProviderName(selectedProviderValue);
-  const selectedModel = selectedEndpointModel ||
-    safeOpenRouterModelName(selectedModelValue);
+  const provider = selectedEndpointProvider || finalAttemptProvider ||
+    envelopeProvider || headerProvider;
+  const selectedModel = selectedEndpointModel || finalAttemptModel ||
+    envelopeModel || headerModel;
+  const conflictKinds = new Set(
+    Array.isArray(routeObservations.routeObservationConflictKinds)
+      ? routeObservations.routeObservationConflictKinds
+        .filter((kind) => ROUTER_OBSERVATION_CONFLICT_KINDS.has(kind))
+        .slice(0, 8)
+      : []
+  );
+  const authorityProvider = selectedEndpointProvider || finalAttemptProvider;
+  const authorityModel = selectedEndpointModel || finalAttemptModel;
+  if (selectedEndpointProvider && finalAttemptProvider &&
+      selectedEndpointProvider !== finalAttemptProvider) {
+    conflictKinds.add('selected_endpoint_final_provider_conflict');
+  }
+  if (selectedEndpointModel && finalAttemptModel &&
+      !reviewedOpenRouterModelEquivalent(
+        selectedEndpointModel,
+        finalAttemptModel
+      )) {
+    conflictKinds.add('selected_endpoint_final_model_conflict');
+  }
+  if (authorityProvider && envelopeProvider &&
+      authorityProvider !== envelopeProvider) {
+    conflictKinds.add('envelope_provider_conflict');
+  }
+  if (authorityModel && envelopeModel &&
+      !reviewedOpenRouterModelEquivalent(authorityModel, envelopeModel)) {
+    conflictKinds.add('envelope_model_conflict');
+  }
+  if (authorityProvider && headerProvider &&
+      authorityProvider !== headerProvider) {
+    conflictKinds.add('header_provider_conflict');
+  }
+  if (authorityModel && headerModel &&
+      !reviewedOpenRouterModelEquivalent(authorityModel, headerModel)) {
+    conflictKinds.add('header_model_conflict');
+  }
   let attemptSequenceSource = reportedAttemptSequenceExact
     ? 'reported'
     : '';
@@ -3744,8 +4007,13 @@ function openRouterRouterDiagnostics(
       (Array.isArray(metadata.attempts) && metadata.attempts.length === 1 &&
        reportedDirectAttempt?.provider === selectedEndpointProvider &&
        (!rawReportedDirectModel ||
-        (reportedDirectAttempt?.model === selectedEndpointModel &&
-         rawReportedDirectModel === selectedEndpointModel)) &&
+        (reviewedOpenRouterModelEquivalent(
+          reportedDirectAttempt?.model,
+          selectedEndpointModel
+        ) && reviewedOpenRouterModelEquivalent(
+          rawReportedDirectModel,
+          selectedEndpointModel
+        ))) &&
        reportedDirectAttempt.status >= 200 &&
        reportedDirectAttempt.status < 300));
   if (safelyReconstructableDirectAttempt &&
@@ -3771,6 +4039,16 @@ function openRouterRouterDiagnostics(
     routerAttemptSequenceSource: attemptSequenceSource || undefined,
     routerSelectedEndpointEvidenced:
       selectedEndpointSafelyEvidenced ? true : undefined,
+    routerEnvelopeProvider: envelopeProvider || undefined,
+    routerEnvelopeModel: envelopeModel || undefined,
+    routerHeaderProvider: headerProvider || undefined,
+    routerHeaderModel: headerModel || undefined,
+    routerFinalAttemptProvider: finalAttemptProvider || undefined,
+    routerFinalAttemptModel: finalAttemptModel || undefined,
+    routerRouteObservationConflict:
+      conflictKinds.size > 0 ? true : undefined,
+    routerRouteObservationConflictKinds:
+      conflictKinds.size > 0 ? [...conflictKinds].slice(0, 8) : undefined,
     routerFallbackUsed: attempt > 1 ? true : undefined,
     routerSelectedProvider:
       /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(provider)
@@ -3781,6 +4059,32 @@ function openRouterRouterDiagnostics(
         ? selectedModel
         : undefined
   });
+}
+
+const ROUTER_OBSERVATION_CONFLICT_KINDS = new Set([
+  'envelope_model_changed',
+  'envelope_provider_changed',
+  'selected_model_changed',
+  'selected_provider_changed',
+  'error_provider_conflict',
+  'selected_endpoint_final_provider_conflict',
+  'selected_endpoint_final_model_conflict',
+  'envelope_provider_conflict',
+  'envelope_model_conflict',
+  'header_provider_conflict',
+  'header_model_conflict'
+]);
+
+function reviewedOpenRouterModelEquivalent(leftValue, rightValue) {
+  const left = safeOpenRouterModelName(leftValue);
+  const right = safeOpenRouterModelName(rightValue);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const reviewedAliases = new Set([
+    'deepseek/deepseek-v4-flash-0731',
+    'deepseek/deepseek-v4-flash-20260731'
+  ]);
+  return reviewedAliases.has(left) && reviewedAliases.has(right);
 }
 
 function safeOpenRouterGenerationId(value) {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { createServer } from 'http';
 import { tmpdir } from 'os';
@@ -22,6 +23,26 @@ const usage = {
 };
 const STRICT_CONTENT_PROSE_SENTINEL =
   'raw-structured-prose-must-not-persist';
+const BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES = 160 * 1_024;
+const BUFFERED_RESPONSE_SECRET_SENTINEL =
+  'raw-oversized-response-secret-must-not-persist';
+const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf]);
+
+function bufferedResponseFixture(byteCount) {
+  const prefix = `${BUFFERED_RESPONSE_SECRET_SENTINEL}:`;
+  if (byteCount < Buffer.byteLength(prefix, 'utf8')) {
+    throw new Error('buffered response fixture is smaller than its prefix');
+  }
+  return `${prefix}${'x'.repeat(byteCount - Buffer.byteLength(prefix, 'utf8'))}`;
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function bomResponseFixture(value) {
+  return Buffer.concat([UTF8_BOM, Buffer.from(value, 'utf8')]);
+}
 
 const server = createServer(async (request, response) => {
   let raw = '';
@@ -166,6 +187,109 @@ const server = createServer(async (request, response) => {
         ]
       }
     }));
+    return;
+  }
+
+  if (input.objective?.id ===
+      'objective-run-job-buffered-exact-limit-malformed') {
+    const body = bufferedResponseFixture(
+      BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES
+    );
+    response.writeHead(200, {
+      'Content-Type': 'application/json',
+      'X-Generation-Id': 'gen-run-job-buffered-exact-limit',
+      'X-Provider-Name': 'Exact Limit Provider'
+    });
+    response.end(body);
+    return;
+  }
+
+  if (input.objective?.id ===
+      'objective-run-job-buffered-bom-malformed') {
+    response.writeHead(200, {
+      'Content-Type': 'application/json',
+      'X-Generation-Id': 'gen-run-job-buffered-bom-malformed',
+      'X-Provider-Name': 'BOM Malformed Provider'
+    });
+    response.end(bomResponseFixture(
+      `${BUFFERED_RESPONSE_SECRET_SENTINEL}:not-json`
+    ));
+    return;
+  }
+
+  if (input.objective?.id ===
+      'objective-run-job-buffered-bom-502') {
+    response.writeHead(502, {
+      'Content-Type': 'application/json',
+      'X-Generation-Id': 'gen-run-job-buffered-bom-502',
+      'X-Provider-Name': 'BOM Error Provider'
+    });
+    response.end(bomResponseFixture(
+      `${BUFFERED_RESPONSE_SECRET_SENTINEL}:not-json`
+    ));
+    return;
+  }
+
+  if (input.objective?.id ===
+        'objective-run-job-buffered-over-limit-2xx-critic' &&
+      schemaName === 'opportunity_tournament_critic_v1') {
+    const body = bufferedResponseFixture(
+      BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES + 1
+    );
+    response.writeHead(200, {
+      'Content-Type': 'application/json',
+      'X-Generation-Id': 'gen-run-job-buffered-over-limit-2xx',
+      'X-Provider-Name': 'Oversized Critic Provider'
+    });
+    response.end(body);
+    return;
+  }
+
+  if (input.objective?.id ===
+      'objective-run-job-buffered-over-limit-502') {
+    const body = bufferedResponseFixture(
+      BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES * 2
+    );
+    response.writeHead(502, {
+      'Content-Type': 'application/json',
+      'X-Generation-Id': 'gen-run-job-buffered-over-limit-502',
+      'X-Provider-Name': 'Oversized Error Provider'
+    });
+    response.end(body);
+    return;
+  }
+
+  if (input.objective?.id ===
+        'objective-run-job-buffered-over-limit-502-critic' &&
+      schemaName === 'opportunity_tournament_critic_v1') {
+    const body = bufferedResponseFixture(
+      BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES * 2
+    );
+    response.writeHead(502, {
+      'Content-Type': 'application/json',
+      'X-Generation-Id': 'gen-run-job-buffered-over-limit-502-critic',
+      'X-Provider-Name': 'Oversized Critic Error Provider'
+    });
+    response.end(body);
+    return;
+  }
+
+  if (input.objective?.id ===
+      'objective-run-job-generation-conflict-502') {
+    const body = JSON.stringify({
+      id: 'gen-run-job-envelope-502',
+      error: {
+        code: 502,
+        message: 'raw-generation-conflict-secret-sentinel'
+      },
+      usage
+    });
+    response.writeHead(502, {
+      'Content-Type': 'application/json',
+      'X-Generation-Id': 'gen-run-job-header-502',
+      'X-Provider-Name': 'Generation Conflict Provider'
+    });
+    response.end(body);
     return;
   }
 
@@ -392,6 +516,10 @@ const server = createServer(async (request, response) => {
     openRouterMetadata.attempts[0].status = '200';
   }
   if (!criticCall && objectiveID ===
+      'objective-run-job-generator-direct-missing-model') {
+    delete openRouterMetadata.attempts[0].model;
+  }
+  if (!criticCall && objectiveID ===
       'objective-run-job-repair-foreign-model' &&
       generatorCallsByObjective.get(objectiveID) === 2) {
     openRouterMetadata.endpoints.available[0].model =
@@ -436,11 +564,38 @@ const server = createServer(async (request, response) => {
         finish_reason: finishReason,
         native_finish_reason: nativeFinishReason
       };
-  response.writeHead(200, { 'Content-Type': 'application/json' });
+  const envelopeProvider = criticCall && objectiveID ===
+      'objective-run-job-critic-env-provider-conflict'
+    ? 'Contradictory Envelope Provider'
+    : selectedProvider;
+  const envelopeModel = criticCall && objectiveID ===
+      'objective-run-job-critic-env-model-conflict'
+    ? 'foreign/contradictory-model'
+    : 'deepseek/deepseek-v4-flash-0731';
+  const responseGenerationId = criticCall && objectiveID ===
+      'objective-run-job-critic-generation-missing'
+    ? undefined
+    : criticCall && objectiveID ===
+        'objective-run-job-critic-generation-unsafe'
+      ? 'unsafe generation id raw-secret-sentinel'
+      : criticCall && objectiveID ===
+          'objective-run-job-critic-generation-conflict'
+        ? 'gen-run-job-envelope-critic-conflict'
+        : `gen-run-job-${providerCalls.length}`;
+  const responseHeaders = { 'Content-Type': 'application/json' };
+  if (criticCall && objectiveID ===
+      'objective-run-job-critic-generation-conflict') {
+    responseHeaders['X-Generation-Id'] =
+      'gen-run-job-header-critic-conflict';
+  }
+  response.writeHead(200, responseHeaders);
   response.end(JSON.stringify({
-    id: `gen-run-job-${providerCalls.length}`,
-    model: 'deepseek/deepseek-v4-flash-0731',
-    provider: selectedProvider,
+    ...(responseGenerationId ? { id: responseGenerationId } : {}),
+    model: envelopeModel,
+    provider: envelopeProvider,
+    ...(/critic-env-(?:provider|model)-conflict/.test(objectiveID)
+      ? { debug_message: 'raw-route-conflict-secret-sentinel' }
+      : {}),
     choices: [{
       ...finishFields,
       message: { content }
@@ -466,6 +621,32 @@ try {
   const successCalls = providerCalls.slice(successCallOffset);
   verifySuccessfulTournament(success, successJob, successCalls);
 
+  const generatorDirectMissingModelJob = tournamentJob(
+    'generator-direct-missing-model',
+    'objective-run-job-generator-direct-missing-model'
+  );
+  const generatorDirectMissingModelFile = writeJob(
+    'generator-direct-missing-model',
+    generatorDirectMissingModelJob
+  );
+  const generatorDirectMissingModelCallOffset = providerCalls.length;
+  const generatorDirectMissingModel = await runJob(
+    generatorDirectMissingModelFile,
+    port
+  );
+  const generatorDirectMissingModelCalls = providerCalls.slice(
+    generatorDirectMissingModelCallOffset
+  );
+  verifySuccessfulTournament(
+    generatorDirectMissingModel,
+    generatorDirectMissingModelJob,
+    generatorDirectMissingModelCalls
+  );
+  verifyGeneratorDirectMissingModelCanonicalization(
+    generatorDirectMissingModel,
+    generatorDirectMissingModelCalls
+  );
+
   for (const scenario of [{
     label: 'generator-foreign-model',
     issue: 'selected_model_not_requested'
@@ -486,6 +667,56 @@ try {
       scenario
     );
   }
+
+  for (const scenario of [{
+    label: 'critic-generation-missing',
+    expectedGenerationId: undefined
+  }, {
+    label: 'critic-generation-unsafe',
+    expectedGenerationId: undefined,
+    forbiddenText: 'unsafe generation id raw-secret-sentinel'
+  }]) {
+    const job = tournamentJob(
+      scenario.label,
+      `objective-run-job-${scenario.label}`
+    );
+    const file = writeJob(scenario.label, job);
+    const callOffset = providerCalls.length;
+    const receipt = await runJob(file, port);
+    verifyCriticGenerationContract(
+      receipt,
+      providerCalls.slice(callOffset),
+      scenario
+    );
+  }
+
+  const criticGenerationConflictJob = tournamentJob(
+    'critic-generation-conflict',
+    'objective-run-job-critic-generation-conflict'
+  );
+  const criticGenerationConflictFile = writeJob(
+    'critic-generation-conflict',
+    criticGenerationConflictJob
+  );
+  const criticGenerationConflictOffset = providerCalls.length;
+  const criticGenerationConflict = await runJob(
+    criticGenerationConflictFile,
+    port
+  );
+  verifyGenerationConflictFailure(
+    criticGenerationConflict,
+    providerCalls.slice(criticGenerationConflictOffset),
+    {
+      label: 'critic 2xx generation conflict',
+      stage: 'critic',
+      expectedHTTPStatus: 200,
+      expectedGenerationId: undefined,
+      forbiddenTexts: [
+        'gen-run-job-envelope-critic-conflict',
+        'gen-run-job-header-critic-conflict'
+      ]
+    }
+  );
 
   for (const scenario of [{
     label: 'critic-fallback-provenance',
@@ -519,13 +750,21 @@ try {
     issue: 'final_attempt_not_2xx'
   }, {
     label: 'critic-route-mismatch',
-    issue: 'selected_provider_not_final_attempt'
+    issue: 'route_observation_conflict'
   }, {
     label: 'critic-route-extra',
-    issue: 'attempt_sequence_incomplete'
+    issue: 'route_observation_conflict'
   }, {
     label: 'critic-route-filtered',
     issue: 'fallback_attempt_sequence_not_reported'
+  }, {
+    label: 'critic-env-provider-conflict',
+    issue: 'route_observation_conflict',
+    conflictKind: 'envelope_provider_conflict'
+  }, {
+    label: 'critic-env-model-conflict',
+    issue: 'route_observation_conflict',
+    conflictKind: 'envelope_model_conflict'
   }]) {
     const job = tournamentJob(
       scenario.label,
@@ -740,6 +979,189 @@ try {
   verifyProvider502Failure(
     providerFailure,
     providerCalls.slice(providerFailureCallOffset)
+  );
+
+  const exactLimitJob = tournamentJob(
+    'buffered-exact-limit-malformed',
+    'objective-run-job-buffered-exact-limit-malformed'
+  );
+  const exactLimitFile = writeJob(
+    'buffered-exact-limit-malformed',
+    exactLimitJob
+  );
+  const exactLimitCallOffset = providerCalls.length;
+  const exactLimit = await runJob(exactLimitFile, port);
+  verifyBoundedBufferedResponseFailure(
+    exactLimit,
+    providerCalls.slice(exactLimitCallOffset),
+    {
+      label: 'exact-limit malformed 2xx',
+      stage: 'generator',
+      expectedError: 'openrouter_invalid_response',
+      expectedHTTPStatus: 200,
+      expectedGenerationId: 'gen-run-job-buffered-exact-limit',
+      expectedProvider: 'Exact Limit Provider',
+      expectedByteCount: BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES,
+      expectedSha256: sha256(bufferedResponseFixture(
+        BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES
+      ))
+    }
+  );
+
+  for (const scenario of [{
+    label: 'BOM malformed 2xx',
+    jobLabel: 'buffered-bom-malformed',
+    objectiveID: 'objective-run-job-buffered-bom-malformed',
+    expectedError: 'openrouter_invalid_response',
+    expectedHTTPStatus: 200,
+    expectedGenerationId: 'gen-run-job-buffered-bom-malformed',
+    expectedProvider: 'BOM Malformed Provider'
+  }, {
+    label: 'BOM malformed non-2xx',
+    jobLabel: 'buffered-bom-502',
+    objectiveID: 'objective-run-job-buffered-bom-502',
+    expectedError: 'openrouter_http_502',
+    expectedHTTPStatus: 502,
+    expectedGenerationId: 'gen-run-job-buffered-bom-502',
+    expectedProvider: 'BOM Error Provider'
+  }]) {
+    const bomBody = bomResponseFixture(
+      `${BUFFERED_RESPONSE_SECRET_SENTINEL}:not-json`
+    );
+    const job = tournamentJob(scenario.jobLabel, scenario.objectiveID);
+    const file = writeJob(scenario.jobLabel, job);
+    const callOffset = providerCalls.length;
+    const result = await runJob(file, port);
+    verifyBoundedBufferedResponseFailure(
+      result,
+      providerCalls.slice(callOffset),
+      {
+        ...scenario,
+        stage: 'generator',
+        expectedByteCount: bomBody.byteLength,
+        expectedSha256: sha256(bomBody)
+      }
+    );
+  }
+
+  const overLimit2xxJob = tournamentJob(
+    'buffered-over-limit-2xx-critic',
+    'objective-run-job-buffered-over-limit-2xx-critic'
+  );
+  const overLimit2xxFile = writeJob(
+    'buffered-over-limit-2xx-critic',
+    overLimit2xxJob
+  );
+  const overLimit2xxCallOffset = providerCalls.length;
+  const overLimit2xx = await runJob(overLimit2xxFile, port);
+  verifyBoundedBufferedResponseFailure(
+    overLimit2xx,
+    providerCalls.slice(overLimit2xxCallOffset),
+    {
+      label: 'over-limit critic 2xx',
+      stage: 'critic',
+      expectedError: 'openrouter_response_body_too_large',
+      expectedHTTPStatus: 200,
+      expectedGenerationId: 'gen-run-job-buffered-over-limit-2xx',
+      expectedProvider: 'Oversized Critic Provider',
+      expectedByteCount: BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES + 1,
+      expectedSha256: sha256(bufferedResponseFixture(
+        BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES + 1
+      ))
+    }
+  );
+
+  const overLimit502Job = tournamentJob(
+    'buffered-over-limit-502',
+    'objective-run-job-buffered-over-limit-502'
+  );
+  const overLimit502File = writeJob(
+    'buffered-over-limit-502',
+    overLimit502Job
+  );
+  const overLimit502CallOffset = providerCalls.length;
+  const overLimit502 = await runJob(overLimit502File, port);
+  verifyBoundedBufferedResponseFailure(
+    overLimit502,
+    providerCalls.slice(overLimit502CallOffset),
+    {
+      label: 'over-limit non-2xx',
+      stage: 'generator',
+      expectedError: 'openrouter_response_body_too_large',
+      expectedHTTPStatus: 502,
+      expectedGenerationId: 'gen-run-job-buffered-over-limit-502',
+      expectedProvider: 'Oversized Error Provider',
+      expectedByteCount: BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES + 1,
+      expectedSha256: sha256(
+        bufferedResponseFixture(
+          BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES * 2
+        ).slice(0, BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES + 1)
+      )
+    }
+  );
+
+  const overLimit502CriticBody = bufferedResponseFixture(
+    BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES * 2
+  );
+  const overLimit502CriticJob = tournamentJob(
+    'buffered-over-limit-502-critic',
+    'objective-run-job-buffered-over-limit-502-critic'
+  );
+  const overLimit502CriticFile = writeJob(
+    'buffered-over-limit-502-critic',
+    overLimit502CriticJob
+  );
+  const overLimit502CriticOffset = providerCalls.length;
+  const overLimit502Critic = await runJob(
+    overLimit502CriticFile,
+    port
+  );
+  verifyBoundedBufferedResponseFailure(
+    overLimit502Critic,
+    providerCalls.slice(overLimit502CriticOffset),
+    {
+      label: 'over-limit critic non-2xx',
+      stage: 'critic',
+      expectedError: 'openrouter_response_body_too_large',
+      expectedHTTPStatus: 502,
+      expectedGenerationId:
+        'gen-run-job-buffered-over-limit-502-critic',
+      expectedProvider: 'Oversized Critic Error Provider',
+      expectedByteCount: BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES + 1,
+      expectedSha256: sha256(overLimit502CriticBody.slice(
+        0,
+        BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES + 1
+      )),
+      expectedRecoveryKind: 'strategy_generation_critic_provider_recovery'
+    }
+  );
+
+  const generationConflict502Job = tournamentJob(
+    'generation-conflict-502',
+    'objective-run-job-generation-conflict-502'
+  );
+  const generationConflict502File = writeJob(
+    'generation-conflict-502',
+    generationConflict502Job
+  );
+  const generationConflict502Offset = providerCalls.length;
+  const generationConflict502 = await runJob(
+    generationConflict502File,
+    port
+  );
+  verifyGenerationConflictFailure(
+    generationConflict502,
+    providerCalls.slice(generationConflict502Offset),
+    {
+      label: 'non-2xx generation conflict',
+      stage: 'generator',
+      expectedHTTPStatus: 502,
+      expectedGenerationId: undefined,
+      forbiddenTexts: [
+        'gen-run-job-envelope-502',
+        'gen-run-job-header-502'
+      ]
+    }
   );
 
   const slowResponseBodyJob = tournamentJob(
@@ -1625,6 +2047,25 @@ function verifyCriticRouteProvenance(receipt, calls, scenario) {
       0,
       `${scenario.label}: rejected critic content survived the route gate`
     );
+    if (scenario.conflictKind) {
+      assertEqual(
+        diagnostics.routerRouteObservationConflict,
+        true,
+        `${scenario.label}: conflict was not retained as a finite diagnostic`
+      );
+      assert(
+        diagnostics.routerRouteObservationConflictKinds?.includes(
+          scenario.conflictKind
+        ),
+        `${scenario.label}: exact conflict kind was not retained`
+      );
+      assert(
+        !JSON.stringify(providerReceipt).includes(
+          'raw-route-conflict-secret-sentinel'
+        ),
+        `${scenario.label}: route conflict copied arbitrary raw data`
+      );
+    }
   }
   verifyNoExecution(metadata);
 }
@@ -1747,6 +2188,170 @@ function verifyMissingKeyPreflight(receipt) {
     traceStep(metadata, 'provider_preflight')?.status,
     'blocked',
     'trace did not record the blocked provider preflight'
+  );
+  verifyNoExecution(metadata);
+}
+
+function verifyGeneratorDirectMissingModelCanonicalization(receipt, calls) {
+  const metadata = receipt.metadata || {};
+  const diagnostics = metadata.llm?.strategyGeneratorJudge
+    ?.responseDiagnostics || {};
+  assertEqual(
+    calls.length,
+    2,
+    'direct generator missing-model parity run changed the two-call contract'
+  );
+  assertEqual(
+    receipt.status,
+    'completed',
+    'direct generator missing-model sequence was not safely canonicalized'
+  );
+  assertEqual(
+    diagnostics.routerAttempt,
+    1,
+    'direct generator missing-model sequence lost its attempt count'
+  );
+  assertEqual(
+    diagnostics.routerAttemptSequenceSource,
+    'selected_endpoint_reconstructed',
+    'direct generator missing-model sequence did not disclose canonicalization'
+  );
+  assertEqual(
+    diagnostics.routerSelectedEndpointEvidenced,
+    true,
+    'direct generator missing-model canonicalization lacked endpoint evidence'
+  );
+  assertEqual(
+    JSON.stringify(diagnostics.routerAttempts),
+    JSON.stringify([{
+      provider: 'OpenAI',
+      model: 'deepseek/deepseek-v4-flash-0731',
+      status: 200
+    }]),
+    'direct generator missing-model sequence reached the receipt without its reviewed model'
+  );
+}
+
+function verifyCriticGenerationContract(receipt, calls, scenario) {
+  const metadata = receipt.metadata || {};
+  const critic = metadata.searchSpace?.commercialCritic || {};
+  const providerReceipt = metadata.llm?.commercialCritic || {};
+  assertEqual(
+    calls.length,
+    2,
+    `${scenario.label}: generation contract changed the two-call ceiling`
+  );
+  assertEqual(
+    receipt.status,
+    'skipped',
+    `${scenario.label}: anonymous critic completion was accepted`
+  );
+  assertEqual(
+    metadata.usage?.calls,
+    2,
+    `${scenario.label}: completed critic lost call accounting`
+  );
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    2,
+    `${scenario.label}: local identity rejection rewrote provider completion`
+  );
+  assertEqual(
+    providerReceipt.status,
+    'completed',
+    `${scenario.label}: completed provider call became a transport failure`
+  );
+  assertEqual(
+    providerReceipt.generationId,
+    scenario.expectedGenerationId,
+    `${scenario.label}: unsafe or missing generation identity persisted`
+  );
+  assertEqual(
+    critic.cause,
+    'critic_route_provenance_invalid',
+    `${scenario.label}: missing generation identity lost its route cause`
+  );
+  assertEqual(
+    critic.routeProvenanceIssue,
+    'generation_id_missing',
+    `${scenario.label}: missing generation identity lost its finite issue`
+  );
+  assertEqual(
+    metadata.nextExperiment?.kind,
+    'strategy_generation_critic_route_provenance_recovery',
+    `${scenario.label}: missing generation identity lost cause-matched recovery`
+  );
+  if (scenario.forbiddenText) {
+    assert(
+      !JSON.stringify(receipt).includes(scenario.forbiddenText),
+      `${scenario.label}: unsafe generation identity leaked into the receipt`
+    );
+  }
+  verifyNoExecution(metadata);
+}
+
+function verifyGenerationConflictFailure(receipt, calls, scenario) {
+  const metadata = receipt.metadata || {};
+  const providerReceipt = scenario.stage === 'critic'
+    ? metadata.llm?.commercialCritic || {}
+    : metadata.llm?.strategyGeneratorJudge || {};
+  const diagnostics = providerReceipt.responseDiagnostics || {};
+  const expectedCalls = scenario.stage === 'critic' ? 2 : 1;
+  assertEqual(
+    calls.length,
+    expectedCalls,
+    `${scenario.label}: generation conflict caused a redispatch`
+  );
+  assertEqual(
+    receipt.status,
+    'skipped',
+    `${scenario.label}: conflicting identities were accepted`
+  );
+  assertEqual(
+    metadata.usage?.calls,
+    expectedCalls,
+    `${scenario.label}: generation conflict lost call accounting`
+  );
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    scenario.stage === 'critic' ? 1 : 0,
+    `${scenario.label}: conflicting provider response was accepted`
+  );
+  assertEqual(
+    providerReceipt.status,
+    'failed',
+    `${scenario.label}: identity conflict became a completed receipt`
+  );
+  assertEqual(
+    providerReceipt.error,
+    'openrouter_invalid_response',
+    `${scenario.label}: identity conflict lost its finite failure code`
+  );
+  assertEqual(
+    providerReceipt.generationId,
+    scenario.expectedGenerationId,
+    `${scenario.label}: exact safe envelope generation ID was not retained`
+  );
+  assertEqual(
+    diagnostics.httpStatus,
+    scenario.expectedHTTPStatus,
+    `${scenario.label}: identity conflict lost its HTTP status`
+  );
+  assert(
+    (scenario.forbiddenTexts || []).every((value) =>
+      !JSON.stringify(receipt).includes(value)
+    ) &&
+      !JSON.stringify(receipt).includes(
+        'raw-generation-conflict-secret-sentinel'
+      ),
+    `${scenario.label}: conflicting identity or provider body leaked`
+  );
+  assertEqual(
+    metadata.nextExperiment?.kind,
+    scenario.stage === 'critic'
+      ? 'strategy_generation_critic_provider_recovery'
+      : 'strategy_generation_provider_recovery',
+    `${scenario.label}: invalid provider envelope lost cause-matched recovery`
   );
   verifyNoExecution(metadata);
 }
@@ -2084,6 +2689,105 @@ function verifyProvider502Failure(receipt, calls) {
     !JSON.stringify(receipt).includes('raw-provider-secret-sentinel'),
     'provider 502 leaked the raw upstream response body'
   );
+  verifyNoExecution(metadata);
+}
+
+function verifyBoundedBufferedResponseFailure(receipt, calls, scenario) {
+  const metadata = receipt.metadata || {};
+  const providerReceipt = scenario.stage === 'critic'
+    ? metadata.llm?.commercialCritic || {}
+    : metadata.llm?.strategyGeneratorJudge || {};
+  const diagnostics = providerReceipt.responseDiagnostics || {};
+  const expectedCalls = scenario.stage === 'critic' ? 2 : 1;
+  assertEqual(
+    receipt.status,
+    'skipped',
+    `${scenario.label}: unsafe response did not stop safely`
+  );
+  assertEqual(
+    calls.length,
+    expectedCalls,
+    `${scenario.label}: response failure caused a model redispatch`
+  );
+  assertEqual(
+    calls.filter((call) => call.schemaName ===
+      (scenario.stage === 'critic'
+        ? 'opportunity_tournament_critic_v1'
+        : 'opportunity_tournament_commercial_v2')).length,
+    1,
+    `${scenario.label}: failing stage was called more than once`
+  );
+  assertEqual(
+    metadata.usage?.calls,
+    expectedCalls,
+    `${scenario.label}: response failure lost call accounting`
+  );
+  assertEqual(
+    metadata.usage?.successfulCalls,
+    scenario.stage === 'critic' ? 1 : 0,
+    `${scenario.label}: unsafe response was counted as accepted`
+  );
+  assertEqual(
+    providerReceipt.status,
+    'failed',
+    `${scenario.label}: unsafe response became a completed receipt`
+  );
+  assertEqual(
+    providerReceipt.error,
+    scenario.expectedError,
+    `${scenario.label}: response failure lost its finite cause`
+  );
+  assertEqual(
+    providerReceipt.generationId,
+    scenario.expectedGenerationId,
+    `${scenario.label}: response failure lost its safe generation header`
+  );
+  assertEqual(
+    diagnostics.routerSelectedProvider,
+    scenario.expectedProvider,
+    `${scenario.label}: response failure lost its safe provider header`
+  );
+  assertEqual(
+    diagnostics.httpStatus,
+    scenario.expectedHTTPStatus,
+    `${scenario.label}: response failure lost its HTTP status`
+  );
+  assertEqual(
+    diagnostics.contentByteCount,
+    scenario.expectedByteCount,
+    `${scenario.label}: response failure did not preserve the bounded observed byte count`
+  );
+  assertEqual(
+    diagnostics.contentSha256,
+    scenario.expectedSha256,
+    `${scenario.label}: response failure did not preserve the bounded observed digest`
+  );
+  assert(
+    diagnostics.contentByteCount <=
+      BUFFERED_OPENROUTER_RESPONSE_MAX_BYTES + 1,
+    `${scenario.label}: diagnostics retained more than the bounded prefix`
+  );
+  assert(
+    !JSON.stringify(receipt).includes(BUFFERED_RESPONSE_SECRET_SENTINEL),
+    `${scenario.label}: raw response content leaked into the receipt`
+  );
+  if (scenario.expectedError ===
+      'openrouter_response_body_too_large' && scenario.stage === 'critic') {
+    const expectedRecoveryKind = scenario.expectedRecoveryKind ||
+      'strategy_generation_critic_contract_recovery';
+    assertEqual(
+      metadata.searchSpace?.commercialCritic?.cause,
+      expectedRecoveryKind === 'strategy_generation_critic_contract_recovery'
+        ? 'critic_contract_invalid'
+        : 'critic_provider_failure',
+      `${scenario.label}: HTTP status did not control wire-bound classification`
+    );
+    assertEqual(
+      metadata.nextExperiment?.kind,
+      expectedRecoveryKind,
+      `${scenario.label}: wire-bound failure lost cause-matched recovery`
+    );
+  }
   verifyNoExecution(metadata);
 }
 

@@ -126,6 +126,19 @@ const REVIEWED_OPENROUTER_MODEL_EQUIVALENTS = new Map([
     ])
   ]
 ]);
+const OPENROUTER_ROUTE_OBSERVATION_CONFLICT_KINDS = new Set([
+  'envelope_model_changed',
+  'envelope_provider_changed',
+  'selected_model_changed',
+  'selected_provider_changed',
+  'error_provider_conflict',
+  'selected_endpoint_final_provider_conflict',
+  'selected_endpoint_final_model_conflict',
+  'envelope_provider_conflict',
+  'envelope_model_conflict',
+  'header_provider_conflict',
+  'header_model_conflict'
+]);
 const OPPORTUNITY_DISCOVERY_PLANNER_FALLBACK_MODELS = Object.freeze([]);
 const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
   Object.freeze({
@@ -500,6 +513,12 @@ const MAX_CRITIC_OUTPUT_TOKENS = 2_000;
 const MAX_COMMERCIAL_CRITIC_COMPARISON_REASON_CODEPOINTS = 240;
 const MAX_COMMERCIAL_CRITIC_REASON_CODEPOINTS = 360;
 const MAX_COMMERCIAL_CRITIC_RESPONSE_BYTES = 16 * 1_024;
+// A buffered OpenRouter envelope can JSON-escape the critic's already-bounded
+// structured content and include finite usage plus up to 64 route attempts.
+// Ten times the accepted parsed-content ceiling leaves ample envelope headroom
+// while keeping the wire body small enough to read, hash, and reject locally
+// before UTF-8 decoding or JSON parsing can materialize an unbounded response.
+export const MAX_BUFFERED_OPENROUTER_RESPONSE_BODY_BYTES = 160 * 1_024;
 const MAX_COMMERCIAL_CRITIC_TIMEOUT_MS = 120_000;
 const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // Call 1 emits one bounded model-authored role-selected path for each motion and
@@ -1373,6 +1392,8 @@ export function opportunityCommercialDiscoveryCapabilities() {
         timeoutMs: MAX_COMMERCIAL_CRITIC_TIMEOUT_MS,
         runtimeParsedResponseMaxBytes:
           MAX_COMMERCIAL_CRITIC_RESPONSE_BYTES,
+        bufferedWireResponseMaxBytes:
+          MAX_BUFFERED_OPENROUTER_RESPONSE_BODY_BYTES,
         framingTokenReserve:
           COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE,
         fixedToolFeeMicros: 0,
@@ -18036,6 +18057,13 @@ async function runCommercialCritic({
     const failureCode = openRouterFailureCode(error);
     const incomplete =
       failureCode === 'openrouter_truncated_structured_output';
+    const failureHTTPStatus = asObject(
+      error?.openRouterDiagnostics
+    ).httpStatus;
+    const bufferedResponseTooLarge =
+      failureCode === 'openrouter_response_body_too_large' &&
+      Number.isInteger(failureHTTPStatus) &&
+      failureHTTPStatus >= 200 && failureHTTPStatus < 300;
     const metadata = openRouterMetadata({
       model,
       purpose: 'opportunity_tournament_commercial_critic',
@@ -18072,6 +18100,37 @@ async function runCommercialCritic({
             'The critic output ended at the provider token limit and was not accepted.',
           cause: 'critic_finish_reason_invalid',
           finishIssue: 'finish_reason_not_stop',
+          routeProvenanceValidated: false,
+          exactSchemaValidated: false,
+          promptTokenCanary: providerPromptTokenCanary(
+            preflight,
+            metadata.openRouterUsage
+          ),
+          preflight
+        }
+      };
+    }
+    if (bufferedResponseTooLarge) {
+      return {
+        status: 'failed',
+        cause: 'commercial_critic_contract_recovery',
+        request,
+        preflight,
+        metadata,
+        trace: {
+          contract: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+          contractVersion: OPPORTUNITY_TOURNAMENT_CRITIC_CONTRACT,
+          attempted: true,
+          valid: false,
+          verdict: 'rejected',
+          acceptedFamilyIds: [],
+          acceptedFinalistIds: [],
+          selectedOrdering: [],
+          rejectedFinalistCount:
+            commercialCriticFinalists(finalists).length,
+          reason:
+            'The buffered critic provider envelope exceeded its local wire-byte contract and was not accepted.',
+          cause: 'critic_contract_invalid',
           routeProvenanceValidated: false,
           exactSchemaValidated: false,
           promptTokenCanary: providerPromptTokenCanary(
@@ -18127,6 +18186,13 @@ async function runCommercialCritic({
     preflight,
     metadata.openRouterUsage
   );
+  // The current buffered critic contract requires one bounded provider
+  // generation identity. The transport has already rejected two conflicting
+  // safe observations; a missing/unsafe identity is therefore incomplete
+  // route provenance, not an acceptable anonymous completion.
+  const generationIdentityValid = Boolean(
+    safeOpenRouterGenerationIdForReceipt(completion?.generationId)
+  );
   const usageIssue = exactCompletedOpenRouterUsageIssue(
     completion?.usage,
     preflight,
@@ -18159,7 +18225,9 @@ async function runCommercialCritic({
     !finishIssue &&
     !reportedCostExceeded;
   const routeProvenanceIssue = preRouteBoundaryPassed
-    ? completedOpenRouterRouteProvenanceIssue(completion, [model])
+    ? generationIdentityValid
+      ? completedOpenRouterRouteProvenanceIssue(completion, [model])
+      : 'generation_id_missing'
     : '';
   const routeProvenanceValidated = preRouteBoundaryPassed
     ? !routeProvenanceIssue
@@ -18292,6 +18360,53 @@ function completedOpenRouterRouteProvenanceIssue(
   if (allowedModels.size === 0 || !allowedModels.has(selectedModel)) {
     return 'selected_model_not_requested';
   }
+  if (diagnostics.routerRouteObservationConflict === true ||
+      asArray(diagnostics.routerRouteObservationConflictKinds).length > 0) {
+    return 'route_observation_conflict';
+  }
+  const envelopeProvider = firstText(
+    diagnostics.routerEnvelopeProvider
+  );
+  const envelopeModel = firstText(
+    diagnostics.routerEnvelopeModel
+  ).toLowerCase();
+  const headerProvider = firstText(
+    diagnostics.routerHeaderProvider
+  );
+  const headerModel = firstText(
+    diagnostics.routerHeaderModel
+  ).toLowerCase();
+  const explicitFinalProvider = firstText(
+    diagnostics.routerFinalAttemptProvider
+  );
+  const explicitFinalModel = firstText(
+    diagnostics.routerFinalAttemptModel
+  ).toLowerCase();
+  if (envelopeProvider && envelopeProvider !== selectedProvider) {
+    return 'envelope_provider_conflicts_with_selected';
+  }
+  if (envelopeModel &&
+      !reviewedOpenRouterModelsEquivalent(envelopeModel, selectedModel)) {
+    return 'envelope_model_conflicts_with_selected';
+  }
+  if (headerProvider && headerProvider !== selectedProvider) {
+    return 'header_provider_conflicts_with_selected';
+  }
+  if (headerModel &&
+      !reviewedOpenRouterModelsEquivalent(headerModel, selectedModel)) {
+    return 'header_model_conflicts_with_selected';
+  }
+  if (explicitFinalProvider &&
+      explicitFinalProvider !== selectedProvider) {
+    return 'selected_provider_not_final_attempt';
+  }
+  if (explicitFinalModel &&
+      !reviewedOpenRouterModelsEquivalent(
+        explicitFinalModel,
+        selectedModel
+      )) {
+    return 'selected_model_not_final_attempt';
+  }
 
   const attemptCount = diagnostics.routerAttempt;
   if (!Number.isInteger(attemptCount) ||
@@ -18373,10 +18488,23 @@ function completedOpenRouterRouteProvenanceIssue(
   if (firstText(finalAttempt.provider) !== selectedProvider) {
     return 'selected_provider_not_final_attempt';
   }
-  if (firstText(finalAttempt.model).toLowerCase() !== selectedModel) {
+  if (!reviewedOpenRouterModelsEquivalent(
+    firstText(finalAttempt.model),
+    selectedModel
+  )) {
     return 'selected_model_not_final_attempt';
   }
   return '';
+}
+
+function reviewedOpenRouterModelsEquivalent(leftValue, rightValue) {
+  const left = firstText(leftValue).toLowerCase();
+  const right = firstText(rightValue).toLowerCase();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const leftEquivalents = REVIEWED_OPENROUTER_MODEL_EQUIVALENTS.get(left);
+  const rightEquivalents = REVIEWED_OPENROUTER_MODEL_EQUIVALENTS.get(right);
+  return Boolean(leftEquivalents?.has(right) || rightEquivalents?.has(left));
 }
 
 function normalizeSeedSet(value, evidenceCatalog, referenceTime) {
@@ -25381,7 +25509,11 @@ function openRouterMetadata({
         ? TOURNAMENT_GENERATOR_CONTRACT
         : undefined,
     status,
-    generationId: firstText(generationId),
+    // completeJSON is injectable in tests and operator repair paths. Treat the
+    // receipt constructor as the final trust boundary even when the production
+    // HTTP adapter was bypassed: raw or unbounded provider identifiers never
+    // enter a durable result.
+    generationId: safeOpenRouterGenerationIdForReceipt(generationId),
     promptHash,
     error,
     openRouterUsage: normalizeUsage(usage),
@@ -25487,6 +25619,48 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       diagnostics.routerSelectedEndpointEvidenced === true
         ? true
         : undefined,
+    routerEnvelopeProvider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(
+      firstText(diagnostics.routerEnvelopeProvider)
+    )
+      ? firstText(diagnostics.routerEnvelopeProvider)
+      : undefined,
+    routerEnvelopeModel: /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(
+      firstText(diagnostics.routerEnvelopeModel).toLowerCase()
+    )
+      ? firstText(diagnostics.routerEnvelopeModel).toLowerCase()
+      : undefined,
+    routerHeaderProvider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(
+      firstText(diagnostics.routerHeaderProvider)
+    )
+      ? firstText(diagnostics.routerHeaderProvider)
+      : undefined,
+    routerHeaderModel: /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(
+      firstText(diagnostics.routerHeaderModel).toLowerCase()
+    )
+      ? firstText(diagnostics.routerHeaderModel).toLowerCase()
+      : undefined,
+    routerFinalAttemptProvider:
+      /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(
+        firstText(diagnostics.routerFinalAttemptProvider)
+      )
+        ? firstText(diagnostics.routerFinalAttemptProvider)
+        : undefined,
+    routerFinalAttemptModel:
+      /^[a-z0-9][a-z0-9._:/-]{0,127}$/.test(
+        firstText(diagnostics.routerFinalAttemptModel).toLowerCase()
+      )
+        ? firstText(diagnostics.routerFinalAttemptModel).toLowerCase()
+        : undefined,
+    routerRouteObservationConflict:
+      diagnostics.routerRouteObservationConflict === true
+        ? true
+        : undefined,
+    routerRouteObservationConflictKinds:
+      asArray(diagnostics.routerRouteObservationConflictKinds)
+        .filter((kind) =>
+          OPENROUTER_ROUTE_OBSERVATION_CONFLICT_KINDS.has(kind)
+        )
+        .slice(0, 8),
     routerFallbackUsed:
       diagnostics.routerFallbackUsed === true ? true : undefined,
     routerSelectedProvider: /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/.test(
@@ -25539,6 +25713,13 @@ function normalizeOpenRouterResponseDiagnostics(value) {
       diagnostics.timeoutElapsedMs
     )
   });
+}
+
+function safeOpenRouterGenerationIdForReceipt(value) {
+  const generationId = firstText(value);
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(generationId)
+    ? generationId
+    : undefined;
 }
 
 function normalizeOpenRouterRouterAttempts(value) {
