@@ -1316,7 +1316,7 @@ async function verifyRunJobUsesStreamingTransport() {
     );
     assertEqual(
       providerRequest?.max_tokens,
-      18_000,
+      42_000,
       'overflow fixture was not bound to the current compact output contract'
     );
     assertEqual(

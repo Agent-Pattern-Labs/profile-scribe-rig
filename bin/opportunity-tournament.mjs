@@ -145,7 +145,7 @@ const OPPORTUNITY_DISCOVERY_PLANNER_MODEL_ROUTES = Object.freeze([
     id: OPPORTUNITY_DISCOVERY_PLANNER_MODEL,
     family: 'deepseek',
     minimumContextTokens: 1_000_000,
-    minimumOutputTokens: 18_000,
+    minimumOutputTokens: 42_000,
     maximumPromptPrice: 2,
     maximumCompletionPrice: 6
   })
@@ -222,11 +222,12 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   require_parameters: true,
   data_collection: 'deny'
 };
-// DeepSeek defaults to reasoning even though it is optional. Live strict-schema
-// calls exhausted both 16k and 32k token ceilings before completing the JSON.
-// Disable reasoning so the bounded output budget is reserved for the validated
-// structured result; this exact route was verified with zero reasoning tokens
-// across the qualified vendor fallback set.
+// DeepSeek defaults to reasoning even though it is optional. Earlier
+// pre-compaction strict-schema calls exhausted both 16k and 32k token ceilings
+// before completing the larger JSON shape. Disable reasoning so the current
+// bounded output budget is reserved for the validated compact result; this
+// exact route was verified with zero reasoning tokens across the qualified
+// vendor fallback set.
 const TOURNAMENT_REASONING = Object.freeze({
   enabled: false,
   exclude: true
@@ -536,14 +537,17 @@ const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // Call 1 emits one bounded model-authored role-selected path for each motion and
 // shares pathBase across its two tactic deltas. Local code selects, but never
 // composes, the branch fixed by the typed motion. The strict grammar has an
-// independently proved <40 KiB serialized upper bound. A production Wafer
-// trace emitted 33,904 bytes in exactly 14,000 tokens and terminated for
-// length after 58,521 ms. At that observed 2.42-byte/token ratio the 40,960-byte
-// runtime ceiling needs fewer than 17,000 tokens; 18,000 preserves explicit
-// headroom and projects well below the existing 300-second total deadline.
-// Historical 10k/14k receipts remain durable in the app; fresh calls use this
-// exact envelope. Length termination remains incomplete and fails closed.
-const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 18_000;
+// independently proved 31,552-byte serialized upper bound below the separate
+// 40 KiB raw-content cap. A tokenizer using byte fallback cannot need more
+// output tokens than encoded bytes. The 42,000-token ceiling therefore exceeds
+// the entire 40,960-byte runtime envelope plus 1,024 tokens of explicit
+// headroom, making token exhaustion unreachable before the byte gate. A
+// production Atlas trace emitted 27,149 bytes in exactly 18,000 native tokens
+// after 99,271 ms; a 42,000-token response projects to about 231,633 ms, below
+// the existing 300-second deadline. Historical 10k/14k/18k/32k receipts remain
+// durable in the app; fresh calls use this exact envelope. Length termination
+// remains incomplete and fails closed.
+const MAX_DISCOVERY_PLANNER_OUTPUT_TOKENS = 42_000;
 // Stream the large strict-schema generator response so a healthy model can
 // continue past the former 120-second buffered-response deadline. Silence is
 // bounded independently from total execution time. The end-to-end deadline
@@ -567,12 +571,12 @@ if (MAX_DISCOVERY_PLANNER_STREAM_TOTAL_TIMEOUT_MS +
         MIN_OPPORTUNITY_TOURNAMENT_LOCAL_MARGIN_MS) {
   throw new Error('opportunity tournament provider deadlines exceed worker window');
 }
-const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 200_160;
+const MAX_DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 344_160;
 const MAX_COMMERCIAL_CRITIC_PROMPT_TOKEN_CEILING =
   MAX_COMMERCIAL_CRITIC_REQUEST_BODY_BYTES +
   COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE;
 const MAX_COMMERCIAL_CRITIC_CALL_SPEND_CEILING_MICROS = 147_168;
-const MAX_OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 347_328;
+const MAX_OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 491_328;
 const computedDiscoveryPlannerCallSpendCeilingMicros =
   Math.ceil(
     OPPORTUNITY_DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING *

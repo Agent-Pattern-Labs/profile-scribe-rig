@@ -307,9 +307,9 @@ function productionCitation(url, title, content) {
     contentHash
   };
 }
-const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 18_000;
-const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 200_160;
-const OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 347_328;
+const DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS = 42_000;
+const DISCOVERY_PLANNER_CALL_SPEND_CEILING_MICROS = 344_160;
+const OPPORTUNITY_TOURNAMENT_LLM_SPEND_RESERVE_MICROS = 491_328;
 const DISCOVERY_PLANNER_WEB_CONTEXT_TOKEN_RESERVE = 950_000;
 const DISCOVERY_PLANNER_PROMPT_TOKEN_CEILING = 45_056 + 1_024;
 const PROFESSIONAL_ROLE_QUERY_CONTRACT = 'professional_role_query_v2';
@@ -1905,14 +1905,18 @@ await verifyProviderAttestedBuyerReviewRoute();
 await verifyPaidDemandTargetProtocolEndToEnd();
 await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
-// The 2026-08-13 Wafer production trace reached the former 14k-token ceiling
-// after 58,521 ms with 33,904 content bytes and finish=length. Prove both the
-// exact schema maximum and the 40 KiB runtime ceiling fit the replacement
-// envelope at that observed encoding rate, and that the projected provider
-// time remains inside the 300-second deadline.
-const observedPlannerCompletionTokens = 14_000;
-const observedPlannerContentBytes = 33_904;
-const observedPlannerDurationMs = 58_521;
+// The 2026-08-13 Atlas production trace reached the former 18k-token ceiling
+// after 99,271 ms with 27,149 content bytes and finish=length. The strict
+// schema's exact derived serialized bound is 31,552 bytes. A tokenizer with
+// byte fallback cannot require more tokens than the encoded byte count, so the
+// current 42k ceiling covers the entire 40,960-byte runtime cap plus 1,024
+// tokens of explicit headroom. Retain the trace projection as a
+// production-derived timing and compression regression: the schema projects
+// to about 20,920 native tokens and 42k projects to 231,633 ms, inside the
+// 300-second deadline.
+const observedPlannerCompletionTokens = 18_000;
+const observedPlannerContentBytes = 27_149;
+const observedPlannerDurationMs = 99_271;
 const observedPlannerFinishReason = 'length';
 const observedPlannerBytesPerOutputToken =
   observedPlannerContentBytes / observedPlannerCompletionTokens;
@@ -1926,7 +1930,13 @@ const projectedPlannerDurationMs = Math.ceil(
   observedPlannerDurationMs * DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS /
     observedPlannerCompletionTokens
 );
-if (observedPlannerFinishReason !== 'length' ||
+if (computedPlannerSchemaResponseBoundBytes !== 31_552 ||
+    DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS <
+      MAX_DISCOVERY_PLANNER_RESPONSE_BYTES + 1_024 ||
+    observedPlannerFinishReason !== 'length' ||
+    projectedSchemaMaximumOutputTokens !== 20_920 ||
+    projectedRuntimeMaximumOutputTokens !== 27_157 ||
+    projectedPlannerDurationMs !== 231_633 ||
     projectedSchemaMaximumOutputTokens > DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
     projectedRuntimeMaximumOutputTokens >
       DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
@@ -5029,7 +5039,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             id: 'deepseek/deepseek-v4-flash-0731',
             family: 'deepseek',
             minimumContextTokens: 1_000_000,
-            minimumOutputTokens: 18_000,
+            minimumOutputTokens: 42_000,
             maximumPromptPrice: 2,
             maximumCompletionPrice: 6,
             requiredParameters: [
