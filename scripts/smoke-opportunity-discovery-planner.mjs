@@ -1980,6 +1980,7 @@ await verifyMaximumFamilyEvidenceContainment();
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
 await verifyAmbientProductionTimeoutFailsOnce(unsafeJob);
+await verifyBaiduProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
@@ -5150,7 +5151,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'akashml',
             'siliconflow',
             'wafer',
-            'ambient'
+            'ambient',
+            'baidu'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7668,7 +7670,8 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'akashml',
     'siliconflow',
     'wafer',
-    'ambient'
+    'ambient',
+    'baidu'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
@@ -7776,7 +7779,8 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
     'akashml',
     'siliconflow',
     'wafer',
-    'ambient'
+    'ambient',
+    'baidu'
   ];
   const capabilityRouting =
     opportunityCommercialDiscoveryCapabilities()
@@ -7857,6 +7861,210 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
   }
 }
 
+async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  let wireRequestSeen;
+  const rawSentinel = 'raw-baidu-schema-mismatch-secret-sentinel';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      wireRequestSeen = JSON.parse(serializeOpenRouterJSONRequestBody({
+        ...request,
+        apiKey: 'not-serialized'
+      }));
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      const evidenceRef = buildEvidenceCatalog(job.payload, {}, now, {
+        includeSystemAttributionCapability: true
+      }).find((item) => /^observation:/i.test(item.id || ''))?.id;
+      if (!evidenceRef) {
+        throw new Error('Baidu fixture has no approved observation evidence');
+      }
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(
+          cases[0].plans(evidenceRef)[0],
+          evidenceRef
+        )
+      );
+      for (const plan of plans) plan.market = exactMarket;
+      for (const plan of plans) {
+        const revenue = plan.contingentFinalists.pathBase.r[0];
+        delete revenue.k;
+        revenue.io = 'Operational interest without an attributable outcome';
+        revenue.cd = 'A destination without a paid conversion path';
+        revenue.g.b = revenue.g.b[0];
+        revenue.g.o = revenue.g.o[0];
+        revenue.g.a = revenue.g.a[0];
+        revenue.g.d.l = 'A destination without a conversion mechanism';
+        revenue.g.c = revenue.g.c[0];
+      }
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage: {
+          prompt_tokens: 13_004,
+          completion_tokens: 4_408,
+          total_tokens: 17_412,
+          cost: 0.0030548
+        },
+        generationId: 'gen-1786633926-Al97kT5cl1a6RQL3z891',
+        diagnostics: {
+          httpStatus: 200,
+          routerStrategy: 'direct',
+          routerAttempt: 1,
+          routerCandidateCount: 27,
+          routerAttemptStatuses: [200],
+          routerAttempts: [{
+            provider: 'Baidu',
+            model: 'deepseek/deepseek-v4-flash-20260731',
+            status: 200
+          }],
+          routerAttemptSequenceSource:
+            'selected_endpoint_reconstructed',
+          routerSelectedEndpointEvidenced: true,
+          routerSelectedProvider: 'Baidu',
+          routerSelectedModel: 'deepseek/deepseek-v4-flash-20260731',
+          routerEnvelopeProvider: 'Baidu',
+          routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 17_653,
+          contentSha256:
+            '328823dbe54b49f694bf968da8a6199a957b754b9ba7d2384b91fac275f9dc14',
+          streaming: true,
+          streamEventCount: 4_409,
+          streamWireByteCount: 1_264_222,
+          streamFirstDataLatencyMs: 829,
+          streamDurationMs: 44_315,
+          streamCompleted: true,
+          responseHeadersReceived: true,
+          rawProviderBody: rawSentinel
+        },
+        annotations: []
+      };
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIssues = [
+    ['required', '/plans/0/contingentFinalists/pathBase/r/0', 'k'],
+    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/io', ''],
+    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/cd', ''],
+    ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/b', ''],
+    ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/o', ''],
+    ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/a', ''],
+    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/g/d/l', ''],
+    ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/c', '']
+  ];
+  const actualIssues = result.normalizationDiagnostic?.issues?.map(
+    (issue) => [
+      issue.keyword,
+      issue.instancePath,
+      issue.missingProperty || ''
+    ]
+  );
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer',
+    'ambient',
+    'baidu'
+  ];
+  if (calls !== 1 ||
+      JSON.stringify(wireRequestSeen?.response_format) !==
+        JSON.stringify(requestSeen?.responseFormat) ||
+      JSON.stringify(wireRequestSeen?.provider?.ignore) !==
+        JSON.stringify(expectedIgnore) ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 2, completion: 6, request: 0 }
+      }) ||
+      result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.acceptedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
+      result.webSearchReceipt !== null ||
+      result.usage?.calls !== 1 || result.usage?.successfulCalls !== 1 ||
+      result.usage?.promptTokens !== 13_004 ||
+      result.usage?.completionTokens !== 4_408 ||
+      result.usage?.totalTokens !== 17_412 ||
+      result.usage?.reportedCostMicros !== 3_055 ||
+      receipt?.status !== 'completed' ||
+      receipt?.generationId !==
+        'gen-1786633926-Al97kT5cl1a6RQL3z891' ||
+      receipt?.model !== 'deepseek/deepseek-v4-flash-20260731' ||
+      receipt?.requestedModel !== 'deepseek/deepseek-v4-flash-0731' ||
+      receipt?.openRouterUsage?.prompt_tokens !== 13_004 ||
+      receipt?.openRouterUsage?.completion_tokens !== 4_408 ||
+      receipt?.openRouterUsage?.total_tokens !== 17_412 ||
+      receipt?.openRouterUsage?.cost !== 0.0030548 ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerSelectedProvider !== 'Baidu' ||
+      diagnostics?.routerSelectedEndpointEvidenced !== true ||
+      diagnostics?.finishReason !== 'stop' ||
+      diagnostics?.nativeFinishReason !== 'stop' ||
+      diagnostics?.contentByteCount !== 17_653 ||
+      diagnostics?.contentSha256 !==
+        '328823dbe54b49f694bf968da8a6199a957b754b9ba7d2384b91fac275f9dc14' ||
+      diagnostics?.streamEventCount !== 4_409 ||
+      diagnostics?.streamWireByteCount !== 1_264_222 ||
+      diagnostics?.streamFirstDataLatencyMs !== 829 ||
+      diagnostics?.streamDurationMs !== 44_315 ||
+      diagnostics?.streamCompleted !== true ||
+      result.preflight?.routeProvenanceValidated !== true ||
+      !Number.isInteger(result.preflight?.responseBodyByteCount) ||
+      result.preflight.responseBodyByteCount <= 0 ||
+      result.preflight.responseBodyByteCount >
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
+      result.normalizationDiagnostic?.contractVersion !==
+        OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      result.normalizationDiagnostic?.failedMotionCount !== 2 ||
+      JSON.stringify(actualIssues) !== JSON.stringify(expectedIssues) ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(rawSentinel)) {
+    throw new Error(
+      `Baidu production strict-schema mismatch did not fail once after exact completed accounting: ${JSON.stringify({
+        calls,
+        routeIgnore: requestSeen?.provider?.ignore,
+        wireSchemaParity:
+          JSON.stringify(wireRequestSeen?.response_format) ===
+            JSON.stringify(requestSeen?.responseFormat),
+        status: result.status,
+        plans: result.plans?.length,
+        planSelection: result.planSelection,
+        usage: result.usage,
+        receipt,
+        preflight: result.preflight,
+        normalizationDiagnostic: result.normalizationDiagnostic,
+        criticPresent: result.llm?.commercialCritic !== undefined,
+        repairPresent: result.llm?.strategyFamilyRepair !== undefined,
+        sideEffectsPerformed: result.sideEffectsPerformed,
+        rawSentinelPresent: JSON.stringify(result).includes(rawSentinel)
+      })}`
+    );
+  }
+}
+
 async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
   const expectedIgnore = [
     'cloudflare',
@@ -7866,7 +8074,8 @@ async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
     'akashml',
     'siliconflow',
     'wafer',
-    'ambient'
+    'ambient',
+    'baidu'
   ];
   for (const scenario of [{
     provider: 'Wafer',

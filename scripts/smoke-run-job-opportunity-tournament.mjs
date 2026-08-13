@@ -3009,7 +3009,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
       'akashml',
       'siliconflow',
       'wafer',
-      'ambient'
+      'ambient',
+      'baidu'
     ]),
     'generator lost its evidence-backed provider quarantine'
   );
