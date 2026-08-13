@@ -1985,6 +1985,7 @@ await verifyFireworksProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyMorphProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyAtlasCloudProductionRawOverflowFailsOnce(unsafeJob);
 await verifyParasailProductionTimeoutFailsOnce(unsafeJob);
+await verifyTogetherProductionTimeoutFailsOnce(unsafeJob);
 await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
@@ -5160,7 +5161,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'fireworks',
             'morph',
             'atlas-cloud',
-            'parasail'
+            'parasail',
+            'together'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7683,7 +7685,8 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'fireworks',
     'morph',
     'atlas-cloud',
-    'parasail'
+    'parasail',
+    'together'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
@@ -7796,7 +7799,8 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
     'fireworks',
     'morph',
     'atlas-cloud',
-    'parasail'
+    'parasail',
+    'together'
   ];
   const capabilityRouting =
     opportunityCommercialDiscoveryCapabilities()
@@ -8001,7 +8005,8 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
     'fireworks',
     'morph',
     'atlas-cloud',
-    'parasail'
+    'parasail',
+    'together'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8214,7 +8219,8 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
     'fireworks',
     'morph',
     'atlas-cloud',
-    'parasail'
+    'parasail',
+    'together'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8464,7 +8470,8 @@ async function verifyMorphProductionStrictSchemaMismatchFailsOnce(job) {
     'fireworks',
     'morph',
     'atlas-cloud',
-    'parasail'
+    'parasail',
+    'together'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8652,7 +8659,8 @@ async function verifyAtlasCloudProductionRawOverflowFailsOnce(job) {
     'fireworks',
     'morph',
     'atlas-cloud',
-    'parasail'
+    'parasail',
+    'together'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -8808,7 +8816,8 @@ async function verifyParasailProductionTimeoutFailsOnce(job) {
     'fireworks',
     'morph',
     'atlas-cloud',
-    'parasail'
+    'parasail',
+    'together'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -8905,6 +8914,162 @@ async function verifyParasailProductionTimeoutFailsOnce(job) {
   }
 }
 
+async function verifyTogetherProductionTimeoutFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  const rawSentinel = 'raw-together-timeout-secret-sentinel';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      const error = new Error(
+        'OpenRouter streaming request exceeded its bounded total deadline'
+      );
+      error.openRouterFailureCode = 'openrouter_timeout';
+      error.openRouterGenerationId =
+        'gen-1786643681-4biso5xGsQ2Bo2ZkHVWO';
+      error.openRouterDiagnostics = {
+        httpStatus: 200,
+        routerSelectedProvider: 'Together',
+        routerSelectedModel: 'deepseek/deepseek-v4-flash-0731',
+        routerEnvelopeProvider: 'Together',
+        routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+        contentByteCount: 91_338,
+        contentSha256:
+          'ee76c1da367408367066a7d75ebce1d367b123fda6c47a43dedf40aefd0ec01e',
+        streaming: true,
+        streamEventCount: 6_567,
+        streamWireByteCount: 1_971_720,
+        streamFirstDataLatencyMs: 607,
+        streamDurationMs: 300_007,
+        streamCompleted: false,
+        timeoutKind: 'total',
+        timeoutOrigin: 'profilescribe_local_deadline',
+        timeoutDeadlineMs: 300_000,
+        timeoutElapsedMs: 300_007,
+        timeoutPhase: 'response_stream',
+        responseHeadersReceived: true,
+        rawProviderBody: rawSentinel
+      };
+      throw error;
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer',
+    'ambient',
+    'baidu',
+    'fireworks',
+    'morph',
+    'atlas-cloud',
+    'parasail',
+    'together'
+  ];
+  if (calls !== 1 ||
+      requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
+      JSON.stringify(requestSeen?.models) !==
+        JSON.stringify(['deepseek/deepseek-v4-flash-0731']) ||
+      requestSeen?.maxTokens !== 42_000 ||
+      requestSeen?.stream !== true ||
+      requestSeen?.streamMaxContentBytes !== 163_840 ||
+      requestSeen?.streamStartTimeoutMs !== 180_000 ||
+      requestSeen?.streamIdleTimeoutMs !== 60_000 ||
+      requestSeen?.streamTotalTimeoutMs !== 300_000 ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 2, completion: 6, request: 0 }
+      }) ||
+      result.status !== 'blocked' ||
+      result.plans.length !== 0 ||
+      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.acceptedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(result.planSelection?.rejectedPlans) !== '[]' ||
+      result.webSearchReceipt !== null ||
+      result.usage?.calls !== 1 ||
+      result.usage?.successfulCalls !== 0 ||
+      result.usage?.promptTokens !== 0 ||
+      result.usage?.completionTokens !== 0 ||
+      result.usage?.totalTokens !== 0 ||
+      result.usage?.reportedCostMicros !== 0 ||
+      result.usage?.reportedCostUsd !== 0 ||
+      result.usage?.costReporting !== 'unavailable' ||
+      result.usage?.withinBudget !== true ||
+      receipt?.status !== 'failed' ||
+      receipt?.error !== 'openrouter_timeout' ||
+      receipt?.generationId !==
+        'gen-1786643681-4biso5xGsQ2Bo2ZkHVWO' ||
+      receipt?.model !== 'deepseek/deepseek-v4-flash-0731' ||
+      receipt?.requestedModel !== 'deepseek/deepseek-v4-flash-0731' ||
+      JSON.stringify(receipt?.openRouterUsage) !== '{}' ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerSelectedProvider !== 'Together' ||
+      diagnostics?.routerSelectedModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.routerEnvelopeProvider !== 'Together' ||
+      diagnostics?.routerEnvelopeModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.contentByteCount !== 91_338 ||
+      diagnostics?.contentSha256 !==
+        'ee76c1da367408367066a7d75ebce1d367b123fda6c47a43dedf40aefd0ec01e' ||
+      diagnostics?.streaming !== true ||
+      diagnostics?.streamEventCount !== 6_567 ||
+      diagnostics?.streamWireByteCount !== 1_971_720 ||
+      diagnostics?.streamFirstDataLatencyMs !== 607 ||
+      diagnostics?.streamDurationMs !== 300_007 ||
+      diagnostics?.streamCompleted !== false ||
+      diagnostics?.timeoutKind !== 'total' ||
+      diagnostics?.timeoutOrigin !== 'profilescribe_local_deadline' ||
+      diagnostics?.timeoutDeadlineMs !== 300_000 ||
+      diagnostics?.timeoutElapsedMs !== 300_007 ||
+      diagnostics?.timeoutPhase !== 'response_stream' ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.finishReason !== undefined ||
+      diagnostics?.nativeFinishReason !== undefined ||
+      diagnostics?.localJSONRepairApplied !== undefined ||
+      diagnostics?.localJSONRepairFailure !== undefined ||
+      result.preflight?.authorized !== true ||
+      !Number.isInteger(result.preflight?.requestBodyByteCount) ||
+      result.preflight.requestBodyByteCount <= 0 ||
+      result.preflight.requestBodyByteCount > 45_056 ||
+      !/^[a-f0-9]{64}$/.test(result.preflight?.requestBodySha256 || '') ||
+      result.preflight?.serializedPromptTokenCeiling !==
+        result.preflight.requestBodyByteCount + 1_024 ||
+      result.preflight?.promptTokenCeiling !==
+        result.preflight.serializedPromptTokenCeiling ||
+      result.preflight?.responseBodyByteCount !== undefined ||
+      result.preflight?.routeProvenanceValidated !== undefined ||
+      result.normalizationDiagnostic !== undefined ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.commercialDiscoveryEvidence !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(rawSentinel)) {
+    throw new Error(
+      `Together production timeout did not fail once with bounded diagnostics: ${JSON.stringify({
+        calls,
+        request: requestSeen,
+        result,
+        rawSentinelPresent: JSON.stringify(result).includes(rawSentinel)
+      })}`
+    );
+  }
+}
+
 async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
   const expectedIgnore = [
     'cloudflare',
@@ -8919,7 +9084,8 @@ async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
     'fireworks',
     'morph',
     'atlas-cloud',
-    'parasail'
+    'parasail',
+    'together'
   ];
   for (const scenario of [{
     provider: 'Wafer',

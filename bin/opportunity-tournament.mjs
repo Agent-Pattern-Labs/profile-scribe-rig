@@ -225,6 +225,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // before it could return a terminal structured response or usable usage.
   // Parasail subsequently returned HTTP 200 and streamed 66,008 content bytes
   // but did not finish or report usage before the same exact total deadline.
+  // Together then returned the same incomplete HTTP-200 condition after
+  // streaming 91,338 content bytes for that full bounded interval.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
   ignore: [
@@ -240,7 +242,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'fireworks',
     'morph',
     'atlas-cloud',
-    'parasail'
+    'parasail',
+    'together'
   ],
   sort: 'throughput',
   allow_fallbacks: true,

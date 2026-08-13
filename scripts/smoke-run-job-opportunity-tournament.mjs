@@ -3014,7 +3014,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
       'fireworks',
       'morph',
       'atlas-cloud',
-      'parasail'
+      'parasail',
+      'together'
     ]),
     'generator lost its evidence-backed provider quarantine'
   );
