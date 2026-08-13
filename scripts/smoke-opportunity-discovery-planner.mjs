@@ -1983,6 +1983,7 @@ await verifyAmbientProductionTimeoutFailsOnce(unsafeJob);
 await verifyBaiduProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyFireworksProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyMorphProductionStrictSchemaMismatchFailsOnce(unsafeJob);
+await verifyMancerProductionStrictRootSchemaMismatchFailsOnce(unsafeJob);
 await verifyAtlasCloudProductionRawOverflowFailsOnce(unsafeJob);
 await verifyParasailProductionTimeoutFailsOnce(unsafeJob);
 await verifyTogetherProductionTimeoutFailsOnce(unsafeJob);
@@ -5164,7 +5165,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'atlas-cloud',
             'parasail',
             'together',
-            'deepinfra'
+            'deepinfra',
+            'mancer'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7689,7 +7691,8 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
@@ -7804,7 +7807,8 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   const capabilityRouting =
     opportunityCommercialDiscoveryCapabilities()
@@ -8011,7 +8015,8 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8226,7 +8231,8 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8478,7 +8484,8 @@ async function verifyMorphProductionStrictSchemaMismatchFailsOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8610,6 +8617,211 @@ async function verifyMorphProductionStrictSchemaMismatchFailsOnce(job) {
   }
 }
 
+async function verifyMancerProductionStrictRootSchemaMismatchFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  let wireRequestSeen;
+  const rawSentinel = 'raw-mancer-root-schema-secret-sentinel';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      wireRequestSeen = JSON.parse(serializeOpenRouterJSONRequestBody({
+        ...request,
+        apiKey: 'not-serialized'
+      }));
+      return {
+        data: { opportunities: rawSentinel },
+        usage: {
+          prompt_tokens: 2_882,
+          completion_tokens: 2_716,
+          total_tokens: 5_598,
+          cost: 0.00186
+        },
+        generationId: 'gen-1786646690-DHJf2t5o8HVy7R6mutRG',
+        diagnostics: {
+          httpStatus: 200,
+          routerStrategy: 'direct',
+          routerAttempt: 1,
+          routerCandidateCount: 27,
+          routerAttemptStatuses: [200],
+          routerAttempts: [{
+            provider: 'Mancer 2',
+            model: 'deepseek/deepseek-v4-flash-20260731',
+            status: 200
+          }],
+          routerAttemptSequenceSource: 'selected_endpoint_reconstructed',
+          routerSelectedEndpointEvidenced: true,
+          routerSelectedProvider: 'Mancer 2',
+          routerSelectedModel: 'deepseek/deepseek-v4-flash-20260731',
+          routerEnvelopeProvider: 'Mancer 2',
+          routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 10_771,
+          contentSha256:
+            '93995a4273a491e94ec5b98fdc78d7394e8f3b197404324ba3278ab67e565277',
+          streaming: true,
+          streamEventCount: 672,
+          streamWireByteCount: 204_649,
+          streamFirstDataLatencyMs: 1_970,
+          streamDurationMs: 69_846,
+          streamCompleted: true,
+          responseHeadersReceived: true,
+          rawProviderBody: rawSentinel
+        },
+        annotations: []
+      };
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIssues = [
+    ['required', '', 'contractVersion'],
+    ['required', '', 'status'],
+    ['required', '', 'reason'],
+    ['required', '', 'plans'],
+    ['additionalProperties', '', '']
+  ];
+  const actualIssues = result.normalizationDiagnostic?.issues?.map(
+    (issue) => [
+      issue.keyword,
+      issue.instancePath,
+      issue.missingProperty || ''
+    ]
+  );
+  const actualIssueKeys = result.normalizationDiagnostic?.issues?.map(
+    (issue) => Object.keys(issue).sort()
+  );
+  const expectedIssueKeys = [
+    ['instancePath', 'keyword', 'missingProperty'],
+    ['instancePath', 'keyword', 'missingProperty'],
+    ['instancePath', 'keyword', 'missingProperty'],
+    ['instancePath', 'keyword', 'missingProperty'],
+    ['instancePath', 'keyword']
+  ];
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer',
+    'ambient',
+    'baidu',
+    'fireworks',
+    'morph',
+    'atlas-cloud',
+    'parasail',
+    'together',
+    'deepinfra',
+    'mancer'
+  ];
+  if (calls !== 1 ||
+      JSON.stringify(wireRequestSeen?.response_format) !==
+        JSON.stringify(requestSeen?.responseFormat) ||
+      JSON.stringify(wireRequestSeen?.provider?.ignore) !==
+        JSON.stringify(expectedIgnore) ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 2, completion: 6, request: 0 }
+      }) ||
+      result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.acceptedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(result.planSelection?.rejectedPlans) !== '[]' ||
+      result.webSearchReceipt !== null ||
+      result.usage?.calls !== 1 || result.usage?.successfulCalls !== 1 ||
+      result.usage?.promptTokens !== 2_882 ||
+      result.usage?.completionTokens !== 2_716 ||
+      result.usage?.totalTokens !== 5_598 ||
+      result.usage?.reportedCostMicros !== 1_860 ||
+      result.usage?.costReporting !== 'complete' ||
+      result.usage?.withinBudget !== true ||
+      receipt?.status !== 'completed' || receipt?.error !== undefined ||
+      receipt?.generationId !==
+        'gen-1786646690-DHJf2t5o8HVy7R6mutRG' ||
+      receipt?.model !== 'deepseek/deepseek-v4-flash-20260731' ||
+      receipt?.requestedModel !== 'deepseek/deepseek-v4-flash-0731' ||
+      receipt?.openRouterUsage?.prompt_tokens !== 2_882 ||
+      receipt?.openRouterUsage?.completion_tokens !== 2_716 ||
+      receipt?.openRouterUsage?.total_tokens !== 5_598 ||
+      receipt?.openRouterUsage?.cost !== 0.00186 ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerStrategy !== 'direct' ||
+      diagnostics?.routerAttempt !== 1 ||
+      diagnostics?.routerCandidateCount !== 27 ||
+      JSON.stringify(diagnostics?.routerAttemptStatuses) !== '[200]' ||
+      JSON.stringify(diagnostics?.routerAttempts) !== JSON.stringify([{
+        provider: 'Mancer 2',
+        model: 'deepseek/deepseek-v4-flash-20260731',
+        status: 200
+      }]) ||
+      diagnostics?.routerAttemptSequenceSource !==
+        'selected_endpoint_reconstructed' ||
+      diagnostics?.routerSelectedEndpointEvidenced !== true ||
+      diagnostics?.routerSelectedProvider !== 'Mancer 2' ||
+      diagnostics?.routerSelectedModel !==
+        'deepseek/deepseek-v4-flash-20260731' ||
+      diagnostics?.routerEnvelopeProvider !== 'Mancer 2' ||
+      diagnostics?.routerEnvelopeModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.routerFallbackUsed !== undefined ||
+      diagnostics?.routerFinalAttemptProvider !== undefined ||
+      diagnostics?.routerFinalAttemptModel !== undefined ||
+      diagnostics?.finishReason !== 'stop' ||
+      diagnostics?.nativeFinishReason !== 'stop' ||
+      diagnostics?.contentByteCount !== 10_771 ||
+      diagnostics?.contentSha256 !==
+        '93995a4273a491e94ec5b98fdc78d7394e8f3b197404324ba3278ab67e565277' ||
+      diagnostics?.streaming !== true ||
+      diagnostics?.streamEventCount !== 672 ||
+      diagnostics?.streamWireByteCount !== 204_649 ||
+      diagnostics?.streamFirstDataLatencyMs !== 1_970 ||
+      diagnostics?.streamDurationMs !== 69_846 ||
+      diagnostics?.streamCompleted !== true ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.localJSONRepairApplied !== undefined ||
+      diagnostics?.localJSONRepairFailure !== undefined ||
+      result.preflight?.routeProvenanceValidated !== true ||
+      !Number.isInteger(result.preflight?.responseBodyByteCount) ||
+      result.preflight.responseBodyByteCount <= 0 ||
+      result.preflight.responseBodyByteCount >
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
+      result.normalizationDiagnostic?.contractVersion !==
+        OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      result.normalizationDiagnostic?.failedMotionCount !== 2 ||
+      JSON.stringify(actualIssues) !== JSON.stringify(expectedIssues) ||
+      JSON.stringify(actualIssueKeys) !== JSON.stringify(expectedIssueKeys) ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.commercialDiscoveryEvidence !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(rawSentinel)) {
+    throw new Error(
+      `Mancer production root-schema mismatch did not fail once after exact completed accounting: ${JSON.stringify({
+        calls,
+        routeIgnore: requestSeen?.provider?.ignore,
+        wireSchemaParity:
+          JSON.stringify(wireRequestSeen?.response_format) ===
+            JSON.stringify(requestSeen?.responseFormat),
+        result,
+        rawSentinelPresent: JSON.stringify(result).includes(rawSentinel)
+      })}`
+    );
+  }
+}
+
 async function verifyAtlasCloudProductionRawOverflowFailsOnce(job) {
   let calls = 0;
   let requestSeen;
@@ -8668,7 +8880,8 @@ async function verifyAtlasCloudProductionRawOverflowFailsOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -8826,7 +9039,8 @@ async function verifyParasailProductionTimeoutFailsOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -8983,7 +9197,8 @@ async function verifyTogetherProductionTimeoutFailsOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9140,7 +9355,8 @@ async function verifyDeepInfraProductionTimeoutFailsOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   if (calls !== 1 ||
       requestSeen?.model !== 'deepseek/deepseek-v4-flash-0731' ||
@@ -9253,7 +9469,8 @@ async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
     'atlas-cloud',
     'parasail',
     'together',
-    'deepinfra'
+    'deepinfra',
+    'mancer'
   ];
   for (const scenario of [{
     provider: 'Wafer',
