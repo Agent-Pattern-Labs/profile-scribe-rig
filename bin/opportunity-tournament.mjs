@@ -223,6 +223,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // maximum length and one causal-path minimum length in its sole motion.
   // AtlasCloud then exceeded the exact 160-KiB raw streaming-content ceiling
   // before it could return a terminal structured response or usable usage.
+  // Parasail subsequently returned HTTP 200 and streamed 66,008 content bytes
+  // but did not finish or report usage before the same exact total deadline.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
   ignore: [
@@ -237,7 +239,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'baidu',
     'fireworks',
     'morph',
-    'atlas-cloud'
+    'atlas-cloud',
+    'parasail'
   ],
   sort: 'throughput',
   allow_fallbacks: true,
