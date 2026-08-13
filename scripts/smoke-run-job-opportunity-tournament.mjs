@@ -3010,7 +3010,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
       'siliconflow',
       'wafer',
       'ambient',
-      'baidu'
+      'baidu',
+      'fireworks'
     ]),
     'generator lost its evidence-backed provider quarantine'
   );

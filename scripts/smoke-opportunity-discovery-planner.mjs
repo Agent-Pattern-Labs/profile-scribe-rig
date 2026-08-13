@@ -1981,6 +1981,7 @@ await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
 await verifyAmbientProductionTimeoutFailsOnce(unsafeJob);
 await verifyBaiduProductionStrictSchemaMismatchFailsOnce(unsafeJob);
+await verifyFireworksProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
@@ -5152,7 +5153,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'siliconflow',
             'wafer',
             'ambient',
-            'baidu'
+            'baidu',
+            'fireworks'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7671,7 +7673,8 @@ async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
     'siliconflow',
     'wafer',
     'ambient',
-    'baidu'
+    'baidu',
+    'fireworks'
   ];
   if (calls !== 1 ||
       requestSeen?.maxTokens !== 42_000 ||
@@ -7780,7 +7783,8 @@ async function verifyAmbientProductionTimeoutFailsOnce(job) {
     'siliconflow',
     'wafer',
     'ambient',
-    'baidu'
+    'baidu',
+    'fireworks'
   ];
   const capabilityRouting =
     opportunityCommercialDiscoveryCapabilities()
@@ -7981,7 +7985,8 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
     'siliconflow',
     'wafer',
     'ambient',
-    'baidu'
+    'baidu',
+    'fireworks'
   ];
   if (calls !== 1 ||
       JSON.stringify(wireRequestSeen?.response_format) !==
@@ -8065,6 +8070,254 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
   }
 }
 
+async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  let wireRequestSeen;
+  const rawSentinel = 'raw-fireworks-schema-mismatch-secret-sentinel';
+  const invalidConversionDestination =
+    'A destination without a paid conversion path';
+  const invalidDiscoveryLink =
+    'A destination without a conversion mechanism';
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      wireRequestSeen = JSON.parse(serializeOpenRouterJSONRequestBody({
+        ...request,
+        apiKey: 'not-serialized'
+      }));
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      const evidenceRef = buildEvidenceCatalog(job.payload, {}, now, {
+        includeSystemAttributionCapability: true
+      }).find((item) => /^observation:/i.test(item.id || ''))?.id;
+      if (!evidenceRef) {
+        throw new Error(
+          'Fireworks fixture has no approved observation evidence'
+        );
+      }
+      const plans = compactFreshPlannerPlans(
+        twoPlannerMotions(
+          cases[0].plans(evidenceRef)[0],
+          evidenceRef
+        )
+      );
+      for (const plan of plans) plan.market = exactMarket;
+      for (const plan of plans) {
+        const revenue = plan.contingentFinalists.pathBase.r[0];
+        revenue.cd = invalidConversionDestination;
+        revenue.g.d.l = invalidDiscoveryLink;
+      }
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage: {
+          prompt_tokens: 13_668,
+          completion_tokens: 3_856,
+          total_tokens: 17_524,
+          cost: 0.0029932
+        },
+        generationId: 'gen-1786637226-Ta0zDVPrCAGofAxY4SBK',
+        diagnostics: {
+          httpStatus: 200,
+          routerStrategy: 'direct',
+          routerAttempt: 2,
+          routerCandidateCount: 27,
+          routerAttemptStatuses: [504, 200],
+          routerAttempts: [{
+            provider: 'AtlasCloud',
+            model: 'deepseek/deepseek-v4-flash-20260731',
+            status: 504
+          }, {
+            provider: 'Fireworks',
+            model: 'deepseek/deepseek-v4-flash-20260731',
+            status: 200
+          }],
+          routerAttemptSequenceSource: 'reported',
+          routerSelectedEndpointEvidenced: true,
+          routerSelectedProvider: 'Fireworks',
+          routerSelectedModel: 'deepseek/deepseek-v4-flash-20260731',
+          routerEnvelopeProvider: 'Fireworks',
+          routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+          routerFinalAttemptProvider: 'Fireworks',
+          routerFinalAttemptModel: 'deepseek/deepseek-v4-flash-20260731',
+          routerFallbackUsed: true,
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: 10_402,
+          contentSha256:
+            '3c464ccf17db2912919f028c2f12e267a7f9408fedc11c6e212d0995bf8109b5',
+          streaming: true,
+          streamEventCount: 3_857,
+          streamWireByteCount: 1_117_420,
+          streamFirstDataLatencyMs: 1_230,
+          streamDurationMs: 39_532,
+          streamCompleted: true,
+          responseHeadersReceived: true,
+          rawProviderBody: rawSentinel
+        },
+        annotations: []
+      };
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIssues = [
+    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/cd', ''],
+    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/g/d/l', ''],
+    ['pattern', '/plans/1/contingentFinalists/pathBase/r/0/cd', ''],
+    ['pattern', '/plans/1/contingentFinalists/pathBase/r/0/g/d/l', '']
+  ];
+  const actualIssues = result.normalizationDiagnostic?.issues?.map(
+    (issue) => [
+      issue.keyword,
+      issue.instancePath,
+      issue.missingProperty || ''
+    ]
+  );
+  const actualIssueKeys = result.normalizationDiagnostic?.issues?.map(
+    (issue) => Object.keys(issue).sort()
+  );
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow',
+    'wafer',
+    'ambient',
+    'baidu',
+    'fireworks'
+  ];
+  if (calls !== 1 ||
+      JSON.stringify(wireRequestSeen?.response_format) !==
+        JSON.stringify(requestSeen?.responseFormat) ||
+      JSON.stringify(wireRequestSeen?.provider?.ignore) !==
+        JSON.stringify(expectedIgnore) ||
+      JSON.stringify(requestSeen?.provider) !== JSON.stringify({
+        ignore: expectedIgnore,
+        sort: 'throughput',
+        allow_fallbacks: true,
+        require_parameters: true,
+        data_collection: 'deny',
+        max_price: { prompt: 2, completion: 6, request: 0 }
+      }) ||
+      result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.acceptedPlanCount !== 0 ||
+      result.planSelection?.rejectedPlanCount !== 0 ||
+      JSON.stringify(result.planSelection?.rejectedPlans) !== '[]' ||
+      result.webSearchReceipt !== null ||
+      result.usage?.calls !== 1 || result.usage?.successfulCalls !== 1 ||
+      result.usage?.promptTokens !== 13_668 ||
+      result.usage?.completionTokens !== 3_856 ||
+      result.usage?.totalTokens !== 17_524 ||
+      result.usage?.reportedCostMicros !== 2_994 ||
+      receipt?.status !== 'completed' ||
+      receipt?.error !== undefined ||
+      receipt?.generationId !==
+        'gen-1786637226-Ta0zDVPrCAGofAxY4SBK' ||
+      receipt?.model !== 'deepseek/deepseek-v4-flash-20260731' ||
+      receipt?.requestedModel !== 'deepseek/deepseek-v4-flash-0731' ||
+      receipt?.openRouterUsage?.prompt_tokens !== 13_668 ||
+      receipt?.openRouterUsage?.completion_tokens !== 3_856 ||
+      receipt?.openRouterUsage?.total_tokens !== 17_524 ||
+      receipt?.openRouterUsage?.cost !== 0.0029932 ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerStrategy !== 'direct' ||
+      diagnostics?.routerAttempt !== 2 ||
+      diagnostics?.routerCandidateCount !== 27 ||
+      JSON.stringify(diagnostics?.routerAttemptStatuses) !==
+        JSON.stringify([504, 200]) ||
+      JSON.stringify(diagnostics?.routerAttempts) !== JSON.stringify([{
+        provider: 'AtlasCloud',
+        model: 'deepseek/deepseek-v4-flash-20260731',
+        status: 504
+      }, {
+        provider: 'Fireworks',
+        model: 'deepseek/deepseek-v4-flash-20260731',
+        status: 200
+      }]) ||
+      diagnostics?.routerAttemptSequenceSource !== 'reported' ||
+      diagnostics?.routerSelectedProvider !== 'Fireworks' ||
+      diagnostics?.routerSelectedModel !==
+        'deepseek/deepseek-v4-flash-20260731' ||
+      diagnostics?.routerEnvelopeProvider !== 'Fireworks' ||
+      diagnostics?.routerEnvelopeModel !==
+        'deepseek/deepseek-v4-flash-0731' ||
+      diagnostics?.routerFinalAttemptProvider !== 'Fireworks' ||
+      diagnostics?.routerFinalAttemptModel !==
+        'deepseek/deepseek-v4-flash-20260731' ||
+      diagnostics?.routerSelectedEndpointEvidenced !== true ||
+      diagnostics?.routerFallbackUsed !== true ||
+      diagnostics?.finishReason !== 'stop' ||
+      diagnostics?.nativeFinishReason !== 'stop' ||
+      diagnostics?.contentByteCount !== 10_402 ||
+      diagnostics?.contentSha256 !==
+        '3c464ccf17db2912919f028c2f12e267a7f9408fedc11c6e212d0995bf8109b5' ||
+      diagnostics?.streaming !== true ||
+      diagnostics?.streamEventCount !== 3_857 ||
+      diagnostics?.streamWireByteCount !== 1_117_420 ||
+      diagnostics?.streamFirstDataLatencyMs !== 1_230 ||
+      diagnostics?.streamDurationMs !== 39_532 ||
+      diagnostics?.streamCompleted !== true ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.localJSONRepairApplied !== undefined ||
+      diagnostics?.localJSONRepairFailure !== undefined ||
+      result.preflight?.routeProvenanceValidated !== true ||
+      !Number.isInteger(result.preflight?.responseBodyByteCount) ||
+      result.preflight.responseBodyByteCount <= 0 ||
+      result.preflight.responseBodyByteCount >
+        MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
+      result.normalizationDiagnostic?.contractVersion !==
+        OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      result.normalizationDiagnostic?.failedMotionCount !== 2 ||
+      JSON.stringify(actualIssues) !== JSON.stringify(expectedIssues) ||
+      actualIssueKeys?.some((keys) =>
+        JSON.stringify(keys) !==
+          JSON.stringify(['instancePath', 'keyword'])) ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.commercialDiscoveryEvidence !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(rawSentinel) ||
+      JSON.stringify(result).includes(invalidConversionDestination) ||
+      JSON.stringify(result).includes(invalidDiscoveryLink)) {
+    throw new Error(
+      `Fireworks production strict-schema mismatch did not fail once after exact completed accounting: ${JSON.stringify({
+        calls,
+        routeIgnore: requestSeen?.provider?.ignore,
+        wireSchemaParity:
+          JSON.stringify(wireRequestSeen?.response_format) ===
+            JSON.stringify(requestSeen?.responseFormat),
+        status: result.status,
+        plans: result.plans?.length,
+        planSelection: result.planSelection,
+        usage: result.usage,
+        receipt,
+        preflight: result.preflight,
+        normalizationDiagnostic: result.normalizationDiagnostic,
+        criticPresent: result.llm?.commercialCritic !== undefined,
+        repairPresent: result.llm?.strategyFamilyRepair !== undefined,
+        discoveryPresent:
+          result.commercialDiscoveryEvidence !== undefined,
+        sideEffectsPerformed: result.sideEffectsPerformed,
+        rawSentinelPresent: JSON.stringify(result).includes(rawSentinel)
+      })}`
+    );
+  }
+}
+
 async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
   const expectedIgnore = [
     'cloudflare',
@@ -8075,7 +8328,8 @@ async function verifyWaferAndAtlasProductionPartialTracesFailOnce(job) {
     'siliconflow',
     'wafer',
     'ambient',
-    'baidu'
+    'baidu',
+    'fireworks'
   ];
   for (const scenario of [{
     provider: 'Wafer',

@@ -216,7 +216,9 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // stream later reached 19,990 bytes and 6,235 events without finish or usage
   // before the exact 300-second local total deadline. Baidu returned a
   // completed HTTP-200/stop response that violated the exact strict schema in
-  // eight independently validated fields across both returned motions.
+  // eight independently validated fields across both returned motions, and
+  // Fireworks later returned a completed HTTP-200/stop response that violated
+  // four exact pattern constraints across both returned motions.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
   ignore: [
@@ -228,7 +230,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'siliconflow',
     'wafer',
     'ambient',
-    'baidu'
+    'baidu',
+    'fireworks'
   ],
   sort: 'throughput',
   allow_fallbacks: true,
