@@ -1897,6 +1897,7 @@ await verifyTypedCausalWitnessContract(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyMaximumFamilyEvidenceContainment();
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
+await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
 await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
 verifyCausalPairReservationSurvivesCrowding();
@@ -5061,7 +5062,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             'open-inference',
             'decart',
             'digitalocean',
-            'akashml'
+            'akashml',
+            'siliconflow'
           ],
           sort: 'throughput',
           allow_fallbacks: true,
@@ -7496,6 +7498,111 @@ async function verifyTruncatedPlannerFailsOnceWithSafeReceipt(job) {
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `truncated planner did not fail once with a safe cause-matched receipt: ${JSON.stringify({ calls, requestMaxTokens: requestSeen?.maxTokens, result })}`
+    );
+  }
+}
+
+async function verifySiliconFlowProductionTimeoutFailsOnce(job) {
+  let calls = 0;
+  let requestSeen;
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      calls += 1;
+      requestSeen = request;
+      const error = new Error(
+        'OpenRouter streaming request exceeded its bounded total deadline'
+      );
+      error.openRouterFailureCode = 'openrouter_timeout';
+      error.openRouterGenerationId =
+        'generation-siliconflow-production-timeout';
+      error.openRouterDiagnostics = {
+        httpStatus: 200,
+        routerStrategy: 'default',
+        routerAttempt: 1,
+        routerCandidateCount: 15,
+        routerAttemptSequenceSource: 'reported',
+        routerSelectedEndpointEvidenced: true,
+        routerSelectedProvider: 'SiliconFlow',
+        routerSelectedModel: 'deepseek/deepseek-v4-flash-20260731',
+        routerEnvelopeProvider: 'SiliconFlow',
+        routerEnvelopeModel: 'deepseek/deepseek-v4-flash-0731',
+        routerFinalAttemptProvider: 'SiliconFlow',
+        routerFinalAttemptModel: 'deepseek/deepseek-v4-flash-20260731',
+        routerAttemptStatuses: [200],
+        routerAttempts: [{
+          provider: 'SiliconFlow',
+          model: 'deepseek/deepseek-v4-flash-20260731',
+          status: 200
+        }],
+        contentByteCount: 37_767,
+        contentSha256: '6'.repeat(64),
+        streaming: true,
+        streamEventCount: 7_457,
+        streamWireByteCount: 1_776_412,
+        streamFirstDataLatencyMs: 1_233,
+        streamDurationMs: 300_007,
+        streamCompleted: false,
+        timeoutKind: 'total',
+        timeoutOrigin: 'profilescribe_local_deadline',
+        timeoutDeadlineMs: 300_000,
+        timeoutElapsedMs: 300_007,
+        timeoutPhase: 'response_stream',
+        responseHeadersReceived: true
+      };
+      throw error;
+    }
+  });
+  const receipt = result.llm?.discoveryPlanner;
+  const diagnostics = receipt?.responseDiagnostics;
+  const expectedIgnore = [
+    'cloudflare',
+    'open-inference',
+    'decart',
+    'digitalocean',
+    'akashml',
+    'siliconflow'
+  ];
+  if (calls !== 1 ||
+      requestSeen?.maxTokens !== 42_000 ||
+      requestSeen?.streamTotalTimeoutMs !== 300_000 ||
+      JSON.stringify(requestSeen?.provider?.ignore) !==
+        JSON.stringify(expectedIgnore) ||
+      requestSeen?.provider?.sort !== 'throughput' ||
+      requestSeen?.provider?.allow_fallbacks !== true ||
+      requestSeen?.provider?.require_parameters !== true ||
+      requestSeen?.provider?.data_collection !== 'deny' ||
+      result.status !== 'blocked' || result.plans.length !== 0 ||
+      result.usage?.calls !== 1 || result.usage?.successfulCalls !== 0 ||
+      result.usage?.promptTokens !== 0 ||
+      result.usage?.completionTokens !== 0 ||
+      receipt?.status !== 'failed' ||
+      receipt?.error !== 'openrouter_timeout' ||
+      JSON.stringify(receipt?.openRouterUsage) !== '{}' ||
+      diagnostics?.httpStatus !== 200 ||
+      diagnostics?.routerSelectedProvider !== 'SiliconFlow' ||
+      diagnostics?.contentByteCount !== 37_767 ||
+      diagnostics?.streamEventCount !== 7_457 ||
+      diagnostics?.streamDurationMs !== 300_007 ||
+      diagnostics?.streamCompleted !== false ||
+      diagnostics?.timeoutKind !== 'total' ||
+      diagnostics?.timeoutOrigin !== 'profilescribe_local_deadline' ||
+      diagnostics?.timeoutDeadlineMs !== 300_000 ||
+      diagnostics?.timeoutElapsedMs !== 300_007 ||
+      diagnostics?.timeoutPhase !== 'response_stream' ||
+      diagnostics?.responseHeadersReceived !== true ||
+      diagnostics?.finishReason !== undefined ||
+      diagnostics?.nativeFinishReason !== undefined ||
+      result.llm?.commercialCritic !== undefined ||
+      result.llm?.strategyFamilyRepair !== undefined ||
+      result.sideEffectsPerformed !== 0 ||
+      JSON.stringify(result).includes(
+        'raw-siliconflow-timeout-secret-sentinel'
+      )) {
+    throw new Error(
+      `SiliconFlow production timeout did not fail once with a safe receipt: ${JSON.stringify({ calls, request: requestSeen, result })}`
     );
   }
 }

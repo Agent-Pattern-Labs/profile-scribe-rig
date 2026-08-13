@@ -207,7 +207,9 @@ const TOURNAMENT_PROVIDER_ROUTING = {
   // Decart returned HTTP 200/stop while violating eight strict-schema
   // minLength constraints with empty compact fields, DigitalOcean emitted only
   // 3,014 content bytes before the exact 300-second planner deadline, and
-  // AkashML streamed only 13,787 bytes before that same current-contract limit.
+  // AkashML streamed only 13,787 bytes before that same current-contract limit,
+  // and SiliconFlow's HTTP-200 stream reached 37,767 bytes but never returned
+  // finish or usage before the exact 300-second local total deadline.
   // Other historical failures occurred under the retired 64k/192-KiB
   // contract, so they remain eligible for OpenRouter's default routing.
   ignore: [
@@ -215,7 +217,8 @@ const TOURNAMENT_PROVIDER_ROUTING = {
     'open-inference',
     'decart',
     'digitalocean',
-    'akashml'
+    'akashml',
+    'siliconflow'
   ],
   sort: 'throughput',
   allow_fallbacks: true,

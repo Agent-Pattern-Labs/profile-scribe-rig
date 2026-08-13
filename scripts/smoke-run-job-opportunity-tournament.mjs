@@ -2956,7 +2956,8 @@ function verifyGeneratorCall(call, expectedMaxTokens) {
       'open-inference',
       'decart',
       'digitalocean',
-      'akashml'
+      'akashml',
+      'siliconflow'
     ]),
     'generator lost its evidence-backed provider quarantine'
   );
