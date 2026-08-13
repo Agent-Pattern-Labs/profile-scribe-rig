@@ -1869,7 +1869,7 @@ async function verifyRunJobUsesStreamingTransport() {
     );
     assertEqual(
       providerRequest?.provider?.ignore?.join(','),
-      'cloudflare,open-inference,decart,digitalocean,akashml,siliconflow,wafer,ambient,baidu,fireworks,morph,atlas-cloud,parasail,together',
+      'cloudflare,open-inference,decart,digitalocean,akashml,siliconflow,wafer,ambient,baidu,fireworks,morph,atlas-cloud,parasail,together,deepinfra',
       'overflow request lost the evidence-backed route quarantine'
     );
   } finally {
