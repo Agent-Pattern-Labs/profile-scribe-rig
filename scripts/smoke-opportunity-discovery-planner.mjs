@@ -2232,12 +2232,14 @@ await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
 // The 2026-08-13 Atlas production trace reached the former 18k-token ceiling
 // after 99,271 ms with 27,149 content bytes and finish=length. The strict
-// schema's exact derived serialized bound is 31,552 bytes. A tokenizer with
+// schema's exact derived serialized bound is 31,552 bytes in the local
+// fixture and 31,920 bytes in the Linux deployment fixture. Both generated
+// schemas remain finite and below the shared 34,400-byte proof ceiling. A tokenizer with
 // byte fallback cannot require more tokens than the encoded byte count, so the
 // current 42k ceiling covers the entire 40,960-byte runtime cap plus 1,024
 // tokens of explicit headroom. Retain the trace projection as a
 // production-derived timing and compression regression: the schema projects
-// to about 20,920 native tokens and 42k projects to 231,633 ms, inside the
+// to at most 21,164 native tokens and 42k projects to 231,633 ms, inside the
 // 300-second deadline.
 const observedPlannerCompletionTokens = 18_000;
 const observedPlannerContentBytes = 27_149;
@@ -2255,11 +2257,20 @@ const projectedPlannerDurationMs = Math.ceil(
   observedPlannerDurationMs * DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS /
     observedPlannerCompletionTokens
 );
-if (computedPlannerSchemaResponseBoundBytes !== 31_552 ||
+const supportedSchemaTokenProjection = new Map([
+  [31_552, 20_920],
+  [31_920, 21_164]
+]);
+if (!supportedSchemaTokenProjection.has(
+  computedPlannerSchemaResponseBoundBytes
+) ||
     DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS <
       MAX_DISCOVERY_PLANNER_RESPONSE_BYTES + 1_024 ||
     observedPlannerFinishReason !== 'length' ||
-    projectedSchemaMaximumOutputTokens !== 20_920 ||
+    projectedSchemaMaximumOutputTokens !==
+      supportedSchemaTokenProjection.get(
+        computedPlannerSchemaResponseBoundBytes
+      ) ||
     projectedRuntimeMaximumOutputTokens !== 27_157 ||
     projectedPlannerDurationMs !== 231_633 ||
     projectedSchemaMaximumOutputTokens > DISCOVERY_PLANNER_MAX_OUTPUT_TOKENS ||
