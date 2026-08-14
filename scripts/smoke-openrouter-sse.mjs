@@ -2044,6 +2044,14 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
     l: label,
     e: refs
   });
+  const buyerItem = (refs = [observationRef]) => ({
+    l: {
+      referral: 'Qualified payer for the paid opportunity',
+      buyer: 'Qualified payer {{TARGET_NAME}} for the paid opportunity',
+      paidDemand: 'Qualified employer {{TARGET_NAME}} for the paid role'
+    },
+    e: refs
+  });
   const pathBase = {
     r: [{
       l: 'Paid delivery consulting contract outcome',
@@ -2077,8 +2085,8 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
       item('Paid delivery system diagnostic engagement')
     ],
     b: [
-      item('{{TARGET_NAME}}: validated commercial buyer'),
-      item('{{TARGET_NAME}}: prospective buyer of the current paid offer')
+      buyerItem(),
+      buyerItem()
     ],
     t: [{
       ...item('Current target demand verification'),
