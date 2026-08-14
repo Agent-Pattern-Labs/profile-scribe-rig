@@ -145,7 +145,7 @@ const server = createServer(async (request, response) => {
       'X-Provider-Name': 'Slow Body Provider'
     });
     response.flushHeaders();
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 2_500));
     if (!response.destroyed) {
       response.end('raw-slow-body-secret-sentinel');
     }
@@ -1282,7 +1282,7 @@ try {
   );
   const slowResponseBodyCallOffset = providerCalls.length;
   const slowResponseBody = await runJob(slowResponseBodyFile, port, {
-    env: { PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS: '250' }
+    env: { PROFILESCRIBE_RIG_OPENROUTER_TIMEOUT_MS: '1000' }
   });
   verifySlowResponseBodyTimeout(
     slowResponseBody,
@@ -2980,9 +2980,9 @@ function verifySlowResponseBodyTimeout(receipt, calls) {
     true,
     'slow body header state'
   );
-  assertEqual(diagnostics.timeoutDeadlineMs, 250, 'slow body deadline');
+  assertEqual(diagnostics.timeoutDeadlineMs, 1_000, 'slow body deadline');
   assert(
-    diagnostics.timeoutElapsedMs >= 230,
+    diagnostics.timeoutElapsedMs >= 900,
     `slow body elapsed time missing: ${JSON.stringify(diagnostics)}`
   );
   assert(

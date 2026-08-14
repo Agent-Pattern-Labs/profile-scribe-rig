@@ -14,6 +14,7 @@ import {
   localStructuredOutputValidatorCacheStats,
   normalizeCommercialDiscoveryEvidence,
   opportunityCommercialDiscoveryCapabilities,
+  opportunityDiscoveryPlannerProjectionIssue,
   repairAndValidateOpenRouterJSONMessage,
   serializeOpenRouterJSONRequestBody,
   validateOpportunityCommercialDiscoveryNoTargetEnvelope,
@@ -37,6 +38,194 @@ const COMPENSATED_JOB_PAID_OFFER =
   'A current compensated role matching verified professional skills';
 const UNSAFE_INJECTED_GENERATION_ID_SENTINEL =
   `raw-generation-id-secret-sentinel/${'x'.repeat(400)}`;
+const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS = Object.freeze([
+  '#/$defs/canonicalText48/pattern',
+  '#/$defs/canonicalText64/pattern',
+  '#/$defs/canonicalText96/pattern',
+  '#/$defs/canonicalText120/pattern',
+  '#/$defs/commercialSemanticText96/pattern',
+  '#/$defs/commercialSemanticText100/pattern',
+  '#/$defs/commercialSemanticText120/pattern',
+  '#/$defs/commercialOptionalSemanticText100/pattern',
+  '#/$defs/paidOutcomeText120/pattern',
+  '#/$defs/compensatedJobPaidOfferText140/pattern',
+  '#/$defs/conversionDestinationText120/pattern',
+  '#/$defs/attributionSignalText140/pattern',
+  '#/$defs/compactBuyerLabel/pattern',
+  '#/$defs/compactChannelLabel/pattern',
+  '#/$defs/compactActionLabel/pattern'
+]);
+const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 =
+  '86be7cdcd33d87e3b4a1e6d9dd358145624abac78d6eef6b16c0539a21d986bf';
+const CURRENT_LUNA_AUTHORED_TEXT_DESCRIPTION =
+  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/ats/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source"; b.l referral="Qualified buyer for paid service", buyer="Qualified buyer {{TARGET_NAME}} for paid service", demand="Qualified employer {{TARGET_NAME}} for paid role"; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
+const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
+  referral_partner: Object.freeze({
+    buyer: 'Qualified buyer for paid service',
+    channel: 'Review-first public professional profile {{TARGET_URL}}',
+    actions: Object.freeze([
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service',
+      'After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking'
+    ])
+  }),
+  buyer: Object.freeze({
+    buyer: 'Qualified buyer {{TARGET_NAME}} for paid service',
+    channel: 'Review-first public professional profile {{TARGET_URL}}',
+    actions: Object.freeze([
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service',
+      'After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service'
+    ])
+  }),
+  paid_demand: Object.freeze({
+    buyer: 'Qualified employer {{TARGET_NAME}} for paid role',
+    channel:
+      'Review-first official paid-demand page {{TARGET_URL}} for paid-role verification',
+    actions: Object.freeze([
+      'After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}',
+      'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}'
+    ])
+  })
+});
+
+function schemaSHA256(value) {
+  return createHash('sha256')
+    .update(JSON.stringify(value), 'utf8')
+    .digest('hex');
+}
+
+function jsonDifferencePaths(leftValue, rightValue, path = '#') {
+  if (Object.is(leftValue, rightValue)) return [];
+  if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+    if (!Array.isArray(leftValue) || !Array.isArray(rightValue) ||
+        leftValue.length !== rightValue.length) return [path];
+    return leftValue.flatMap((item, index) => jsonDifferencePaths(
+      item,
+      rightValue[index],
+      `${path}/${index}`
+    ));
+  }
+  const leftObject = leftValue && typeof leftValue === 'object';
+  const rightObject = rightValue && typeof rightValue === 'object';
+  if (leftObject || rightObject) {
+    if (!leftObject || !rightObject) return [path];
+    return [...new Set([
+      ...Object.keys(leftValue),
+      ...Object.keys(rightValue)
+    ])].flatMap((key) => {
+      const childPath = `${path}/${key.replaceAll('~', '~0')
+        .replaceAll('/', '~1')}`;
+      if (!Object.prototype.hasOwnProperty.call(leftValue, key) ||
+          !Object.prototype.hasOwnProperty.call(rightValue, key)) {
+        return [childPath];
+      }
+      return jsonDifferencePaths(leftValue[key], rightValue[key], childPath);
+    });
+  }
+  return [path];
+}
+
+function verifyProjectedPatternsRemainExactLocalAuthority({
+  canonicalSchema,
+  providerSchema
+}) {
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  for (const path of CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS) {
+    const definitionName = path.split('/')[2];
+    const canonicalDefinition = canonicalSchema?.$defs?.[definitionName];
+    const providerDefinition = providerSchema?.$defs?.[definitionName];
+    if (!canonicalDefinition || !providerDefinition ||
+        typeof canonicalDefinition.pattern !== 'string' ||
+        Object.prototype.hasOwnProperty.call(providerDefinition, 'pattern')) {
+      throw new Error(`projection pattern authority drifted at ${path}`);
+    }
+    const minimum = Number.isInteger(canonicalDefinition.minLength)
+      ? canonicalDefinition.minLength
+      : 1;
+    const maximum = Number.isInteger(canonicalDefinition.maxLength)
+      ? canonicalDefinition.maxLength
+      : Math.max(minimum, 80);
+    const adversary = ' '.repeat(Math.min(maximum, Math.max(minimum, 8)));
+    const canonicalValidate = ajv.compile(canonicalDefinition);
+    const providerValidate = ajv.compile(providerDefinition);
+    if (canonicalValidate(adversary) || !providerValidate(adversary) ||
+        canonicalValidate.errors?.[0]?.keyword !== 'pattern') {
+      throw new Error(
+        `projection path ${path} lost its exact local AJV adversary`
+      );
+    }
+  }
+  const canonicalDefinitionPatterns = Object.values(
+    canonicalSchema?.$defs || {}
+  ).filter((definition) => typeof definition?.pattern === 'string').length;
+  const providerDefinitionPatterns = Object.values(
+    providerSchema?.$defs || {}
+  ).filter((definition) => typeof definition?.pattern === 'string').length;
+  const canonicalSellerPattern = canonicalSchema?.properties?.plans?.items
+    ?.properties?.paidOffer?.properties?.seller?.pattern;
+  const providerSellerPattern = providerSchema?.properties?.plans?.items
+    ?.properties?.paidOffer?.properties?.seller?.pattern;
+  const canonicalFollowUpPattern = canonicalSchema?.$defs?.followUpItem
+    ?.properties?.l?.pattern;
+  const providerFollowUpPattern = providerSchema?.$defs?.followUpItem
+    ?.properties?.l?.pattern;
+  if (canonicalDefinitionPatterns !== 30 ||
+      providerDefinitionPatterns !== 15 ||
+      canonicalSellerPattern !== providerSellerPattern ||
+      canonicalFollowUpPattern !== providerFollowUpPattern ||
+      typeof canonicalFollowUpPattern !== 'string') {
+    throw new Error(
+      `projection did not retain the exact historical pattern cohort: ${JSON.stringify({ canonicalDefinitionPatterns, providerDefinitionPatterns, sellerPatternPreserved: canonicalSellerPattern === providerSellerPattern, followUpPatternPreserved: canonicalFollowUpPattern === providerFollowUpPattern })}`
+    );
+  }
+}
+
+function verifyAuthoredTextContractFitsCanonicalSchema({
+  canonicalSchema
+}) {
+  if (canonicalSchema?.description !==
+      CURRENT_LUNA_AUTHORED_TEXT_DESCRIPTION) {
+    throw new Error('current Luna authored-text contract drifted');
+  }
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  const samples = {
+    canonicalText48: ['Current paid service'],
+    canonicalText64: ['Current paid service'],
+    canonicalText96: ['Current paid service'],
+    canonicalText120: ['Current paid service'],
+    commercialSemanticText96: ['Current paid service'],
+    commercialSemanticText100: ['Current paid service'],
+    commercialSemanticText120: ['Current paid service'],
+    commercialOptionalSemanticText100: ['Current paid service'],
+    paidOutcomeText120: ['Paid booking'],
+    compensatedJobPaidOfferText140: ['Paid role'],
+    conversionDestinationText120: ['Booking service'],
+    attributionSignalText140: ['Referral source'],
+    compactBuyerLabel: Object.values(CURRENT_LUNA_ROLE_EXAMPLES).map(
+      (example) => example.buyer
+    ),
+    compactChannelLabel: Object.values(CURRENT_LUNA_ROLE_EXAMPLES).map(
+      (example) => example.channel
+    ),
+    compactActionLabel: Object.values(CURRENT_LUNA_ROLE_EXAMPLES).flatMap(
+      (example) => example.actions
+    )
+  };
+  if (JSON.stringify(Object.keys(samples).map((name) =>
+    `#/$defs/${name}/pattern`
+  )) !== JSON.stringify(CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS)) {
+    throw new Error('authored-text examples lost exact projection coverage');
+  }
+  for (const [name, definitionSamples] of Object.entries(samples)) {
+    const validate = ajv.compile(canonicalSchema?.$defs?.[name]);
+    for (const sample of definitionSamples) {
+      if (!validate(sample)) {
+        throw new Error(
+          `authored-text example violates canonical ${name}: ${JSON.stringify(validate.errors)}`
+        );
+      }
+    }
+  }
+}
 
 // Normal planner fixtures exercise business/schema behavior, so give each
 // successful injected completion the same direct-route receipt required at the
@@ -723,6 +912,11 @@ for (const scenario of cases) {
         ?.minItems !== 2 ||
       requestSeen.responseFormat?.json_schema?.schema?.properties?.plans
         ?.maxItems !== 2 ||
+      (requestSeen.model === 'openai/gpt-5.6-luna'
+        ? requestSeen.responseFormat?.json_schema?.schema?.description !==
+          CURRENT_LUNA_AUTHORED_TEXT_DESCRIPTION
+        : requestSeen.responseFormat?.json_schema?.schema?.description !==
+          undefined) ||
       JSON.stringify(
         requestSeen.responseFormat?.json_schema?.schema?.properties?.status
           ?.enum
@@ -841,7 +1035,7 @@ for (const scenario of cases) {
       result.preflight?.providerPromptEnvelope
         ?.minimumSoftHeadroomByteCount !== 512) {
     throw new Error(
-      `${scenario.name}: call-1 request lost its 512-byte soft headroom`
+      `${scenario.name}: call-1 request lost its 512-byte soft headroom (${result.preflight?.requestBodyByteCount} bytes)`
     );
   }
   const plannerPrompt = JSON.parse(requestSeen.user || '{}');
@@ -1974,6 +2168,7 @@ await verifySingleOperationalVariantCanBePruned(unsafeJob, unsafeRef);
 await verifyLinkedRecoveryCannotBeBusinessAction(unsafeJob, unsafeRef);
 await verifySupportingBottleneckIsMissingEvidence(unsafeJob, unsafeRef);
 await verifyQualifiedPartnerReferralActionsPass(unsafeJob, unsafeRef);
+await verifyAuthoredTextRoleExamplesPassFullPlanner();
 await verifyCompactConversionActionProjection(unsafeJob, unsafeRef);
 await verifyRepeatedOptionalRoleActionsArePruned(unsafeJob, unsafeRef);
 await verifyPaidDemandResponseActionVerbs(unsafeJob, unsafeRef);
@@ -1987,6 +2182,9 @@ await verifyTypedCausalWitnessContract(unsafeJob, unsafeRef);
 await verifyRawOverCardinalityFailsClosed(unsafeJob, unsafeRef);
 await verifyMaximumFamilyEvidenceContainment();
 await verifyCurrentLunaGeneratorRouteQualification(unsafeJob, unsafeRef);
+await verifyCurrentLunaProductionLengthFailuresPreserveProjection(
+  unsafeJob
+);
 await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
 await verifyAmbientProductionTimeoutFailsOnce(unsafeJob);
@@ -5177,6 +5375,14 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             completion: 1.2,
             request: 0
           },
+          structuredOutputProjection: {
+            contractVersion:
+              'opportunity_discovery_provider_schema_projection_v1',
+            omittedPatternPathsSha256:
+              '86be7cdcd33d87e3b4a1e6d9dd358145624abac78d6eef6b16c0539a21d986bf',
+            omittedPatternCount: 15,
+            localExactSchemaRequired: true
+          },
           reasoning: { effort: 'none', exclude: true },
           pluginIds: [],
           requestMaxBytes: 44 * 1_024,
@@ -7396,6 +7602,79 @@ async function plannerResultForMotion({ job, motion, generationId }) {
   });
 }
 
+async function verifyAuthoredTextRoleExamplesPassFullPlanner() {
+  const roleScenarios = [
+    { scenario: cases[0], motionIndex: 0, role: 'referral_partner' },
+    { scenario: cases[2], motionIndex: 1, role: 'buyer' },
+    { scenario: cases[1], motionIndex: 0, role: 'paid_demand' }
+  ];
+  for (const { scenario, motionIndex, role } of roleScenarios) {
+    const job = plannerJob(scenario);
+    const catalog = buildEvidenceCatalog(job.payload, {}, now, {
+      includeSystemAttributionCapability: true
+    });
+    const evidenceRef = catalog.find((item) =>
+      typeof item.id === 'string' && item.id.startsWith('observation:')
+    )?.id;
+    if (!evidenceRef) {
+      throw new Error(`${role} authored-text fixture lost approved evidence`);
+    }
+    const motion = scenario.plans(evidenceRef)[motionIndex];
+    motion.contingentFinalists = compactContingentFinalists(
+      motion.contingentFinalists
+    );
+    const examples = CURRENT_LUNA_ROLE_EXAMPLES[role];
+    motion.paidOffer = {
+      seller: motion.paidOffer,
+      compensatedJob: 'Paid role'
+    };
+    const revenue = motion.contingentFinalists.pathBase.r[0];
+    revenue.io = 'Paid booking';
+    revenue.cd = 'Booking service';
+    revenue.ats = 'Referral source';
+    revenue.g.d.l = 'Booking service';
+    motion.contingentFinalists.pathBase.b[0].l = examples.buyer;
+    for (const tacticKey of ['tacticA', 'tacticB']) {
+      const tactic = motion.contingentFinalists[tacticKey];
+      tactic.c[0].l = examples.channel;
+      tactic.a[0].l = examples.actions[0];
+      tactic.a[1].l = examples.actions[1];
+    }
+    const accepted = await plannerResultForMotion({
+      job,
+      motion,
+      generationId: `generation-authored-text-${role}`
+    });
+    const matchingMotions = accepted.plans.filter((item) =>
+      item.commercialRole === role &&
+      item.motionKind === motion.motionKind
+    );
+    const acceptedMotion = matchingMotions[0];
+    const families = ['familyA', 'familyB'].map((familyKey) =>
+      acceptedMotion?.contingentFinalists?.[familyKey]
+    );
+    if (accepted.status !== 'planned' || matchingMotions.length !== 1 ||
+        accepted.normalizationDiagnostic != null ||
+        accepted.sideEffectsPerformed !== 0 ||
+        (role === 'paid_demand' &&
+          acceptedMotion?.paidOffer !== 'Paid role') ||
+        families.some((family) =>
+          family?.d?.r?.[0]?.io !== 'Paid booking' ||
+          family?.d?.r?.[0]?.cd !== 'Booking service' ||
+          family?.d?.r?.[0]?.ats !== 'Referral source' ||
+          family?.d?.r?.[0]?.g?.d?.l !== 'Booking service' ||
+          family?.d?.b?.[0]?.l !== examples.buyer ||
+          family?.d?.c?.[0]?.l !== examples.channel ||
+          JSON.stringify(family?.d?.a?.map((item) => item.l)) !==
+            JSON.stringify(examples.actions)
+        )) {
+      throw new Error(
+        `${role} authored-text examples failed full planner semantics: ${JSON.stringify(accepted)}`
+      );
+    }
+  }
+}
+
 async function verifyRepeatedOptionalRoleActionsArePruned(
   job,
   evidenceRef
@@ -7581,6 +7860,15 @@ async function verifyCurrentLunaGeneratorRouteQualification(
     }
   });
   const serialized = serializeOpenRouterJSONRequestBody(requestSeen);
+  const wireRequest = JSON.parse(serialized);
+  const canonicalSchema = requestSeen?.responseFormat?.json_schema?.schema;
+  const providerSchema = wireRequest?.response_format?.json_schema?.schema;
+  const projection = result.preflight?.structuredOutputProjection;
+  verifyProjectedPatternsRemainExactLocalAuthority({
+    canonicalSchema,
+    providerSchema
+  });
+  verifyAuthoredTextContractFitsCanonicalSchema({ canonicalSchema });
   if (result.status !== 'planned' ||
       result.usage?.calls !== 1 ||
       result.usage?.successfulCalls !== 1 ||
@@ -7605,6 +7893,41 @@ async function verifyCurrentLunaGeneratorRouteQualification(
       !serialized.includes(
         '"reasoning":{"effort":"none","exclude":true}'
       ) ||
+      JSON.stringify(jsonDifferencePaths(
+        canonicalSchema,
+        providerSchema
+      )) !== JSON.stringify(CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS) ||
+      CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS.some((path) => {
+        const segments = path.slice(2).split('/');
+        const canonicalParent = segments.slice(0, -1).reduce(
+          (value, segment) => value?.[segment],
+          canonicalSchema
+        );
+        const providerParent = segments.slice(0, -1).reduce(
+          (value, segment) => value?.[segment],
+          providerSchema
+        );
+        return typeof canonicalParent?.pattern !== 'string' ||
+          Object.prototype.hasOwnProperty.call(
+            providerParent || {},
+            'pattern'
+          );
+      }) ||
+      projection?.contractVersion !==
+        'opportunity_discovery_provider_schema_projection_v1' ||
+      projection?.canonicalSchemaSha256 !==
+        schemaSHA256(canonicalSchema) ||
+      projection?.providerSchemaSha256 !== schemaSHA256(providerSchema) ||
+      projection?.canonicalSchemaSha256 ===
+        projection?.providerSchemaSha256 ||
+      projection?.omittedPatternPathsSha256 !==
+        CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 ||
+      projection?.omittedPatternCount !== 15 ||
+      projection?.localExactSchemaRequired !== true ||
+      result.preflight?.requestBodyByteCount !==
+        Buffer.byteLength(serialized, 'utf8') ||
+      result.preflight?.requestBodySha256 !== createHash('sha256')
+        .update(serialized, 'utf8').digest('hex') ||
       result.llm?.discoveryPlanner?.requestedModel !==
         'openai/gpt-5.6-luna' ||
       result.llm?.discoveryPlanner?.model !==
@@ -7619,6 +7942,253 @@ async function verifyCurrentLunaGeneratorRouteQualification(
       result.sideEffectsPerformed !== 0) {
     throw new Error(
       `current Luna generator route qualification failed: ${JSON.stringify({ requestSeen, result })}`
+    );
+  }
+
+  let projectionBoundaryCalls = 0;
+  const guardedProjectionDispatch = async (request, preflight) => {
+    const issue = opportunityDiscoveryPlannerProjectionIssue(
+      request,
+      preflight
+    );
+    if (issue) return issue;
+    projectionBoundaryCalls += 1;
+    return '';
+  };
+  for (const [label, requestMutation, preflightMutation, expectedIssue] of [[
+    'missing-schema-name',
+    (request) => {
+      delete request.responseFormat.json_schema.name;
+    },
+    () => {},
+    'provider_schema_projection_contract_missing'
+  ], [
+    'wrong-schema-name',
+    (request) => {
+      request.responseFormat.json_schema.name = 'wrong_planner_contract';
+    },
+    () => {},
+    'provider_schema_projection_contract_missing'
+  ], [
+    'missing-schema-description',
+    (request) => {
+      delete request.responseFormat.json_schema.schema.description;
+    },
+    () => {},
+    'provider_schema_projection_request_invalid'
+  ], [
+    'mutated-schema-description',
+    (request) => {
+      request.responseFormat.json_schema.schema.description += ' drift';
+    },
+    () => {},
+    'provider_schema_projection_request_invalid'
+  ], [
+    'missing-projection-marker',
+    () => {},
+    (preflight) => {
+      delete preflight.structuredOutputProjection;
+    },
+    'provider_schema_projection_proof_invalid'
+  ], [
+    'mutated-projection-marker',
+    () => {},
+    (preflight) => {
+      preflight.structuredOutputProjection.providerSchemaSha256 =
+        '0'.repeat(64);
+    },
+    'provider_schema_projection_proof_invalid'
+  ]]) {
+    const request = structuredClone(requestSeen);
+    const preflight = structuredClone(result.preflight);
+    requestMutation(request);
+    preflightMutation(preflight);
+    const issue = await guardedProjectionDispatch(request, preflight);
+    if (issue !== expectedIssue) {
+      throw new Error(
+        `${label} lost its pre-provider projection fence: ${issue}`
+      );
+    }
+  }
+  if (projectionBoundaryCalls !== 0) {
+    throw new Error(
+      'invalid projection proof reached the planner provider callback'
+    );
+  }
+
+  const historicalReplayRequest = structuredClone(requestSeen);
+  historicalReplayRequest.model = 'deepseek/deepseek-v4-flash-0731';
+  historicalReplayRequest.models = ['deepseek/deepseek-v4-flash-0731'];
+  if (opportunityDiscoveryPlannerProjectionIssue(
+    historicalReplayRequest,
+    {}
+  ) !== '') {
+    throw new Error(
+      'exact injected historical planner replay lost compatibility'
+    );
+  }
+  historicalReplayRequest.model =
+    'deepseek/deepseek-v4-flash-20260731';
+  historicalReplayRequest.models = [
+    'deepseek/deepseek-v4-flash-20260731'
+  ];
+  if (opportunityDiscoveryPlannerProjectionIssue(
+    historicalReplayRequest,
+    {}
+  ) !== 'provider_schema_projection_model_invalid') {
+    throw new Error(
+      'historical provider-returned identity gained planner dispatch authority'
+    );
+  }
+
+  for (const [label, configuredModel] of [
+    ['permaslug', 'openai/gpt-5.6-luna-20260709'],
+    ['case', 'OpenAI/gpt-5.6-luna'],
+    ['leading-whitespace', ' openai/gpt-5.6-luna'],
+    ['trailing-whitespace', 'openai/gpt-5.6-luna ']
+  ]) {
+    let invalidModelProviderCalls = 0;
+    const invalidModel = await runOpportunityDiscoveryPlannerRaw({
+      job,
+      model: configuredModel,
+      now,
+      completeJSON: async () => {
+        invalidModelProviderCalls += 1;
+        throw new Error(`${label} config reached provider`);
+      }
+    });
+    if (invalidModelProviderCalls !== 0 ||
+        invalidModel.status !== 'blocked' ||
+        invalidModel.preflight?.authorized !== false ||
+        invalidModel.preflight?.cause !==
+          'provider_schema_projection_model_invalid' ||
+        invalidModel.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${label} Luna config crossed the pre-provider fence: ${JSON.stringify(invalidModel)}`
+      );
+    }
+  }
+
+  for (const [label, mutation] of [
+    ['request-model-permaslug', (request) => {
+      request.model = 'openai/gpt-5.6-luna-20260709';
+    }],
+    ['request-model-missing', (request) => {
+      request.model = '';
+    }],
+    ['request-model-case', (request) => {
+      request.model = 'OpenAI/gpt-5.6-luna';
+    }],
+    ['request-models-permaslug', (request) => {
+      request.models = ['openai/gpt-5.6-luna-20260709'];
+    }],
+    ['provider-sort', (request) => {
+      request.provider.sort = 'throughput';
+    }],
+    ['provider-service-tier', (request) => {
+      request.provider.service_tier = 'priority';
+    }],
+    ['request-service-tier', (request) => {
+      request.service_tier = 'priority';
+    }],
+    ['response-format-key', (request) => {
+      request.responseFormat.unreviewed = true;
+    }],
+    ['json-schema-key', (request) => {
+      request.responseFormat.json_schema.unreviewed = true;
+    }],
+    ['json-schema-name-whitespace', (request) => {
+      request.responseFormat.json_schema.name =
+        ` ${OPPORTUNITY_DISCOVERY_PLAN_CONTRACT}`;
+    }]
+  ]) {
+    const mutated = structuredClone(requestSeen);
+    mutation(mutated);
+    let rejected = false;
+    try {
+      serializeOpenRouterJSONRequestBody(mutated);
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) {
+      throw new Error(`${label} escaped the exact Luna projection route`);
+    }
+  }
+
+  const historicalRequest = structuredClone(requestSeen);
+  historicalRequest.model = 'deepseek/deepseek-v4-flash-0731';
+  historicalRequest.models = ['deepseek/deepseek-v4-flash-0731'];
+  historicalRequest.reasoning = { enabled: false, exclude: true };
+  const historicalWire = JSON.parse(
+    serializeOpenRouterJSONRequestBody(historicalRequest)
+  );
+  const criticRequest = structuredClone(requestSeen);
+  criticRequest.responseFormat.json_schema.name =
+    'opportunity_tournament_critic_v1';
+  const criticWire = JSON.parse(serializeOpenRouterJSONRequestBody(
+    criticRequest
+  ));
+  if (JSON.stringify(historicalWire.response_format) !==
+        JSON.stringify(historicalRequest.responseFormat) ||
+      JSON.stringify(criticWire.response_format) !==
+        JSON.stringify(criticRequest.responseFormat)) {
+    throw new Error(
+      'current planner projection changed a historical or critic schema'
+    );
+  }
+
+  // The provider grammar omits the reviewed patterns, but acceptance never
+  // does. A value admitted by that relaxed provider schema must still fail the
+  // untouched local canonical schema before normalization or effects.
+  const providerOnlyValid = await runOpportunityDiscoveryPlannerRaw({
+    job,
+    model: 'openai/gpt-5.6-luna',
+    now,
+    completeJSON: async (request) => {
+      const plans = compactFreshPlannerPlans(twoPlannerMotions(
+        cases[0].plans(evidenceRef)[0],
+        evidenceRef
+      ));
+      const exactMarket = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.market?.enum?.[0];
+      for (const planValue of plans) planValue.market = exactMarket;
+      plans[0].organizationTerms[0] = ' invalid';
+      return {
+        data: {
+          contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+          status: 'planned',
+          reason: '',
+          plans
+        },
+        usage: {
+          prompt_tokens: 900,
+          completion_tokens: 650,
+          total_tokens: 1_550,
+          cost: 0.001
+        },
+        generationId: 'generation-luna-provider-only-schema-valid',
+        diagnostics: {
+          ...acceptedCurrentLunaRouteDiagnostics(),
+          finishReason: 'stop',
+          nativeFinishReason: 'completed',
+          contentByteCount: 8_000,
+          contentSha256: '4'.repeat(64)
+        }
+      };
+    }
+  });
+  if (providerOnlyValid.status !== 'blocked' ||
+      providerOnlyValid.plans.length !== 0 ||
+      providerOnlyValid.normalizationDiagnostic?.code !==
+        'strict_schema_mismatch' ||
+      !providerOnlyValid.normalizationDiagnostic?.issues?.some((issue) =>
+        issue.keyword === 'pattern' &&
+        issue.instancePath === '/plans/0/organizationTerms/0'
+      ) ||
+      providerOnlyValid.llm?.commercialCritic !== undefined ||
+      providerOnlyValid.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `provider projection bypassed exact local AJV: ${JSON.stringify(providerOnlyValid)}`
     );
   }
 
@@ -7843,6 +8413,127 @@ async function verifyCurrentLunaGeneratorRouteQualification(
         )) {
       throw new Error(
         `${label} escaped current Luna generator route quarantine: ${JSON.stringify(failed)}`
+      );
+    }
+  }
+}
+
+async function verifyCurrentLunaProductionLengthFailuresPreserveProjection(
+  job
+) {
+  const incidents = [{
+    label: 'fresh',
+    generationId: 'gen-1786662931-q2cJSmNYjUhXR8vgMaTy',
+    promptTokens: 5_152,
+    completionTokens: 261,
+    totalTokens: 5_413,
+    cost: 0.000800525,
+    expectedCostMicros: 801,
+    contentByteCount: 999,
+    contentSha256:
+      '63e7059b8a9ef3be05183345e65f584d8d71103eebdba66e8da61e2688180bd1',
+    streamEventCount: 251,
+    streamWireByteCount: 69_960,
+    streamFirstDataLatencyMs: 1_083,
+    streamDurationMs: 2_972
+  }, {
+    label: 'linked',
+    generationId: 'gen-1786663919-XXDZVBMqNL0WKPTVh2pY',
+    promptTokens: 5_151,
+    completionTokens: 77,
+    totalTokens: 5_228,
+    cost: 0.000392725,
+    expectedCostMicros: 393,
+    contentByteCount: 318,
+    contentSha256:
+      '3c7a0dad0c47a6a41cfc449f1fb881767456677fa4b0c73c23c92abf0ffa36ea',
+    streamEventCount: 67,
+    streamWireByteCount: 19_355,
+    streamFirstDataLatencyMs: 581,
+    streamDurationMs: 1_565
+  }];
+  for (const incident of incidents) {
+    let calls = 0;
+    let requestSeen;
+    const result = await runOpportunityDiscoveryPlannerRaw({
+      job,
+      model: 'openai/gpt-5.6-luna',
+      now,
+      completeJSON: async (request) => {
+        calls += 1;
+        requestSeen = request;
+        const error = new Error(
+          'OpenRouter ended current Luna structured output at its token limit'
+        );
+        error.openRouterFailureCode =
+          'openrouter_truncated_structured_output';
+        error.openRouterGenerationId = incident.generationId;
+        error.openRouterUsage = {
+          prompt_tokens: incident.promptTokens,
+          completion_tokens: incident.completionTokens,
+          total_tokens: incident.totalTokens,
+          cost: incident.cost
+        };
+        error.openRouterDiagnostics = {
+          ...acceptedCurrentLunaRouteDiagnostics(),
+          routerCandidateCount: 4,
+          finishReason: 'length',
+          nativeFinishReason: 'max_output_tokens',
+          contentByteCount: incident.contentByteCount,
+          contentSha256: incident.contentSha256,
+          streaming: true,
+          streamEventCount: incident.streamEventCount,
+          streamWireByteCount: incident.streamWireByteCount,
+          streamFirstDataLatencyMs: incident.streamFirstDataLatencyMs,
+          streamDurationMs: incident.streamDurationMs,
+          streamCompleted: false,
+          responseHeadersReceived: true
+        };
+        throw error;
+      }
+    });
+    const receipt = result.llm?.discoveryPlanner;
+    const diagnostics = receipt?.responseDiagnostics;
+    const projection = result.preflight?.structuredOutputProjection;
+    const serialized = serializeOpenRouterJSONRequestBody(requestSeen);
+    if (calls !== 1 || result.status !== 'blocked' ||
+        result.plans.length !== 0 ||
+        result.usage?.calls !== 1 ||
+        result.usage?.successfulCalls !== 0 ||
+        result.usage?.promptTokens !== incident.promptTokens ||
+        result.usage?.completionTokens !== incident.completionTokens ||
+        result.usage?.totalTokens !== incident.totalTokens ||
+        result.usage?.reportedCostMicros !== incident.expectedCostMicros ||
+        receipt?.status !== 'incomplete' ||
+        receipt?.error !== 'openrouter_truncated_structured_output' ||
+        receipt?.generationId !== incident.generationId ||
+        diagnostics?.routerSelectedProvider !== 'OpenAI' ||
+        diagnostics?.routerCandidateCount !== 4 ||
+        diagnostics?.finishReason !== 'length' ||
+        diagnostics?.nativeFinishReason !== 'max_output_tokens' ||
+        diagnostics?.contentByteCount !== incident.contentByteCount ||
+        diagnostics?.contentSha256 !== incident.contentSha256 ||
+        diagnostics?.streamEventCount !== incident.streamEventCount ||
+        diagnostics?.streamWireByteCount !== incident.streamWireByteCount ||
+        diagnostics?.streamFirstDataLatencyMs !==
+          incident.streamFirstDataLatencyMs ||
+        diagnostics?.streamDurationMs !== incident.streamDurationMs ||
+        diagnostics?.streamCompleted !== false ||
+        projection?.contractVersion !==
+          'opportunity_discovery_provider_schema_projection_v1' ||
+        projection?.omittedPatternPathsSha256 !==
+          CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 ||
+        projection?.omittedPatternCount !== 15 ||
+        projection?.localExactSchemaRequired !== true ||
+        result.preflight?.requestBodyByteCount !==
+          Buffer.byteLength(serialized, 'utf8') ||
+        result.preflight?.requestBodySha256 !== createHash('sha256')
+          .update(serialized, 'utf8').digest('hex') ||
+        result.normalizationDiagnostic !== undefined ||
+        result.llm?.commercialCritic !== undefined ||
+        result.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `${incident.label} Luna length incident lost bounded projection proof: ${JSON.stringify({ requestSeen, result })}`
       );
     }
   }
@@ -16393,7 +17084,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   let requestSeen;
   const result = await runOpportunityDiscoveryPlanner({
     job: productionJob,
-    model: 'deepseek/deepseek-v4-flash-0731',
+    model: 'openai/gpt-5.6-luna',
     now,
     completeJSON: async (request) => {
       requestSeen = request;
@@ -16419,8 +17110,9 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
         usage,
         generationId: 'generation-production-shaped-headroom',
         diagnostics: {
+          ...acceptedCurrentLunaRouteDiagnostics(),
           finishReason: 'stop',
-          nativeFinishReason: 'stop',
+          nativeFinishReason: 'completed',
           contentByteCount: 900,
           contentSha256: '9'.repeat(64)
         },
@@ -16461,7 +17153,7 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
   let overflowCalls = 0;
   const overflowResult = await runOpportunityDiscoveryPlanner({
     job: overflowJob,
-    model: 'deepseek/deepseek-v4-flash-0731',
+    model: 'openai/gpt-5.6-luna',
     now,
     completeJSON: async (request) => {
       overflowCalls += 1;
@@ -16488,8 +17180,9 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
         usage,
         generationId: 'generation-production-shaped-adaptive-envelope',
         diagnostics: {
+          ...acceptedCurrentLunaRouteDiagnostics(),
           finishReason: 'stop',
-          nativeFinishReason: 'stop',
+          nativeFinishReason: 'completed',
           contentByteCount: 900,
           contentSha256: '8'.repeat(64)
         },
