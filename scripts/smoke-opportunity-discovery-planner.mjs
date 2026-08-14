@@ -51,17 +51,16 @@ const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS = Object.freeze([
   '#/$defs/compensatedJobPaidOfferText140/pattern',
   '#/$defs/conversionDestinationText120/pattern',
   '#/$defs/attributionSignalText140/pattern',
-  '#/$defs/compactBuyerLabel/pattern',
   '#/$defs/compactChannelLabel/pattern',
   '#/$defs/compactActionLabel/pattern'
 ]);
 const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 =
-  '86be7cdcd33d87e3b4a1e6d9dd358145624abac78d6eef6b16c0539a21d986bf';
+  'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70';
 const CURRENT_LUNA_AUTHORED_TEXT_DESCRIPTION =
-  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/ats/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source"; b.l referral="Qualified buyer for paid service", buyer="Qualified buyer {{TARGET_NAME}} for paid service", demand="Qualified employer {{TARGET_NAME}} for paid role"; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
+  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/ats/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified employer {{TARGET_NAME}} for the paid role" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
 const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
   referral_partner: Object.freeze({
-    buyer: 'Qualified buyer for paid service',
+    buyer: 'Qualified payer for the paid opportunity',
     channel: 'Review-first public professional profile {{TARGET_URL}}',
     actions: Object.freeze([
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service',
@@ -69,7 +68,7 @@ const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
     ])
   }),
   buyer: Object.freeze({
-    buyer: 'Qualified buyer {{TARGET_NAME}} for paid service',
+    buyer: 'Qualified payer {{TARGET_NAME}} for the paid opportunity',
     channel: 'Review-first public professional profile {{TARGET_URL}}',
     actions: Object.freeze([
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service',
@@ -77,7 +76,7 @@ const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
     ])
   }),
   paid_demand: Object.freeze({
-    buyer: 'Qualified employer {{TARGET_NAME}} for paid role',
+    buyer: 'Qualified employer {{TARGET_NAME}} for the paid role',
     channel:
       'Review-first official paid-demand page {{TARGET_URL}} for paid-role verification',
     actions: Object.freeze([
@@ -168,7 +167,7 @@ function verifyProjectedPatternsRemainExactLocalAuthority({
     ?.properties?.l?.pattern;
   const providerFollowUpPattern = providerSchema?.$defs?.followUpItem
     ?.properties?.l?.pattern;
-  if (canonicalDefinitionPatterns !== 30 ||
+  if (canonicalDefinitionPatterns !== 29 ||
       providerDefinitionPatterns !== 15 ||
       canonicalSellerPattern !== providerSellerPattern ||
       canonicalFollowUpPattern !== providerFollowUpPattern ||
@@ -200,9 +199,6 @@ function verifyAuthoredTextContractFitsCanonicalSchema({
     compensatedJobPaidOfferText140: ['Paid role'],
     conversionDestinationText120: ['Booking service'],
     attributionSignalText140: ['Referral source'],
-    compactBuyerLabel: Object.values(CURRENT_LUNA_ROLE_EXAMPLES).map(
-      (example) => example.buyer
-    ),
     compactChannelLabel: Object.values(CURRENT_LUNA_ROLE_EXAMPLES).map(
       (example) => example.channel
     ),
@@ -214,6 +210,23 @@ function verifyAuthoredTextContractFitsCanonicalSchema({
     `#/$defs/${name}/pattern`
   )) !== JSON.stringify(CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS)) {
     throw new Error('authored-text examples lost exact projection coverage');
+  }
+  const buyerLabel = canonicalSchema?.$defs?.compactBuyerLabel;
+  if (buyerLabel?.type !== 'object' ||
+      JSON.stringify(buyerLabel.required) !== JSON.stringify([
+        'referral', 'buyer', 'paidDemand'
+      ]) || buyerLabel.additionalProperties !== false ||
+      JSON.stringify(buyerLabel.properties?.referral?.enum) !==
+        JSON.stringify(['Qualified payer for the paid opportunity']) ||
+      JSON.stringify(buyerLabel.properties?.buyer?.enum) !==
+        JSON.stringify([
+          'Qualified payer {{TARGET_NAME}} for the paid opportunity'
+        ]) ||
+      JSON.stringify(buyerLabel.properties?.paidDemand?.enum) !==
+        JSON.stringify([
+          'Qualified employer {{TARGET_NAME}} for the paid role'
+        ])) {
+    throw new Error('buyer label lost its finite role-branch contract');
   }
   for (const [name, definitionSamples] of Object.entries(samples)) {
     const validate = ajv.compile(canonicalSchema?.$defs?.[name]);
@@ -1076,6 +1089,7 @@ for (const scenario of cases) {
     const schema = resolvePlannerSchema(schemaValue);
     const length = [...String(value)].length;
     try {
+      if (Array.isArray(schema?.enum)) return schema.enum.includes(value);
       return (!Number.isInteger(schema?.minLength) ||
           length >= schema.minLength) &&
         (!Number.isInteger(schema?.maxLength) ||
@@ -1093,6 +1107,7 @@ for (const scenario of cases) {
       if (Array.isArray(resolved?.enum)) {
         return resolved.enum.includes('   ') || resolved.enum.includes('');
       }
+      if (resolved?.type === 'object') return false;
       return new RegExp(resolved?.pattern || '').test('   ');
     } catch {
       return true;
@@ -1198,12 +1213,20 @@ for (const scenario of cases) {
       !/copy one exact approved market value.*do not expand.*abbreviate.*widen/is.test(
         plannerPlanSchema.market?.description || ''
       ) ||
-      buyerLabelSchema?.maxLength !== 96 ||
+      buyerLabelSchema?.type !== 'object' ||
+      JSON.stringify(buyerLabelSchema?.required) !== JSON.stringify([
+        'referral', 'buyer', 'paidDemand'
+      ]) ||
       channelLabelSchema?.maxLength !== 120 ||
       actionLabelSchema?.maxLength !== 180 ||
-      !schemaAcceptsString(
-        buyerLabelSchema,
-        '{{TARGET_NAME}} is a purchasing organization for the current paid advisory service'
+      JSON.stringify(buyerLabelSchema?.properties?.referral?.enum) !==
+        JSON.stringify(['Qualified payer for the paid opportunity']) ||
+      JSON.stringify(buyerLabelSchema?.properties?.buyer?.enum) !==
+        JSON.stringify([
+          'Qualified payer {{TARGET_NAME}} for the paid opportunity'
+        ]) ||
+      buyerLabelSchema?.properties?.referral?.enum?.includes(
+        'Qualified buyer {{TARGET_NAME}} for paid service'
       ) ||
       !schemaAcceptsString(
         channelLabelSchema,
@@ -5379,8 +5402,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             contractVersion:
               'opportunity_discovery_provider_schema_projection_v1',
             omittedPatternPathsSha256:
-              '86be7cdcd33d87e3b4a1e6d9dd358145624abac78d6eef6b16c0539a21d986bf',
-            omittedPatternCount: 15,
+              'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70',
+            omittedPatternCount: 14,
             localExactSchemaRequired: true
           },
           reasoning: { effort: 'none', exclude: true },
@@ -5619,13 +5642,9 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     contingentFinalists: motion.contingentFinalists
   });
   const roleAuthoredPrimary = compactFreshPlannerPlans([candidate()])[0];
-  // Use non-catalogue strings to prove the single selected buyer, channel,
-  // and action values remain model-authored and byte-for-byte stable.
-  roleAuthoredPrimary.contingentFinalists.pathBase.b.forEach(
-    (item, index) => {
-      item.l = `{{TARGET_NAME}} is an accountable buyer for the current paid advisory service option ${index + 1}`;
-    }
-  );
+  // Buyer labels are deliberately role-neutral protocol text; use
+  // non-catalogue channel and action strings to prove the substantive
+  // selected values remain model-authored and byte-for-byte stable.
   for (const [tacticIndex, tacticKey] of ['tacticA', 'tacticB'].entries()) {
     const tactic = roleAuthoredPrimary.contingentFinalists[tacticKey];
     tactic.c.forEach((item, index) => {
@@ -5641,7 +5660,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     mechanism:
       roleAuthoredPrimary.contingentFinalists.pathBase.r[0].rm.seller,
     buyers: roleAuthoredPrimary.contingentFinalists.pathBase.b
-      .map((item) => item.l),
+      .map((item) => item.l.buyer),
     channels: [
       roleAuthoredPrimary.contingentFinalists.tacticA.c
         .map((item) => item.l),
@@ -7633,7 +7652,6 @@ async function verifyAuthoredTextRoleExamplesPassFullPlanner() {
     revenue.cd = 'Booking service';
     revenue.ats = 'Referral source';
     revenue.g.d.l = 'Booking service';
-    motion.contingentFinalists.pathBase.b[0].l = examples.buyer;
     for (const tacticKey of ['tacticA', 'tacticB']) {
       const tactic = motion.contingentFinalists[tacticKey];
       tactic.c[0].l = examples.channel;
@@ -7922,7 +7940,7 @@ async function verifyCurrentLunaGeneratorRouteQualification(
         projection?.providerSchemaSha256 ||
       projection?.omittedPatternPathsSha256 !==
         CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 ||
-      projection?.omittedPatternCount !== 15 ||
+      projection?.omittedPatternCount !== 14 ||
       projection?.localExactSchemaRequired !== true ||
       result.preflight?.requestBodyByteCount !==
         Buffer.byteLength(serialized, 'utf8') ||
@@ -8523,7 +8541,7 @@ async function verifyCurrentLunaProductionLengthFailuresPreserveProjection(
           'opportunity_discovery_provider_schema_projection_v1' ||
         projection?.omittedPatternPathsSha256 !==
           CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 ||
-        projection?.omittedPatternCount !== 15 ||
+        projection?.omittedPatternCount !== 14 ||
         projection?.localExactSchemaRequired !== true ||
         result.preflight?.requestBodyByteCount !==
           Buffer.byteLength(serialized, 'utf8') ||
@@ -17849,8 +17867,11 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
     }
     if (schema.$ref) {
       const ref = schema.$ref;
-      if (/#\/\$defs\/compact(?:Buyer|Channel|Action)Label$/.test(ref)) {
+      if (/#\/\$defs\/compact(?:Channel|Action)Label$/.test(ref)) {
         const resolved = resolveRef(ref);
+        if (Array.isArray(resolved.enum)) {
+          return walk(resolved, [...refStack, ref]);
+        }
         return {
           textCodepoints: 0,
           asciiCodepoints: resolved.maxLength,
@@ -17966,7 +17987,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
     stats.fixedBytes;
   computedPlannerSchemaResponseBoundBytes = derivedBound;
   if (stats.textCodepoints > 5_216 ||
-      stats.asciiCodepoints !== 2_784 ||
+      stats.asciiCodepoints !== 2_400 ||
       stats.evidenceRefOccurrences !== 56 ||
       derivedBound > MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES ||
       MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES >
@@ -18571,9 +18592,10 @@ function verifyFreshPlannerStrictSchemaTotality({
     .compile(maximumSchema);
   if (!validateMaximum(maximumResponse) ||
       evidenceOccurrenceCount !== 56 || evidenceArrayCount === 0 ||
-      // All 20 safe-ASCII buyer/channel/action strings plus the other 52
-      // bounded authored strings must reach their individual maxima.
-      maximizedStringOccurrenceCount !== 72 ||
+      // All 16 variable safe-ASCII channel/action strings plus the other 52
+      // bounded authored strings must reach their individual maxima. The four
+      // buyer labels are fixed enums and contribute exact serialized bytes.
+      maximizedStringOccurrenceCount !== 68 ||
       maximumResponse.plans.some((planValue) =>
         planValue.organizationTerms.length !== 4 ||
         planValue.skills.length !== 4
@@ -18751,8 +18773,8 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     first.contingentFinalists.pathBase.r[0].sb,
     first.contingentFinalists.pathBase.r[0].g.d.l,
     first.contingentFinalists.pathBase.o[0].l,
-    first.contingentFinalists.pathBase.b[0].l,
-    second.contingentFinalists.pathBase.b[0].l,
+    first.contingentFinalists.pathBase.b[0].l.referral,
+    second.contingentFinalists.pathBase.b[0].l.paidDemand,
     first.contingentFinalists.pathBase.t[0].l,
     first.contingentFinalists.pathBase.t[0].q,
     first.contingentFinalists.pathBase.p[0].l,
@@ -19221,18 +19243,9 @@ function compactContingentFinalists(value) {
     return text || fallback;
   };
   const buyerLabels = {
-    referral_partner: [
-      'Qualified buyer for the current paid offer',
-      'Prospective buyer eligible for the current paid offer'
-    ],
-    buyer: [
-      '{{TARGET_NAME}}: validated commercial buyer',
-      '{{TARGET_NAME}}: prospective buyer of the current paid offer'
-    ],
-    paid_demand: [
-      '{{TARGET_NAME}}: employer with current compensated demand',
-      '{{TARGET_NAME}}: buyer issuing a current paid engagement'
-    ]
+    referral: 'Qualified payer for the paid opportunity',
+    buyer: 'Qualified payer {{TARGET_NAME}} for the paid opportunity',
+    paidDemand: 'Qualified employer {{TARGET_NAME}} for the paid role'
   };
   const channelLabels = {
     referral_partner: [
@@ -19268,17 +19281,17 @@ function compactContingentFinalists(value) {
       'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
     ]
   };
-  const selectedRole = !String(familyA.d.b?.[0]?.l || '').includes(
-    '{{TARGET_NAME}}'
+  const selectedRole = familyA.d.a.some((item) =>
+    /\b(?:application|bid|proposal|response)\b/i.test(item.l || '')
   )
-    ? 'referral_partner'
+    ? 'paid_demand'
     : familyA.d.a.some((item) =>
-      /\b(?:application|bid|proposal|response)\b/i.test(item.l || '')
+      /\b(?:introduce|recommend|refer|referral)\b/i.test(item.l || '')
     )
-      ? 'paid_demand'
+      ? 'referral_partner'
       : 'buyer';
-  const buyerItem = (item, index) => ({
-    l: buyerLabels[selectedRole][index % 2],
+  const buyerItem = (item) => ({
+    l: structuredClone(buyerLabels),
     e: item.e
   });
   const channelItem = (item, index, family) => ({
@@ -19351,14 +19364,6 @@ function compactProvisionalContingentFinalists(
   sellerRef
 ) {
   const compact = compactContingentFinalists(value);
-  const referralBuyers = [
-    'Qualified buyer for the proposed paid offer',
-    'Prospective buyer for the proposed paid offer'
-  ];
-  const directBuyers = [
-    '{{TARGET_NAME}}: prospective buyer for the proposed paid offer',
-    '{{TARGET_NAME}}: candidate buyer for the proposed paid offer'
-  ];
   const referralActions = [
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to validate the proposed paid offer',
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to evaluate the proposed paid offer',
@@ -19371,11 +19376,13 @@ function compactProvisionalContingentFinalists(
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to assess one proposed paid service proposal',
     'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one proposed paid service contract'
   ];
-  compact.pathBase.b = compact.pathBase.b.map((item, index) => ({
+  compact.pathBase.b = compact.pathBase.b.map((item) => ({
     ...item,
-    l: commercialRole === 'referral_partner'
-      ? referralBuyers[index % referralBuyers.length]
-      : directBuyers[index % directBuyers.length]
+    l: {
+      referral: 'Qualified payer for the paid opportunity',
+      buyer: 'Qualified payer {{TARGET_NAME}} for the paid opportunity',
+      paidDemand: 'Qualified employer {{TARGET_NAME}} for the paid role'
+    }
   }));
   compact.pathBase.o = compact.pathBase.o.map((item) => ({
     ...item,
@@ -19463,12 +19470,20 @@ function canonicalMaterializedPlannerPlans(values) {
       l: item.l,
       e: structuredClone(item.e)
     }));
+    const selectBuyerItems = (items) => (items || []).map((item) => ({
+      l: motion.commercialRole === 'referral_partner'
+        ? item.l.referral
+        : motion.commercialRole === 'paid_demand'
+          ? item.l.paidDemand
+          : item.l.buyer,
+      e: structuredClone(item.e)
+    }));
     const materializeFamily = (familyKey, tacticKey, key) => {
       const source = structuredClone(original[familyKey]);
       const tactic = compact[tacticKey];
       source.m = motion.acquisitionMode;
       source.tacticKey = key;
-      source.d.b = selectItems(compact.pathBase.b);
+      source.d.b = selectBuyerItems(compact.pathBase.b);
       source.d.c = selectItems(tactic.c);
       source.d.a = selectItems(tactic.a);
       const compactRevenue = structuredClone(compact.pathBase.r[0]);

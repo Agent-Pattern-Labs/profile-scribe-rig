@@ -46,14 +46,13 @@ const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS =
     '#/$defs/compensatedJobPaidOfferText140/pattern',
     '#/$defs/conversionDestinationText120/pattern',
     '#/$defs/attributionSignalText140/pattern',
-    '#/$defs/compactBuyerLabel/pattern',
     '#/$defs/compactChannelLabel/pattern',
     '#/$defs/compactActionLabel/pattern'
   ]);
 const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS_SHA256 =
-  '86be7cdcd33d87e3b4a1e6d9dd358145624abac78d6eef6b16c0539a21d986bf';
+  'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70';
 const OPPORTUNITY_DISCOVERY_PLANNER_AUTHORED_TEXT_DESCRIPTION =
-  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/ats/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source"; b.l referral="Qualified buyer for paid service", buyer="Qualified buyer {{TARGET_NAME}} for paid service", demand="Qualified employer {{TARGET_NAME}} for paid role"; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
+  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/ats/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified employer {{TARGET_NAME}} for the paid role" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
 if (createHash('sha256').update(JSON.stringify(
   OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS
 )).digest('hex') !==
@@ -3235,14 +3234,27 @@ function opportunityDiscoveryPlannerResponseFormat(
   const compactRoleASCIIText =
     `[A-Za-z0-9][A-Za-z0-9 ,.'()&/+!?_:-]*`;
   const compactBuyerLabel = {
-    type: 'string',
-    minLength: 16,
-    maxLength: 96,
-    pattern:
-      `^(?:${compactRoleASCIIText}|` +
-      `${compactRoleASCIIText} \\{\\{TARGET_NAME\\}\\}` +
-      `(?: ${compactRoleASCIIText})?|` +
-      `\\{\\{TARGET_NAME\\}\\}(?::| is)? ${compactRoleASCIIText})$`
+    type: 'object',
+    properties: {
+      referral: {
+        type: 'string',
+        enum: ['Qualified payer for the paid opportunity']
+      },
+      buyer: {
+        type: 'string',
+        enum: [
+          'Qualified payer {{TARGET_NAME}} for the paid opportunity'
+        ]
+      },
+      paidDemand: {
+        type: 'string',
+        enum: [
+          'Qualified employer {{TARGET_NAME}} for the paid role'
+        ]
+      }
+    },
+    required: ['referral', 'buyer', 'paidDemand'],
+    additionalProperties: false
   };
   const compactChannelLabel = {
     type: 'string',
@@ -3467,7 +3479,7 @@ function opportunityDiscoveryPlannerResponseFormat(
       required: ['l', 'e'],
       additionalProperties: false,
       description:
-        'One bounded model-authored buyer label; typed local validation checks the motion-specific placeholder role and preserves the text byte-for-byte.'
+        'One finite buyer-label branch object; code selects the schema-fixed branch implied by motionKind before typed target validation.'
     },
     channelItem: {
       type: 'object',
@@ -3753,7 +3765,7 @@ function compactOpportunityDiscoveryHardRules(
     provisionalOfferExperiment
       ? 'requiredPrimaryFocus is the verified seller capability, but no current paid offer is proven. Use the schema-required Proposed paid seller form, ground it only in requiredEvidenceRefs, and treat it as review-first validation, never a current offer.'
       : 'requiredPrimaryFocus is the objective seller. paidOffer.seller includes it; compensatedJob is a paid role; code selects by motionKind and filters refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
-    `Top-level buyer is the payer archetype with no target token. b.l has {{TARGET_NAME}} once for buyer/paid_demand and none for referral; c.l has {{TARGET_URL}} once; a.l has both once. Never put ${CONTINGENT_TARGET_EVIDENCE_REF} in e; code binds it after role validation.`,
+    `Top-level buyer is the payer archetype with no target token. Every b.l supplies the three schema-fixed referral/buyer/paidDemand branches; code selects the branch fixed by motionKind, so the selected b.l has {{TARGET_NAME}} once for buyer/paid_demand and none for referral. c.l has {{TARGET_URL}} once; a.l has both once. Never put ${CONTINGENT_TARGET_EVIDENCE_REF} in e; code binds it after role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     provisionalOfferExperiment
@@ -5138,11 +5150,11 @@ function contingentBuyerLabelRoleIssue(value, planValue) {
   const text = primaryActionSemanticText(value);
   const role = firstText(plan.commercialRole);
   const buyerNoun =
-    /\b(?:buyer|client|customer|family|organization|parent|patient|practice)\w*\b/.test(
+    /\b(?:buyer|client|customer|family|organization|parent|patient|payer|practice)\w*\b/.test(
       text
     );
   const paidOffer =
-    /\b(?:book|buy|contract|current paid|paid offer|paid service|purchase|reimburs|subscription)\w*\b/.test(
+    /\b(?:book|buy|contract|current paid|paid offer|paid opportunity|paid service|purchase|reimburs|subscription)\w*\b/.test(
       text
     );
   if (role === 'referral_partner') {
@@ -5153,7 +5165,7 @@ function contingentBuyerLabelRoleIssue(value, planValue) {
   }
   if (role === 'paid_demand') {
     const payer =
-      /\b(?:buyer|company|employer|organization|purchaser)\w*\b/.test(text);
+      /\b(?:buyer|company|employer|organization|payer|purchaser)\w*\b/.test(text);
     const compensated =
       /\b(?:compensated|contract|engagement|paid|salary|wage)\w*\b/.test(
         text
@@ -5217,6 +5229,20 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
       e: copy(asArray(item.e))
     };
   });
+  const buyerItems = (items) => asArray(items).map((itemValue) => {
+    const item = asObject(itemValue);
+    const labels = asObject(item.l);
+    const commercialRole = firstText(asObject(planValue).commercialRole);
+    const selected = commercialRole === 'referral_partner'
+      ? labels.referral
+      : commercialRole === 'paid_demand'
+        ? labels.paidDemand
+        : labels.buyer;
+    return {
+      l: typeof selected === 'string' ? selected : '',
+      e: copy(asArray(item.e))
+    };
+  });
   // Exact AJV has already proved the required one-item array. Preserve that
   // model-authored container verbatim; never promote a schema-invalid singleton
   // object into compliance during materialization.
@@ -5238,7 +5264,7 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
     d: {
       r: copy(sharedRevenuePaths),
       o: copy(asArray(pathBase.o)),
-      b: roleItems(pathBase.b),
+      b: buyerItems(pathBase.b),
       c: roleItems(tactic.c),
       a: roleItems(tactic.a),
       t: copy(asArray(pathBase.t)),
