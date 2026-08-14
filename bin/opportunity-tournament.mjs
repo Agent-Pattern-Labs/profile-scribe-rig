@@ -1197,12 +1197,13 @@ const COMMERCIAL_DISCOVERY_CANDIDATE_ROLES = new Set([
   'paid_demand',
   'hiring_manager'
 ]);
-const MAX_COMMERCIAL_DISCOVERY_PROVIDER_CALLS = 4;
+const MAX_COMMERCIAL_DISCOVERY_PROVIDER_CALLS = 9;
 // One folded Exa read is retained for accounting only. Exact commercial
-// evidence may then use at most two separately reserved post-plan reads.
-const MAX_COMMERCIAL_DISCOVERY_PAID_PROVIDER_CALLS = 3;
-const MAX_COMMERCIAL_DISCOVERY_ATTEMPTS = 3;
-const MAX_COMMERCIAL_DISCOVERY_CANONICAL_ATTEMPTS = 2;
+// evidence may then walk a closed category slate with at most eight
+// separately reserved post-plan reads inside the $1 hard cap.
+const MAX_COMMERCIAL_DISCOVERY_PAID_PROVIDER_CALLS = 8;
+const MAX_COMMERCIAL_DISCOVERY_ATTEMPTS = 8;
+const MAX_COMMERCIAL_DISCOVERY_CANONICAL_ATTEMPTS = 8;
 const MAX_COMMERCIAL_DISCOVERY_LLM_INCLUDED_ATTEMPTS = 1;
 const MAX_COMMERCIAL_DISCOVERY_EVIDENCE = 10;
 const MAX_COMMERCIAL_DISCOVERY_CANDIDATES = 10;
