@@ -2180,15 +2180,14 @@ export async function runOpportunityDiscoveryPlanner({
   const provisionalOfferExperiment =
     !sellerHasCurrentPaidOfferEvidence &&
     sellerCanSupportProvisionalOfferExperiment;
-  // A verified current focus may ground what the owner can plausibly sell
-  // without proving that a priced, purchasable offer already exists. In that
-  // case person discovery remains useful, but every downstream finalist is
-  // proposal-only and can terminate only as a review-first validation
-  // experiment. It can never pass the immediate-revenue winner gate.
+  // A verified capability is not a current paid offer. Without a proven paid
+  // offer, buyer/referral discovery produces exactly the failure we need to
+  // avoid: a plausible person gets bound to an invented service, while no
+  // evidence can establish the offer, conversion, or payment. Search live
+  // compensated demand instead; the provider record can then prove the payer,
+  // current paid work, application destination, and response path together.
   allowedMotionKinds = allowedMotionKinds.filter((motionKind) =>
-    motionKind === 'compensated_job' ||
-      sellerHasCurrentPaidOfferEvidence ||
-      sellerCanSupportProvisionalOfferExperiment
+    motionKind === 'compensated_job' || sellerHasCurrentPaidOfferEvidence
   );
   const sellerContractIssue = commercialSellerContractIssue({
     workerSellerContract,
@@ -2448,7 +2447,7 @@ export async function runOpportunityDiscoveryPlanner({
             requiredPrimaryFocus: requiredSellerFocus,
             requiredEvidenceRefs: requiredSellerEvidenceRefs,
             offerEvidenceStatus: provisionalOfferExperiment
-              ? 'proposed_from_verified_capability'
+              ? 'unverified_offer_paid_demand_only'
               : 'verified_current_paid_offer'
           }
         : {},
@@ -3752,7 +3751,7 @@ function compactOpportunityDiscoveryOutputContract(
     evidence:
       `base+tactic e has observation:* plus child refs; e uses approved refs, never ${CONTINGENT_TARGET_EVIDENCE_REF}`,
     offerAuthority: provisionalOfferExperiment
-      ? 'Verified seller capability, unverified offer: author the schema-required Proposed paid offer for review-first validation only.'
+      ? 'No current seller offer is proven: select only compensated_job motions. The schema-required Proposed paid seller branch is inert and code must never select it.'
       : 'Seller paid offer is current and evidence-grounded.'
   };
 }
@@ -3763,13 +3762,13 @@ function compactOpportunityDiscoveryHardRules(
   return [
     'Exactly 2 distinct motions, each pathBase+2 causal tactics. Unknown identities use the declared slot and bounded read-only discovery; never return 0 plans or call a missing target missing supply evidence.',
     provisionalOfferExperiment
-      ? 'requiredPrimaryFocus is the verified seller capability, but no current paid offer is proven. Use the schema-required Proposed paid seller form, ground it only in requiredEvidenceRefs, and treat it as review-first validation, never a current offer.'
+      ? 'requiredPrimaryFocus is a verified capability, but no current paid offer is proven. Select only compensated_job motions backed after planning by current employer-authored paid demand. The schema-required Proposed paid seller branch is inert and must never drive buyer or referral discovery.'
       : 'requiredPrimaryFocus is the objective seller. paidOffer.seller includes it; compensatedJob is a paid role; code selects by motionKind and filters refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
     `Top-level buyer is the payer archetype with no target token. Every b.l supplies the three schema-fixed referral/buyer/paidDemand branches; code selects the branch fixed by motionKind, so the selected b.l has {{TARGET_NAME}} once for buyer/paid_demand and none for referral. c.l has {{TARGET_URL}} once; a.l has both once. Never put ${CONTINGENT_TARGET_EVIDENCE_REF} in e; code binds it after role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     provisionalOfferExperiment
-      ? 'a:2/tactic; each a has one model-authored l/e. For referral/buyer routes, author a review-first proposed-paid-offer validation action. A compensated-job action submits a paid application/proposal response. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
+      ? 'a:2/tactic; each a has one model-authored l/e. Only compensated_job is authorized: every action responds through the official current paid-demand page with a review-first paid application or proposal. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
       : 'a:2/tactic; each a has one model-authored l/e selected for motionKind. referral_partner introduces a qualified buyer to the current paid offer and paid booking/payment; buyer asks the target to book/buy/sign; paid_demand submits a paid application/proposal response. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0. sb must state one factual unknown or not-yet-observed causal proof about demand, acquisition, conversion, attribution, or paid outcome. Never put an imperative, research/verification task, artifact, setup, tracking instruction, or other operational step in sb.',
@@ -8818,6 +8817,9 @@ async function runOpportunityTournamentCore({
   const provisionalOfferExperiment = Boolean(
     firstText(commercialDiscovery.plan?.contractVersion) ===
       OPPORTUNITY_DISCOVERY_PLAN_CONTRACT &&
+    asArray(commercialDiscovery.plan?.plans).some((planValue) =>
+      firstText(asObject(planValue).motionKind) !== 'compensated_job'
+    ) &&
     coreRequiredSellerFocus &&
     coreSellerEvidenceRefs.length === 1 &&
     !opportunityDiscoverySellerHasCurrentPaidOfferEvidence(

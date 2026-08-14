@@ -2223,7 +2223,7 @@ await verifyIoNetProductionTimeoutFailsOnce(unsafeJob);
 await verifyPhalaProductionTimeoutFailsOnce(unsafeJob);
 await verifyWaferAndAtlasProductionPartialTracesFailOnce(unsafeJob);
 await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
-await verifyVerifiedCapabilityCanPlanProvisionalPaidOffer();
+await verifyUnprovenOfferRequiresLiveCompensatedDemand();
 verifyCausalPairReservationSurvivesCrowding();
 await verifyTwoStageTargetBinding();
 await verifyProviderAttestedBuyerReviewRoute();
@@ -11489,6 +11489,135 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       targetTokenResult.sideEffectsPerformed !== 0) {
     throw new Error(
       `removed top-level buyer authority leaked into execution: ${JSON.stringify(targetTokenResult)}`
+    );
+  }
+}
+
+async function verifyUnprovenOfferRequiresLiveCompensatedDemand() {
+  const job = plannerJob(cases[3]);
+  job.payload.objective.outcome =
+    'Create one verifiable attributable incremental-income outcome for ProfileScribe';
+  job.payload.commercialContext.profile.currentFocus = [{
+    name: 'ProfileScribe',
+    description:
+      'Agent-managed professional profiles and source-backed updates.',
+    status: 'active',
+    priority: 'primary',
+    evidenceRef: 'profile:focus:1'
+  }];
+  job.payload.commercialSellerContract = {
+    requiredPrimaryFocus: 'ProfileScribe',
+    requiredEvidenceRefs: ['profile:focus:1']
+  };
+  job.payload.commercialDiscoveryCapabilities = {
+    braveWebSearch: true,
+    pdlPersonSearch: true,
+    pdlJobPostingSearch: true
+  };
+  job.payload.evidenceSnapshot.profile.currentFocus = [{
+    id: 'focus-profilescribe',
+    name: 'ProfileScribe',
+    description:
+      'Agent-managed professional profiles and source-backed updates.',
+    status: 'active',
+    priority: 'primary',
+    evidence: ['The owner confirmed ProfileScribe is the primary focus.']
+  }];
+  job.payload.evidenceSnapshot.sources = [{
+    id: 'profilescribe-owner-site',
+    label: 'ProfileScribe',
+    url: 'https://profilescribe.com',
+    status: 'approved',
+    profileControlled: true
+  }];
+  job.payload.evidenceSnapshot.sourceEvidence = [{
+    id: 'profilescribe-capability-observation',
+    observationId: 'profilescribe-capability-observation',
+    sourceId: 'profilescribe-owner-site',
+    label: 'ProfileScribe professional profile platform',
+    summary:
+      'ProfileScribe demonstrates production software, agent orchestration, professional profiles, and source-backed updates.',
+    url: 'https://profilescribe.com/',
+    observedAt: now.toISOString(),
+    status: 'approved'
+  }];
+
+  const evidenceRef = 'observation:profilescribe-capability-observation';
+  let requestSeen;
+  const result = await runOpportunityDiscoveryPlanner({
+    job,
+    model: 'deepseek/deepseek-v4-flash-0731',
+    now,
+    completeJSON: async (request) => {
+      requestSeen = request;
+      const market = request.responseFormat.json_schema.schema.properties
+        .plans.items.properties.market.enum[0];
+      const source = cases[1].plans(evidenceRef)[0];
+      const plans = [source, structuredClone(source)].map((motion, index) => {
+        motion.id = `profilescribe_paid_demand_${index + 1}`;
+        motion.priority = index + 1;
+        motion.market = market;
+        motion.jobTitle = index === 0
+          ? 'Software product engineer'
+          : 'AI platform engineer';
+        motion.skills = index === 0
+          ? ['Software engineering', 'Product development']
+          : ['AI agents', 'Platform engineering'];
+        motion.contingentFinalists = compactContingentFinalists(
+          motion.contingentFinalists
+        );
+        motion.paidOffer = {
+          seller: 'Proposed paid ProfileScribe professional profile service',
+          compensatedJob:
+            'A current compensated software product engineering role'
+        };
+        return motion;
+      });
+      const response = {
+        contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
+        status: 'planned',
+        reason: '',
+        plans: compactFreshPlannerPlans(plans)
+      };
+      return {
+        data: response,
+        usage,
+        generationId: 'generation-unproven-offer-paid-demand',
+        diagnostics: {
+          finishReason: 'stop',
+          nativeFinishReason: 'stop',
+          contentByteCount: Buffer.byteLength(JSON.stringify(response)),
+          contentSha256: 'e'.repeat(64)
+        },
+        annotations: []
+      };
+    }
+  });
+  const prompt = JSON.parse(requestSeen?.user || '{}');
+  const motionKinds = requestSeen?.responseFormat?.json_schema?.schema
+    ?.properties?.plans?.items?.properties?.motionKind?.enum || [];
+  if (result.status !== 'planned' ||
+      result.plans.length !== 2 ||
+      result.plans.some((motion) =>
+        motion.motionKind !== 'compensated_job' ||
+        motion.searchMode !== 'active_job_posting' ||
+        motion.commercialRole !== 'paid_demand' ||
+        motion.demandArtifactKind !== 'employer_job_posting' ||
+        /^Proposed paid\b/.test(motion.paidOffer || '')
+      ) ||
+      JSON.stringify(motionKinds) !== JSON.stringify(['compensated_job']) ||
+      prompt.sellerContract?.offerEvidenceStatus !==
+        'unverified_offer_paid_demand_only' ||
+      !prompt.outputContract?.offerAuthority?.includes(
+        'select only compensated_job motions'
+      ) ||
+      !prompt.hardRules?.some((rule) =>
+        rule.includes('Only compensated_job is authorized')
+      ) ||
+      result.usage?.calls !== 1 ||
+      result.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `unproven offer was not forced onto live compensated demand: ${JSON.stringify({ prompt, motionKinds, result })}`
     );
   }
 }
