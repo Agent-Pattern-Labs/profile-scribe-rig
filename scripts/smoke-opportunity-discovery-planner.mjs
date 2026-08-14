@@ -13093,25 +13093,22 @@ async function verifyTwoStageTargetBinding() {
       `accounting-only Exa plus two canonical reads did not survive normalization: ${JSON.stringify(normalizedThreeAttemptEvidence)}`
     );
   }
-  const thirdCanonicalAttempt = {
+  const excessCanonicalAttempts = Array.from({ length: 9 }, (_, index) => ({
     ...braveAttempt,
-    id: 'attempt-third-canonical-read-must-fail',
-    queryHash: 'e'.repeat(64),
+    id: `attempt-canonical-read-${index + 1}`,
+    queryHash: (index + 1).toString(16).repeat(64),
     status: 'not_found',
     resultCount: 0
-  };
+  }));
   const excessCanonicalEvidence = structuredClone(
     downstreamPayload.commercialDiscoveryEvidence
   );
-  excessCanonicalEvidence.attempts = [
-    thirdCanonicalAttempt,
-    braveAttempt,
-    pdlAttempt
-  ];
-  excessCanonicalEvidence.providersAttempted = [
-    'brave_web_search',
-    'people_data_labs_person_search'
-  ];
+  excessCanonicalEvidence.attempts = excessCanonicalAttempts;
+  excessCanonicalEvidence.providersAttempted = ['brave_web_search'];
+  excessCanonicalEvidence.providerCalls = 9;
+  excessCanonicalEvidence.paidProviderCalls = 9;
+  excessCanonicalEvidence.creditsUsed = 9;
+  excessCanonicalEvidence.resultCount = 0;
   excessCanonicalEvidence.queryHash =
     commercialDiscoveryAttemptLedgerHash(
       excessCanonicalEvidence.attempts
@@ -13124,7 +13121,7 @@ async function verifyTwoStageTargetBinding() {
       excessCanonicalNormalized.rejectedReasons
         ?.invalid_attempt_ledger !== 1) {
     throw new Error(
-      `three canonical provider reads escaped the two-read cap: ${JSON.stringify(excessCanonicalNormalized)}`
+      `nine canonical provider reads escaped the eight-read cap: ${JSON.stringify(excessCanonicalNormalized)}`
     );
   }
   const requests = [];

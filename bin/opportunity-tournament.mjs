@@ -1201,8 +1201,8 @@ const MAX_COMMERCIAL_DISCOVERY_PROVIDER_CALLS = 9;
 // One folded Exa read is retained for accounting only. Exact commercial
 // evidence may then walk a closed category slate with at most eight
 // separately reserved post-plan reads inside the $1 hard cap.
-const MAX_COMMERCIAL_DISCOVERY_PAID_PROVIDER_CALLS = 8;
-const MAX_COMMERCIAL_DISCOVERY_ATTEMPTS = 8;
+const MAX_COMMERCIAL_DISCOVERY_PAID_PROVIDER_CALLS = 9;
+const MAX_COMMERCIAL_DISCOVERY_ATTEMPTS = 9;
 const MAX_COMMERCIAL_DISCOVERY_CANONICAL_ATTEMPTS = 8;
 const MAX_COMMERCIAL_DISCOVERY_LLM_INCLUDED_ATTEMPTS = 1;
 const MAX_COMMERCIAL_DISCOVERY_EVIDENCE = 10;
