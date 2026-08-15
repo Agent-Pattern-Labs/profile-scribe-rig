@@ -98,6 +98,9 @@ const CONTINGENT_AUTHORED_SEMANTIC_TEXT = Symbol(
 const CONTINGENT_HYPOTHESIS_SEMANTICS = Symbol(
   'contingentHypothesisSemantics'
 );
+const CONTINGENT_ACTION_PROJECTION_DIAGNOSTIC = Symbol(
+  'contingentActionProjectionDiagnostic'
+);
 // Provider evidence keeps its exact public identity for target binding,
 // provenance, receipts, and critic review. Commercial polarity and mechanism
 // checks use this hidden candidate-scoped view instead so words in an exact
@@ -3794,7 +3797,7 @@ function compactOpportunityDiscoveryHardRules(
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     provisionalOfferExperiment
-      ? 'a:2/tactic; each a has one model-authored l/e. Only compensated_job or buyer_solicitation is authorized: every action responds through the official current paid-demand page with a review-first paid application or proposal. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
+      ? 'a:2/tactic; each a has one model-authored l/e. Only compensated_job or buyer_solicitation is authorized: every action responds through the official current paid-demand page with a review-first paid application or proposal. Use submit plus application/proposal only. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
       : 'a:2/tactic; each a has one model-authored l/e selected for motionKind. referral_partner introduces a qualified buyer to the current paid offer and paid booking/payment; buyer asks the target to book/buy/sign; paid_demand submits a paid application/proposal response. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job/buyer_solicitation, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0. sb must state one factual unknown or not-yet-observed causal proof about demand, acquisition, conversion, attribution, or paid outcome. Never put an imperative, research/verification task, artifact, setup, tracking instruction, or other operational step in sb.',
@@ -4924,6 +4927,7 @@ function canonicalizeContingentRevenueStructure(value, planValue) {
  */
 function canonicalizeContingentConversionActions(value, planValue) {
   const bundle = asObject(value);
+  const projectionDiagnostics = {};
   for (const familyKey of ['familyA', 'familyB']) {
     const family = asObject(bundle[familyKey]);
     const dimensions = asObject(family.d);
@@ -4940,8 +4944,29 @@ function canonicalizeContingentConversionActions(value, planValue) {
         family,
         planValue
       ));
-    if (!action) continue;
+    if (!action) {
+      projectionDiagnostics[familyKey] = asArray(dimensions.a).map(
+        (item) => contingentProjectableActionIssueCodes(
+          item,
+          family,
+          planValue
+        )
+      );
+      continue;
+    }
     revenue.c = firstText(action.l);
+  }
+  if (Object.keys(projectionDiagnostics).length > 0) {
+    Object.defineProperty(
+      bundle,
+      CONTINGENT_ACTION_PROJECTION_DIAGNOSTIC,
+      {
+        value: Object.freeze(projectionDiagnostics),
+        enumerable: false,
+        configurable: true,
+        writable: false
+      }
+    );
   }
   return bundle;
 }
@@ -5005,6 +5030,62 @@ function contingentProjectableActionItem(
     ) &&
     !contingentPrimaryRevenueActionRoleIssue(label, plan) &&
     viablePrimaryRevenueAction(label);
+}
+
+function contingentProjectableActionIssueCodes(
+  itemValue,
+  familyValue,
+  planValue
+) {
+  const item = asObject(itemValue);
+  const family = asObject(familyValue);
+  const plan = asObject(planValue);
+  const label = firstText(item.l);
+  const evidenceRefs = compactStrings(item.e);
+  const familyRefs = new Set(compactStrings(family.e));
+  const actionModes = acquisitionModesFromText(label);
+  const publicProfessionalRouteRequired = [
+    'buyer',
+    'referral_partner'
+  ].includes(firstText(plan.commercialRole));
+  const issues = [];
+  if (evidenceRefs.length === 0) issues.push('evidence_missing');
+  if (evidenceRefs.some((ref) => !familyRefs.has(ref))) {
+    issues.push('evidence_outside_family');
+  }
+  if (countExactToken(label, CONTINGENT_TARGET_NAME_TOKEN) !== 1) {
+    issues.push('target_name_count');
+  }
+  if (publicProfessionalRouteRequired &&
+      countExactToken(label, CONTINGENT_TARGET_URL_TOKEN) !== 1) {
+    issues.push('target_url_count');
+  }
+  if (publicProfessionalRouteRequired &&
+      !/\b(?:linkedin|public professional profile|verified professional profile)\b/i.test(
+        label
+      )) {
+    issues.push('public_professional_route');
+  }
+  if (firstText(family.m) !== firstText(plan.acquisitionMode)) {
+    issues.push('family_acquisition_mode');
+  }
+  if (actionModes.some((mode) =>
+    mode !== firstText(plan.acquisitionMode)
+  )) {
+    issues.push('action_acquisition_mode');
+  }
+  const roleIssue = contingentPrimaryRevenueActionRoleIssue(label, plan);
+  if (roleIssue) issues.push(roleIssue);
+  if (passiveOrObservationalPrimaryAction(label)) {
+    issues.push('primary_action_passive');
+  }
+  if (operationOnlyAction(label)) issues.push('primary_action_operational');
+  if (negatedPrimaryRevenueAction(label)) issues.push('primary_action_negated');
+  if (!revenueAdvancingAction(label)) issues.push('primary_action_non_revenue');
+  if (experimentActionClaimsCompletedExternalExecution(label)) {
+    issues.push('primary_action_claimed_execution');
+  }
+  return issues.length > 0 ? issues : ['unknown_projection_mismatch'];
 }
 
 /**
@@ -6822,8 +6903,20 @@ function contingentTargetPlaceholderLocalityIssue(planValue) {
         .replaceAll(CONTINGENT_TARGET_URL_TOKEN, '');
       if (nameCount !== expected.name || urlCount !== expected.url ||
           /[{}]/.test(suffix)) {
+        const projectionDiagnostic = value ===
+            CONTINGENT_CONVERSION_ACTION_PROJECTION
+          ? asObject(bundle[CONTINGENT_ACTION_PROJECTION_DIAGNOSTIC])
+          : {};
+        const diagnosticSuffix = Object.keys(projectionDiagnostic).length > 0
+          ? `; projection=${Object.entries(projectionDiagnostic)
+            .map(([family, variants]) =>
+              `${family}:${asArray(variants).map((codes) =>
+                asArray(codes).join('+')
+              ).join('|')}`
+            ).join(',')}`
+          : '';
         issue =
-          `has reserved target syntax outside the finite buyer, channel, action, or projected-action paths (${path.join('.')}:${truncate(value, 120)}).`;
+          `has reserved target syntax outside the finite buyer, channel, action, or projected-action paths (${path.join('.')}:${truncate(value, 120)}${diagnosticSuffix}).`;
       }
       return;
     }
