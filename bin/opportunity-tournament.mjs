@@ -4875,10 +4875,9 @@ function canonicalizeContingentProposalGrounding(
 ) {
   const bundle = asObject(value);
   const plan = asObject(planValue);
-  if (!/^Proposed paid\b/.test(firstText(plan.paidOffer)) ||
-      firstText(plan.motionKind) === 'compensated_job') {
-    return bundle;
-  }
+  const proposedSellerGrounding =
+    /^Proposed paid\b/.test(firstText(plan.paidOffer)) &&
+    firstText(plan.motionKind) !== 'compensated_job';
   const sellerRefs = compactStrings(plan.evidenceRefs).filter((ref) =>
     /^profile:focus:\d+$/i.test(ref) && knownEvidence.has(ref)
   ).slice(0, 1);
@@ -4886,28 +4885,37 @@ function canonicalizeContingentProposalGrounding(
     ref === PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID &&
       knownEvidence.has(ref)
   );
-  if (sellerRefs.length !== 1 || !attributionRef) return bundle;
+  if (!attributionRef ||
+      (proposedSellerGrounding && sellerRefs.length !== 1)) return bundle;
   for (const familyKey of ['familyA', 'familyB']) {
     const family = asObject(bundle[familyKey]);
     const dimensions = asObject(family.d);
-    for (const offerValue of asArray(dimensions.o)) {
-      const offer = asObject(offerValue);
-      offer.l = firstText(plan.paidOffer);
-      offer.e = [...sellerRefs];
+    if (proposedSellerGrounding) {
+      for (const offerValue of asArray(dimensions.o)) {
+        const offer = asObject(offerValue);
+        offer.l = firstText(plan.paidOffer);
+        offer.e = [...sellerRefs];
+      }
     }
     for (const revenueValue of asArray(dimensions.r)) {
       const revenue = asObject(revenueValue);
       const grounding = asObject(revenue.g);
-      grounding.o = [...sellerRefs];
-      const destination = asObject(grounding.d);
-      destination.e = [...sellerRefs];
-      grounding.d = destination;
-      grounding.c = [...sellerRefs];
+      if (proposedSellerGrounding) {
+        grounding.o = [...sellerRefs];
+        const destination = asObject(grounding.d);
+        destination.e = [...sellerRefs];
+        grounding.d = destination;
+        grounding.c = [...sellerRefs];
+      }
+      // Call 1 already authored the attribution method and signal. Bind that
+      // claim to the one verified control-plane attribution capability instead
+      // of retaining an unrelated observation selected by the model. This is
+      // evidence canonicalization, not a new commercial claim.
       grounding.t = [attributionRef];
       revenue.g = grounding;
       revenue.e = compactStrings([
         ...asArray(revenue.e),
-        ...sellerRefs,
+        ...(proposedSellerGrounding ? sellerRefs : []),
         attributionRef
       ]);
     }

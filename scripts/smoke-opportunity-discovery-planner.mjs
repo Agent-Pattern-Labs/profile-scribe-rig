@@ -1523,6 +1523,21 @@ for (const scenario of cases) {
       `${scenario.name}: compact planner bundle was not materialized into two diverse legacy families: ${JSON.stringify(materialized)}`
     );
   }
+  for (const motion of result.plans) {
+    for (const familyKey of ['familyA', 'familyB']) {
+      for (const revenue of motion.contingentFinalists?.[familyKey]?.d?.r || []) {
+        if (JSON.stringify(revenue.g?.t) !== JSON.stringify([
+          PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+        ]) || !revenue.e?.includes(
+          PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
+        )) {
+          throw new Error(
+            `${scenario.name}: compact call-1 attribution grounding was not bound to the verified system capability: ${JSON.stringify(revenue)}`
+          );
+        }
+      }
+    }
+  }
   const projectedSystemCapability = plannerPrompt.evidenceCatalog?.find(
     (item) => item.id ===
       PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
@@ -2552,7 +2567,8 @@ async function verifyMaximumFamilyEvidenceContainment() {
           collectSubmittedEvidence(observationOnlyBundle.tacticA);
           expectedFirstFamilyEvidence = [
             'target:evidence',
-            ...observed.filter((ref) => ref !== 'target:evidence')
+            ...observed.filter((ref) => ref !== 'target:evidence'),
+            PROFILESCRIBE_SYSTEM_ATTRIBUTION_CAPABILITY_EVIDENCE_ID
           ];
         }
         const [freshMotion] = compactFreshPlannerPlans([{
