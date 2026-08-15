@@ -9163,13 +9163,13 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
   const diagnostics = receipt?.responseDiagnostics;
   const expectedIssues = [
     ['required', '/plans/0/contingentFinalists/pathBase/r/0', 'k'],
-    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/io', ''],
     ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/cd', ''],
     ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/b', ''],
     ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/o', ''],
     ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/a', ''],
     ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/g/d/l', ''],
-    ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/c', '']
+    ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/c', ''],
+    ['required', '/plans/1/contingentFinalists/pathBase/r/0', 'k']
   ];
   const actualIssues = result.normalizationDiagnostic?.issues?.map(
     (issue) => [
@@ -18560,6 +18560,16 @@ function verifyFreshPlannerStrictSchemaTotality({
   if (!validate(baseline)) {
     throw new Error(
       `strict planner baseline is not schema-valid: ${JSON.stringify(validate.errors)}`
+    );
+  }
+  const vocabularyNeutralOutcome = structuredClone(baseline);
+  for (const plan of vocabularyNeutralOutcome.plans) {
+    plan.contingentFinalists.pathBase.r[0].io =
+      'One accepted compensated engagement from the reviewed opportunity';
+  }
+  if (!validate(vocabularyNeutralOutcome)) {
+    throw new Error(
+      `strict planner transport schema rejected a structurally valid incremental outcome: ${JSON.stringify(validate.errors)}`
     );
   }
   const expectInvalid = (label, mutate) => {

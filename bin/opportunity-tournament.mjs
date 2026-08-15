@@ -3337,8 +3337,6 @@ function opportunityDiscoveryPlannerResponseFormat(
     required: ['referral', 'buyer', 'paidDemand'],
     additionalProperties: false
   };
-  const paidOutcomeText = (maxLength) =>
-    commercialSemanticConstraint(`paidOutcomeText${maxLength}`);
   const conversionDestinationTextSchema = (maxLength) =>
     commercialSemanticConstraint(`conversionDestinationText${maxLength}`);
   const attributionSignalTextSchema = (maxLength) =>
@@ -3594,7 +3592,13 @@ function opportunityDiscoveryPlannerResponseFormat(
         e: { $ref: '#/$defs/compactEvidenceRefs' },
         rm: { $ref: '#/$defs/revenueMechanismChoice' },
         l: commercialSemanticText(96),
-        io: paidOutcomeText(120),
+        // Keep transport validation structural. Native structured-output
+        // providers do not reliably satisfy vocabulary-bearing regexes even
+        // when the causal witness and typed mechanism are complete. The
+        // deterministic semantic gate below binds io to the mechanism,
+        // rejects contradiction, and never grants provider authority from
+        // this prose alone.
+        io: commercialSemanticText(120),
         atm: { $ref: '#/$defs/attributionMethod' },
         ats: attributionSignalTextSchema(140),
         cd: conversionDestinationTextSchema(120),
