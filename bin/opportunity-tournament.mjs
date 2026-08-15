@@ -50,7 +50,7 @@ const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS =
 const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS_SHA256 =
   'c15ad4b5bc49f268ff226ded3e97e2a673f51df0886d59bc3fc0ad34d39f4e35';
 const OPPORTUNITY_DISCOVERY_PLANNER_AUTHORED_TEXT_DESCRIPTION =
-  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces except target tokens; commercial prose may contain URL or record-field colons. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field". b.l/c.l/a.l contain all fixed role branches; code selects commercialRole. Vary selected channels and actions.';
+  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces except target tokens; commercial prose may contain URL or record-field colons. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field"; sb selects one schema-enumerated factual unobserved-revenue state. b.l/c.l/a.l contain all fixed role branches; code selects commercialRole. Vary selected channels and actions.';
 if (createHash('sha256').update(JSON.stringify(
   OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS
 )).digest('hex') !==
@@ -3609,7 +3609,18 @@ function opportunityDiscoveryPlannerResponseFormat(
         cd: commercialProseText(120),
         st: commercialProseText(120),
         k: { $ref: '#/$defs/causalWitness' },
-        sb: commercialProseText(100),
+        // Supporting-bottleneck text is a factual missing-evidence state, not
+        // an action surface. Keeping its complete safe vocabulary in the
+        // schema prevents a transport-valid imperative from discarding an
+        // otherwise complete commercial motion at the semantic gate.
+        sb: {
+          type: 'string',
+          enum: [
+            'No attributed paid booking has been observed for this route.',
+            'No attributed paid contract has been observed for this route.',
+            'Current paid demand and attributed conversion remain unobserved'
+          ]
+        },
         vm: {
           type: 'integer',
           minimum: 1,

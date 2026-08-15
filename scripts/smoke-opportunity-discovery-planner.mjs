@@ -55,7 +55,7 @@ const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS = Object.freeze([
 const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 =
   'c15ad4b5bc49f268ff226ded3e97e2a673f51df0886d59bc3fc0ad34d39f4e35';
 const CURRENT_LUNA_AUTHORED_TEXT_DESCRIPTION =
-  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces except target tokens; commercial prose may contain URL or record-field colons. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field". b.l/c.l/a.l contain all fixed role branches; code selects commercialRole. Vary selected channels and actions.';
+  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces except target tokens; commercial prose may contain URL or record-field colons. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field"; sb selects one schema-enumerated factual unobserved-revenue state. b.l/c.l/a.l contain all fixed role branches; code selects commercialRole. Vary selected channels and actions.';
 const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
   referral_partner: Object.freeze({
     buyer: 'Qualified payer for the paid opportunity',
@@ -2310,6 +2310,7 @@ const projectedPlannerDurationMs = Math.ceil(
 const supportedSchemaTokenProjection = new Map([
   [32_936, 21_837],
   [33_304, 22_081],
+  [33_584, 22_267],
   [33_872, 22_458],
   [34_258, 22_714],
   [35_360, 23_444]
@@ -6999,11 +7000,8 @@ async function verifySupportingBottleneckIsMissingEvidence(job, evidenceRef) {
     }
   });
   if (result.status !== 'blocked' || result.plans.length !== 0 ||
-      result.normalizationDiagnostic != null ||
-      result.planSelection?.rejectedPlanCount !== 2 ||
-      result.planSelection?.rejectedPlans?.some((item) =>
-        !/supporting_bottleneck_not_evidence_gap/.test(item.reason || '')
-      ) ||
+      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      result.normalizationDiagnostic?.failedMotionCount !== 2 ||
       result.usage?.successfulCalls !== 1 ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
@@ -18748,7 +18746,6 @@ function verifyFreshPlannerStrictSchemaTotality({
     ['attribution signal', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'ats'], 140],
     ['conversion destination', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'cd'], 120],
     ['revenue stop', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'st'], 120],
-    ['supporting bottleneck', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'sb'], 100],
     ['grounded destination', ['plans', 0, 'contingentFinalists', 'pathBase', 'r', 0, 'g', 'd', 'l'], 120],
     ['offer item', ['plans', 0, 'contingentFinalists', 'pathBase', 'o', 0, 'l'], 96],
     ['timing label', ['plans', 0, 'contingentFinalists', 'pathBase', 't', 0, 'l'], 100],
@@ -18776,6 +18773,14 @@ function verifyFreshPlannerStrictSchemaTotality({
   if (!validate(allMax)) {
     throw new Error(
       `strict planner joint-max astral response is invalid: ${JSON.stringify(validate.errors)}`
+    );
+  }
+  const unsafeBottleneck = structuredClone(baseline);
+  unsafeBottleneck.plans[0].contingentFinalists.pathBase.r[0].sb =
+    'Research and verify buyer demand';
+  if (validate(unsafeBottleneck)) {
+    throw new Error(
+      'strict planner accepted an imperative supporting bottleneck outside the factual enum'
     );
   }
   const serializedAllMax = JSON.stringify(allMax);
@@ -18910,10 +18915,11 @@ function verifyFreshPlannerStrictSchemaTotality({
     .compile(maximumSchema);
   if (!validateMaximum(maximumResponse) ||
       evidenceOccurrenceCount !== 56 || evidenceArrayCount === 0 ||
-      // All 50 bounded authored strings reach their individual maxima. Buyer,
-      // channel, action, and compensated-role labels are fixed enums and
-      // contribute exact bytes.
-      maximizedStringOccurrenceCount !== 50 ||
+      // All 48 non-enum bounded authored strings reach their individual
+      // maxima. Buyer, channel, action, compensated-role, and factual
+      // supporting-bottleneck labels are fixed enums and contribute exact
+      // bytes.
+      maximizedStringOccurrenceCount !== 48 ||
       maximumResponse.plans.some((planValue) =>
         planValue.organizationTerms.length !== 4 ||
         planValue.skills.length !== 4
