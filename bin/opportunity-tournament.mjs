@@ -52,7 +52,7 @@ const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS =
 const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS_SHA256 =
   'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70';
 const OPPORTUNITY_DISCOVERY_PLANNER_AUTHORED_TEXT_DESCRIPTION =
-  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/ats/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified employer {{TARGET_NAME}} for the paid role" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
+  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified employer {{TARGET_NAME}} for the paid role" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
 if (createHash('sha256').update(JSON.stringify(
   OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS
 )).digest('hex') !==
@@ -3155,15 +3155,20 @@ function opportunityDiscoveryPlannerResponseFormat(
   };
   const commercialSemanticTextContaining = (
     maxLength,
-    requiredPattern
+    requiredPattern,
+    { allowColon = false } = {}
   ) => ({
     type: 'string',
     minLength: 8,
     maxLength,
     pattern:
-      `^[A-Za-z](?:${canonicalAuthoredCharacter}| )*` +
+      `^[A-Za-z](?:${allowColon
+        ? '[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b\\u200e-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufeff\\ufffd\\ufff9-\\ufffb{}]'
+        : canonicalAuthoredCharacter}| )*` +
       `(?:${requiredPattern})` +
-      `(?:${canonicalAuthoredCharacter}| )*$`
+      `(?:${allowColon
+        ? '[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b\\u200e-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufeff\\ufffd\\ufff9-\\ufffb{}]'
+        : canonicalAuthoredCharacter}| )*$`
   });
   const commercialSemanticConstraintDefinitions = {
     paidOutcomeText120: commercialSemanticTextContaining(
@@ -3220,17 +3225,20 @@ function opportunityDiscoveryPlannerResponseFormat(
     attributionSignalText180: commercialSemanticTextContaining(
       180,
       '[Ss]ource|[Rr]eferral|(?:UTM|utm)|[Cc]ampaign|' +
-        '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]'
+        '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]',
+      { allowColon: true }
     ),
     attributionSignalText140: commercialSemanticTextContaining(
       140,
       '[Ss]ource|[Rr]eferral|(?:UTM|utm)|[Cc]ampaign|' +
-        '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]'
+        '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]',
+      { allowColon: true }
     ),
     attributionSignalText220: commercialSemanticTextContaining(
       220,
       '[Ss]ource|[Rr]eferral|(?:UTM|utm)|[Cc]ampaign|' +
-        '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]'
+        '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]',
+      { allowColon: true }
     )
   };
   const commercialSemanticConstraint = (name) => {
