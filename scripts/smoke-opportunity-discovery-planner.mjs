@@ -14263,7 +14263,9 @@ async function verifyTwoStageTargetBinding() {
         ) ||
         !exactRunes(finalist.revenuePath?.attributionSignal, 220) ||
         !exactRunes(finalist.revenuePath?.conversionDestination, 180) ||
-        !exactRunes(finalist.revenuePath?.stopCondition, 180) ||
+        !/^[1-9][0-9]{0,2} (?:calendar days|review first actions|referral requests|applications|qualified visits|paid outcomes|bookings|orders|proposals|buyers)$/.test(
+          finalist.revenuePath?.stopCondition || ''
+        ) ||
         !exactRunes(finalist.revenuePath?.supportingBottleneck, 180) ||
         finalist.expectedGrossIncomeMicros !== 1_000_000_000_000 ||
         finalist.evidenceRefs?.length !== 15 ||

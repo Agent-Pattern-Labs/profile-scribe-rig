@@ -19928,6 +19928,16 @@ function normalizeRevenuePathSeed(seedValue, evidenceRefs) {
   );
   const currentRevenueContract =
     contractVersion === REVENUE_PATH_CONTRACT_VERSION;
+  const causalWitness = normalizeRevenueCausalWitness(
+    seed.k ?? seed.causalWitness
+  );
+  const structuredStopCondition =
+    firstText(causalWitness?.stopRule) === REVENUE_CAUSAL_STOP_RULE &&
+    Number.isInteger(causalWitness?.stopLimit) &&
+    REVENUE_CAUSAL_STOP_UNITS.has(firstText(causalWitness?.stopUnit))
+      ? `${causalWitness.stopLimit} ${firstText(causalWitness.stopUnit)
+          .replaceAll('_', ' ')}`
+      : '';
   const grounding = normalizeRevenuePathGrounding(
     seed.g ?? seed.grounding,
     evidenceRefs,
@@ -19940,9 +19950,7 @@ function normalizeRevenuePathSeed(seedValue, evidenceRefs) {
   ].find((item) => typeof item === 'string' && item.length > 0) || '';
   const normalized = compact({
     contractVersion,
-    causalWitness: normalizeRevenueCausalWitness(
-      seed.k ?? seed.causalWitness
-    ),
+    causalWitness,
     revenueMechanism: contractEnum(firstText(
       seed.revenueMechanism,
       seed.mechanism,
@@ -20022,9 +20030,10 @@ function normalizeRevenuePathSeed(seedValue, evidenceRefs) {
         ), 240),
     stopCondition: currentRevenueContract
       ? opportunityDiscoveryFreshSchemaText(
-          [seed.stopCondition, seed.st].find((item) =>
-            typeof item === 'string' && item.length > 0
-          ) || '',
+          structuredStopCondition ||
+            [seed.stopCondition, seed.st].find((item) =>
+              typeof item === 'string' && item.length > 0
+            ) || '',
           180
         )
       : truncate(firstText(
