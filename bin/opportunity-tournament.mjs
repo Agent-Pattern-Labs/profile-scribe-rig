@@ -38,19 +38,19 @@ const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS =
     '#/$defs/canonicalText64/pattern',
     '#/$defs/canonicalText96/pattern',
     '#/$defs/canonicalText120/pattern',
-    '#/$defs/commercialSemanticText96/pattern',
-    '#/$defs/commercialSemanticText100/pattern',
-    '#/$defs/commercialSemanticText120/pattern',
-    '#/$defs/commercialOptionalSemanticText100/pattern',
+    '#/$defs/commercialProseText96/pattern',
+    '#/$defs/commercialProseText100/pattern',
+    '#/$defs/commercialProseText120/pattern',
+    '#/$defs/commercialProseText140/pattern',
     '#/$defs/paidOutcomeText120/pattern',
     '#/$defs/compensatedJobPaidOfferText140/pattern',
     '#/$defs/conversionDestinationText120/pattern',
     '#/$defs/attributionSignalText140/pattern'
   ]);
 const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS_SHA256 =
-  'd2464c9c7782291ad51c2d21be0dbb017edcb8b955c531dd12b47efaffc65ee6';
+  'c15ad4b5bc49f268ff226ded3e97e2a673f51df0886d59bc3fc0ad34d39f4e35';
 const OPPORTUNITY_DISCOVERY_PLANNER_AUTHORED_TEXT_DESCRIPTION =
-  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces/colon except target tokens; ats may use one record/field colon. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field". b.l/c.l/a.l contain all fixed role branches; code selects commercialRole. Vary selected channels and actions.';
+  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces except target tokens; commercial prose may contain URL or record-field colons. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field". b.l/c.l/a.l contain all fixed role branches; code selects commercialRole. Vary selected channels and actions.';
 if (createHash('sha256').update(JSON.stringify(
   OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS
 )).digest('hex') !==
@@ -3083,9 +3083,6 @@ function opportunityDiscoveryPlannerResponseFormat(
   const canonicalAuthoredToken = `${canonicalAuthoredCharacter}+`;
   const canonicalAuthoredText =
     `${canonicalAuthoredToken}(?: ${canonicalAuthoredToken})*`;
-  const canonicalCommercialSemanticText =
-    `[A-Za-z]${canonicalAuthoredCharacter}*` +
-    `(?: ${canonicalAuthoredToken})*`;
   const canonicalTextDefinition = (maxLength, allowEmpty = false) => ({
     type: 'string',
     maxLength,
@@ -3105,28 +3102,32 @@ function opportunityDiscoveryPlannerResponseFormat(
     canonicalText220: canonicalTextDefinition(220),
     canonicalOptionalText180: canonicalTextDefinition(180, true)
   };
-  const commercialSemanticTextDefinition = (
-    maxLength,
-    allowEmpty = false
-  ) => ({
+  // Planner-authored commercial prose is transport data, not a semantic
+  // authority boundary. It may legitimately begin with a number (for a stop
+  // condition) or contain a URL colon (for a conversion destination). Keep
+  // target sentinels and control characters impossible at the schema layer,
+  // then let the typed causal witness and deterministic semantic gate decide
+  // whether the prose describes a valid revenue path.
+  const canonicalCommercialProseCharacter =
+    '[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b\\u200e-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufeff\\ufffd\\ufff9-\\ufffb{}]';
+  const canonicalCommercialProseToken =
+    `${canonicalCommercialProseCharacter}+`;
+  const canonicalCommercialProseText =
+    `(?:${canonicalCommercialProseToken} )*` +
+    `${canonicalCommercialProseCharacter}*[A-Za-z]` +
+    `${canonicalCommercialProseCharacter}*` +
+    `(?: ${canonicalCommercialProseToken})*`;
+  const commercialProseTextDefinition = (maxLength) => ({
     type: 'string',
+    minLength: 8,
     maxLength,
-    ...(allowEmpty ? {} : { minLength: 8 }),
-    pattern: allowEmpty
-      ? `^(?:|${canonicalCommercialSemanticText})$`
-      : `^${canonicalCommercialSemanticText}$`
+    pattern: `^${canonicalCommercialProseText}$`
   });
-  const commercialSemanticTextDefinitions = {
-    commercialSemanticText96: commercialSemanticTextDefinition(96),
-    commercialSemanticText100: commercialSemanticTextDefinition(100),
-    commercialSemanticText120: commercialSemanticTextDefinition(120),
-    commercialSemanticText140: commercialSemanticTextDefinition(140),
-    commercialSemanticText180: commercialSemanticTextDefinition(180),
-    commercialSemanticText220: commercialSemanticTextDefinition(220),
-    commercialOptionalSemanticText180:
-      commercialSemanticTextDefinition(180, true),
-    commercialOptionalSemanticText100:
-      commercialSemanticTextDefinition(100, true)
+  const commercialProseTextDefinitions = {
+    commercialProseText96: commercialProseTextDefinition(96),
+    commercialProseText100: commercialProseTextDefinition(100),
+    commercialProseText120: commercialProseTextDefinition(120),
+    commercialProseText140: commercialProseTextDefinition(140)
   };
   const targetTokenFreeText = (maxLength, allowEmpty = false) => {
     const definitionName = allowEmpty
@@ -3140,15 +3141,13 @@ function opportunityDiscoveryPlannerResponseFormat(
     }
     return { $ref: `#/$defs/${definitionName}` };
   };
-  const commercialSemanticText = (maxLength, allowEmpty = false) => {
-    const definitionName = allowEmpty
-      ? `commercialOptionalSemanticText${maxLength}`
-      : `commercialSemanticText${maxLength}`;
+  const commercialProseText = (maxLength) => {
+    const definitionName = `commercialProseText${maxLength}`;
     if (!Object.prototype.hasOwnProperty.call(
-      commercialSemanticTextDefinitions,
+      commercialProseTextDefinitions,
       definitionName
     )) {
-      throw new Error(`missing commercial semantic-text schema ${definitionName}`);
+      throw new Error(`missing commercial prose schema ${definitionName}`);
     }
     return { $ref: `#/$defs/${definitionName}` };
   };
@@ -3337,8 +3336,6 @@ function opportunityDiscoveryPlannerResponseFormat(
     required: ['referral', 'buyer', 'paidDemand'],
     additionalProperties: false
   };
-  const attributionSignalTextSchema = (maxLength) =>
-    commercialSemanticConstraint(`attributionSignalText${maxLength}`);
   const regexLiteral = (value) => firstText(value).replace(
     /[.*+?^${}()|[\]\\]/g,
     '\\$&'
@@ -3396,7 +3393,7 @@ function opportunityDiscoveryPlannerResponseFormat(
       ...definition,
       properties: {
         ...properties,
-        l: commercialSemanticText(labelMaxLength),
+        l: commercialProseText(labelMaxLength),
         ...(Object.prototype.hasOwnProperty.call(properties, 'q')
           ? { q: targetTokenFreeText(140) }
           : {})
@@ -3465,7 +3462,7 @@ function opportunityDiscoveryPlannerResponseFormat(
   };
   const contingentDefs = {
     ...canonicalTextDefinitions,
-    ...commercialSemanticTextDefinitions,
+    ...commercialProseTextDefinitions,
     ...commercialSemanticConstraintDefinitions,
     evidenceRef: contingentSchema.$defs.evidenceRef,
     evidenceRefs: contingentSchema.$defs.evidenceRefs,
@@ -3589,20 +3586,20 @@ function opportunityDiscoveryPlannerResponseFormat(
         ...authoredRevenuePathProperties,
         e: { $ref: '#/$defs/compactEvidenceRefs' },
         rm: { $ref: '#/$defs/revenueMechanismChoice' },
-        l: commercialSemanticText(96),
+        l: commercialProseText(96),
         // Keep transport validation structural. Native structured-output
         // providers do not reliably satisfy vocabulary-bearing regexes even
         // when the causal witness and typed mechanism are complete. The
         // deterministic semantic gate below binds io to the mechanism,
         // rejects contradiction, and never grants provider authority from
         // this prose alone.
-        io: commercialSemanticText(120),
+        io: commercialProseText(120),
         atm: { $ref: '#/$defs/attributionMethod' },
-        ats: attributionSignalTextSchema(140),
-        cd: commercialSemanticText(120),
-        st: commercialSemanticText(120),
+        ats: commercialProseText(140),
+        cd: commercialProseText(120),
+        st: commercialProseText(120),
         k: { $ref: '#/$defs/causalWitness' },
-        sb: commercialSemanticText(100),
+        sb: commercialProseText(100),
         vm: {
           type: 'integer',
           minimum: 1,
@@ -3619,7 +3616,7 @@ function opportunityDiscoveryPlannerResponseFormat(
               ...destinationGrounding,
               properties: {
                 ...asObject(destinationGrounding.properties),
-                l: commercialSemanticText(120),
+                l: commercialProseText(120),
                 e: { $ref: '#/$defs/singleEvidenceRefs' }
               }
             },

@@ -43,19 +43,19 @@ const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS = Object.freeze([
   '#/$defs/canonicalText64/pattern',
   '#/$defs/canonicalText96/pattern',
   '#/$defs/canonicalText120/pattern',
-  '#/$defs/commercialSemanticText96/pattern',
-  '#/$defs/commercialSemanticText100/pattern',
-  '#/$defs/commercialSemanticText120/pattern',
-  '#/$defs/commercialOptionalSemanticText100/pattern',
+  '#/$defs/commercialProseText96/pattern',
+  '#/$defs/commercialProseText100/pattern',
+  '#/$defs/commercialProseText120/pattern',
+  '#/$defs/commercialProseText140/pattern',
   '#/$defs/paidOutcomeText120/pattern',
   '#/$defs/compensatedJobPaidOfferText140/pattern',
   '#/$defs/conversionDestinationText120/pattern',
   '#/$defs/attributionSignalText140/pattern'
 ]);
 const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 =
-  'd2464c9c7782291ad51c2d21be0dbb017edcb8b955c531dd12b47efaffc65ee6';
+  'c15ad4b5bc49f268ff226ded3e97e2a673f51df0886d59bc3fc0ad34d39f4e35';
 const CURRENT_LUNA_AUTHORED_TEXT_DESCRIPTION =
-  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces/colon except target tokens; ats may use one record/field colon. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field". b.l/c.l/a.l contain all fixed role branches; code selects commercialRole. Vary selected channels and actions.';
+  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces except target tokens; commercial prose may contain URL or record-field colons. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field". b.l/c.l/a.l contain all fixed role branches; code selects commercialRole. Vary selected channels and actions.';
 const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
   referral_partner: Object.freeze({
     buyer: 'Qualified payer for the paid opportunity',
@@ -195,8 +195,8 @@ function verifyProjectedPatternsRemainExactLocalAuthority({
     ?.properties?.l?.pattern;
   const providerFollowUpPattern = providerSchema?.$defs?.followUpItem
     ?.properties?.l?.pattern;
-  if (canonicalDefinitionPatterns !== 27 ||
-      providerDefinitionPatterns !== 15 ||
+  if (canonicalDefinitionPatterns !== 23 ||
+      providerDefinitionPatterns !== 11 ||
       canonicalSellerPattern !== providerSellerPattern ||
       canonicalFollowUpPattern !== providerFollowUpPattern ||
       typeof canonicalFollowUpPattern !== 'string') {
@@ -219,10 +219,10 @@ function verifyAuthoredTextContractFitsCanonicalSchema({
     canonicalText64: ['Current paid service'],
     canonicalText96: ['Current paid service'],
     canonicalText120: ['Current paid service'],
-    commercialSemanticText96: ['Current paid service'],
-    commercialSemanticText100: ['Current paid service'],
-    commercialSemanticText120: ['Current paid service'],
-    commercialOptionalSemanticText100: ['Current paid service'],
+    commercialProseText96: ['Current paid service'],
+    commercialProseText100: ['10 attempts or fewer'],
+    commercialProseText120: ['https://owner.example/offer reviewed endpoint'],
+    commercialProseText140: ['Persist the originating practice beside the transaction'],
     paidOutcomeText120: ['Paid booking'],
     compensatedJobPaidOfferText140: ['Paid role'],
     conversionDestinationText120: ['Booking service'],
@@ -5494,7 +5494,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             contractVersion:
               'opportunity_discovery_provider_schema_projection_v1',
             omittedPatternPathsSha256:
-              'd2464c9c7782291ad51c2d21be0dbb017edcb8b955c531dd12b47efaffc65ee6',
+              'c15ad4b5bc49f268ff226ded3e97e2a673f51df0886d59bc3fc0ad34d39f4e35',
             omittedPatternCount: 12,
             localExactSchemaRequired: true
           },
@@ -7544,7 +7544,7 @@ async function verifyNaturalBookingAttribution(job, evidenceRef) {
   const rejectedAuthoredSignals = [
     {
       text: 'No attribution is recorded for the booking.',
-      expectedStage: 'strict_schema'
+      expectedStage: 'semantic'
     },
     {
       text: 'The booking has an unknown source.',
@@ -18551,9 +18551,13 @@ function verifyFreshPlannerStrictSchemaTotality({
     plan.contingentFinalists.pathBase.r[0].io =
       'One accepted compensated engagement from the reviewed opportunity';
     plan.contingentFinalists.pathBase.r[0].cd =
-      'The reviewed employer careers endpoint';
+      'https://employer.example/careers reviewed endpoint';
     plan.contingentFinalists.pathBase.r[0].g.d.l =
-      'The reviewed employer careers endpoint';
+      'https://employer.example/careers reviewed endpoint';
+    plan.contingentFinalists.pathBase.r[0].ats =
+      'Persist the originating practice beside the transaction';
+    plan.contingentFinalists.pathBase.r[0].st =
+      '10 attempts or 14 calendar days, whichever comes first';
   }
   if (!validate(vocabularyNeutralOutcome)) {
     throw new Error(
