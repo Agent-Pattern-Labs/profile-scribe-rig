@@ -3337,8 +3337,6 @@ function opportunityDiscoveryPlannerResponseFormat(
     required: ['referral', 'buyer', 'paidDemand'],
     additionalProperties: false
   };
-  const conversionDestinationTextSchema = (maxLength) =>
-    commercialSemanticConstraint(`conversionDestinationText${maxLength}`);
   const attributionSignalTextSchema = (maxLength) =>
     commercialSemanticConstraint(`attributionSignalText${maxLength}`);
   const regexLiteral = (value) => firstText(value).replace(
@@ -3601,7 +3599,7 @@ function opportunityDiscoveryPlannerResponseFormat(
         io: commercialSemanticText(120),
         atm: { $ref: '#/$defs/attributionMethod' },
         ats: attributionSignalTextSchema(140),
-        cd: conversionDestinationTextSchema(120),
+        cd: commercialSemanticText(120),
         st: commercialSemanticText(120),
         k: { $ref: '#/$defs/causalWitness' },
         sb: commercialSemanticText(100),
@@ -3621,7 +3619,7 @@ function opportunityDiscoveryPlannerResponseFormat(
               ...destinationGrounding,
               properties: {
                 ...asObject(destinationGrounding.properties),
-                l: conversionDestinationTextSchema(120),
+                l: commercialSemanticText(120),
                 e: { $ref: '#/$defs/singleEvidenceRefs' }
               }
             },
@@ -7901,7 +7899,7 @@ function explicitlyContradictsAttribution(value) {
 }
 
 function explicitlyContradictsConversionDestination(value) {
-  return /\b(?:destination unavailable|no conversion destination|no destination|not bookable|not available)\b/i.test(
+  return /\b(?:destination unavailable|no conversion destination|no destination|not bookable|not available|without (?:a )?(?:paid )?conversion (?:mechanism|path))\b/i.test(
     firstText(value)
   );
 }

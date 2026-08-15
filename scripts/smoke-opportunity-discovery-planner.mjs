@@ -2261,7 +2261,7 @@ await verifyTruncatedPlannerFailsOnceWithSafeReceipt(unsafeJob);
 await verifySiliconFlowProductionTimeoutFailsOnce(unsafeJob);
 await verifyAmbientProductionTimeoutFailsOnce(unsafeJob);
 await verifyBaiduProductionStrictSchemaMismatchFailsOnce(unsafeJob);
-await verifyFireworksProductionStrictSchemaMismatchFailsOnce(unsafeJob);
+await verifyFireworksProductionDestinationContradictionFailsSemantically(unsafeJob);
 await verifyMorphProductionStrictSchemaMismatchFailsOnce(unsafeJob);
 await verifyMancerProductionStrictRootSchemaMismatchFailsOnce(unsafeJob);
 await verifyAtlasCloudProductionRawOverflowFailsOnce(unsafeJob);
@@ -9163,13 +9163,13 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
   const diagnostics = receipt?.responseDiagnostics;
   const expectedIssues = [
     ['required', '/plans/0/contingentFinalists/pathBase/r/0', 'k'],
-    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/cd', ''],
     ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/b', ''],
     ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/o', ''],
     ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/a', ''],
-    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/g/d/l', ''],
     ['type', '/plans/0/contingentFinalists/pathBase/r/0/g/c', ''],
-    ['required', '/plans/1/contingentFinalists/pathBase/r/0', 'k']
+    ['required', '/plans/1/contingentFinalists/pathBase/r/0', 'k'],
+    ['type', '/plans/1/contingentFinalists/pathBase/r/0/g/b', ''],
+    ['type', '/plans/1/contingentFinalists/pathBase/r/0/g/o', '']
   ];
   const actualIssues = result.normalizationDiagnostic?.issues?.map(
     (issue) => [
@@ -9280,7 +9280,7 @@ async function verifyBaiduProductionStrictSchemaMismatchFailsOnce(job) {
   }
 }
 
-async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
+async function verifyFireworksProductionDestinationContradictionFailsSemantically(job) {
   let calls = 0;
   let requestSeen;
   let wireRequestSeen;
@@ -9380,22 +9380,6 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
   });
   const receipt = result.llm?.discoveryPlanner;
   const diagnostics = receipt?.responseDiagnostics;
-  const expectedIssues = [
-    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/cd', ''],
-    ['pattern', '/plans/0/contingentFinalists/pathBase/r/0/g/d/l', ''],
-    ['pattern', '/plans/1/contingentFinalists/pathBase/r/0/cd', ''],
-    ['pattern', '/plans/1/contingentFinalists/pathBase/r/0/g/d/l', '']
-  ];
-  const actualIssues = result.normalizationDiagnostic?.issues?.map(
-    (issue) => [
-      issue.keyword,
-      issue.instancePath,
-      issue.missingProperty || ''
-    ]
-  );
-  const actualIssueKeys = result.normalizationDiagnostic?.issues?.map(
-    (issue) => Object.keys(issue).sort()
-  );
   const expectedIgnore = [
     'cloudflare',
     'open-inference',
@@ -9430,11 +9414,18 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
         max_price: { prompt: 2, completion: 6, request: 0 }
       }) ||
       result.status !== 'blocked' || result.plans.length !== 0 ||
-      result.planSelection?.returnedPlanCount !== 0 ||
+      result.planSelection?.returnedPlanCount !== 2 ||
       result.planSelection?.acceptedPlanCount !== 0 ||
-      result.planSelection?.rejectedPlanCount !== 0 ||
-      JSON.stringify(result.planSelection?.rejectedPlans) !== '[]' ||
-      result.webSearchReceipt !== null ||
+      result.planSelection?.rejectedPlanCount !== 2 ||
+      result.planSelection?.rejectedPlans?.length !== 2 ||
+      result.planSelection.rejectedPlans.some((plan) =>
+        !/incomplete causal revenue path.*conversion_destination/i.test(
+          plan.reason || ''
+        )) ||
+      result.webSearchReceipt?.attempted !== false ||
+      result.webSearchReceipt?.resultCount !== 0 ||
+      result.webSearchReceipt?.actualSpendMicros !== 0 ||
+      result.webSearchReceipt?.costIncludedInLLMReceipt !== false ||
       result.usage?.calls !== 1 || result.usage?.successfulCalls !== 1 ||
       result.usage?.promptTokens !== 13_668 ||
       result.usage?.completionTokens !== 3_856 ||
@@ -9496,14 +9487,7 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
       result.preflight.responseBodyByteCount <= 0 ||
       result.preflight.responseBodyByteCount >
         MAX_DISCOVERY_PLANNER_RESPONSE_BYTES ||
-      result.normalizationDiagnostic?.contractVersion !==
-        OPPORTUNITY_DISCOVERY_PLANNER_DIAGNOSTIC_CONTRACT ||
-      result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
-      result.normalizationDiagnostic?.failedMotionCount !== 2 ||
-      JSON.stringify(actualIssues) !== JSON.stringify(expectedIssues) ||
-      actualIssueKeys?.some((keys) =>
-        JSON.stringify(keys) !==
-          JSON.stringify(['instancePath', 'keyword'])) ||
+      result.normalizationDiagnostic !== undefined ||
       result.llm?.commercialCritic !== undefined ||
       result.llm?.strategyFamilyRepair !== undefined ||
       result.commercialDiscoveryEvidence !== undefined ||
@@ -9512,7 +9496,7 @@ async function verifyFireworksProductionStrictSchemaMismatchFailsOnce(job) {
       JSON.stringify(result).includes(invalidConversionDestination) ||
       JSON.stringify(result).includes(invalidDiscoveryLink)) {
     throw new Error(
-      `Fireworks production strict-schema mismatch did not fail once after exact completed accounting: ${JSON.stringify({
+      `Fireworks production destination contradiction did not fail semantically after exact completed accounting: ${JSON.stringify({
         calls,
         routeIgnore: requestSeen?.provider?.ignore,
         wireSchemaParity:
@@ -18566,6 +18550,10 @@ function verifyFreshPlannerStrictSchemaTotality({
   for (const plan of vocabularyNeutralOutcome.plans) {
     plan.contingentFinalists.pathBase.r[0].io =
       'One accepted compensated engagement from the reviewed opportunity';
+    plan.contingentFinalists.pathBase.r[0].cd =
+      'The reviewed employer careers endpoint';
+    plan.contingentFinalists.pathBase.r[0].g.d.l =
+      'The reviewed employer careers endpoint';
   }
   if (!validate(vocabularyNeutralOutcome)) {
     throw new Error(
