@@ -99,6 +99,15 @@ const CONTINGENT_HYPOTHESIS_SEMANTICS = Symbol(
 const CONTINGENT_ACTION_PROJECTION_DIAGNOSTIC = Symbol(
   'contingentActionProjectionDiagnostic'
 );
+// A fresh seller offer is constrained by an exact, seller-specific pattern in
+// the locally validated response schema. Preserve that authority across the
+// normalization boundary so a second text classifier cannot disagree with
+// the structural contract after the selected branch is copied byte-for-byte.
+// The marker is process-local and cannot be supplied by provider JSON or a
+// persisted receipt.
+const DISCOVERY_SCHEMA_BOUND_SELLER_OFFER = Symbol(
+  'discoverySchemaBoundSellerOffer'
+);
 // Provider evidence keeps its exact public identity for target binding,
 // provenance, receipts, and critic review. Commercial polarity and mechanism
 // checks use this hidden candidate-scoped view instead so words in an exact
@@ -2890,7 +2899,8 @@ export async function runOpportunityDiscoveryPlanner({
     allowedMotionKinds,
     requiredSellerFocus,
     requiredSellerEvidenceRefs,
-    authoritativePersonMarket: authoritativePlannerMarket
+    authoritativePersonMarket: authoritativePlannerMarket,
+    strictSchemaValidated: true
   });
   normalized.plans = selection.plans;
   normalized.planSelection = selection.diagnostics;
@@ -4281,9 +4291,9 @@ function normalizeOpportunityDiscoveryPlan(
       ? { ...routeInput, ...typedRoute }
       : routeInput;
     const rawPaidOffer = asObject(routedPlan.paidOffer);
-    const paidDemandMotion = opportunityDiscoveryPaidDemandMotionKind(
-      routedPlan.motionKind
-    );
+    const paidDemandMotion = typedRoute
+      ? typedRoute.commercialRole === 'paid_demand'
+      : opportunityDiscoveryPaidDemandMotionKind(routedPlan.motionKind);
     const normalizedPaidOffer = deriveFreshPlannerAuthority
       ? paidDemandMotion
         ? firstText(rawPaidOffer.compensatedJob)
@@ -5932,8 +5942,10 @@ function opportunityDiscoveryPlanIssue(
         return `Discovery plan ${item.id} is missing ${field}.`;
       }
     }
+    const paidDemandMotion = firstText(item.commercialRole) === 'paid_demand';
     if (requiredSellerFocus &&
-        !opportunityDiscoveryPaidDemandMotionKind(item.motionKind) &&
+        !paidDemandMotion &&
+        item[DISCOVERY_SCHEMA_BOUND_SELLER_OFFER] !== true &&
         !opportunityDiscoveryUnicodeIdentityContains(
           item.paidOffer,
           requiredSellerFocus
@@ -5941,7 +5953,7 @@ function opportunityDiscoveryPlanIssue(
       return `Discovery plan ${item.id} paidOffer must remain bound to the objective's primary seller focus "${truncate(requiredSellerFocus, 120)}".`;
     }
     if (requireTypedRoute &&
-        opportunityDiscoveryPaidDemandMotionKind(item.motionKind) &&
+        paidDemandMotion &&
         !compensatedJobPaidOfferText(item.paidOffer)) {
       return `Discovery plan ${item.id} paidOffer must describe the model-authored paid compensated role.`;
     }
@@ -5949,7 +5961,7 @@ function opportunityDiscoveryPlanIssue(
       compactStrings(sellerEvidenceRefsValue)
     );
     if (requiredSellerFocus &&
-        !opportunityDiscoveryPaidDemandMotionKind(item.motionKind) &&
+        !paidDemandMotion &&
         (requiredSellerEvidenceRefs.size === 0 ||
           !asArray(item.evidenceRefs).some((ref) =>
             requiredSellerEvidenceRefs.has(firstText(ref))
@@ -6560,7 +6572,8 @@ function selectValidOpportunityDiscoveryPlans({
   allowedMotionKinds: allowedMotionKindsValue,
   requiredSellerFocus = '',
   requiredSellerEvidenceRefs: requiredSellerEvidenceRefsValue = [],
-  authoritativePersonMarket = ''
+  authoritativePersonMarket = '',
+  strictSchemaValidated = false
 }) {
   const raw = asObject(rawValue);
   const envelope = {
@@ -6603,9 +6616,21 @@ function selectValidOpportunityDiscoveryPlans({
       }
     );
     normalized.webSearchReceipt = webSearchReceipt;
+    const normalizedPlan = asObject(asArray(normalized.plans)[0]);
+    const rawPaidOffer = asObject(asObject(rawPlan).paidOffer);
+    if (strictSchemaValidated === true &&
+        firstText(normalizedPlan.commercialRole) !== 'paid_demand' &&
+        firstText(normalizedPlan.paidOffer) ===
+          firstText(rawPaidOffer.seller)) {
+      Object.defineProperty(
+        normalizedPlan,
+        DISCOVERY_SCHEMA_BOUND_SELLER_OFFER,
+        { value: true, enumerable: false }
+      );
+    }
     return {
       rawPlan: asObject(rawPlan),
-      plan: asObject(asArray(normalized.plans)[0]),
+      plan: normalizedPlan,
       sourceIndex
     };
   }).sort((left, right) =>
