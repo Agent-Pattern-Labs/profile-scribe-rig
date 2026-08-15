@@ -12744,6 +12744,12 @@ async function verifyPrivateContactBearingURLsFailClosed() {
       url:
         'https://rfp.safe-example.com/open/%39%31%37%2D%35%35%35%2D%30%31%32%33',
       privateValue: '917-555-0123'
+    },
+    {
+      name: 'phone disguised as job id',
+      slug: 'phone-job-id',
+      url: 'https://jobs.safe-example.com/opening?jid=917-555-0123',
+      privateValue: '917-555-0123'
     }
   ];
   const assertScrubbed = (value, variant, surface) => {
@@ -12974,6 +12980,25 @@ async function verifyPrivateContactBearingURLsFailClosed() {
         numericJobRecordURL) {
     throw new Error(
       `numeric public job record was mistaken for a phone number: ${JSON.stringify(normalizedNumericJobRecord)}`
+    );
+  }
+
+  const compactJobQueryURL =
+    'https://www.ziprecruiter.com/c/Expedite-Technology-Solutions/Job/Lead-Consultant-%7C-Digital-Marketing-&-Portals/-in-New-York,NY?jid=681e715369115d9b';
+  const compactJobQuery = structuredClone(baseDiscoveryEvidence);
+  compactJobQuery.evidence[0].url = compactJobQueryURL;
+  compactJobQuery.candidates[0].publicUrl = compactJobQueryURL;
+  compactJobQuery.candidates[0].contactPaths[0].reference =
+    compactJobQueryURL;
+  const normalizedCompactJobQuery = normalizeCommercialDiscoveryEvidence(
+    compactJobQuery,
+    now
+  );
+  if (normalizedCompactJobQuery.valid !== true ||
+      normalizedCompactJobQuery.evidence.length !== 1 ||
+      normalizedCompactJobQuery.candidates.length !== 1) {
+    throw new Error(
+      `compact public job query id was mistaken for a phone number: ${JSON.stringify(normalizedCompactJobQuery)}`
     );
   }
 

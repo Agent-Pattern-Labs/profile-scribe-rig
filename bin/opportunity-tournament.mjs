@@ -12973,6 +12973,9 @@ function commercialDiscoveryURLWithLabeledRecordIDs(value) {
   return value.replace(
     /(\/(?:jobs?|job-details)\/)\d{7,15}(?=-[a-z][a-z0-9-]*(?:[/?#]|$))/gi,
     '$1job-record-id'
+  ).replace(
+    /([?&](?:jid|job_id|jobid|requisition_id)=)[a-z0-9]{7,64}(?=&|#|$)/gi,
+    '$1job-record-id'
   );
 }
 
