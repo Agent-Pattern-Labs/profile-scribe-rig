@@ -1390,7 +1390,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /fresh paid demand requires a structured PDL employer_job_posting.*public snippets\/RFP\/RFQ\/tender\/procurement prose has no live-demand authority.*supplier offers.*marketplaces.*accepts-insurance pages are not demand/is.test(
+        /fresh paid demand requires either a structured PDL employer_job_posting or a bounded provider URL result.*currentness.*open response action.*explicit non-zero compensation.*market fit.*exact public demand page.*supplier offers.*marketplaces.*accepts-insurance pages are not demand/is.test(
           rule
         )
       ) ||
@@ -3538,7 +3538,7 @@ async function verifyPlannerMarketGroundingAndSiblingSalvage(
         motion.market !== 'Remote'
       ) ||
       JSON.stringify(remoteOnlyMotionKinds) !==
-        JSON.stringify(['compensated_job'])) {
+        JSON.stringify(['compensated_job', 'buyer_solicitation'])) {
     throw new Error(
       `Remote-only scope did not constrain both plans to compensated-job discovery: ${JSON.stringify({ remoteOnlyCalls, remoteOnlyMotionKinds, explicitRemote })}`
     );
@@ -4634,7 +4634,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
 
   const publicDemand = plan({
     ...cases[1].plans(evidenceRef)[0],
-    id: 'retired_public_live_demand_route',
+    id: 'current_public_live_demand_route',
     motionKind: 'buyer_solicitation',
     searchMode: 'public_live_demand',
     commercialRole: 'paid_demand',
@@ -4650,16 +4650,15 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     publicDemand,
     'generation-public-demand-unused-sensitive-filter-fields'
   );
-  if (publicResult.status !== 'blocked' ||
-      publicResult.plans.length !== 0 ||
-      publicResult.normalizationDiagnostic?.code !==
-        'strict_schema_mismatch' ||
-      !publicResult.normalizationDiagnostic?.issues?.some((issue) =>
-        issue.keyword === 'enum' &&
-        issue.instancePath === '/plans/0/motionKind'
+  if (publicResult.status !== 'planned' ||
+      publicResult.planSelection?.acceptedPlanCount !== 1 ||
+      publicResult.planSelection?.rejectedPlanCount !== 1 ||
+      !publicResult.planSelection?.rejectedPlans?.some((item) =>
+        item.id === 'plan_1_buyer_solicitation' &&
+        /missing buyer/i.test(item.reason || '')
       )) {
     throw new Error(
-      `retired public-live-demand route regained fresh authority: ${JSON.stringify(publicResult)}`
+      `public-live-demand fresh route was not semantically validated after projection: ${JSON.stringify(publicResult)}`
     );
   }
 
@@ -5354,7 +5353,24 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
           commercialRole: 'paid_demand',
           acquisitionMode: 'permissioned_outreach',
           demandArtifactKinds: ['employer_job_posting'],
-          providerSequences: [['people_data_labs_job_posting_search']]
+          providerSequences: [
+            ['people_data_labs_job_posting_search'],
+            ['brave_web_search']
+          ]
+        },
+        {
+          motionKind: 'buyer_solicitation',
+          searchMode: 'public_live_demand',
+          commercialRole: 'paid_demand',
+          acquisitionMode: 'permissioned_outreach',
+          demandArtifactKinds: [
+            'buyer_rfp',
+            'buyer_rfq',
+            'buyer_tender',
+            'buyer_procurement_notice',
+            'buyer_paid_request'
+          ],
+          providerSequences: [['brave_web_search']]
         }
       ]) ||
       JSON.stringify(capabilities.plannerResponseBounds) !== JSON.stringify({
@@ -11605,14 +11621,15 @@ async function verifyUnprovenOfferRequiresLiveCompensatedDemand() {
         motion.demandArtifactKind !== 'employer_job_posting' ||
         /^Proposed paid\b/.test(motion.paidOffer || '')
       ) ||
-      JSON.stringify(motionKinds) !== JSON.stringify(['compensated_job']) ||
+      JSON.stringify(motionKinds) !==
+        JSON.stringify(['compensated_job', 'buyer_solicitation']) ||
       prompt.sellerContract?.offerEvidenceStatus !==
         'unverified_offer_paid_demand_only' ||
       !prompt.outputContract?.offerAuthority?.includes(
-        'select only compensated_job motions'
+        'select only compensated_job or buyer_solicitation motions'
       ) ||
       !prompt.hardRules?.some((rule) =>
-        rule.includes('Only compensated_job is authorized')
+        rule.includes('Only compensated_job or buyer_solicitation is authorized')
       ) ||
       result.usage?.calls !== 1 ||
       result.sideEffectsPerformed !== 0) {

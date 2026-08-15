@@ -905,7 +905,24 @@ const FRESH_DISCOVERY_EXECUTION_ROUTES = Object.freeze([
     acquisitionMode: 'permissioned_outreach',
     demandArtifactKinds: Object.freeze(['employer_job_posting']),
     providerSequences: Object.freeze([
-      Object.freeze(['people_data_labs_job_posting_search'])
+      Object.freeze(['people_data_labs_job_posting_search']),
+      Object.freeze(['brave_web_search'])
+    ])
+  }),
+  Object.freeze({
+    motionKind: 'buyer_solicitation',
+    searchMode: 'public_live_demand',
+    commercialRole: 'paid_demand',
+    acquisitionMode: 'permissioned_outreach',
+    demandArtifactKinds: Object.freeze([
+      'buyer_rfp',
+      'buyer_rfq',
+      'buyer_tender',
+      'buyer_procurement_notice',
+      'buyer_paid_request'
+    ]),
+    providerSequences: Object.freeze([
+      Object.freeze(['brave_web_search'])
     ])
   })
 ]);
@@ -2187,7 +2204,8 @@ export async function runOpportunityDiscoveryPlanner({
   // compensated demand instead; the provider record can then prove the payer,
   // current paid work, application destination, and response path together.
   allowedMotionKinds = allowedMotionKinds.filter((motionKind) =>
-    motionKind === 'compensated_job' || sellerHasCurrentPaidOfferEvidence
+    ['compensated_job', 'buyer_solicitation'].includes(motionKind) ||
+      sellerHasCurrentPaidOfferEvidence
   );
   const sellerContractIssue = commercialSellerContractIssue({
     workerSellerContract,
@@ -3751,7 +3769,7 @@ function compactOpportunityDiscoveryOutputContract(
     evidence:
       `base+tactic e has observation:* plus child refs; e uses approved refs, never ${CONTINGENT_TARGET_EVIDENCE_REF}`,
     offerAuthority: provisionalOfferExperiment
-      ? 'No current seller offer is proven: select only compensated_job motions. The schema-required Proposed paid seller branch is inert and code must never select it.'
+      ? 'No current seller offer is proven: select only compensated_job or buyer_solicitation motions. The schema-required Proposed paid seller branch is inert and code must never select it.'
       : 'Seller paid offer is current and evidence-grounded.'
   };
 }
@@ -3762,18 +3780,18 @@ function compactOpportunityDiscoveryHardRules(
   return [
     'Exactly 2 distinct motions, each pathBase+2 causal tactics. Unknown identities use the declared slot and bounded read-only discovery; never return 0 plans or call a missing target missing supply evidence.',
     provisionalOfferExperiment
-      ? 'requiredPrimaryFocus is a verified capability, but no current paid offer is proven. Select only compensated_job motions backed after planning by current employer-authored paid demand. The schema-required Proposed paid seller branch is inert and must never drive buyer or referral discovery.'
+      ? 'requiredPrimaryFocus is a verified capability, but no current paid offer is proven. Select only compensated_job or buyer_solicitation motions backed after planning by current employer-authored paid demand or buyer-authored solicitation. The schema-required Proposed paid seller branch is inert and must never drive buyer or referral discovery.'
       : 'requiredPrimaryFocus is the objective seller. paidOffer.seller includes it; compensatedJob is a paid role; code selects by motionKind and filters refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
     `Top-level buyer is the payer archetype with no target token. Every b.l supplies the three schema-fixed referral/buyer/paidDemand branches; code selects the branch fixed by motionKind, so the selected b.l has {{TARGET_NAME}} once for buyer/paid_demand and none for referral. c.l has {{TARGET_URL}} once; a.l has both once. Never put ${CONTINGENT_TARGET_EVIDENCE_REF} in e; code binds it after role validation.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     provisionalOfferExperiment
-      ? 'a:2/tactic; each a has one model-authored l/e. Only compensated_job is authorized: every action responds through the official current paid-demand page with a review-first paid application or proposal. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
+      ? 'a:2/tactic; each a has one model-authored l/e. Only compensated_job or buyer_solicitation is authorized: every action responds through the official current paid-demand page with a review-first paid application or proposal. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
       : 'a:2/tactic; each a has one model-authored l/e selected for motionKind. referral_partner introduces a qualified buyer to the current paid offer and paid booking/payment; buyer asks the target to book/buy/sign; paid_demand submits a paid application/proposal response. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0. sb must state one factual unknown or not-yet-observed causal proof about demand, acquisition, conversion, attribution, or paid outcome. Never put an imperative, research/verification task, artifact, setup, tracking instruction, or other operational step in sb.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
-    'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. Fresh paid demand requires a structured PDL employer_job_posting; public snippets/RFP/RFQ/tender/procurement prose has no live-demand authority. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional compensated job.',
+    'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. Fresh paid demand requires either a structured PDL employer_job_posting or a bounded provider URL result that independently proves currentness, an open response action, explicit non-zero compensation, market fit, and the exact public demand page. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional compensated job.',
     'Adapters: professional=person/single; local_org=person/org->decision-maker; never terminal org; select one exact canonical PDL targetRoleSubrole; code derives its PDL role and drops role intent for non-person routes; organizationTerms=context.',
     'acquisitionMechanism exact: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page".',
     'buyer/referral c+a: use that exact form; URL=HTTPS LinkedIn /in; no message/DM/InMail/connect/email/phone/form.',
@@ -4059,7 +4077,10 @@ function commercialDiscoveryMotionKindsForCapabilities(value) {
   if (capabilities.pdlJobPostingSearch) {
     allowed.push('compensated_job');
   }
-  return allowed;
+  if (capabilities.braveWebSearch) {
+    allowed.push('compensated_job', 'buyer_solicitation');
+  }
+  return [...new Set(allowed)];
 }
 
 function freshDiscoveryExecutionRouteIssue(planValue) {
