@@ -11792,7 +11792,17 @@ function bindContingentTargetTokens(value, bindingValue) {
         const item = asObject(itemValue);
         const authoredLabel = firstText(item.l);
         if (dimensionEvidence.has(dimension)) item.e = bindRefs(item.e);
-        if (dimension === 'b' && commercialRole !== 'referral_partner') {
+        if (dimension === 'p' && commercialRole === 'paid_demand') {
+          // Before discovery, call 1 cannot truthfully name the eventual live
+          // demand proof and may describe its absence. Once the typed slot is
+          // bound, the provider-attested target label and evidence are the
+          // exact proof. Project only those validated identity values; do not
+          // compose fallback proof prose from the pre-discovery hypothesis.
+          item.l = targetName;
+          item.e = compactStrings(binding.evidenceRefs);
+          setContingentAuthoredSemanticText(item, targetName);
+        } else if (dimension === 'b' &&
+            commercialRole !== 'referral_partner') {
           item.l = bindLabel(item.l, { name: true });
           setContingentAuthoredSemanticText(item, authoredLabel);
         } else if (dimension === 'c') {

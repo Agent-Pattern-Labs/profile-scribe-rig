@@ -16516,6 +16516,12 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
     family.d.r[0].cd =
       'The official job application page at {{TARGET_URL}}';
     family.d.r[0].g.d.l = family.d.r[0].cd;
+    family.d.p = family.d.p.map((item, index) => ({
+      ...item,
+      l: index === 0
+        ? 'Attribution exists, but no current paid-demand page is verified'
+        : 'No employer-authored paid opportunity is present yet'
+    }));
   }
   const stripTargetRef = (value) => {
     if (Array.isArray(value)) {
@@ -16891,6 +16897,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       !result.winner?.action?.includes(
         'Acme Services'
       ) ||
+      result.winner?.why !== 'Acme Services' ||
       result.gate?.sideEffects?.outreachAttempts !== 0 ||
       result.gate?.sideEffects?.publishAttempts !== 0 ||
       result.gate?.sideEffects?.providerWrites !== 0) {
