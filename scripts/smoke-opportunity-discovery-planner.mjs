@@ -57,7 +57,7 @@ const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS = Object.freeze([
 const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 =
   'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70';
 const CURRENT_LUNA_AUTHORED_TEXT_DESCRIPTION =
-  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified employer {{TARGET_NAME}} for the paid role" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
+  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified payer {{TARGET_NAME}} for the paid opportunity" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
 const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
   referral_partner: Object.freeze({
     buyer: 'Qualified payer for the paid opportunity',
@@ -76,7 +76,7 @@ const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
     ])
   }),
   paid_demand: Object.freeze({
-    buyer: 'Qualified employer {{TARGET_NAME}} for the paid role',
+    buyer: 'Qualified payer {{TARGET_NAME}} for the paid opportunity',
     channel:
       'Review-first official paid-demand page {{TARGET_URL}} for paid-role verification',
     actions: Object.freeze([
@@ -227,7 +227,7 @@ function verifyAuthoredTextContractFitsCanonicalSchema({
         ]) ||
       JSON.stringify(buyerLabel.properties?.paidDemand?.enum) !==
         JSON.stringify([
-          'Qualified employer {{TARGET_NAME}} for the paid role'
+          'Qualified payer {{TARGET_NAME}} for the paid opportunity'
         ])) {
     throw new Error('buyer label lost its finite role-branch contract');
   }
@@ -2235,14 +2235,14 @@ await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
 // The 2026-08-13 Atlas production trace reached the former 18k-token ceiling
 // after 99,271 ms with 27,149 content bytes and finish=length. The strict
-// schema's exact derived serialized bound is 31,552 bytes in the local
-// fixture and 31,920 bytes in the Linux deployment fixture. Both generated
+// schema's exact derived serialized bound is 31,936 bytes in the local
+// fixture and 32,304 bytes in the Linux deployment fixture. Both generated
 // schemas remain finite and below the shared 34,400-byte proof ceiling. A tokenizer with
 // byte fallback cannot require more tokens than the encoded byte count, so the
 // current 42k ceiling covers the entire 40,960-byte runtime cap plus 1,024
 // tokens of explicit headroom. Retain the trace projection as a
 // production-derived timing and compression regression: the schema projects
-// to at most 21,164 native tokens and 42k projects to 231,633 ms, inside the
+// to at most 21,419 native tokens and 42k projects to 231,633 ms, inside the
 // 300-second deadline.
 const observedPlannerCompletionTokens = 18_000;
 const observedPlannerContentBytes = 27_149;
@@ -2261,8 +2261,8 @@ const projectedPlannerDurationMs = Math.ceil(
     observedPlannerCompletionTokens
 );
 const supportedSchemaTokenProjection = new Map([
-  [31_552, 20_920],
-  [31_920, 21_164]
+  [31_936, 21_174],
+  [32_304, 21_419]
 ]);
 if (!supportedSchemaTokenProjection.has(
   computedPlannerSchemaResponseBoundBytes
@@ -4653,12 +4653,26 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
     publicDemand,
     'generation-public-demand-unused-sensitive-filter-fields'
   );
+  const projectedPublicDemand = publicResult.plans.find((item) =>
+    item.id === 'plan_1_buyer_solicitation'
+  );
   if (publicResult.status !== 'planned' ||
-      publicResult.planSelection?.acceptedPlanCount !== 1 ||
-      publicResult.planSelection?.rejectedPlanCount !== 1 ||
-      !publicResult.planSelection?.rejectedPlans?.some((item) =>
-        item.id === 'plan_1_buyer_solicitation' &&
-        /missing buyer/i.test(item.reason || '')
+      publicResult.planSelection?.acceptedPlanCount !== 2 ||
+      publicResult.planSelection?.rejectedPlanCount !== 0 ||
+      !projectedPublicDemand ||
+      projectedPublicDemand.buyer !==
+        'The validated buyer requesting compensated professional work' ||
+      projectedPublicDemand.counterparty !==
+        'A current buyer with a public paid solicitation' ||
+      projectedPublicDemand.paidOffer !==
+        'A current compensated role matching verified professional skills' ||
+      projectedPublicDemand.targetRoleTerms.length !== 0 ||
+      projectedPublicDemand.organizationTerms.length !== 0 ||
+      projectedPublicDemand.jobTitle !== '' ||
+      projectedPublicDemand.skills.length !== 0 ||
+      ['familyA', 'familyB'].some((familyKey) =>
+        projectedPublicDemand.contingentFinalists?.[familyKey]
+          ?.d?.r?.[0]?.rm !== 'compensated_role'
       )) {
     throw new Error(
       `public-live-demand fresh route was not semantically validated after projection: ${JSON.stringify(publicResult)}`
@@ -16298,9 +16312,12 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
   const original = scenario.plans(evidenceRef)[0];
   const motion = plan({
     ...original,
+    motionKind: 'buyer_solicitation',
+    searchMode: 'public_live_demand',
+    demandArtifactKind: 'buyer_paid_request',
     acquisitionMode: 'permissioned_outreach',
     acquisitionMechanism:
-      'One review-first application to a current compensated job'
+      'One review-first proposal to a current public paid solicitation'
   });
   for (const familyKey of ['familyA', 'familyB']) {
     const family = motion.contingentFinalists[familyKey];
@@ -16341,7 +16358,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
   motion.targetSlot.resolutionStrategy =
     'organization_then_decision_maker';
   const demandURL =
-    'https://jobs.acme.example/software-engineer';
+    'https://rfp.acme.example/software-platform-contract';
   const discoveryPlan = await runOpportunityDiscoveryPlanner({
     job: planner,
     model: 'deepseek/deepseek-v4-flash-0731',
@@ -16367,7 +16384,8 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
     })
   });
   if (discoveryPlan.status !== 'planned' ||
-      discoveryPlan.plans[0]?.searchMode !== 'active_job_posting' ||
+      discoveryPlan.plans[0]?.searchMode !== 'public_live_demand' ||
+      discoveryPlan.plans[0]?.motionKind !== 'buyer_solicitation' ||
       discoveryPlan.plans[0]?.targetSlot?.finalTargetKind !==
         'live_paid_demand' ||
       discoveryPlan.plans[0]?.targetSlot?.resolutionStrategy !==
@@ -16378,14 +16396,14 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
   }
   const selectedMotion = structuredClone(discoveryPlan.plans[0]);
   const attempt = {
-    id: 'attempt-paid-demand-canonical-pdl-job-search',
-    provider: 'people_data_labs_job_posting_search',
-    operation: 'planned_job_posting_search',
+    id: 'attempt-paid-demand-canonical-brave-public-search',
+    provider: 'brave_web_search',
+    operation: 'planned_public_live_demand_search',
     queryHash: 'e'.repeat(64),
     status: 'succeeded',
-    estimatedSpendMicros: 5_000,
-    actualSpendMicros: 5_000,
-    creditsUsed: 1,
+    estimatedSpendMicros: 0,
+    actualSpendMicros: 0,
+    creditsUsed: 0,
     resultCount: 1,
     reservedAt: '2026-08-01T12:00:00Z',
     updatedAt: '2026-08-01T12:00:00Z',
@@ -16416,10 +16434,10 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       buyerArchetype: selectedMotion.buyer,
       queryHash: commercialDiscoveryAttemptLedgerHash([attempt]),
       market: selectedMotion.market,
-      providersAttempted: ['people_data_labs_job_posting_search'],
+      providersAttempted: ['brave_web_search'],
       providerCalls: 1,
       paidProviderCalls: 1,
-      creditsUsed: 1,
+      creditsUsed: 0,
       resultCount: 1,
       patientTargetingExcluded: true,
       sideEffectsPerformed: 0,
@@ -16429,12 +16447,12 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
         motionId: selectedMotion.id,
         evidenceRef: jobEvidenceRef,
         kind: 'verified_external_live_demand',
-        label: 'Acme Services Software Engineer',
+        label: 'Acme Services Software Platform RFP',
         summary:
-          `Acme Services has a current compensated software engineering job. The official application page is ${demandURL}. One accepted offer can produce salary income.`,
+          `Acme Services has a current paid software-platform solicitation. The official proposal page is ${demandURL}. One accepted proposal can produce contract income.`,
         url: demandURL,
-        provider: 'people_data_labs_job_posting_search',
-        provenance: 'people_data_labs_active_job_posting',
+        provider: 'brave_web_search',
+        provenance: 'read_only_professional_provider',
         roles: [
           'acquisition',
           'channel_fit',
@@ -16450,19 +16468,19 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       candidates: [{
         motionId: selectedMotion.id,
         id: candidateID,
-        kind: 'employer_job_posting',
-        // The structured provider attestation fixes this as an employer job
-        // posting; organization-like display text cannot retype the record.
+        kind: 'public_paid_demand_page',
+        // The provider attestation fixes this as a public paid-demand page;
+        // organization-like display text cannot retype the record.
         displayLabel: 'Acme Services',
         organization: 'Acme Services',
-        role: 'Software Engineer',
+        role: 'Software platform contractor',
         market: 'United States',
         publicUrl: demandURL,
-        provider: 'people_data_labs_job_posting_search',
+        provider: 'brave_web_search',
         commercialRole: 'paid_demand',
         evidenceRefs: [jobEvidenceRef],
         contactPaths: [{
-          kind: 'application_page',
+          kind: 'public_paid_demand_response',
           available: true,
           verified: true,
           reference: demandURL
@@ -16611,7 +16629,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
             finalist.evidenceBindings?.length !== 7 ||
             finalist.evidenceBindings?.find((binding) =>
               binding.role === 'exact_outside_target'
-            )?.kind !== 'employer_job_posting'
+            )?.kind !== 'public_paid_demand_page'
           )) {
         criticIssue =
           `paid-demand critic did not receive one safe family-diverse pair: ${JSON.stringify({ finalists, task, requestBytes })}`;
@@ -16680,7 +16698,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       result.result?.incrementalRevenueGate?.allowedChannelSource !==
         'provider_attested_review_route' ||
       result.result?.allowedChannel !==
-        'application_page' ||
+        'public_paid_demand_response' ||
       result.result?.permissionRequired !== 'explicit_user_approval' ||
       result.result?.executionAuthorization !== 'none' ||
       result.result?.sideEffectsPerformed !== 0 ||
@@ -16689,7 +16707,7 @@ async function verifyPaidDemandTargetProtocolEndToEnd() {
       !exactCurrentRecommendationProjection(result.runnerUp, false) ||
       result.candidates?.find((candidate) =>
         candidate.id === candidateID
-      )?.kind !== 'employer_job_posting' ||
+      )?.kind !== 'public_paid_demand_page' ||
       !result.winner?.action?.includes(
         'Acme Services'
       ) ||
@@ -19405,7 +19423,7 @@ function compactContingentFinalists(value) {
   const buyerLabels = {
     referral: 'Qualified payer for the paid opportunity',
     buyer: 'Qualified payer {{TARGET_NAME}} for the paid opportunity',
-    paidDemand: 'Qualified employer {{TARGET_NAME}} for the paid role'
+    paidDemand: 'Qualified payer {{TARGET_NAME}} for the paid opportunity'
   };
   const channelLabels = {
     referral_partner: [
@@ -19541,7 +19559,7 @@ function compactProvisionalContingentFinalists(
     l: {
       referral: 'Qualified payer for the paid opportunity',
       buyer: 'Qualified payer {{TARGET_NAME}} for the paid opportunity',
-      paidDemand: 'Qualified employer {{TARGET_NAME}} for the paid role'
+      paidDemand: 'Qualified payer {{TARGET_NAME}} for the paid opportunity'
     }
   }));
   compact.pathBase.o = compact.pathBase.o.map((item) => ({

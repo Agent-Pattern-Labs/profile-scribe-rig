@@ -2048,7 +2048,7 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
     l: {
       referral: 'Qualified payer for the paid opportunity',
       buyer: 'Qualified payer {{TARGET_NAME}} for the paid opportunity',
-      paidDemand: 'Qualified employer {{TARGET_NAME}} for the paid role'
+      paidDemand: 'Qualified payer {{TARGET_NAME}} for the paid opportunity'
     },
     e: refs
   });

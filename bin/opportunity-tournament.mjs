@@ -52,7 +52,7 @@ const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS =
 const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS_SHA256 =
   'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70';
 const OPPORTUNITY_DISCOVERY_PLANNER_AUTHORED_TEXT_DESCRIPTION =
-  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified employer {{TARGET_NAME}} for the paid role" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
+  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified payer {{TARGET_NAME}} for the paid opportunity" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
 if (createHash('sha256').update(JSON.stringify(
   OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS
 )).digest('hex') !==
@@ -3274,7 +3274,7 @@ function opportunityDiscoveryPlannerResponseFormat(
       paidDemand: {
         type: 'string',
         enum: [
-          'Qualified employer {{TARGET_NAME}} for the paid role'
+          'Qualified payer {{TARGET_NAME}} for the paid opportunity'
         ]
       }
     },
@@ -3796,7 +3796,7 @@ function compactOpportunityDiscoveryHardRules(
     provisionalOfferExperiment
       ? 'a:2/tactic; each a has one model-authored l/e. Only compensated_job or buyer_solicitation is authorized: every action responds through the official current paid-demand page with a review-first paid application or proposal. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
       : 'a:2/tactic; each a has one model-authored l/e selected for motionKind. referral_partner introduces a qualified buyer to the current paid offer and paid booking/payment; buyer asks the target to book/buy/sign; paid_demand submits a paid application/proposal response. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
-    `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
+    `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job/buyer_solicitation, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0. sb must state one factual unknown or not-yet-observed causal proof about demand, acquisition, conversion, attribution, or paid outcome. Never put an imperative, research/verification task, artifact, setup, tracking instruction, or other operational step in sb.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. Fresh paid demand requires either a structured PDL employer_job_posting or a bounded provider URL result that independently proves currentness, an open response action, explicit non-zero compensation, market fit, and the exact public demand page. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional compensated job.',
@@ -4031,6 +4031,8 @@ function opportunityDiscoveryBuyerForMotionKind(
       : 'The validated outside target buying the current paid offer';
   case 'compensated_job':
     return 'The validated employer buying compensated professional work';
+  case 'buyer_solicitation':
+    return 'The validated buyer requesting compensated professional work';
   default:
     return '';
   }
@@ -4046,9 +4048,17 @@ function opportunityDiscoveryCounterpartyForMotionKind(motionKindValue) {
     return 'A prospective commercial buyer';
   case 'compensated_job':
     return 'A current employer with a compensated role';
+  case 'buyer_solicitation':
+    return 'A current buyer with a public paid solicitation';
   default:
     return '';
   }
+}
+
+function opportunityDiscoveryPaidDemandMotionKind(value) {
+  return ['compensated_job', 'buyer_solicitation'].includes(
+    firstText(value)
+  );
 }
 
 function normalizeCommercialDiscoveryCapabilities(value) {
@@ -4241,10 +4251,11 @@ function normalizeOpportunityDiscoveryPlan(
       ? { ...routeInput, ...typedRoute }
       : routeInput;
     const rawPaidOffer = asObject(routedPlan.paidOffer);
-    const compensatedJob = firstText(routedPlan.motionKind) ===
-      'compensated_job';
+    const paidDemandMotion = opportunityDiscoveryPaidDemandMotionKind(
+      routedPlan.motionKind
+    );
     const normalizedPaidOffer = deriveFreshPlannerAuthority
-      ? compensatedJob
+      ? paidDemandMotion
         ? firstText(rawPaidOffer.compensatedJob)
         : firstText(rawPaidOffer.seller)
       : firstText(routedPlan.paidOffer);
@@ -4789,7 +4800,7 @@ function canonicalizeContingentProposalGrounding(
   const bundle = asObject(value);
   const plan = asObject(planValue);
   if (!/^Proposed paid\b/.test(firstText(plan.paidOffer)) ||
-      firstText(plan.motionKind) === 'compensated_job') {
+      opportunityDiscoveryPaidDemandMotionKind(plan.motionKind)) {
     return bundle;
   }
   const sellerRefs = compactStrings(plan.evidenceRefs).filter((ref) =>
@@ -4839,7 +4850,9 @@ function canonicalizeContingentProposalGrounding(
 function canonicalizeContingentRevenueStructure(value, planValue) {
   const bundle = asObject(value);
   const plan = asObject(planValue);
-  const compensatedRole = firstText(plan.motionKind) === 'compensated_job';
+  const compensatedRole = opportunityDiscoveryPaidDemandMotionKind(
+    plan.motionKind
+  );
   for (const [familyIndex, familyKey] of
     ['familyA', 'familyB'].entries()) {
     const family = asObject(bundle[familyKey]);
@@ -5784,21 +5797,24 @@ function opportunityDiscoveryPlanIssue(
         return `Discovery plan ${item.id} is missing ${field}.`;
       }
     }
-    if (requiredSellerFocus && item.motionKind !== 'compensated_job' &&
+    if (requiredSellerFocus &&
+        !opportunityDiscoveryPaidDemandMotionKind(item.motionKind) &&
         !opportunityDiscoveryUnicodeIdentityContains(
           item.paidOffer,
           requiredSellerFocus
         )) {
       return `Discovery plan ${item.id} paidOffer must remain bound to the objective's primary seller focus "${truncate(requiredSellerFocus, 120)}".`;
     }
-    if (requireTypedRoute && item.motionKind === 'compensated_job' &&
+    if (requireTypedRoute &&
+        opportunityDiscoveryPaidDemandMotionKind(item.motionKind) &&
         !compensatedJobPaidOfferText(item.paidOffer)) {
       return `Discovery plan ${item.id} paidOffer must describe the model-authored paid compensated role.`;
     }
     const requiredSellerEvidenceRefs = new Set(
       compactStrings(sellerEvidenceRefsValue)
     );
-    if (requiredSellerFocus && item.motionKind !== 'compensated_job' &&
+    if (requiredSellerFocus &&
+        !opportunityDiscoveryPaidDemandMotionKind(item.motionKind) &&
         (requiredSellerEvidenceRefs.size === 0 ||
           !asArray(item.evidenceRefs).some((ref) =>
             requiredSellerEvidenceRefs.has(firstText(ref))
@@ -8847,7 +8863,9 @@ async function runOpportunityTournamentCore({
     firstText(commercialDiscovery.plan?.contractVersion) ===
       OPPORTUNITY_DISCOVERY_PLAN_CONTRACT &&
     asArray(commercialDiscovery.plan?.plans).some((planValue) =>
-      firstText(asObject(planValue).motionKind) !== 'compensated_job'
+      !opportunityDiscoveryPaidDemandMotionKind(
+        asObject(planValue).motionKind
+      )
     ) &&
     coreRequiredSellerFocus &&
     coreSellerEvidenceRefs.length === 1 &&
@@ -14586,7 +14604,9 @@ function commercialDiscoveryMotionAttestations(motionsValue) {
     if (!motionID || !typedRoute ||
         typedDiscoveryMotionRouteIssue(motion) ||
         freshDiscoveryExecutionRouteIssue(motion)) continue;
-    const revenueMechanisms = typedRoute.motionKind === 'compensated_job'
+    const revenueMechanisms = opportunityDiscoveryPaidDemandMotionKind(
+      typedRoute.motionKind
+    )
       ? ['compensated_role']
       : [];
     byMotionID.set(motionID, Object.freeze({
@@ -25152,16 +25172,24 @@ function commercialDiscoverySupportsRevenueRole(
   const revenueMechanisms = new Set(
     compactStrings(attestation.revenueMechanisms)
   );
-  const routeSupportsMechanism = mechanism === 'compensated_role'
-    ? attestation.motionKind === 'compensated_job' &&
-      attestation.searchMode === 'active_job_posting' &&
-      attestation.commercialRole === 'paid_demand' &&
-      attestation.demandArtifactKind === 'employer_job_posting' &&
-      attestation.provider ===
-        'people_data_labs_job_posting_search' &&
-      attestation.provenance ===
-        'people_data_labs_active_job_posting'
-    : false;
+  const compensatedJobRoute =
+    attestation.motionKind === 'compensated_job' &&
+    attestation.searchMode === 'active_job_posting' &&
+    attestation.demandArtifactKind === 'employer_job_posting' &&
+    ((attestation.provider === 'people_data_labs_job_posting_search' &&
+      attestation.provenance === 'people_data_labs_active_job_posting') ||
+     (attestation.provider === 'brave_web_search' &&
+      attestation.provenance === 'read_only_professional_provider'));
+  const buyerSolicitationRoute =
+    attestation.motionKind === 'buyer_solicitation' &&
+    attestation.searchMode === 'public_live_demand' &&
+    BUYER_SOLICITATION_ARTIFACT_KINDS.has(
+      attestation.demandArtifactKind
+    ) && attestation.provider === 'brave_web_search' &&
+    attestation.provenance === 'read_only_professional_provider';
+  const routeSupportsMechanism = mechanism === 'compensated_role' &&
+    attestation.commercialRole === 'paid_demand' &&
+    (compensatedJobRoute || buyerSolicitationRoute);
   if (!REVENUE_MECHANISMS.has(mechanism) ||
       attestation.providerAttestedCommercialDiscovery !== true ||
       attestation.candidateBound !== true ||
