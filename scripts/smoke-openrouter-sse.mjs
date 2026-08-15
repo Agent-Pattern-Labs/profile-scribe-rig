@@ -2160,7 +2160,7 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
     motionKind,
     paidOffer: {
       seller: 'Paid delivery system consulting engagement',
-      compensatedJob: 'Current compensated consulting role'
+      compensatedJob: 'Paid role'
     },
     market,
     targetRoleSubrole: 'executive',

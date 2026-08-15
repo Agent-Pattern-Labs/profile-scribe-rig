@@ -35,7 +35,7 @@ const MAX_DISCOVERY_PLANNER_CONTINGENT_BUNDLE_BYTES = 24 * 1024;
 const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES = 35_360;
 const DISCOVERY_PLANNER_COMPACT_RESPONSE_TARGET_BYTES = 20 * 1024;
 const COMPENSATED_JOB_PAID_OFFER =
-  'A current compensated role matching verified professional skills';
+  'Paid role';
 const UNSAFE_INJECTED_GENERATION_ID_SENTINEL =
   `raw-generation-id-secret-sentinel/${'x'.repeat(400)}`;
 const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS = Object.freeze([
@@ -2311,6 +2311,7 @@ const supportedSchemaTokenProjection = new Map([
   [32_936, 21_837],
   [33_304, 22_081],
   [33_872, 22_458],
+  [34_258, 22_714],
   [35_360, 23_444]
 ]);
 if (!supportedSchemaTokenProjection.has(
@@ -2645,7 +2646,7 @@ async function verifyTypedCommercialMotionSelection(
   compensatedMotions[1].jobTitle = 'Platform engineer';
   compensatedMotions[1].skills = ['Go', 'Cloud infrastructure'];
   const authoredCompensatedJobOffer =
-    'A model-authored paid platform engineering role';
+    COMPENSATED_JOB_PAID_OFFER;
   const authoredCompensatedIncome =
     'Salary payment from the accepted platform engineering role.';
   const authoredCompensatedDestination =
@@ -2753,7 +2754,14 @@ async function verifyTypedCommercialMotionSelection(
     });
     if (unpaid.status !== 'blocked' || unpaid.plans.length !== 0 ||
         unpaid.planSelection?.acceptedPlanCount !== 0 ||
-        unpaid.planSelection?.rejectedPlanCount !== 2 ||
+        unpaid.planSelection?.rejectedPlanCount !== 0 ||
+        unpaid.normalizationDiagnostic?.code !==
+          'strict_schema_mismatch' ||
+        unpaid.normalizationDiagnostic?.failedMotionCount !== 2 ||
+        unpaid.normalizationDiagnostic?.issues?.some((issue) =>
+          issue.keyword !== 'enum' ||
+          !/\/paidOffer\/compensatedJob$/.test(issue.instancePath || '')
+        ) ||
         unpaid.sideEffectsPerformed !== 0) {
       throw new Error(
         `deterministic paid-role gate accepted ${unpaidOffer}: ${JSON.stringify(unpaid)}`
@@ -3973,8 +3981,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   for (const roleCase of roleCases) {
     const candidate = structuredClone(roleCase.candidate);
     if (candidate.motionKind === 'compensated_job') {
-      candidate.paidOffer =
-        'A current compensated role matching verified professional skills';
+      candidate.paidOffer = COMPENSATED_JOB_PAID_OFFER;
     }
     candidate.contingentFinalists = replaceExactRef(
       compactContingentFinalists(candidate.contingentFinalists),
@@ -4196,8 +4203,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
   for (const unauthorized of unauthorizedCases) {
     const candidate = structuredClone(unauthorized.candidate);
     if (candidate.motionKind === 'compensated_job') {
-      candidate.paidOffer =
-        'A current compensated role matching verified professional skills';
+      candidate.paidOffer = COMPENSATED_JOB_PAID_OFFER;
     }
     candidate.market = 'Queens, New York, United States';
     candidate.contingentFinalists = replaceExactRef(
@@ -4232,8 +4238,7 @@ async function verifyOmittedTargetEvidenceProtocolCanonicalization(
     for (const dimension of roleCase.ordinaryDimensions) {
       const candidate = structuredClone(roleCase.candidate);
       if (candidate.motionKind === 'compensated_job') {
-        candidate.paidOffer =
-          'A current compensated role matching verified professional skills';
+        candidate.paidOffer = COMPENSATED_JOB_PAID_OFFER;
       }
       candidate.contingentFinalists = replaceExactRef(
         compactContingentFinalists(candidate.contingentFinalists),
@@ -4738,7 +4743,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       projectedPublicDemand.counterparty !==
         'A current buyer with a public paid solicitation' ||
       projectedPublicDemand.paidOffer !==
-        'A current compensated role matching verified professional skills' ||
+        COMPENSATED_JOB_PAID_OFFER ||
       projectedPublicDemand.targetRoleTerms.length !== 0 ||
       projectedPublicDemand.organizationTerms.length !== 0 ||
       projectedPublicDemand.jobTitle !== '' ||
@@ -9651,7 +9656,7 @@ async function verifyMorphProductionStrictSchemaMismatchFailsOnce(job) {
   const receipt = result.llm?.discoveryPlanner;
   const diagnostics = receipt?.responseDiagnostics;
   const expectedIssues = [
-    ['maxLength', '/plans/0/paidOffer/compensatedJob'],
+    ['enum', '/plans/0/paidOffer/compensatedJob'],
     ['minLength', '/plans/0/contingentFinalists/pathBase/r/0/l']
   ];
   const actualIssues = result.normalizationDiagnostic?.issues?.map(
@@ -11448,8 +11453,7 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
     (motion) => {
       motion.paidOffer = {
         seller: colonPaidOffer,
-        compensatedJob:
-          'A current compensated role matching verified professional skills'
+        compensatedJob: COMPENSATED_JOB_PAID_OFFER
       };
       motion.evidenceRefs = [
         ...motion.evidenceRefs,
@@ -11728,8 +11732,7 @@ async function verifyUnprovenOfferRequiresLiveCompensatedDemand() {
         );
         motion.paidOffer = {
           seller: 'Proposed paid ProfileScribe professional profile service',
-          compensatedJob:
-            'A current compensated software product engineering role'
+          compensatedJob: COMPENSATED_JOB_PAID_OFFER
         };
         return motion;
       });
@@ -11910,8 +11913,7 @@ async function verifyVerifiedCapabilityCanPlanProvisionalPaidOffer() {
           key === 'paidOffer'
             ? {
                 seller: motion.paidOffer,
-                compensatedJob:
-                  'A model-authored compensated professional role'
+                compensatedJob: COMPENSATED_JOB_PAID_OFFER
               }
             : key === 'jobTitle'
               ? 'ProfileScribe product consultant'
@@ -18609,15 +18611,12 @@ function verifyFreshPlannerStrictSchemaTotality({
   for (const paidOffer of [
     'Unpaid job role',
     'Volunteer role',
-    'Pro bono engagement'
+    'Pro bono engagement',
+    'A model-authored compensated professional role'
   ]) {
-    const structurallyValid = structuredClone(baseline);
-    structurallyValid.plans[0].paidOffer.compensatedJob = paidOffer;
-    if (!validate(structurallyValid)) {
-      throw new Error(
-        `transport schema enforced paid-role semantics for ${paidOffer}: ${JSON.stringify(validate.errors)}`
-      );
-    }
+    expectInvalid(`noncanonical paid-role branch ${paidOffer}`, (response) => {
+      response.plans[0].paidOffer.compensatedJob = paidOffer;
+    });
   }
   for (const [label, value] of [
     ['leading whitespace', ' invalid'],
@@ -18911,9 +18910,10 @@ function verifyFreshPlannerStrictSchemaTotality({
     .compile(maximumSchema);
   if (!validateMaximum(maximumResponse) ||
       evidenceOccurrenceCount !== 56 || evidenceArrayCount === 0 ||
-      // All 52 bounded authored strings reach their individual maxima. Buyer,
-      // channel, and action labels are fixed enums and contribute exact bytes.
-      maximizedStringOccurrenceCount !== 52 ||
+      // All 50 bounded authored strings reach their individual maxima. Buyer,
+      // channel, action, and compensated-role labels are fixed enums and
+      // contribute exact bytes.
+      maximizedStringOccurrenceCount !== 50 ||
       maximumResponse.plans.some((planValue) =>
         planValue.organizationTerms.length !== 4 ||
         planValue.skills.length !== 4
@@ -19790,8 +19790,7 @@ function canonicalMaterializedPlannerPlans(values) {
   return (values || []).map((planValue) => {
     const motion = structuredClone(planValue);
     if (motion.motionKind === 'compensated_job') {
-      motion.paidOffer =
-        'A current compensated role matching verified professional skills';
+      motion.paidOffer = COMPENSATED_JOB_PAID_OFFER;
     }
     const original = motion.contingentFinalists;
     if (!original?.familyA || !original?.familyB) return motion;

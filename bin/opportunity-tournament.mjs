@@ -3351,7 +3351,14 @@ function opportunityDiscoveryPlannerResponseFormat(
     type: 'object',
     properties: {
       seller: sellerPaidOffer,
-      compensatedJob: commercialProseText(140)
+      // The paid-demand branch is a typed economic role, not freeform offer
+      // prose. Keeping its only valid semantic representation in the schema
+      // prevents the provider from returning transport-valid synonyms that
+      // the deterministic compensated-role gate must later reject.
+      compensatedJob: {
+        type: 'string',
+        enum: ['Paid role']
+      }
     },
     required: ['seller', 'compensatedJob'],
     additionalProperties: false,
