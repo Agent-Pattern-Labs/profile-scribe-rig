@@ -2025,12 +2025,17 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
   );
   const market = planSchema?.properties?.market?.enum?.[0];
   const actionBranches = definitions.compactActionLabel?.properties || {};
+  const channelBranches = definitions.compactChannelLabel?.properties || {};
+  const referralChannels = channelBranches.referral?.enum || [];
+  const buyerChannels = channelBranches.buyer?.enum || [];
+  const paidDemandChannels = channelBranches.paidDemand?.enum || [];
   const referralActions = actionBranches.referral?.enum || [];
   const buyerActions = actionBranches.buyer?.enum || [];
   const paidDemandActions = actionBranches.paidDemand?.enum || [];
   if (!observationRef || !attributionRef || !market ||
       referralActions.length < 4 || buyerActions.length < 4 ||
-      paidDemandActions.length < 4) {
+      paidDemandActions.length < 4 || referralChannels.length < 2 ||
+      buyerChannels.length < 2 || paidDemandChannels.length < 2) {
     throw new Error('raw/canonical split fixture could not bind schema enums');
   }
   const scores = {
@@ -2063,6 +2068,14 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
       referral: referralActions[index],
       buyer: buyerActions[index],
       paidDemand: paidDemandActions[index]
+    },
+    e: [observationRef]
+  });
+  const channelItem = (index) => ({
+    l: {
+      referral: referralChannels[index],
+      buyer: buyerChannels[index],
+      paidDemand: paidDemandChannels[index]
     },
     e: [observationRef]
   });
@@ -2116,14 +2129,7 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
   };
   const tactic = (variant) => ({
     s: scores,
-    c: [
-      item(
-        'Review-first public professional profile {{TARGET_URL}} for buyer fit verification'
-      ),
-      item(
-        'Review-first verified professional profile {{TARGET_URL}} for purchase authority verification'
-      )
-    ],
+    c: [channelItem(0), channelItem(1)],
     a: variant === 'person'
       ? [
           actionItem(

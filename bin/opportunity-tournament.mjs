@@ -45,13 +45,12 @@ const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS =
     '#/$defs/paidOutcomeText120/pattern',
     '#/$defs/compensatedJobPaidOfferText140/pattern',
     '#/$defs/conversionDestinationText120/pattern',
-    '#/$defs/attributionSignalText140/pattern',
-    '#/$defs/compactChannelLabel/pattern'
+    '#/$defs/attributionSignalText140/pattern'
   ]);
 const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS_SHA256 =
-  '46a0345c19eca3a815502e5ad8a62af3a6f0815e635ff3e4a25eaa61d599c290';
+  'd2464c9c7782291ad51c2d21be0dbb017edcb8b955c531dd12b47efaffc65ee6';
 const OPPORTUNITY_DISCOVERY_PLANNER_AUTHORED_TEXT_DESCRIPTION =
-  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces/colon except target tokens; ats may use one record/field colon. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field". b.l/a.l contain all fixed role branches; code selects commercialRole. c.l uses its fixed route. Vary selected actions.';
+  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces/colon except target tokens; ats may use one record/field colon. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field". b.l/c.l/a.l contain all fixed role branches; code selects commercialRole. Vary selected channels and actions.';
 if (createHash('sha256').update(JSON.stringify(
   OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS
 )).digest('hex') !==
@@ -648,7 +647,7 @@ const COMMERCIAL_CRITIC_PROMPT_FRAMING_TOKEN_RESERVE = 2_048;
 // Call 1 emits one bounded model-authored role-selected path for each motion and
 // shares pathBase across its two tactic deltas. Local code selects, but never
 // composes, the branch fixed by the typed motion. The strict grammar has an
-// independently proved 34,400-byte serialized upper bound below the separate
+// independently proved 35,360-byte serialized upper bound below the separate
 // 40 KiB canonical parsed-content cap. A tokenizer using byte fallback cannot
 // need more
 // output tokens than encoded bytes. The 42,000-token ceiling therefore exceeds
@@ -746,13 +745,11 @@ const OPPORTUNITY_DISCOVERY_UNSUPPORTED_SCALAR_RE =
 // maximum, prices every authored code point as four UTF-8 bytes, and prices
 // every canonical evidence reference at its full encoded-byte ceiling.
 const MAX_DISCOVERY_PLANNER_SCHEMA_TEXT_CODEPOINTS = 5_216;
-// The selected buyer/channel/action strings are schema-restricted to safe
-// printable ASCII. Pricing those authored strings at one byte per code point
-// preserves a sub-40-KiB proof without turning their commercial prose into a
-// code-authored enum.
-const MAX_DISCOVERY_PLANNER_SCHEMA_ASCII_CODEPOINTS = 2_784;
+// Buyer, channel, and action labels are finite enum branches, so they
+// contribute exact serialized bytes rather than variable authored codepoints.
+const MAX_DISCOVERY_PLANNER_SCHEMA_ASCII_CODEPOINTS = 0;
 const MAX_DISCOVERY_PLANNER_SCHEMA_EVIDENCE_REF_OCCURRENCES = 56;
-const MAX_DISCOVERY_PLANNER_SCHEMA_FIXED_BYTES = 7 * 1_024;
+const MAX_DISCOVERY_PLANNER_SCHEMA_FIXED_BYTES = 10_912;
 const MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES =
   MAX_DISCOVERY_PLANNER_SCHEMA_TEXT_CODEPOINTS * 4 +
   MAX_DISCOVERY_PLANNER_SCHEMA_ASCII_CODEPOINTS +
@@ -3252,14 +3249,9 @@ function opportunityDiscoveryPlannerResponseFormat(
     }
     return { $ref: `#/$defs/${name}` };
   };
-  // These three strings remain authored by the model. Their finite grammar
-  // admits only printable ASCII plus the exact protocol placeholders, so a
-  // provider cannot add another template token or hide control text. The
-  // typed post-AJV gates below still enforce the motion-specific placeholder
-  // count, route, and cash-advancing semantics; local code never rewrites the
-  // selected prose.
-  const compactRoleASCIIText =
-    `[A-Za-z0-9][A-Za-z0-9 ,.'()&/+!?_:-]*`;
+  // Buyer, channel, and action labels are model-selected from finite branches
+  // keyed by commercial role. Local code selects the declared branch without
+  // composing or rewriting its prose.
   const compactBuyerLabel = {
     type: 'object',
     properties: {
@@ -3284,13 +3276,32 @@ function opportunityDiscoveryPlannerResponseFormat(
     additionalProperties: false
   };
   const compactChannelLabel = {
-    type: 'string',
-    minLength: 48,
-    maxLength: 120,
-    pattern:
-      `^Review-first (?:public professional profile|` +
-      `verified professional profile|official paid-demand page) ` +
-      `\\{\\{TARGET_URL\\}\\}(?: for ${compactRoleASCIIText})?$`
+    type: 'object',
+    properties: {
+      referral: {
+        type: 'string',
+        enum: [
+          'Review-first public professional profile {{TARGET_URL}} for referral fit verification',
+          'Review-first public professional profile {{TARGET_URL}} for partner-channel verification'
+        ]
+      },
+      buyer: {
+        type: 'string',
+        enum: [
+          'Review-first public professional profile {{TARGET_URL}} for buyer fit verification',
+          'Review-first public professional profile {{TARGET_URL}} for purchase-authority verification'
+        ]
+      },
+      paidDemand: {
+        type: 'string',
+        enum: [
+          'Review-first official paid-demand page {{TARGET_URL}} for compensated-role verification',
+          'Review-first official paid-demand page {{TARGET_URL}} for paid-engagement verification'
+        ]
+      }
+    },
+    required: ['referral', 'buyer', 'paidDemand'],
+    additionalProperties: false
   };
   const compactActionLabel = {
     type: 'object',
@@ -3535,7 +3546,7 @@ function opportunityDiscoveryPlannerResponseFormat(
       required: ['l', 'e'],
       additionalProperties: false,
       description:
-        'One bounded model-authored review route with exactly one target URL token; typed local validation checks the route and preserves the text byte-for-byte.'
+        'One finite channel-label branch object; code selects the model-authored branch implied by commercialRole and preserves it without rewriting.'
     },
     actionItem: {
       type: 'object',
@@ -3787,7 +3798,7 @@ function compactOpportunityDiscoveryOutputContract(
     finalists:
       `{seedContract:${SEED_CONTRACT_VERSION},pathBase,tacticA,tacticB,w}; pathBase={r,o,b,t,p}; tactic={s,c,a,f}; code derives family evidence, labels, m, and positional tacticKey`,
     dimensions:
-      `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}; b/c/a each has one authored l`,
+      `pathBase r=1,o/b/t/p=${INITIAL_FAMILY_VARIANT_COUNT}; tactic c/a/f=${INITIAL_FAMILY_VARIANT_COUNT}; every b/c/a l has referral/buyer/paidDemand branches`,
     item:
       '{l,e}; t={l,e,q}; exact evidence IDs; code preserves authored l byte-for-byte',
     revenuePath:
@@ -3810,7 +3821,7 @@ function compactOpportunityDiscoveryHardRules(
     provisionalOfferExperiment
       ? 'requiredPrimaryFocus is a verified capability, but no current paid offer is proven. Select only compensated_job or buyer_solicitation motions backed after planning by current employer-authored paid demand or buyer-authored solicitation. The schema-required Proposed paid seller branch is inert and must never drive buyer or referral discovery.'
       : 'requiredPrimaryFocus is the objective seller. paidOffer.seller includes it; compensatedJob is a paid role; code selects by motionKind and filters refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
-    `Buyer is the token-free payer archetype. Every b.l/a.l has all three fixed role branches; code selects by commercialRole. Selected b.l has {{TARGET_NAME}} once for buyer/paid_demand and none for referral; c.l has {{TARGET_URL}} once; selected a.l has both once. Never put ${CONTINGENT_TARGET_EVIDENCE_REF} in e; code binds it.`,
+    `Buyer is the token-free payer archetype. Every b.l/c.l/a.l has all three fixed role branches; code selects by commercialRole. Selected b.l has {{TARGET_NAME}} once for buyer/paid_demand and none for referral; selected c.l has {{TARGET_URL}} once; selected a.l has both once. Never put ${CONTINGENT_TARGET_EVIDENCE_REF} in e; code binds it.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     provisionalOfferExperiment
@@ -5367,10 +5378,17 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
     return raw;
   }
   const copy = (item) => JSON.parse(JSON.stringify(item));
-  const roleItems = (items) => asArray(items).map((itemValue) => {
+  const channelItems = (items) => asArray(items).map((itemValue) => {
     const item = asObject(itemValue);
+    const labels = asObject(item.l);
+    const commercialRole = firstText(asObject(planValue).commercialRole);
+    const selected = commercialRole === 'referral_partner'
+      ? labels.referral
+      : commercialRole === 'paid_demand'
+        ? labels.paidDemand
+        : labels.buyer;
     return {
-      l: typeof item.l === 'string' ? item.l : '',
+      l: typeof selected === 'string' ? selected : '',
       e: copy(asArray(item.e))
     };
   });
@@ -5424,7 +5442,7 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
       r: copy(sharedRevenuePaths),
       o: copy(asArray(pathBase.o)),
       b: buyerItems(pathBase.b),
-      c: roleItems(tactic.c),
+      c: channelItems(tactic.c),
       a: actionItems(tactic.a),
       t: copy(asArray(pathBase.t)),
       p: copy(asArray(pathBase.p)),
@@ -6894,6 +6912,19 @@ function contingentTargetPlaceholderLocalityIssue(planValue) {
       Number.isInteger(path[7]) && commercialRole === 'paid_demand';
   };
   const authorizedTextCounts = (path) => {
+    if (path.length === 6 && familyKey(path[0]) &&
+        path[1] === 'd' && Number.isInteger(path[3]) &&
+        path[4] === 'l' &&
+        ['referral', 'buyer', 'paidDemand'].includes(path[5])) {
+      if (path[2] === 'b') {
+        return {
+          name: path[5] === 'referral' ? 0 : 1,
+          url: 0
+        };
+      }
+      if (path[2] === 'c') return { name: 0, url: 1 };
+      if (path[2] === 'a') return { name: 1, url: 1 };
+    }
     if (path.length === 5 && familyKey(path[0]) &&
         path[1] === 'd' && Number.isInteger(path[3]) &&
         path[4] === 'l') {
