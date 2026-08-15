@@ -1030,6 +1030,14 @@ for (const scenario of cases) {
       !requestSeen.system?.includes(
         'Obey outputContract and hardRules exactly'
       ) ||
+      !requestSeen.system?.includes(
+        'Opportunity is always possible'
+      ) ||
+      !initialPlannerPrompt.hardRules?.some((rule) =>
+        /Opportunity is always possible.*unfinished hunt/i.test(
+          rule
+        )
+      ) ||
       !initialPlannerPrompt.outputContract?.plan?.includes(
         'exactly 2 ranked, economically distinct plans'
       ) ||
@@ -1196,6 +1204,11 @@ for (const scenario of cases) {
       plannerPrompt.hardRules.length < 7 ||
       !plannerPrompt.hardRules.some((rule) =>
         /2 distinct motions.*each pathBase\+2 causal tactics/i.test(
+          rule
+        )
+      ) ||
+      !plannerPrompt.hardRules.some((rule) =>
+        /Opportunity is always possible.*unfinished hunt/i.test(
           rule
         )
       ) ||

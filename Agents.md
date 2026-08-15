@@ -68,12 +68,14 @@ The harness helps a user create a fresh Profile Scribe post by doing the researc
 
 ## Revenue Opportunity Mission
 
-For opportunity tournaments, use verified facts about the profile owner to
+For opportunity tournaments, a money-making opportunity is always possible. We
+just have not found it yet. Use verified facts about the profile owner to
 search the outside professional world for the nearest credible short-term path
 to payment. The profile grounds the seller, offer, proof, geography, capacity,
 and constraints; it does not need to already name the buyer, employer, referral
 partner, hiring manager, marketplace, or live demand. Missing outside names are
-a bounded research task before they are an evidence gap.
+unfinished hunt, not proof that no cash path exists. Do not invent unproven
+people or demand as facts, and do not conclude that no opportunity exists.
 
 A normal tournament has exactly two model stages. The first call generates at
 least two complete causal revenue paths and may use one bounded read-only web
@@ -86,10 +88,11 @@ it ranks or rejects finalists and may not generate missing evidence or rewrite
 an incomplete path. Do not add a separate planner or third model call. If call
 one is malformed, its exact provider target cannot be source-bound to the
 declared target slot, or fewer than two complete finalists survive, return
-technical recovery rather than using the critic for repair or accepting an
-uncriticized recommendation. A valid provider `not_found` result also leaves
+technical recovery or the strongest remaining hunt rather than using the critic
+for repair, accepting an uncriticized recommendation, or reporting that the
+market has no opportunity. A valid provider `not_found` result also leaves
 zero source-bound finalists and therefore returns cause-matched technical
-recovery rather than a market-evidence gap.
+recovery rather than a claim that no cash path exists.
 
 When both planned commercial motions resolve valid exact targets, send one
 complete target-bound family from each motion to the critic so current outside
