@@ -3103,11 +3103,13 @@ function opportunityDiscoveryPlannerResponseFormat(
     canonicalOptionalText180: canonicalTextDefinition(180, true)
   };
   // Planner-authored commercial prose is transport data, not a semantic
-  // authority boundary. It may legitimately begin with a number (for a stop
-  // condition) or contain a URL colon (for a conversion destination). Keep
-  // target sentinels and control characters impossible at the schema layer,
-  // then let the typed causal witness and deterministic semantic gate decide
-  // whether the prose describes a valid revenue path.
+  // authority boundary. It may legitimately begin with a number or currency
+  // marker, contain a URL colon, or use punctuation the provider grammar does
+  // not reproduce consistently. Keep the historical definition cohort below
+  // for the qualified provider-wire projection, but fresh fields use only
+  // structural length bounds. Deterministic authored-text, target-token,
+  // contradiction, causal-witness, evidence, and revenue gates remain the
+  // authority before any provider discovery or recommendation can proceed.
   const canonicalCommercialProseCharacter =
     '[^\\s\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u180e\\u200b\\u200e-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufeff\\ufffd\\ufff9-\\ufffb{}]';
   const canonicalCommercialProseToken =
@@ -3149,7 +3151,11 @@ function opportunityDiscoveryPlannerResponseFormat(
     )) {
       throw new Error(`missing commercial prose schema ${definitionName}`);
     }
-    return { $ref: `#/$defs/${definitionName}` };
+    return {
+      type: 'string',
+      minLength: 8,
+      maxLength
+    };
   };
   // Retain the qualified provider-wire definition cohort for grammar
   // stability, but do not use these vocabulary-bearing definitions for fresh

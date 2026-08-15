@@ -1159,7 +1159,8 @@ for (const scenario of cases) {
         return resolved.enum.includes('   ') || resolved.enum.includes('');
       }
       if (resolved?.type === 'object') return false;
-      return new RegExp(resolved?.pattern || '').test('   ');
+      return schemaAcceptsString(resolved, '   ') ||
+        schemaAcceptsString(resolved, '');
     } catch {
       return true;
     }
@@ -11638,8 +11639,12 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
   });
   if (targetTokenResult.status !== 'blocked' ||
       targetTokenResult.plans.length !== 0 ||
-      targetTokenResult.normalizationDiagnostic?.code !==
-        'strict_schema_mismatch' ||
+      targetTokenResult.normalizationDiagnostic !== undefined ||
+      targetTokenResult.planSelection?.acceptedPlanCount !== 0 ||
+      targetTokenResult.planSelection?.rejectedPlanCount !== 2 ||
+      targetTokenResult.planSelection?.rejectedPlans?.some((item) =>
+        !/reserved target syntax outside the finite/i.test(item.reason || '')
+      ) ||
       targetTokenResult.usage?.successfulCalls !== 1 ||
       targetTokenResult.sideEffectsPerformed !== 0) {
     throw new Error(
@@ -18572,6 +18577,8 @@ function verifyFreshPlannerStrictSchemaTotality({
   }
   const vocabularyNeutralOutcome = structuredClone(baseline);
   for (const plan of vocabularyNeutralOutcome.plans) {
+    plan.contingentFinalists.pathBase.r[0].l =
+      '$5,000 paid contract outcome';
     plan.contingentFinalists.pathBase.r[0].io =
       'One accepted compensated engagement from the reviewed opportunity';
     plan.contingentFinalists.pathBase.r[0].cd =
