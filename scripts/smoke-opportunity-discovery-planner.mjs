@@ -51,28 +51,27 @@ const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS = Object.freeze([
   '#/$defs/compensatedJobPaidOfferText140/pattern',
   '#/$defs/conversionDestinationText120/pattern',
   '#/$defs/attributionSignalText140/pattern',
-  '#/$defs/compactChannelLabel/pattern',
-  '#/$defs/compactActionLabel/pattern'
+  '#/$defs/compactChannelLabel/pattern'
 ]);
 const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 =
-  'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70';
+  '46a0345c19eca3a815502e5ad8a62af3a6f0815e635ff3e4a25eaa61d599c290';
 const CURRENT_LUNA_AUTHORED_TEXT_DESCRIPTION =
-  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified payer {{TARGET_NAME}} for the paid opportunity" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; every a has generic l plus one exact paidDemand branch, and code selects paidDemand only for compensated_job/buyer_solicitation. Vary paidDemand across tactics using its enum values. Generic a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service".';
+  'Authored strings: one line, single ASCII spaces, no edge/repeated whitespace, controls, or braces/colon except target tokens; ats may use one record/field colon. Exact short forms: compensatedJob="Paid role"; io="Paid booking"; cd and g.d.l="Booking service"; ats="Referral source" or "CRM record: source field". b.l/a.l contain all fixed role branches; code selects commercialRole. c.l uses its fixed route. Vary selected actions.';
 const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
   referral_partner: Object.freeze({
     buyer: 'Qualified payer for the paid opportunity',
     channel: 'Review-first public professional profile {{TARGET_URL}}',
     actions: Object.freeze([
-      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service',
-      'After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking'
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer',
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to purchase the current paid offer'
     ])
   }),
   buyer: Object.freeze({
     buyer: 'Qualified payer {{TARGET_NAME}} for the paid opportunity',
     channel: 'Review-first public professional profile {{TARGET_URL}}',
     actions: Object.freeze([
-      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service',
-      'After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service'
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation',
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package'
     ])
   }),
   paid_demand: Object.freeze({
@@ -85,6 +84,18 @@ const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
     ])
   })
 });
+const CURRENT_LUNA_REFERRAL_ACTION_ENUM = Object.freeze([
+  'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to book the current paid offer',
+  'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to introduce one qualified buyer to purchase the current paid offer',
+  'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to recommend one qualified buyer to buy the current paid offer',
+  'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer one qualified buyer to sign up for the current paid offer'
+]);
+const CURRENT_LUNA_BUYER_ACTION_ENUM = Object.freeze([
+  'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book the current paid consultation',
+  'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to buy the current paid service package',
+  'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid service package',
+  'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
+]);
 const CURRENT_LUNA_PAID_DEMAND_ACTION_ENUM = Object.freeze([
   'After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}',
   'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
@@ -173,13 +184,13 @@ function verifyProjectedPatternsRemainExactLocalAuthority({
     ?.properties?.l?.pattern;
   const providerFollowUpPattern = providerSchema?.$defs?.followUpItem
     ?.properties?.l?.pattern;
-  if (canonicalDefinitionPatterns !== 29 ||
+  if (canonicalDefinitionPatterns !== 28 ||
       providerDefinitionPatterns !== 15 ||
       canonicalSellerPattern !== providerSellerPattern ||
       canonicalFollowUpPattern !== providerFollowUpPattern ||
       typeof canonicalFollowUpPattern !== 'string') {
     throw new Error(
-      `projection did not retain the exact historical pattern cohort: ${JSON.stringify({ canonicalDefinitionPatterns, providerDefinitionPatterns, sellerPatternPreserved: canonicalSellerPattern === providerSellerPattern, followUpPatternPreserved: canonicalFollowUpPattern === providerFollowUpPattern })}`
+      `projection did not retain the exact local pattern cohort: ${JSON.stringify({ canonicalDefinitionPatterns, providerDefinitionPatterns, sellerPatternPreserved: canonicalSellerPattern === providerSellerPattern, followUpPatternPreserved: canonicalFollowUpPattern === providerFollowUpPattern })}`
     );
   }
 }
@@ -210,9 +221,6 @@ function verifyAuthoredTextContractFitsCanonicalSchema({
     ],
     compactChannelLabel: Object.values(CURRENT_LUNA_ROLE_EXAMPLES).map(
       (example) => example.channel
-    ),
-    compactActionLabel: Object.values(CURRENT_LUNA_ROLE_EXAMPLES).flatMap(
-      (example) => example.actions
     )
   };
   if (JSON.stringify(Object.keys(samples).map((name) =>
@@ -237,10 +245,18 @@ function verifyAuthoredTextContractFitsCanonicalSchema({
         ])) {
     throw new Error('buyer label lost its finite role-branch contract');
   }
-  if (JSON.stringify(
-    canonicalSchema?.$defs?.compactPaidDemandActionLabel?.enum
-  ) !== JSON.stringify(CURRENT_LUNA_PAID_DEMAND_ACTION_ENUM)) {
-    throw new Error('paid-demand action lost its finite response contract');
+  const actionLabel = canonicalSchema?.$defs?.compactActionLabel;
+  if (actionLabel?.type !== 'object' ||
+      JSON.stringify(actionLabel.required) !== JSON.stringify([
+        'referral', 'buyer', 'paidDemand'
+      ]) || actionLabel.additionalProperties !== false ||
+      JSON.stringify(actionLabel.properties?.referral?.enum) !==
+        JSON.stringify(CURRENT_LUNA_REFERRAL_ACTION_ENUM) ||
+      JSON.stringify(actionLabel.properties?.buyer?.enum) !==
+        JSON.stringify(CURRENT_LUNA_BUYER_ACTION_ENUM) ||
+      JSON.stringify(actionLabel.properties?.paidDemand?.enum) !==
+        JSON.stringify(CURRENT_LUNA_PAID_DEMAND_ACTION_ENUM)) {
+    throw new Error('action label lost its finite role-branch contract');
   }
   for (const [name, definitionSamples] of Object.entries(samples)) {
     const validate = ajv.compile(canonicalSchema?.$defs?.[name]);
@@ -1053,12 +1069,12 @@ for (const scenario of cases) {
     largestPlannerRequestBytes,
     result.preflight?.requestBodyByteCount || 0
   );
-  if (result.preflight?.requestBodyByteCount > 36 * 1024) {
+  if (result.preflight?.requestBodyByteCount > 38 * 1024) {
     throw new Error(
-      `${scenario.name}: call-1 request exceeded the 36 KiB provider envelope`
+      `${scenario.name}: call-1 request exceeded the 38 KiB representative envelope`
     );
   }
-  if (36 * 1024 - result.preflight?.requestBodyByteCount < 512 ||
+  if (38 * 1024 - result.preflight?.requestBodyByteCount < 512 ||
       result.preflight?.providerPromptEnvelope
         ?.minimumSoftHeadroomByteCount !== 512) {
     throw new Error(
@@ -1232,7 +1248,6 @@ for (const scenario of cases) {
         'referral', 'buyer', 'paidDemand'
       ]) ||
       channelLabelSchema?.maxLength !== 120 ||
-      actionLabelSchema?.maxLength !== 180 ||
       JSON.stringify(buyerLabelSchema?.properties?.referral?.enum) !==
         JSON.stringify(['Qualified payer for the paid opportunity']) ||
       JSON.stringify(buyerLabelSchema?.properties?.buyer?.enum) !==
@@ -1246,14 +1261,7 @@ for (const scenario of cases) {
         channelLabelSchema,
         'Review-first verified professional profile {{TARGET_URL}} for executive buyer fit'
       ) ||
-      !schemaAcceptsString(
-        actionLabelSchema,
-        'After approval via verified professional profile {{TARGET_URL}}, request {{TARGET_NAME}} to buy the current paid advisory service'
-      ) ||
-      schemaAcceptsString(
-        actionLabelSchema,
-        'After review, inspect scheduling and write a report'
-      ) ||
+      actionLabelSchema?.type !== 'object' ||
       !contingentProperties.pathBase ||
       !contingentProperties.tacticA ||
       !contingentProperties.tacticB ||
@@ -1358,13 +1366,13 @@ for (const scenario of cases) {
         followUpLabelPattern
       ) ||
       JSON.stringify(plannerDefinitions.actionItem?.required) !==
-        JSON.stringify(['l', 'paidDemand', 'e']) ||
+        JSON.stringify(['l', 'e']) ||
       plannerDefinitions.actionItem?.properties?.rp ||
-      !/one generic model-authored action.*finite paid-demand response branch.*selects the paidDemand branch only/is.test(
+      !/finite action-label branch object.*selects the model-authored branch implied by commercialRole.*without rewriting/is.test(
         plannerDefinitions.actionItem?.description || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /a:2\/tactic.*generic l\/e.*exact model-returned paidDemand enum branch.*selects paidDemand only for compensated_job\/buyer_solicitation.*referral_partner l introduces.*current paid offer.*paid booking\/payment.*buyer l asks.*book\/buy\/sign.*finite paid application\/proposal response.*preserves the selected model-returned branch without rewriting/is.test(
+        /a:2\/tactic.*a\.l has exact referral\/buyer\/paidDemand enums.*selects commercialRole without rewriting.*referral introduces.*paid offer.*buyer asks.*book\/buy\/sign.*paidDemand submits.*paid application\/proposal/is.test(
           rule
         )
       ) ||
@@ -1435,7 +1443,7 @@ for (const scenario of cases) {
         projection: /projects r\.c per tactic/is.test(requestSeen.system || ''),
         acquisition: /acquisitionMechanism is exact and structural.*buyer\/referral="Review-first public professional profile".*paid_demand="Review-first official paid-demand page"/is.test(requestSeen.system || ''),
         market: /market must copy one response-schema enum value exactly.*never expand.*abbreviate.*widen/is.test(requestSeen.system || ''),
-        actions: /a:2\/tactic.*generic l\/e.*model-returned paidDemand enum branch.*selects paidDemand only.*referral_partner l introduces.*buyer l asks/is.test(requestSeen.system || ''),
+        actions: /a:2\/tactic.*a\.l has exact referral\/buyer\/paidDemand enums.*selects commercialRole without rewriting.*referral introduces.*buyer asks/is.test(requestSeen.system || ''),
         diversity: /prefer 4 distinct selected actions; >=2 across both tactics must be distinct\+viable/is.test(requestSeen.system || ''),
         demand: /compensated_job finds an employer job posting.*public web snippets.*RFP pages.*have no fresh paid-demand authority.*two referral motions with different counterparties are valid.*diversity never requires paid_demand.*supplier\/competitor offers.*accepts insurance.*are supply, never demand/is.test(requestSeen.system || '')
       } })}`
@@ -2246,14 +2254,14 @@ await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
 // The 2026-08-13 Atlas production trace reached the former 18k-token ceiling
 // after 99,271 ms with 27,149 content bytes and finish=length. The strict
-// schema's exact derived serialized bound is 32,936 bytes in the local
-// fixture and 33,304 bytes in the Linux deployment fixture. Both generated
-// schemas remain finite and below the shared 34,400-byte proof ceiling. A tokenizer with
+// schema's exact derived serialized bound is 33,872 bytes in this local
+// fixture. Local and Linux-generated schemas must remain finite and below the
+// shared 34,400-byte proof ceiling. A tokenizer with
 // byte fallback cannot require more tokens than the encoded byte count, so the
 // current 42k ceiling covers the entire 40,960-byte runtime cap plus 1,024
 // tokens of explicit headroom. Retain the trace projection as a
 // production-derived timing and compression regression: the schema projects
-// to at most 22,081 native tokens and 42k projects to 231,633 ms, inside the
+// to at most 22,458 native tokens and 42k projects to 231,633 ms, inside the
 // 300-second deadline.
 const observedPlannerCompletionTokens = 18_000;
 const observedPlannerContentBytes = 27_149;
@@ -2273,7 +2281,8 @@ const projectedPlannerDurationMs = Math.ceil(
 );
 const supportedSchemaTokenProjection = new Map([
   [32_936, 21_837],
-  [33_304, 22_081]
+  [33_304, 22_081],
+  [33_872, 22_458]
 ]);
 if (!supportedSchemaTokenProjection.has(
   computedPlannerSchemaResponseBoundBytes
@@ -5457,8 +5466,8 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
             contractVersion:
               'opportunity_discovery_provider_schema_projection_v1',
             omittedPatternPathsSha256:
-              'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70',
-            omittedPatternCount: 14,
+              '46a0345c19eca3a815502e5ad8a62af3a6f0815e635ff3e4a25eaa61d599c290',
+            omittedPatternCount: 13,
             localExactSchemaRequired: true
           },
           reasoning: { effort: 'none', exclude: true },
@@ -5697,16 +5706,17 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     contingentFinalists: motion.contingentFinalists
   });
   const roleAuthoredPrimary = compactFreshPlannerPlans([candidate()])[0];
-  // Buyer labels are deliberately role-neutral protocol text; use
-  // non-catalogue channel and action strings to prove the substantive
-  // selected values remain model-authored and byte-for-byte stable.
+  // Use non-catalogue channels plus different finite buyer actions to prove
+  // the selected model-returned values remain byte-for-byte stable.
   for (const [tacticIndex, tacticKey] of ['tacticA', 'tacticB'].entries()) {
     const tactic = roleAuthoredPrimary.contingentFinalists[tacticKey];
     tactic.c.forEach((item, index) => {
       item.l = `Review-first verified professional profile {{TARGET_URL}} for executive purchase route ${tacticIndex + 1}${index + 1}`;
     });
     tactic.a.forEach((item, index) => {
-      item.l = `After approval via verified professional profile {{TARGET_URL}}, request {{TARGET_NAME}} to buy the current paid advisory service option ${tacticIndex + 1}${index + 1}`;
+      item.l.buyer = CURRENT_LUNA_BUYER_ACTION_ENUM[
+        tacticIndex * 2 + index
+      ];
     });
   }
   roleAuthoredPrimary.contingentFinalists.tacticB.a.reverse();
@@ -5724,9 +5734,9 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
     ],
     actions: [
       roleAuthoredPrimary.contingentFinalists.tacticA.a
-        .map((item) => item.l),
+        .map((item) => item.l.buyer),
       roleAuthoredPrimary.contingentFinalists.tacticB.a
-        .map((item) => item.l)
+        .map((item) => item.l.buyer)
     ]
   };
   const roleAuthoredResult = await runOpportunityDiscoveryPlanner({
@@ -5785,7 +5795,7 @@ async function verifyDiscoveryRoleAndAdapterInvariants(job, evidenceRef) {
   }
 
   const invalidLabelPrimary = structuredClone(roleAuthoredPrimary);
-  invalidLabelPrimary.contingentFinalists.tacticA.a[0].l =
+  invalidLabelPrimary.contingentFinalists.tacticA.a[0].l.buyer =
     'After review, inspect scheduling and write an operational report.';
   const invalidLabelResult = await runOpportunityDiscoveryPlanner({
     job: structuredClone(job),
@@ -6742,13 +6752,13 @@ async function verifyOneMotionUsesTwoTacticFallback(job, evidenceRef) {
       // but must fail the local causal-diversity gate. Motion one survives
       // for the critic's two-tactic comparison.
       const repeatedAction =
-        plans[1].contingentFinalists.tacticA.a[0].paidDemand;
+        plans[1].contingentFinalists.tacticA.a[0].l.paidDemand;
       for (const tactic of [
         plans[1].contingentFinalists.tacticA,
         plans[1].contingentFinalists.tacticB
       ]) {
         for (const action of tactic.a) {
-          action.paidDemand = repeatedAction;
+          action.l.paidDemand = repeatedAction;
         }
       }
       return {
@@ -6846,15 +6856,21 @@ async function verifyLinkedRecoveryCannotBeBusinessAction(
           ?.properties?.plans?.items?.properties?.market?.enum?.[0];
         for (const plan of plans) plan.market = exactMarket;
         const invalidPlan = plans[0];
+        const branch = invalidPlan.commercialRole === 'referral_partner'
+          ? 'referral'
+          : invalidPlan.commercialRole === 'paid_demand'
+            ? 'paidDemand'
+            : 'buyer';
         for (const tacticKey of ['tacticA', 'tacticB']) {
           for (const action of
             invalidPlan.contingentFinalists[tacticKey].a) {
-            action.l = action.l.endsWith(' {{TARGET_NAME}}')
-              ? action.l.replace(
+            const label = action.l[branch];
+            action.l[branch] = label.endsWith(' {{TARGET_NAME}}')
+              ? label.replace(
                   / (to|for) \{\{TARGET_NAME\}\}$/,
                   ` after ${recoveryVerb} review $1 {{TARGET_NAME}}`
                 )
-              : `${action.l} after ${recoveryVerb} review`;
+              : `${label} after ${recoveryVerb} review`;
           }
         }
         return {
@@ -6876,13 +6892,8 @@ async function verifyLinkedRecoveryCannotBeBusinessAction(
         };
       }
     });
-    if (result.status !== 'planned' || result.plans.length !== 1 ||
-        result.normalizationDiagnostic != null ||
-        result.planSelection?.acceptedPlanCount !== 1 ||
-        result.planSelection?.rejectedPlanCount !== 1 ||
-        !/primary_action_linked_recovery/.test(
-          result.planSelection?.rejectedPlans?.[0]?.reason || ''
-        ) ||
+    if (result.status !== 'blocked' || result.plans.length !== 0 ||
+        result.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
         result.usage?.successfulCalls !== 1 ||
         result.sideEffectsPerformed !== 0) {
       throw new Error(
@@ -6957,7 +6968,7 @@ async function verifyQualifiedPartnerReferralActionsPass(job, evidenceRef) {
       expectedActions = [
         ...plans[0].contingentFinalists.tacticA.a,
         ...plans[0].contingentFinalists.tacticB.a
-      ].map((action) => action.l);
+      ].map((action) => action.l.referral);
       return {
         data: {
           contractVersion: OPPORTUNITY_DISCOVERY_PLAN_CONTRACT,
@@ -7149,7 +7160,7 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
   const actions = [
     ...motion.contingentFinalists.tacticA.a,
     ...motion.contingentFinalists.tacticB.a
-  ].map((action) => action.paidDemand);
+  ].map((action) => action.l.paidDemand);
   const accepted = await plannerResultForMotion({
     job,
     motion,
@@ -7170,20 +7181,20 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
     );
   }
 
-  const inertGeneric = cases[1].plans(evidenceRef)[0];
-  inertGeneric.contingentFinalists = compactContingentFinalists(
-    inertGeneric.contingentFinalists
+  const inactiveBranches = cases[1].plans(evidenceRef)[0];
+  inactiveBranches.contingentFinalists = compactContingentFinalists(
+    inactiveBranches.contingentFinalists
   );
   for (const action of [
-    ...inertGeneric.contingentFinalists.tacticA.a,
-    ...inertGeneric.contingentFinalists.tacticB.a
+    ...inactiveBranches.contingentFinalists.tacticA.a,
+    ...inactiveBranches.contingentFinalists.tacticB.a
   ]) {
-    action.l =
-      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one operational dashboard';
+    action.l.referral = CURRENT_LUNA_REFERRAL_ACTION_ENUM[3];
+    action.l.buyer = CURRENT_LUNA_BUYER_ACTION_ENUM[3];
   }
   const selectedFiniteBranch = await plannerResultForMotion({
     job,
-    motion: inertGeneric,
+    motion: inactiveBranches,
     generationId: 'generation-finite-paid-demand-action-branch'
   });
   const selectedFiniteMotion = selectedFiniteBranch.plans.find((plan) =>
@@ -7197,7 +7208,7 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
       selectedFiniteBranch.plans.length !== 2 ||
       JSON.stringify(selectedFiniteActions) !== JSON.stringify(actions)) {
     throw new Error(
-      `finite paid-demand branch was not selected over inert generic prose: ${JSON.stringify(selectedFiniteBranch)}`
+      `finite paid-demand branch was not selected independently of inactive role branches: ${JSON.stringify(selectedFiniteBranch)}`
     );
   }
 
@@ -7205,7 +7216,7 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
   explicitlyUnpaid.contingentFinalists = compactContingentFinalists(
     explicitlyUnpaid.contingentFinalists
   );
-  explicitlyUnpaid.contingentFinalists.tacticA.a[0].paidDemand =
+  explicitlyUnpaid.contingentFinalists.tacticA.a[0].l.paidDemand =
     'After review via official paid-demand page {{TARGET_URL}}, submit one unpaid application to {{TARGET_NAME}}';
   const unpaid = await plannerResultForMotion({
     job,
@@ -7224,9 +7235,9 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
   artifactOnly.contingentFinalists = compactContingentFinalists(
     artifactOnly.contingentFinalists
   );
-  artifactOnly.contingentFinalists.tacticA.a[0].paidDemand =
+  artifactOnly.contingentFinalists.tacticA.a[0].l.paidDemand =
     'After review via official paid-demand page {{TARGET_URL}}, submit one research report to {{TARGET_NAME}}.';
-  artifactOnly.contingentFinalists.tacticA.a[1].paidDemand =
+  artifactOnly.contingentFinalists.tacticA.a[1].l.paidDemand =
     'After review via official paid-demand page {{TARGET_URL}}, submit one analytics dashboard to {{TARGET_NAME}}.';
   const rejected = await plannerResultForMotion({
     job,
@@ -7759,15 +7770,16 @@ async function verifyAuthoredTextRoleExamplesPassFullPlanner() {
     revenue.cd = 'Booking service';
     revenue.ats = 'Referral source';
     revenue.g.d.l = 'Booking service';
+    const actionBranch = role === 'referral_partner'
+      ? 'referral'
+      : role === 'paid_demand'
+        ? 'paidDemand'
+        : 'buyer';
     for (const tacticKey of ['tacticA', 'tacticB']) {
       const tactic = motion.contingentFinalists[tacticKey];
       tactic.c[0].l = examples.channel;
-      tactic.a[0].l = examples.actions[0];
-      tactic.a[1].l = examples.actions[1];
-      if (role === 'paid_demand') {
-        tactic.a[0].paidDemand = examples.actions[0];
-        tactic.a[1].paidDemand = examples.actions[1];
-      }
+      tactic.a[0].l[actionBranch] = examples.actions[0];
+      tactic.a[1].l[actionBranch] = examples.actions[1];
     }
     const accepted = await plannerResultForMotion({
       job,
@@ -7813,14 +7825,14 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
     motion.contingentFinalists
   );
   const familyAAction =
-    motion.contingentFinalists.tacticA.a[0].l;
+    motion.contingentFinalists.tacticA.a[0].l.referral;
   const familyBAction =
-    motion.contingentFinalists.tacticB.a[0].l;
+    motion.contingentFinalists.tacticB.a[0].l.referral;
   for (const action of motion.contingentFinalists.tacticA.a) {
-    action.l = familyAAction;
+    action.l.referral = familyAAction;
   }
   for (const action of motion.contingentFinalists.tacticB.a) {
-    action.l = familyBAction;
+    action.l.referral = familyBAction;
   }
   const accepted = await plannerResultForMotion({
     job,
@@ -7857,14 +7869,16 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
   );
   const collapsedPlans = collapsedMotions.map((motionValue) => {
     const [collapsed] = compactFreshPlannerPlans([motionValue]);
-    const actionField = ['compensated_job', 'buyer_solicitation'].includes(
-      collapsed.motionKind
-    ) ? 'paidDemand' : 'l';
+    const actionField = motionValue.commercialRole === 'referral_partner'
+      ? 'referral'
+      : motionValue.commercialRole === 'paid_demand'
+        ? 'paidDemand'
+        : 'buyer';
     const repeated =
-      collapsed.contingentFinalists.tacticA.a[0][actionField];
+      collapsed.contingentFinalists.tacticA.a[0].l[actionField];
     for (const tacticKey of ['tacticA', 'tacticB']) {
       for (const action of collapsed.contingentFinalists[tacticKey].a) {
-        action[actionField] = repeated;
+        action.l[actionField] = repeated;
       }
     }
     return collapsed;
@@ -8054,7 +8068,7 @@ async function verifyCurrentLunaGeneratorRouteQualification(
         projection?.providerSchemaSha256 ||
       projection?.omittedPatternPathsSha256 !==
         CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 ||
-      projection?.omittedPatternCount !== 14 ||
+      projection?.omittedPatternCount !== 13 ||
       projection?.localExactSchemaRequired !== true ||
       result.preflight?.requestBodyByteCount !==
         Buffer.byteLength(serialized, 'utf8') ||
@@ -8655,7 +8669,7 @@ async function verifyCurrentLunaProductionLengthFailuresPreserveProjection(
           'opportunity_discovery_provider_schema_projection_v1' ||
         projection?.omittedPatternPathsSha256 !==
           CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 ||
-        projection?.omittedPatternCount !== 14 ||
+        projection?.omittedPatternCount !== 13 ||
         projection?.localExactSchemaRequired !== true ||
         result.preflight?.requestBodyByteCount !==
           Buffer.byteLength(serialized, 'utf8') ||
@@ -11716,7 +11730,7 @@ async function verifyUnprovenOfferRequiresLiveCompensatedDemand() {
         'select only compensated_job or buyer_solicitation motions'
       ) ||
       !prompt.hardRules?.some((rule) =>
-        rule.includes('Only compensated_job or buyer_solicitation is authorized')
+        rule.includes('Select only compensated_job or buyer_solicitation motions')
       ) ||
       result.usage?.calls !== 1 ||
       result.sideEffectsPerformed !== 0) {
@@ -14732,10 +14746,21 @@ async function verifyTwoStageTargetBinding() {
   firstMotion.organizationTerms = [];
   const secondMotion = structuredClone(selectedMotion);
   secondMotion.priority = 2;
-  if (firstMotion.contingentFinalists.familyA.d.a[0].l !==
-      secondMotion.contingentFinalists.familyA.d.a[0].l) {
+  const selectedRoleAction = (motionValue) => {
+    const label = motionValue.contingentFinalists.familyA.d.a[0].l;
+    if (typeof label === 'string') return label;
+    return motionValue.commercialRole === 'referral_partner'
+      ? label.referral
+      : motionValue.commercialRole === 'paid_demand'
+        ? label.paidDemand
+        : label.buyer;
+  };
+  const firstRoleAction = selectedRoleAction(firstMotion);
+  const secondRoleAction = selectedRoleAction(secondMotion);
+  if (!firstRoleAction.includes('{{TARGET_NAME}}') ||
+      !secondRoleAction.includes('{{TARGET_NAME}}')) {
     throw new Error(
-      'two-motion fixture must start with the same generic placeholder action so exact target binding proves the richer causal-signature distinction'
+      'two-motion fixture must retain typed placeholder actions before exact target binding'
     );
   }
   multiMotionPayload.commercialDiscoveryEvidence.plan =
@@ -18115,7 +18140,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
     }
     if (schema.$ref) {
       const ref = schema.$ref;
-      if (/#\/\$defs\/compact(?:Channel|Action)Label$/.test(ref)) {
+      if (/#\/\$defs\/compactChannelLabel$/.test(ref)) {
         const resolved = resolveRef(ref);
         if (Array.isArray(resolved.enum)) {
           return walk(resolved, [...refStack, ref]);
@@ -18235,7 +18260,7 @@ function verifyGeneratedPlannerSchemaResponseBound(schemaValue) {
     stats.fixedBytes;
   computedPlannerSchemaResponseBoundBytes = derivedBound;
   if (stats.textCodepoints > 5_216 ||
-      stats.asciiCodepoints !== 2_400 ||
+      stats.asciiCodepoints !== 960 ||
       stats.evidenceRefOccurrences !== 56 ||
       derivedBound > MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES ||
       MAX_DISCOVERY_PLANNER_SCHEMA_RESPONSE_BOUND_BYTES >
@@ -18840,10 +18865,10 @@ function verifyFreshPlannerStrictSchemaTotality({
     .compile(maximumSchema);
   if (!validateMaximum(maximumResponse) ||
       evidenceOccurrenceCount !== 56 || evidenceArrayCount === 0 ||
-      // All 16 variable safe-ASCII channel/action strings plus the other 52
-      // bounded authored strings must reach their individual maxima. The four
-      // buyer labels are fixed enums and contribute exact serialized bytes.
-      maximizedStringOccurrenceCount !== 68 ||
+      // All eight variable safe-ASCII channel strings plus the other 52
+      // bounded authored strings must reach their individual maxima. Buyer
+      // and action labels are fixed enums and contribute exact bytes.
+      maximizedStringOccurrenceCount !== 60 ||
       maximumResponse.plans.some((planValue) =>
         planValue.organizationTerms.length !== 4 ||
         planValue.skills.length !== 4
@@ -19028,8 +19053,8 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     first.contingentFinalists.pathBase.p[0].l,
     first.contingentFinalists.tacticA.c[0].l,
     second.contingentFinalists.tacticA.c[0].l,
-    first.contingentFinalists.tacticA.a[0].l,
-    second.contingentFinalists.tacticA.a[0].l,
+    first.contingentFinalists.tacticA.a[0].l.referral,
+    second.contingentFinalists.tacticA.a[0].l.paidDemand,
     first.contingentFinalists.tacticA.f[0].l
   ];
   let calls = 0;
@@ -19548,10 +19573,14 @@ function compactContingentFinalists(value) {
     e: item.e
   });
   const actionItem = (item, index, family) => ({
-    l: actionLabels[selectedRole][
-      ((family === familyB ? 2 : 0) + index) % 4],
-    paidDemand: actionLabels.paid_demand[
-      ((family === familyB ? 2 : 0) + index) % 4],
+    l: {
+      referral: actionLabels.referral_partner[
+        ((family === familyB ? 2 : 0) + index) % 4],
+      buyer: actionLabels.buyer[
+        ((family === familyB ? 2 : 0) + index) % 4],
+      paidDemand: actionLabels.paid_demand[
+        ((family === familyB ? 2 : 0) + index) % 4]
+    },
     e: item.e
   });
   const tactic = (family) => ({
@@ -19728,6 +19757,14 @@ function canonicalMaterializedPlannerPlans(values) {
           : item.l.buyer,
       e: structuredClone(item.e)
     }));
+    const selectActionItems = (items) => (items || []).map((item) => ({
+      l: motion.commercialRole === 'referral_partner'
+        ? item.l.referral
+        : motion.commercialRole === 'paid_demand'
+          ? item.l.paidDemand
+          : item.l.buyer,
+      e: structuredClone(item.e)
+    }));
     const materializeFamily = (familyKey, tacticKey, key) => {
       const source = structuredClone(original[familyKey]);
       const tactic = compact[tacticKey];
@@ -19735,7 +19772,7 @@ function canonicalMaterializedPlannerPlans(values) {
       source.tacticKey = key;
       source.d.b = selectBuyerItems(compact.pathBase.b);
       source.d.c = selectItems(tactic.c);
-      source.d.a = selectItems(tactic.a);
+      source.d.a = selectActionItems(tactic.a);
       const compactRevenue = structuredClone(compact.pathBase.r[0]);
       const originalRevenue = source.d.r[0];
       source.d.r[0] = {

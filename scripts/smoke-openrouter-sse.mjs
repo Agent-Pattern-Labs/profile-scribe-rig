@@ -2024,9 +2024,12 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
     item === 'profile:system_attribution_capability:v1'
   );
   const market = planSchema?.properties?.market?.enum?.[0];
-  const paidDemandActions =
-    definitions.compactPaidDemandActionLabel?.enum || [];
+  const actionBranches = definitions.compactActionLabel?.properties || {};
+  const referralActions = actionBranches.referral?.enum || [];
+  const buyerActions = actionBranches.buyer?.enum || [];
+  const paidDemandActions = actionBranches.paidDemand?.enum || [];
   if (!observationRef || !attributionRef || !market ||
+      referralActions.length < 4 || buyerActions.length < 4 ||
       paidDemandActions.length < 4) {
     throw new Error('raw/canonical split fixture could not bind schema enums');
   }
@@ -2055,9 +2058,13 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
     },
     e: refs
   });
-  const actionItem = (label, index) => ({
-    ...item(label),
-    paidDemand: paidDemandActions[index]
+  const actionItem = (_label, index) => ({
+    l: {
+      referral: referralActions[index],
+      buyer: buyerActions[index],
+      paidDemand: paidDemandActions[index]
+    },
+    e: [observationRef]
   });
   const pathBase = {
     r: [{
