@@ -2736,6 +2736,30 @@ async function verifyTypedCommercialMotionSelection(
     );
   }
 
+  for (const [index, unpaidOffer] of [
+    'Unpaid job role',
+    'Volunteer role',
+    'Pro bono engagement'
+  ].entries()) {
+    const unpaidMotions = structuredClone(compensatedMotions);
+    for (const motion of unpaidMotions) {
+      motion.paidOffer.compensatedJob = unpaidOffer;
+    }
+    const unpaid = await run({
+      job: compensatedOnlyJob,
+      plans: unpaidMotions,
+      generationId: `generation-unpaid-compensated-job-${index + 1}`
+    });
+    if (unpaid.status !== 'blocked' || unpaid.plans.length !== 0 ||
+        unpaid.planSelection?.acceptedPlanCount !== 0 ||
+        unpaid.planSelection?.rejectedPlanCount !== 2 ||
+        unpaid.sideEffectsPerformed !== 0) {
+      throw new Error(
+        `deterministic paid-role gate accepted ${unpaidOffer}: ${JSON.stringify(unpaid)}`
+      );
+    }
+  }
+
   const safeReferral = cases[0].plans(referralEvidenceRef)[0];
   safeReferral.priority = 2;
   const sensitiveDirectBuyer = plan({
@@ -18580,9 +18604,13 @@ function verifyFreshPlannerStrictSchemaTotality({
     'Volunteer role',
     'Pro bono engagement'
   ]) {
-    expectInvalid(`non-income compensated-job offer ${paidOffer}`, (response) => {
-      response.plans[0].paidOffer.compensatedJob = paidOffer;
-    });
+    const structurallyValid = structuredClone(baseline);
+    structurallyValid.plans[0].paidOffer.compensatedJob = paidOffer;
+    if (!validate(structurallyValid)) {
+      throw new Error(
+        `transport schema enforced paid-role semantics for ${paidOffer}: ${JSON.stringify(validate.errors)}`
+      );
+    }
   }
   for (const [label, value] of [
     ['leading whitespace', ' invalid'],

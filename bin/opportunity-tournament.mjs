@@ -3151,6 +3151,9 @@ function opportunityDiscoveryPlannerResponseFormat(
     }
     return { $ref: `#/$defs/${definitionName}` };
   };
+  // Retain the qualified provider-wire definition cohort for grammar
+  // stability, but do not use these vocabulary-bearing definitions for fresh
+  // planner fields. Local semantic validation below remains authoritative.
   const commercialSemanticTextContaining = (
     maxLength,
     requiredPattern,
@@ -3191,11 +3194,6 @@ function opportunityDiscoveryPlannerResponseFormat(
       type: 'string',
       minLength: 8,
       maxLength: 140,
-      // Keep both semantic words as complete space-delimited tokens. This
-      // remains within native structured-output regex subsets and prevents
-      // the positive token "paid" from matching inside "unpaid". The local
-      // semantic gate separately rejects explicit volunteer/pro-bono or
-      // other negated compensation prose before it gains plan authority.
       pattern: (() => {
         const income =
           '(?:[Cc]ompensated|[Cc]ontract|[Ee]mployment|[Pp]aid|' +
@@ -3238,15 +3236,6 @@ function opportunityDiscoveryPlannerResponseFormat(
         '[Oo]rigin|[Cc]hannel|[Cc][Rr][Mm]',
       { allowColon: true }
     )
-  };
-  const commercialSemanticConstraint = (name) => {
-    if (!Object.prototype.hasOwnProperty.call(
-      commercialSemanticConstraintDefinitions,
-      name
-    )) {
-      throw new Error(`missing commercial semantic constraint ${name}`);
-    }
-    return { $ref: `#/$defs/${name}` };
   };
   // Buyer, channel, and action labels are model-selected from finite branches
   // keyed by commercial role. Local code selects the declared branch without
@@ -3356,9 +3345,7 @@ function opportunityDiscoveryPlannerResponseFormat(
     type: 'object',
     properties: {
       seller: sellerPaidOffer,
-      compensatedJob: commercialSemanticConstraint(
-        'compensatedJobPaidOfferText140'
-      )
+      compensatedJob: commercialProseText(140)
     },
     required: ['seller', 'compensatedJob'],
     additionalProperties: false,
