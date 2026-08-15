@@ -11639,18 +11639,23 @@ async function verifyObjectiveSellerFocusAndDirectoryEvidenceRoles() {
       };
     }
   });
-  if (targetTokenResult.status !== 'blocked' ||
-      targetTokenResult.plans.length !== 0 ||
+  if (targetTokenResult.status !== 'planned' ||
+      targetTokenResult.plans.length !== 2 ||
       targetTokenResult.normalizationDiagnostic !== undefined ||
-      targetTokenResult.planSelection?.acceptedPlanCount !== 0 ||
-      targetTokenResult.planSelection?.rejectedPlanCount !== 2 ||
-      targetTokenResult.planSelection?.rejectedPlans?.some((item) =>
-        !/reserved target syntax outside the finite/i.test(item.reason || '')
+      targetTokenResult.planSelection?.acceptedPlanCount !== 2 ||
+      targetTokenResult.planSelection?.rejectedPlanCount !== 0 ||
+      targetTokenResult.plans.some((motion) =>
+        ['familyA', 'familyB'].some((family) =>
+          motion.contingentFinalists?.[family]?.d?.r?.some((revenue) =>
+            /\{\{TARGET_(?:NAME|URL)\}\}/.test(revenue?.l || '') ||
+            revenue?.l !== motion.paidConversion
+          )
+        )
       ) ||
       targetTokenResult.usage?.successfulCalls !== 1 ||
       targetTokenResult.sideEffectsPerformed !== 0) {
     throw new Error(
-      `removed top-level buyer authority leaked into execution: ${JSON.stringify(targetTokenResult)}`
+      `structural revenue-label projection did not remove target authority: ${JSON.stringify(targetTokenResult)}`
     );
   }
 }
@@ -19091,7 +19096,6 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
     first.organizationTerms[0],
     second.jobTitle,
     second.skills[0],
-    first.contingentFinalists.pathBase.r[0].l,
     first.contingentFinalists.pathBase.r[0].cd,
     first.contingentFinalists.pathBase.r[0].st,
     first.contingentFinalists.pathBase.r[0].sb,
@@ -19138,7 +19142,12 @@ async function verifyFreshAstralPlannerRoundTrip(jobValue) {
       expectedRoundTrips.some((value) => !serialized.includes(value)) ||
       result.plans.some((planValue) =>
         planValue.contingentFinalists?.familyA?.l !== 'Commercial path A' ||
-        planValue.contingentFinalists?.familyB?.l !== 'Commercial path B'
+        planValue.contingentFinalists?.familyB?.l !== 'Commercial path B' ||
+        ['familyA', 'familyB'].some((family) =>
+          planValue.contingentFinalists?.[family]?.d?.r?.some((revenue) =>
+            revenue?.l !== planValue.paidConversion
+          )
+        )
       ) ||
       /\\ud[89ab][0-9a-f]{2}|\\ud[cdef][0-9a-f]{2}/i.test(serialized) ||
       result.preflight?.responseBodyByteCount >

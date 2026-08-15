@@ -4917,10 +4917,11 @@ function canonicalizeContingentProposalGrounding(
 /**
  * Fresh call-1 authors the economic mechanism, attribution method, and stop
  * sample only. Every duplicated contract/witness field and the settled
- * terminal outcome are exact functions of those authored choices; tactic
- * identity is positional. Projecting them here makes the strict schema total
- * without changing any offer, action, evidence, or commercial claim. Durable
- * materialized receipts remain tamper-checked and are never repaired.
+ * terminal outcome and revenue label are exact functions of those authored
+ * choices and the plan's paid-conversion claim; tactic identity is positional.
+ * Projecting them here makes the strict schema total without changing any
+ * offer, action, evidence, or commercial claim. Durable materialized receipts
+ * remain tamper-checked and are never repaired.
  */
 function canonicalizeContingentRevenueStructure(value, planValue) {
   const bundle = asObject(value);
@@ -4947,6 +4948,7 @@ function canonicalizeContingentRevenueStructure(value, planValue) {
       revenue.rm = mechanism;
       revenue.a = firstText(plan.acquisitionMode);
       revenue.c = CONTINGENT_CONVERSION_ACTION_PROJECTION;
+      revenue.l = firstText(plan.paidConversion, revenue.l);
       revenue.io = firstText(plan.paidConversion, revenue.io);
       revenue.atm = attributionMethod;
       revenue.ats = firstText(plan.attributionSignal, revenue.ats);
