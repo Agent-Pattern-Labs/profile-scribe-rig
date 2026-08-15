@@ -2024,7 +2024,10 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
     item === 'profile:system_attribution_capability:v1'
   );
   const market = planSchema?.properties?.market?.enum?.[0];
-  if (!observationRef || !attributionRef || !market) {
+  const paidDemandActions =
+    definitions.compactPaidDemandActionLabel?.enum || [];
+  if (!observationRef || !attributionRef || !market ||
+      paidDemandActions.length < 4) {
     throw new Error('raw/canonical split fixture could not bind schema enums');
   }
   const scores = {
@@ -2051,6 +2054,10 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
       paidDemand: 'Qualified payer {{TARGET_NAME}} for the paid opportunity'
     },
     e: refs
+  });
+  const actionItem = (label, index) => ({
+    ...item(label),
+    paidDemand: paidDemandActions[index]
   });
   const pathBase = {
     r: [{
@@ -2112,19 +2119,23 @@ function schemaValidStreamingPlannerResponse(providerRequest) {
     ],
     a: variant === 'person'
       ? [
-          item(
-            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
+          actionItem(
+            'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract',
+            0
           ),
-          item(
-            'After approval via verified professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to buy the current paid consulting engagement'
+          actionItem(
+            'After approval via verified professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to buy the current paid consulting engagement',
+            1
           )
         ]
       : [
-          item(
-            'Once approved via public professional profile {{TARGET_URL}}, request {{TARGET_NAME}} to review the current paid service contract'
+          actionItem(
+            'Once approved via public professional profile {{TARGET_URL}}, request {{TARGET_NAME}} to review the current paid service contract',
+            2
           ),
-          item(
-            'Review first via verified professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid consulting engagement'
+          actionItem(
+            'Review first via verified professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to purchase the current paid consulting engagement',
+            3
           )
         ],
     f: [

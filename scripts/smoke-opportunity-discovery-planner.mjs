@@ -57,7 +57,7 @@ const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS = Object.freeze([
 const CURRENT_LUNA_PROVIDER_OMITTED_PATTERN_PATHS_SHA256 =
   'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70';
 const CURRENT_LUNA_AUTHORED_TEXT_DESCRIPTION =
-  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified payer {{TARGET_NAME}} for the paid opportunity" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
+  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified payer {{TARGET_NAME}} for the paid opportunity" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; every a has generic l plus one exact paidDemand branch, and code selects paidDemand only for compensated_job/buyer_solicitation. Vary paidDemand across tactics using its enum values. Generic a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service".';
 const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
   referral_partner: Object.freeze({
     buyer: 'Qualified payer for the paid opportunity',
@@ -85,6 +85,12 @@ const CURRENT_LUNA_ROLE_EXAMPLES = Object.freeze({
     ])
   })
 });
+const CURRENT_LUNA_PAID_DEMAND_ACTION_ENUM = Object.freeze([
+  'After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}',
+  'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
+  'After review via official paid-demand page {{TARGET_URL}}, apply with one paid application to {{TARGET_NAME}}',
+  'After review via official paid-demand page {{TARGET_URL}}, bid one paid proposal to {{TARGET_NAME}}'
+]);
 
 function schemaSHA256(value) {
   return createHash('sha256')
@@ -230,6 +236,11 @@ function verifyAuthoredTextContractFitsCanonicalSchema({
           'Qualified payer {{TARGET_NAME}} for the paid opportunity'
         ])) {
     throw new Error('buyer label lost its finite role-branch contract');
+  }
+  if (JSON.stringify(
+    canonicalSchema?.$defs?.compactPaidDemandActionLabel?.enum
+  ) !== JSON.stringify(CURRENT_LUNA_PAID_DEMAND_ACTION_ENUM)) {
+    throw new Error('paid-demand action lost its finite response contract');
   }
   for (const [name, definitionSamples] of Object.entries(samples)) {
     const validate = ajv.compile(canonicalSchema?.$defs?.[name]);
@@ -1347,13 +1358,13 @@ for (const scenario of cases) {
         followUpLabelPattern
       ) ||
       JSON.stringify(plannerDefinitions.actionItem?.required) !==
-        JSON.stringify(['l', 'e']) ||
+        JSON.stringify(['l', 'paidDemand', 'e']) ||
       plannerDefinitions.actionItem?.properties?.rp ||
-      !/one bounded model-authored review-first commercial action.*never composes or rewrites/is.test(
+      !/one generic model-authored action.*finite paid-demand response branch.*selects the paidDemand branch only/is.test(
         plannerDefinitions.actionItem?.description || ''
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /a:2\/tactic.*one model-authored l\/e.*referral_partner introduces.*current paid offer.*paid booking\/payment.*buyer asks.*book\/buy\/sign.*paid_demand submits.*paid application\/proposal response.*preserves l without rewriting/is.test(
+        /a:2\/tactic.*generic l\/e.*exact model-returned paidDemand enum branch.*selects paidDemand only for compensated_job\/buyer_solicitation.*referral_partner l introduces.*current paid offer.*paid booking\/payment.*buyer l asks.*book\/buy\/sign.*finite paid application\/proposal response.*preserves the selected model-returned branch without rewriting/is.test(
           rule
         )
       ) ||
@@ -1388,7 +1399,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /prefer 4 distinct actions; >=2 across both tactics must be distinct\+viable/is.test(
+        /prefer 4 distinct (?:selected )?actions; >=2 across both tactics must be distinct\+viable/is.test(
           rule
         )
       ) ||
@@ -1424,7 +1435,7 @@ for (const scenario of cases) {
         projection: /projects r\.c per tactic/is.test(requestSeen.system || ''),
         acquisition: /acquisitionMechanism is exact and structural.*buyer\/referral="Review-first public professional profile".*paid_demand="Review-first official paid-demand page"/is.test(requestSeen.system || ''),
         market: /market must copy one response-schema enum value exactly.*never expand.*abbreviate.*widen/is.test(requestSeen.system || ''),
-        actions: /a:2\/tactic.*one model-authored l\/e.*referral_partner introduces.*buyer asks.*paid_demand submits/is.test(requestSeen.system || ''),
+        actions: /a:2\/tactic.*generic l\/e.*model-returned paidDemand enum branch.*selects paidDemand only.*referral_partner l introduces.*buyer l asks/is.test(requestSeen.system || ''),
         diversity: /prefer 4 distinct selected actions; >=2 across both tactics must be distinct\+viable/is.test(requestSeen.system || ''),
         demand: /compensated_job finds an employer job posting.*public web snippets.*RFP pages.*have no fresh paid-demand authority.*two referral motions with different counterparties are valid.*diversity never requires paid_demand.*supplier\/competitor offers.*accepts insurance.*are supply, never demand/is.test(requestSeen.system || '')
       } })}`
@@ -2235,14 +2246,14 @@ await verifyProductionShapedPlannerHeadroom(unsafeJob, unsafeRef);
 
 // The 2026-08-13 Atlas production trace reached the former 18k-token ceiling
 // after 99,271 ms with 27,149 content bytes and finish=length. The strict
-// schema's exact derived serialized bound is 31,936 bytes in the local
-// fixture and 32,304 bytes in the Linux deployment fixture. Both generated
+// schema's exact derived serialized bound is 32,936 bytes in the local
+// fixture and 33,304 bytes in the Linux deployment fixture. Both generated
 // schemas remain finite and below the shared 34,400-byte proof ceiling. A tokenizer with
 // byte fallback cannot require more tokens than the encoded byte count, so the
 // current 42k ceiling covers the entire 40,960-byte runtime cap plus 1,024
 // tokens of explicit headroom. Retain the trace projection as a
 // production-derived timing and compression regression: the schema projects
-// to at most 21,419 native tokens and 42k projects to 231,633 ms, inside the
+// to at most 22,081 native tokens and 42k projects to 231,633 ms, inside the
 // 300-second deadline.
 const observedPlannerCompletionTokens = 18_000;
 const observedPlannerContentBytes = 27_149;
@@ -2261,8 +2272,8 @@ const projectedPlannerDurationMs = Math.ceil(
     observedPlannerCompletionTokens
 );
 const supportedSchemaTokenProjection = new Map([
-  [31_936, 21_174],
-  [32_304, 21_419]
+  [32_936, 21_837],
+  [33_304, 22_081]
 ]);
 if (!supportedSchemaTokenProjection.has(
   computedPlannerSchemaResponseBoundBytes
@@ -6731,12 +6742,14 @@ async function verifyOneMotionUsesTwoTacticFallback(job, evidenceRef) {
       // but must fail the local causal-diversity gate. Motion one survives
       // for the critic's two-tactic comparison.
       const repeatedAction =
-        plans[1].contingentFinalists.tacticA.a[0].l;
+        plans[1].contingentFinalists.tacticA.a[0].paidDemand;
       for (const tactic of [
         plans[1].contingentFinalists.tacticA,
         plans[1].contingentFinalists.tacticB
       ]) {
-        for (const action of tactic.a) action.l = repeatedAction;
+        for (const action of tactic.a) {
+          action.paidDemand = repeatedAction;
+        }
       }
       return {
         data: {
@@ -7136,7 +7149,7 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
   const actions = [
     ...motion.contingentFinalists.tacticA.a,
     ...motion.contingentFinalists.tacticB.a
-  ].map((action) => action.l);
+  ].map((action) => action.paidDemand);
   const accepted = await plannerResultForMotion({
     job,
     motion,
@@ -7157,40 +7170,34 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
     );
   }
 
-  const groundedCompensation = cases[1].plans(evidenceRef)[0];
-  groundedCompensation.contingentFinalists = compactContingentFinalists(
-    groundedCompensation.contingentFinalists
+  const inertGeneric = cases[1].plans(evidenceRef)[0];
+  inertGeneric.contingentFinalists = compactContingentFinalists(
+    inertGeneric.contingentFinalists
   );
-  const groundedActionLabels = [
-    'After review via official paid-demand page {{TARGET_URL}}, submit one tailored application to {{TARGET_NAME}}',
-    'After review via official paid-demand page {{TARGET_URL}}, submit one tailored proposal to {{TARGET_NAME}}',
-    'After review via official paid-demand page {{TARGET_URL}}, apply with one tailored application to {{TARGET_NAME}}',
-    'After review via official paid-demand page {{TARGET_URL}}, respond with one tailored proposal to {{TARGET_NAME}}'
-  ];
-  [
-    ...groundedCompensation.contingentFinalists.tacticA.a,
-    ...groundedCompensation.contingentFinalists.tacticB.a
-  ].forEach((action, index) => {
-    action.l = groundedActionLabels[index];
-  });
-  const grounded = await plannerResultForMotion({
+  for (const action of [
+    ...inertGeneric.contingentFinalists.tacticA.a,
+    ...inertGeneric.contingentFinalists.tacticB.a
+  ]) {
+    action.l =
+      'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to review one operational dashboard';
+  }
+  const selectedFiniteBranch = await plannerResultForMotion({
     job,
-    motion: groundedCompensation,
-    generationId: 'generation-paid-demand-grounded-compensation'
+    motion: inertGeneric,
+    generationId: 'generation-finite-paid-demand-action-branch'
   });
-  const groundedMotion = grounded.plans.find((plan) =>
+  const selectedFiniteMotion = selectedFiniteBranch.plans.find((plan) =>
     plan.motionKind === 'compensated_job'
   );
-  const groundedActions = ['familyA', 'familyB'].flatMap((familyKey) =>
-    groundedMotion?.contingentFinalists?.[familyKey]?.d?.a?.map(
-      (action) => action.l
-    ) || []
+  const selectedFiniteActions = ['familyA', 'familyB'].flatMap(
+    (familyKey) => selectedFiniteMotion?.contingentFinalists
+      ?.[familyKey]?.d?.a?.map((action) => action.l) || []
   );
-  if (grounded.status !== 'planned' || grounded.plans.length !== 2 ||
-      JSON.stringify(groundedActions) !==
-        JSON.stringify(groundedActionLabels)) {
+  if (selectedFiniteBranch.status !== 'planned' ||
+      selectedFiniteBranch.plans.length !== 2 ||
+      JSON.stringify(selectedFiniteActions) !== JSON.stringify(actions)) {
     throw new Error(
-      `separately grounded paid-demand compensation was rejected: ${JSON.stringify(grounded)}`
+      `finite paid-demand branch was not selected over inert generic prose: ${JSON.stringify(selectedFiniteBranch)}`
     );
   }
 
@@ -7198,28 +7205,18 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
   explicitlyUnpaid.contingentFinalists = compactContingentFinalists(
     explicitlyUnpaid.contingentFinalists
   );
-  [
-    ...explicitlyUnpaid.contingentFinalists.tacticA.a,
-    ...explicitlyUnpaid.contingentFinalists.tacticB.a
-  ].forEach((action, index) => {
-    action.l = index % 2 === 0
-      ? 'After review via official paid-demand page {{TARGET_URL}}, submit one unpaid application to {{TARGET_NAME}}'
-      : 'After review via official paid-demand page {{TARGET_URL}}, submit one free proposal to {{TARGET_NAME}}';
-  });
+  explicitlyUnpaid.contingentFinalists.tacticA.a[0].paidDemand =
+    'After review via official paid-demand page {{TARGET_URL}}, submit one unpaid application to {{TARGET_NAME}}';
   const unpaid = await plannerResultForMotion({
     job,
     motion: explicitlyUnpaid,
     generationId: 'generation-explicitly-unpaid-demand-response'
   });
-  if (unpaid.plans.some((plan) =>
-    plan.motionKind === 'compensated_job'
-  ) || !unpaid.planSelection?.rejectedPlans?.some((item) =>
-    /primary_action_(?:negated|non_revenue|paid_demand_response)/i.test(
-      item.reason || ''
-    )
-  ) || unpaid.sideEffectsPerformed !== 0) {
+  if (unpaid.status !== 'blocked' || unpaid.plans.length !== 0 ||
+      unpaid.normalizationDiagnostic?.code !== 'strict_schema_mismatch' ||
+      unpaid.sideEffectsPerformed !== 0) {
     throw new Error(
-      `explicitly free or unpaid demand response was accepted: ${JSON.stringify(unpaid)}`
+      `explicitly unpaid finite demand branch escaped strict schema: ${JSON.stringify(unpaid)}`
     );
   }
 
@@ -7227,9 +7224,9 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
   artifactOnly.contingentFinalists = compactContingentFinalists(
     artifactOnly.contingentFinalists
   );
-  artifactOnly.contingentFinalists.tacticA.a[0].l =
+  artifactOnly.contingentFinalists.tacticA.a[0].paidDemand =
     'After review via official paid-demand page {{TARGET_URL}}, submit one research report to {{TARGET_NAME}}.';
-  artifactOnly.contingentFinalists.tacticA.a[1].l =
+  artifactOnly.contingentFinalists.tacticA.a[1].paidDemand =
     'After review via official paid-demand page {{TARGET_URL}}, submit one analytics dashboard to {{TARGET_NAME}}.';
   const rejected = await plannerResultForMotion({
     job,
@@ -7767,6 +7764,10 @@ async function verifyAuthoredTextRoleExamplesPassFullPlanner() {
       tactic.c[0].l = examples.channel;
       tactic.a[0].l = examples.actions[0];
       tactic.a[1].l = examples.actions[1];
+      if (role === 'paid_demand') {
+        tactic.a[0].paidDemand = examples.actions[0];
+        tactic.a[1].paidDemand = examples.actions[1];
+      }
     }
     const accepted = await plannerResultForMotion({
       job,
@@ -7856,11 +7857,14 @@ async function verifyRepeatedOptionalRoleActionsArePruned(
   );
   const collapsedPlans = collapsedMotions.map((motionValue) => {
     const [collapsed] = compactFreshPlannerPlans([motionValue]);
+    const actionField = ['compensated_job', 'buyer_solicitation'].includes(
+      collapsed.motionKind
+    ) ? 'paidDemand' : 'l';
     const repeated =
-      collapsed.contingentFinalists.tacticA.a[0].l;
+      collapsed.contingentFinalists.tacticA.a[0][actionField];
     for (const tacticKey of ['tacticA', 'tacticB']) {
       for (const action of collapsed.contingentFinalists[tacticKey].a) {
-        action.l = repeated;
+        action[actionField] = repeated;
       }
     }
     return collapsed;
@@ -19519,10 +19523,10 @@ function compactContingentFinalists(value) {
       'After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to sign the current paid service contract'
     ],
     paid_demand: [
-      'After review via official paid-demand page {{TARGET_URL}}, apply a compensated application to {{TARGET_NAME}}',
+      'After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}',
       'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
+      'After review via official paid-demand page {{TARGET_URL}}, apply with one paid application to {{TARGET_NAME}}',
       'After review via official paid-demand page {{TARGET_URL}}, bid one paid proposal to {{TARGET_NAME}}',
-      'After review via official paid-demand page {{TARGET_URL}}, submit a paid response to {{TARGET_NAME}}'
     ]
   };
   const selectedRole = familyA.d.a.some((item) =>
@@ -19545,6 +19549,8 @@ function compactContingentFinalists(value) {
   });
   const actionItem = (item, index, family) => ({
     l: actionLabels[selectedRole][
+      ((family === familyB ? 2 : 0) + index) % 4],
+    paidDemand: actionLabels.paid_demand[
       ((family === familyB ? 2 : 0) + index) % 4],
     e: item.e
   });

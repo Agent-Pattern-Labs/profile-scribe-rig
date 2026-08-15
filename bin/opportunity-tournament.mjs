@@ -52,7 +52,7 @@ const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS =
 const OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS_SHA256 =
   'd0c9fd558f52f3a58e427efd7e0745b96e78a5bddbaa6ee7df859639de959c70';
 const OPPORTUNITY_DISCOVERY_PLANNER_AUTHORED_TEXT_DESCRIPTION =
-  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified payer {{TARGET_NAME}} for the paid opportunity" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; distinct a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to introduce qualified clients to paid booking", buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service" or "After review via public professional profile {{TARGET_URL}}, invite {{TARGET_NAME}} to purchase paid service", demand="After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}" or "After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}".';
+  'Projected authored-text contract: organizationTerms/skills entries and authored l/q/sb/io/cd/st strings are one line with single ASCII spaces, no leading/trailing/repeated whitespace or control/format characters, and no braces or colon except the exact target placeholders; ats follows the same contract but may contain a colon separating its record from its field; commercial labels start with a letter. paidOffer.compensatedJob="Paid role". Valid forms: r.io="Paid booking"; r.cd and r.g.d.l="Booking service"; r.ats="Referral source" or "CRM record: source field"; every b.l has all fixed branches referral="Qualified payer for the paid opportunity", buyer="Qualified payer {{TARGET_NAME}} for the paid opportunity", paidDemand="Qualified payer {{TARGET_NAME}} for the paid opportunity" and code selects by motionKind; c.l public="Review-first public professional profile {{TARGET_URL}}" or demand="Review-first official paid-demand page {{TARGET_URL}} for paid-role verification"; every a has generic l plus one exact paidDemand branch, and code selects paidDemand only for compensated_job/buyer_solicitation. Vary paidDemand across tactics using its enum values. Generic a.l referral="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to refer qualified buyers to paid service" or buyer="After review via public professional profile {{TARGET_URL}}, ask {{TARGET_NAME}} to book paid service".';
 if (createHash('sha256').update(JSON.stringify(
   OPPORTUNITY_DISCOVERY_LUNA_WIRE_OMITTED_PATTERN_PATHS
 )).digest('hex') !==
@@ -3309,6 +3309,15 @@ function opportunityDiscoveryPlannerResponseFormat(
       `${compactRoleASCIIText} (?:to|for) ` +
       `\\{\\{TARGET_NAME\\}\\})$`
   };
+  const compactPaidDemandActionLabel = {
+    type: 'string',
+    enum: [
+      'After review via official paid-demand page {{TARGET_URL}}, submit one paid application to {{TARGET_NAME}}',
+      'After review via official paid-demand page {{TARGET_URL}}, submit one paid proposal to {{TARGET_NAME}}',
+      'After review via official paid-demand page {{TARGET_URL}}, apply with one paid application to {{TARGET_NAME}}',
+      'After review via official paid-demand page {{TARGET_URL}}, bid one paid proposal to {{TARGET_NAME}}'
+    ]
+  };
   const paidOutcomeText = (maxLength) =>
     commercialSemanticConstraint(`paidOutcomeText${maxLength}`);
   const conversionDestinationTextSchema = (maxLength) =>
@@ -3491,6 +3500,7 @@ function opportunityDiscoveryPlannerResponseFormat(
     compactBuyerLabel,
     compactChannelLabel,
     compactActionLabel,
+    compactPaidDemandActionLabel,
     offerItem: {
       ...boundedItemDefinition('offerItem', 96),
       properties: {
@@ -3524,12 +3534,13 @@ function opportunityDiscoveryPlannerResponseFormat(
       type: 'object',
       properties: {
         l: { $ref: '#/$defs/compactActionLabel' },
+        paidDemand: { $ref: '#/$defs/compactPaidDemandActionLabel' },
         e: { $ref: '#/$defs/compactObservationEvidenceRefs' }
       },
-      required: ['l', 'e'],
+      required: ['l', 'paidDemand', 'e'],
       additionalProperties: false,
       description:
-        'One bounded model-authored review-first commercial action with exact target tokens; typed local validation checks its motion role and local code never composes or rewrites it.'
+        'One generic model-authored action plus one finite paid-demand response branch; code selects the paidDemand branch only for compensated_job or buyer_solicitation.'
     },
     timingItem: {
       ...boundedItemDefinition('timingItem', 100),
@@ -3797,8 +3808,8 @@ function compactOpportunityDiscoveryHardRules(
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
     provisionalOfferExperiment
-      ? 'a:2/tactic; each a has one model-authored l/e. Only compensated_job or buyer_solicitation is authorized: every action responds through the official current paid-demand page with a review-first paid application or proposal. Use submit plus application/proposal only. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
-      : 'a:2/tactic; each a has one model-authored l/e selected for motionKind. referral_partner introduces a qualified buyer to the current paid offer and paid booking/payment; buyer asks the target to book/buy/sign; paid_demand submits a paid application/proposal response. Code preserves l without rewriting it. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
+      ? 'a:2/tactic; each a has generic l/e plus one exact model-returned paidDemand enum branch. Only compensated_job or buyer_solicitation is authorized, so code selects paidDemand as the review-first paid application/proposal response and preserves it without rewriting. Vary paidDemand across tactics. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
+      : 'a:2/tactic; each a has generic l/e plus one exact model-returned paidDemand enum branch. Code selects paidDemand only for compensated_job/buyer_solicitation and otherwise selects l. referral_partner l introduces a qualified buyer to the current paid offer and paid booking/payment; buyer l asks the target to book/buy/sign; paidDemand is a finite paid application/proposal response. Code preserves the selected model-returned branch without rewriting. Prefer 4 distinct selected actions; >=2 across both tactics must be distinct+viable. Bare introduction/message/conversation, marketplace/directory placement, and setup/support are invalid.',
     `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job/buyer_solicitation, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0. sb must state one factual unknown or not-yet-observed causal proof about demand, acquisition, conversion, attribution, or paid outcome. Never put an imperative, research/verification task, artifact, setup, tracking instruction, or other operational step in sb.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
@@ -5357,6 +5368,20 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
       e: copy(asArray(item.e))
     };
   });
+  const actionItems = (items) => asArray(items).map((itemValue) => {
+    const item = asObject(itemValue);
+    const paidDemandMotion = opportunityDiscoveryPaidDemandMotionKind(
+      asObject(planValue).motionKind
+    );
+    return {
+      l: paidDemandMotion && typeof item.paidDemand === 'string'
+        ? item.paidDemand
+        : typeof item.l === 'string'
+          ? item.l
+          : '',
+      e: copy(asArray(item.e))
+    };
+  });
   const buyerItems = (items) => asArray(items).map((itemValue) => {
     const item = asObject(itemValue);
     const labels = asObject(item.l);
@@ -5394,7 +5419,7 @@ function materializePlannerContingentFinalistBundle(value, planValue) {
       o: copy(asArray(pathBase.o)),
       b: buyerItems(pathBase.b),
       c: roleItems(tactic.c),
-      a: roleItems(tactic.a),
+      a: actionItems(tactic.a),
       t: copy(asArray(pathBase.t)),
       p: copy(asArray(pathBase.p)),
       f: copy(asArray(tactic.f))
