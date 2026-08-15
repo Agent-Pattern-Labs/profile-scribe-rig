@@ -12929,7 +12929,8 @@ function commercialDiscoveryURLContainsPrivateContact(value) {
   // digits are identity data rather than a private phone number.
   if (safePublicProfessionalProfileURL(decoded)) return false;
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    if (commercialDiscoveryContainsPrivateContact(decoded, {
+    const inspected = commercialDiscoveryURLWithLabeledRecordIDs(decoded);
+    if (commercialDiscoveryContainsPrivateContact(inspected, {
       allowBareCodePackage: true
     })) {
       return true;
@@ -12944,6 +12945,17 @@ function commercialDiscoveryURLContainsPrivateContact(value) {
     }
   }
   return decoded.includes('%');
+}
+
+function commercialDiscoveryURLWithLabeledRecordIDs(value) {
+  // Public job boards commonly use a compact numeric provider record followed
+  // by a human-readable job slug. Preserve the route while replacing only the
+  // structurally labelled record id before phone inspection. A formatted
+  // number such as /jobs/917-555-0123 does not match this grammar.
+  return value.replace(
+    /(\/(?:jobs?|job-details)\/)\d{7,15}(?=-[a-z][a-z0-9-]*(?:[/?#]|$))/gi,
+    '$1job-record-id'
+  );
 }
 
 function commercialDiscoveryAtTokenIsCodePackage(

@@ -12940,6 +12940,27 @@ async function verifyPrivateContactBearingURLsFailClosed() {
     );
   }
 
+  const numericJobRecordURL =
+    'https://www.mediabistro.com/jobs/3542312647-marketing-manager';
+  const numericJobRecord = structuredClone(baseDiscoveryEvidence);
+  numericJobRecord.evidence[0].url = numericJobRecordURL;
+  numericJobRecord.candidates[0].publicUrl = numericJobRecordURL;
+  numericJobRecord.candidates[0].contactPaths[0].reference =
+    numericJobRecordURL;
+  const normalizedNumericJobRecord = normalizeCommercialDiscoveryEvidence(
+    numericJobRecord,
+    now
+  );
+  if (normalizedNumericJobRecord.valid !== true ||
+      normalizedNumericJobRecord.evidence.length !== 1 ||
+      normalizedNumericJobRecord.candidates.length !== 1 ||
+      normalizedNumericJobRecord.candidates[0].publicUrl !==
+        numericJobRecordURL) {
+    throw new Error(
+      `numeric public job record was mistaken for a phone number: ${JSON.stringify(normalizedNumericJobRecord)}`
+    );
+  }
+
   for (const variant of variants) {
     const factValue = structuredClone(baseDiscoveryEvidence);
     factValue.evidence[0].url = variant.url;
