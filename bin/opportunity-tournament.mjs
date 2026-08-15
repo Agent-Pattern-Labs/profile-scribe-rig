@@ -1420,6 +1420,7 @@ const COMMERCIAL_DISCOVERY_REJECTION_REASON_MAX = new Map([
   ['citation_not_source_bound', 5],
   ['citation_motion_ambiguous', 5],
   ['plan_market_not_grounded', 2],
+  ['provider_results_not_source_bound', 2],
   ['provider_zero_results', 2],
   ['missing_professional_fields', 2],
   ['role_mismatch', 2],
