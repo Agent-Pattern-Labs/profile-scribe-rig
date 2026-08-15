@@ -5029,7 +5029,10 @@ function contingentProjectableActionItem(
       mode === firstText(plan.acquisitionMode)
     ) &&
     !contingentPrimaryRevenueActionRoleIssue(label, plan) &&
-    viablePrimaryRevenueAction(label);
+    (
+      viablePrimaryRevenueAction(label) ||
+      paidDemandResponseAction(label, plan)
+    );
 }
 
 function contingentProjectableActionIssueCodes(
@@ -5081,7 +5084,10 @@ function contingentProjectableActionIssueCodes(
   }
   if (operationOnlyAction(label)) issues.push('primary_action_operational');
   if (negatedPrimaryRevenueAction(label)) issues.push('primary_action_negated');
-  if (!revenueAdvancingAction(label)) issues.push('primary_action_non_revenue');
+  if (!revenueAdvancingAction(label) &&
+      !paidDemandResponseAction(label, plan)) {
+    issues.push('primary_action_non_revenue');
+  }
   if (experimentActionClaimsCompletedExternalExecution(label)) {
     issues.push('primary_action_claimed_execution');
   }
@@ -7338,11 +7344,7 @@ function contingentPrimaryRevenueActionRoleIssue(value, planValue) {
     return '';
   }
   if (plan.commercialRole === 'paid_demand') {
-    const response = /\b(?:apply|bid|respond|submit)\b/.test(text) &&
-      /\b(?:application|bid|proposal|request for proposal|response|rfp|solicitation)\b/.test(
-        text
-      ) &&
-      /\b(?:compensated|contract|paid|payment|salary|wage)\b/.test(text);
+    const response = paidDemandResponseAction(value, plan);
     return response ? '' : 'primary_action_paid_demand_response';
   }
   if (plan.commercialRole === 'referral_partner') {
@@ -7358,6 +7360,31 @@ function contingentPrimaryRevenueActionRoleIssue(value, planValue) {
     return buyerAsk ? '' : 'primary_action_buyer_commitment';
   }
   return 'primary_action_unknown_commercial_role';
+}
+
+/**
+ * A paid-demand action does not need to repeat the word "paid" when the
+ * commercial-motion contract already binds it to a validated compensated
+ * role or solicitation. Require the action to be a direct response artifact
+ * and require the separate typed paid-offer field to prove compensation.
+ * Explicitly free, unpaid, negated, passive, operational, or already-executed
+ * actions remain ineligible.
+ */
+function paidDemandResponseAction(value, planValue) {
+  const plan = asObject(planValue);
+  const text = primaryActionSemanticText(value);
+  return firstText(plan.commercialRole) === 'paid_demand' &&
+    compensatedJobPaidOfferText(plan.paidOffer) &&
+    /\b(?:apply|bid|respond|submit)\b/.test(text) &&
+    /\b(?:application|bid|proposal|request for proposal|response|rfp|solicitation)\b/.test(
+      text
+    ) &&
+    !passiveOrObservationalPrimaryAction(value) &&
+    !operationOnlyAction(value) &&
+    !negatedPrimaryRevenueAction(value) &&
+    !explicitlyUnpaidPrimaryAction(value) &&
+    !nonRevenueArtifactOrQuestionAction(value) &&
+    !experimentActionClaimsCompletedExternalExecution(value);
 }
 
 function contingentCausalRevenuePathIssues(
@@ -8060,8 +8087,11 @@ function discoveryAcquisitionRequestsPrivateContact(value) {
       /^Review-first official paid-demand page \{\{TARGET_URL\}\} for [^\r\n{}:]{1,140}$/u.test(
         firstText(value)
       ) ||
-      /^After review via official paid-demand page \{\{TARGET_URL\}\}, (?:apply|bid|respond|submit) (?:a|one|the) (?:compensated|paid) (?:application|bid|proposal|response) (?:to|for) \{\{TARGET_NAME\}\}[^\r\n{}:]{0,260}$/u.test(
-        firstText(value)
+      (
+        countExactToken(rawText, CONTINGENT_TARGET_NAME_TOKEN) === 1 &&
+        /^After review via official paid-demand page \{\{TARGET_URL\}\}, (?:apply|bid|respond|submit) [^\r\n{}:]{1,120} (?:application|bid|proposal|response) (?:to|for) \{\{TARGET_NAME\}\}[^\r\n{}:]{0,120}$/u.test(
+          firstText(value)
+        )
       )
     );
   const unnormalizedRouteText = comparable(routeText).replace(
@@ -24654,8 +24684,7 @@ function revenueAdvancingAction(value) {
     /\b(?:apply|bid|respond|submit)\b/i.test(text) &&
     /\b(?:application|bid|proposal|request for proposal|response|rfp|solicitation)\b/i.test(
       text
-    ) &&
-    /\b(?:compensated|contract|paid|payment|salary|wage)\b/i.test(text);
+    );
   const namesPaidCommitment =
     /\b(paid|payment|purchase|sale|contract|agreement|deposit|invoice|order|checkout|subscription|retainer|reimburs(?:able|ed|ement)|paid pilot|licen[cs]e|royalt(?:y|ies)|commission|referral fee|sponsorship|platform payout|compensated role|salary|wage)\b/i.test(
       text
@@ -24679,7 +24708,8 @@ function revenueAdvancingAction(value) {
     (
       namesPaidCommitment ||
       namesPermissionedDemand ||
-      advancesQualifiedReferral
+      advancesQualifiedReferral ||
+      advancesPaidDemandResponse
     );
 }
 

@@ -7157,6 +7157,72 @@ async function verifyPaidDemandResponseActionVerbs(job, evidenceRef) {
     );
   }
 
+  const groundedCompensation = cases[1].plans(evidenceRef)[0];
+  groundedCompensation.contingentFinalists = compactContingentFinalists(
+    groundedCompensation.contingentFinalists
+  );
+  const groundedActionLabels = [
+    'After review via official paid-demand page {{TARGET_URL}}, submit one tailored application to {{TARGET_NAME}}',
+    'After review via official paid-demand page {{TARGET_URL}}, submit one tailored proposal to {{TARGET_NAME}}',
+    'After review via official paid-demand page {{TARGET_URL}}, apply with one tailored application to {{TARGET_NAME}}',
+    'After review via official paid-demand page {{TARGET_URL}}, respond with one tailored proposal to {{TARGET_NAME}}'
+  ];
+  [
+    ...groundedCompensation.contingentFinalists.tacticA.a,
+    ...groundedCompensation.contingentFinalists.tacticB.a
+  ].forEach((action, index) => {
+    action.l = groundedActionLabels[index];
+  });
+  const grounded = await plannerResultForMotion({
+    job,
+    motion: groundedCompensation,
+    generationId: 'generation-paid-demand-grounded-compensation'
+  });
+  const groundedMotion = grounded.plans.find((plan) =>
+    plan.motionKind === 'compensated_job'
+  );
+  const groundedActions = ['familyA', 'familyB'].flatMap((familyKey) =>
+    groundedMotion?.contingentFinalists?.[familyKey]?.d?.a?.map(
+      (action) => action.l
+    ) || []
+  );
+  if (grounded.status !== 'planned' || grounded.plans.length !== 2 ||
+      JSON.stringify(groundedActions) !==
+        JSON.stringify(groundedActionLabels)) {
+    throw new Error(
+      `separately grounded paid-demand compensation was rejected: ${JSON.stringify(grounded)}`
+    );
+  }
+
+  const explicitlyUnpaid = cases[1].plans(evidenceRef)[0];
+  explicitlyUnpaid.contingentFinalists = compactContingentFinalists(
+    explicitlyUnpaid.contingentFinalists
+  );
+  [
+    ...explicitlyUnpaid.contingentFinalists.tacticA.a,
+    ...explicitlyUnpaid.contingentFinalists.tacticB.a
+  ].forEach((action, index) => {
+    action.l = index % 2 === 0
+      ? 'After review via official paid-demand page {{TARGET_URL}}, submit one unpaid application to {{TARGET_NAME}}'
+      : 'After review via official paid-demand page {{TARGET_URL}}, submit one free proposal to {{TARGET_NAME}}';
+  });
+  const unpaid = await plannerResultForMotion({
+    job,
+    motion: explicitlyUnpaid,
+    generationId: 'generation-explicitly-unpaid-demand-response'
+  });
+  if (unpaid.plans.some((plan) =>
+    plan.motionKind === 'compensated_job'
+  ) || !unpaid.planSelection?.rejectedPlans?.some((item) =>
+    /primary_action_(?:negated|non_revenue|paid_demand_response)/i.test(
+      item.reason || ''
+    )
+  ) || unpaid.sideEffectsPerformed !== 0) {
+    throw new Error(
+      `explicitly free or unpaid demand response was accepted: ${JSON.stringify(unpaid)}`
+    );
+  }
+
   const artifactOnly = cases[1].plans(evidenceRef)[0];
   artifactOnly.contingentFinalists = compactContingentFinalists(
     artifactOnly.contingentFinalists
