@@ -2729,7 +2729,7 @@ async function verifyTypedCommercialMotionSelection(
       }) ||
       JSON.stringify(compensatedOnlySchemaFields) !== JSON.stringify({}) ||
       compensatedJob?.query !==
-        'current compensated job hiring Go backend engineer Go PostgreSQL United States' ||
+        'Go backend engineer jobs United States' ||
       /consultancy|supplier|rfp services available/i.test(
         compensatedJob?.query || ''
       ) ||

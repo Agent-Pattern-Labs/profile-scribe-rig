@@ -3849,6 +3849,7 @@ function compactOpportunityDiscoveryHardRules(
       ? 'a:2/tactic; every a.l has exact referral/buyer/paidDemand enum branches. Only paid_demand commercialRole is authorized, so code selects paidDemand as the review-first paid application/proposal response and preserves it without rewriting. Vary paidDemand across tactics. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
       : 'a:2/tactic; a.l has exact referral/buyer/paidDemand enums; code selects commercialRole without rewriting. referral introduces a buyer to the paid offer; buyer asks to book/buy/sign; paidDemand submits a paid application/proposal. Prefer 4 distinct selected actions; >=2 across both tactics must be distinct+viable. Bare conversation, listings, and setup are invalid.',
     `Code selects paidOffer.seller for buyer_solicitation/buyer/referral routes and paidOffer.compensatedJob only for compensated_job. Revenue-mechanism projection selects r.rm.compensatedJob for typed paid demand and remains structural, then code derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
+    'For compensated_job only: jobTitle is one conventional occupation directly supported by approved evidence, never a novel compound title made from product features; cd is the employer official application page; io is acceptance of a compensated employment offer or contract; ats names the application and accepted-offer or payment receipt. Never use the seller booking, checkout, CRM, or service-sale outcome for a compensated job.',
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0. sb must state one factual unknown or not-yet-observed causal proof about demand, acquisition, conversion, attribution, or paid outcome. Never put an imperative, research/verification task, artifact, setup, tracking instruction, or other operational step in sb.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
     'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. Fresh paid demand requires either a structured PDL employer_job_posting or a bounded provider URL result that independently proves currentness, an open response action, market fit, and the exact public demand page. An open employer job is compensated unless explicitly unpaid; a buyer solicitation must prove formal procurement or explicit non-zero consideration. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional compensated job.',
@@ -4241,18 +4242,18 @@ function deterministicCommercialDiscoveryQuery(planValue) {
   if (!route) return truncate(firstText(plan.query), 240);
   const terms = route.motionKind === 'compensated_job'
     ? [
-        discoveryDemandArtifactQueryLabel(route.demandArtifactKind),
-        plan.jobTitle,
-        ...asArray(plan.skills),
+        firstText(plan.jobTitle, ...asArray(plan.skills)),
+        'jobs',
         plan.market
       ]
     : route.motionKind === 'buyer_solicitation'
       ? [
           discoveryDemandArtifactQueryLabel(route.demandArtifactKind),
-          plan.paidOffer,
-          plan.jobTitle,
-          ...asArray(plan.skills),
-          plan.counterparty,
+          firstText(
+            plan.jobTitle,
+            ...asArray(plan.skills),
+            plan.paidOffer
+          ),
           plan.market
         ]
       : [
