@@ -13788,21 +13788,38 @@ function finalizeOpportunityTournamentResult(rawValue, argsValue) {
   const experimentAcquisitionMechanism = firstText(
     coherentExperiment.acquisitionMechanism
   );
+  const experimentHypothesisId = firstText(
+    asArray(asObject(asObject(raw.searchSpace).commercialCritic)
+      .selectedOrdering)[0]
+  );
+  const experimentHypothesis = asArray(raw.hypotheses)
+    .map(asObject)
+    .find((hypothesis) =>
+      firstText(hypothesis.id) === experimentHypothesisId
+    );
+  const experimentDiscoveryReviewChannel =
+    commercialDiscoveryReviewChannelForHypothesis(
+      experimentHypothesis,
+      graphNodes,
+      payload.commercialDiscoveryEvidence,
+      args.now || new Date()
+    );
   const experimentAllowedChannel =
-    discoveryReviewChannel && allowedValue(
-      experimentAcquisitionMechanism,
-      [discoveryReviewChannel]
-    )
+    experimentDiscoveryReviewChannel ||
+    (discoveryReviewChannel && allowedValue(
+        experimentAcquisitionMechanism,
+        [discoveryReviewChannel]
+      )
       ? discoveryReviewChannel
       : commercialContext.allowedChannels.find(
-          (channel) =>
-            allowedValue(
-              experimentAcquisitionMechanism,
-              [channel]
-            ) ||
-            comparable(experimentAcquisitionMechanism)
-              .includes(comparable(channel))
-        ) || '';
+            (channel) =>
+              allowedValue(
+                experimentAcquisitionMechanism,
+                [channel]
+              ) ||
+              comparable(experimentAcquisitionMechanism)
+                .includes(comparable(channel))
+          ) || '');
   const resultGate = normalizeIncrementalRevenueGateForResult(
     gate,
     resultType
