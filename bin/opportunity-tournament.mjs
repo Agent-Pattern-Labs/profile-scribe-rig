@@ -3847,10 +3847,10 @@ function compactOpportunityDiscoveryHardRules(
     provisionalOfferExperiment
       ? 'a:2/tactic; every a.l has exact referral/buyer/paidDemand enum branches. Only paid_demand commercialRole is authorized, so code selects paidDemand as the review-first paid application/proposal response and preserves it without rewriting. Vary paidDemand across tactics. Prefer 4 distinct actions; >=2 across both tactics must be distinct+viable.'
       : 'a:2/tactic; a.l has exact referral/buyer/paidDemand enums; code selects commercialRole without rewriting. referral introduces a buyer to the paid offer; buyer asks to book/buy/sign; paidDemand submits a paid application/proposal. Prefer 4 distinct selected actions; >=2 across both tactics must be distinct+viable. Bare conversation, listings, and setup are invalid.',
-    `Code selects r.rm.seller for buyer/referral routes and r.rm.compensatedJob for compensated_job/buyer_solicitation, then derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
+    `Code selects paidOffer.seller for buyer_solicitation/buyer/referral routes and paidOffer.compensatedJob only for compensated_job. Revenue-mechanism projection selects r.rm.compensatedJob for typed paid demand and remains structural, then code derives r.v/r.a/r.c/r.o, positional tactic keys, and k.v/i/c/o/p/t/d/s. r.c=${CONTINGENT_CONVERSION_ACTION_PROJECTION}; each evaluated tuple projects its exact selected authored tactic action.`,
     'k.n/u is the bounded stop sample; calendar_days<=30. Author io/atm/ats/cd/st; vm>0. sb must state one factual unknown or not-yet-observed causal proof about demand, acquisition, conversion, attribution, or paid outcome. Never put an imperative, research/verification task, artifact, setup, tracking instruction, or other operational step in sb.',
     'r.g binds exact role evidence; prospective partner proves no buyer/offer/warmness/permission/demand.',
-    'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. Fresh paid demand requires either a structured PDL employer_job_posting or a bounded provider URL result that independently proves currentness, an open response action, explicit non-zero compensation, market fit, and the exact public demand page. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional compensated job.',
+    'motionKind route is authoritative. Two different referral counterparties are valid diversity; never invent paid demand. Fresh paid demand requires either a structured PDL employer_job_posting or a bounded provider URL result that independently proves currentness, an open response action, market fit, and the exact public demand page. An open employer job is compensated unless explicitly unpaid; a buyer solicitation must prove formal procurement or explicit non-zero consideration. Supplier offers, marketplaces, directories, payer participation, and accepts-insurance pages are not demand. Sensitive end buyer=>referral motion unless targeting a real institutional compensated job.',
     'Adapters: professional=person/single; local_org=person/org->decision-maker; never terminal org; select one exact canonical PDL targetRoleSubrole; code derives its PDL role and drops role intent for non-person routes; organizationTerms=context.',
     'acquisitionMechanism exact: buyer/referral="Review-first public professional profile"; paid_demand="Review-first official paid-demand page".',
     'buyer/referral c+a: use that exact form; URL=HTTPS LinkedIn /in; no message/DM/InMail/connect/email/phone/form.',
@@ -4249,6 +4249,8 @@ function deterministicCommercialDiscoveryQuery(planValue) {
       ? [
           discoveryDemandArtifactQueryLabel(route.demandArtifactKind),
           plan.paidOffer,
+          plan.jobTitle,
+          ...asArray(plan.skills),
           plan.counterparty,
           plan.market
         ]
@@ -4302,11 +4304,10 @@ function normalizeOpportunityDiscoveryPlan(
       ? { ...routeInput, ...typedRoute }
       : routeInput;
     const rawPaidOffer = asObject(routedPlan.paidOffer);
-    const paidDemandMotion = typedRoute
-      ? typedRoute.commercialRole === 'paid_demand'
-      : opportunityDiscoveryPaidDemandMotionKind(routedPlan.motionKind);
+    const compensatedJobMotion = firstText(routedPlan.motionKind) ===
+      'compensated_job';
     const normalizedPaidOffer = deriveFreshPlannerAuthority
-      ? paidDemandMotion
+      ? compensatedJobMotion
         ? firstText(rawPaidOffer.compensatedJob)
         : firstText(rawPaidOffer.seller)
       : firstText(routedPlan.paidOffer);
@@ -4573,17 +4574,39 @@ function normalizeOpportunityDiscoverySearchFields(
       targetRoleRole: '',
       organizationTerms: []
     };
-  case 'public_live_demand':
-    // Public demand is bound from the buyer-authored query and cited demand
-    // artifact, not from person, organization, title, or skill filters.
+  case 'public_live_demand': {
+    // Preserve bounded service/category terms so the provider searches for
+    // demand complementary to the source-bound seller offer instead of a
+    // generic paid role. Person and organization terms remain inapplicable.
+    const sensitiveJobTitle = discoveryPlanTargetsSensitivePerson(
+      allFields.jobTitle
+    );
+    const sensitiveSkills = allFields.skills.filter((term) =>
+      discoveryPlanTargetsSensitivePerson(term)
+    );
+    const candidateJobTitle = sensitiveJobTitle ? '' : allFields.jobTitle;
+    const candidateSkills = allFields.skills.filter((term) =>
+      !discoveryPlanTargetsSensitivePerson(term)
+    );
+    const querySpecificity = compactStrings([
+      plan.paidOffer,
+      candidateJobTitle,
+      ...candidateSkills
+    ]);
+    const sensitiveQuerySpecificity = sensitiveJobTitle ||
+      sensitiveSkills.length > 0 || discoveryPlanTargetsSensitivePerson(
+        querySpecificity.join(' ')
+      );
     return {
+      ...allFields,
       targetRoleTerms: [],
       targetRoleSubrole: '',
       targetRoleRole: '',
       organizationTerms: [],
-      jobTitle: '',
-      skills: []
+      jobTitle: sensitiveQuerySpecificity ? '' : candidateJobTitle,
+      skills: sensitiveQuerySpecificity ? [] : candidateSkills
     };
+  }
   default:
     // Preserve unsupported-route input so the typed route validator below
     // can reject it without normalization masking any supplied field.
@@ -4851,7 +4874,7 @@ function canonicalizeContingentProposalGrounding(
   const bundle = asObject(value);
   const plan = asObject(planValue);
   if (!/^Proposed paid\b/.test(firstText(plan.paidOffer)) ||
-      opportunityDiscoveryPaidDemandMotionKind(plan.motionKind)) {
+      firstText(plan.motionKind) === 'compensated_job') {
     return bundle;
   }
   const sellerRefs = compactStrings(plan.evidenceRefs).filter((ref) =>
@@ -5954,8 +5977,10 @@ function opportunityDiscoveryPlanIssue(
       }
     }
     const paidDemandMotion = firstText(item.commercialRole) === 'paid_demand';
+    const compensatedJobMotion = firstText(item.motionKind) ===
+      'compensated_job';
     if (requiredSellerFocus &&
-        !paidDemandMotion &&
+        !compensatedJobMotion &&
         item[DISCOVERY_SCHEMA_BOUND_SELLER_OFFER] !== true &&
         !opportunityDiscoveryUnicodeIdentityContains(
           item.paidOffer,
@@ -5964,7 +5989,7 @@ function opportunityDiscoveryPlanIssue(
       return `Discovery plan ${item.id} paidOffer must remain bound to the objective's primary seller focus "${truncate(requiredSellerFocus, 120)}".`;
     }
     if (requireTypedRoute &&
-        paidDemandMotion &&
+        compensatedJobMotion &&
         !compensatedJobPaidOfferText(item.paidOffer)) {
       return `Discovery plan ${item.id} paidOffer must describe the model-authored paid compensated role.`;
     }
@@ -5972,7 +5997,7 @@ function opportunityDiscoveryPlanIssue(
       compactStrings(sellerEvidenceRefsValue)
     );
     if (requiredSellerFocus &&
-        !paidDemandMotion &&
+        !compensatedJobMotion &&
         (requiredSellerEvidenceRefs.size === 0 ||
           !asArray(item.evidenceRefs).some((ref) =>
             requiredSellerEvidenceRefs.has(firstText(ref))
@@ -7470,8 +7495,11 @@ function contingentPrimaryRevenueActionRoleIssue(value, planValue) {
 function paidDemandResponseAction(value, planValue) {
   const plan = asObject(planValue);
   const text = primaryActionSemanticText(value);
+  const offerIsPaid = firstText(plan.motionKind) === 'buyer_solicitation'
+    ? paidOfferText(plan.paidOffer)
+    : compensatedJobPaidOfferText(plan.paidOffer);
   return firstText(plan.commercialRole) === 'paid_demand' &&
-    compensatedJobPaidOfferText(plan.paidOffer) &&
+    offerIsPaid &&
     /\b(?:apply|bid|respond|submit)\b/.test(text) &&
     /\b(?:application|bid|proposal|request for proposal|response|rfp|solicitation)\b/.test(
       text

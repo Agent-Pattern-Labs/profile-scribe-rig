@@ -1405,7 +1405,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /selects r\.rm\.seller.*r\.rm\.compensatedJob.*derives r\.v\/r\.a\/r\.c\/r\.o.*positional tactic keys.*k\.v\/i\/c\/o\/p\/t\/d\/s/i.test(
+        /selects paidOffer\.seller for buyer_solicitation\/buyer\/referral routes.*paidOffer\.compensatedJob only for compensated_job.*r\.rm\.compensatedJob for typed paid demand.*derives r\.v\/r\.a\/r\.c\/r\.o.*positional tactic keys.*k\.v\/i\/c\/o\/p\/t\/d\/s/i.test(
           rule
         )
       ) ||
@@ -1440,7 +1440,7 @@ for (const scenario of cases) {
         )
       ) ||
       !plannerPrompt.hardRules.some((rule) =>
-        /fresh paid demand requires either a structured PDL employer_job_posting or a bounded provider URL result.*currentness.*open response action.*explicit non-zero compensation.*market fit.*exact public demand page.*supplier offers.*marketplaces.*accepts-insurance pages are not demand/is.test(
+        /fresh paid demand requires either a structured PDL employer_job_posting or a bounded provider URL result.*currentness.*open response action.*market fit.*exact public demand page.*open employer job is compensated unless explicitly unpaid.*buyer solicitation must prove formal procurement or explicit non-zero consideration.*supplier offers.*marketplaces.*accepts-insurance pages are not demand/is.test(
           rule
         )
       ) ||
@@ -4744,7 +4744,7 @@ async function verifySensitiveTargetFieldPolicy(job, evidenceRef) {
       projectedPublicDemand.counterparty !==
         'A current buyer with a public paid solicitation' ||
       projectedPublicDemand.paidOffer !==
-        COMPENSATED_JOB_PAID_OFFER ||
+        publicDemand.paidOffer ||
       projectedPublicDemand.targetRoleTerms.length !== 0 ||
       projectedPublicDemand.organizationTerms.length !== 0 ||
       projectedPublicDemand.jobTitle !== '' ||
