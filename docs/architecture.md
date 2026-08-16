@@ -100,9 +100,11 @@ The `opportunity_tournament` worker path is separate from post composition:
    but unactionable finalists are removed while the remaining score order is
    preserved. Completion also requires at least two finalists so the runner-up
    is distinct. Without either invariant, the bounded research run skips with
-   `needs_more_approved_evidence` and zero external side effects. A response
-   that remains structurally incomplete instead returns a cause-matched
-   `strategy_generation_shape_recovery`, never a false market-evidence gap.
+   `needs_more_approved_evidence` and zero external side effects. If a live
+   target was already source-bound, that skip is the review-first found hunt,
+   not a software retry. A response that remains structurally incomplete
+   instead returns a cause-matched `strategy_generation_shape_recovery`, never
+   a false market-evidence gap.
    The returned
    `revenue_evidence_experiment_v1` keeps the existing control-plane shape but
    additively preserves `knownFact`, `buyer`, `paidOffer`,

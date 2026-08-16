@@ -86,13 +86,15 @@ then validates evidence, binds targets, expands combinations, and rejects
 unsupported or passive paths. The second call is an independent compact critic;
 it ranks or rejects finalists and may not generate missing evidence or rewrite
 an incomplete path. Do not add a separate planner or third model call. If call
-one is malformed, its exact provider target cannot be source-bound to the
-declared target slot, or fewer than two complete finalists survive, return
-technical recovery or the strongest remaining hunt rather than using the critic
-for repair, accepting an uncriticized recommendation, or reporting that the
-market has no opportunity. A valid provider `not_found` result also leaves
-zero source-bound finalists and therefore returns cause-matched technical
-recovery rather than a claim that no cash path exists.
+one is malformed or software blocks the hunt, return technical recovery. If a
+live target was source-bound or one complete finalist remains, persist that as
+the review-first next opportunity even when the critic has not compared two
+families. The critic is required for an immediate revenue winner, not for
+saying that a found target is the next move. Never use the critic for repair,
+invent missing targets or offers as facts, or report that the market has no
+opportunity. A valid provider `not_found` result with no remaining speakable
+target still returns cause-matched technical recovery rather than a claim that
+no cash path exists.
 
 When both planned commercial motions resolve valid exact targets, send one
 complete target-bound family from each motion to the critic so current outside

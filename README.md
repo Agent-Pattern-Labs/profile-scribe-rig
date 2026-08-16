@@ -232,7 +232,9 @@ Additional managed job kinds:
   seven business-only fields. An incomplete response that cannot use or
   survive its explicitly budgeted repair returns
   `strategy_generation_shape_recovery`; it is not mislabeled as missing market
-  evidence. Tournament generation uses the versioned
+  evidence. A live source-bound target with fewer than two critic-ready
+  finalists returns the review-first found hunt instead of that repair ticket.
+  Tournament generation uses the versioned
   `opportunity_tournament_commercial_v2` strict provider contract. The model
   considers multiple grounded acquisition-to-payment paths internally and
   returns one canonical path for each of the strongest two complete strategy

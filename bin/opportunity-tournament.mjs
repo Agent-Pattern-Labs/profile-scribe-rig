@@ -9233,6 +9233,30 @@ async function runOpportunityTournamentCore({
       commercialContext,
       commercialEvidenceGraph
     });
+  const huntCanSpeak = (hypotheses = []) =>
+    (commercialDiscovery.valid === true &&
+      asArray(commercialDiscovery.candidates).some((candidateValue) => {
+        const candidate = asObject(candidateValue);
+        return Boolean(
+          firstText(candidate.displayLabel, candidate.organization) &&
+          safePublicURL(firstText(candidate.publicUrl))
+        );
+      })) ||
+    asArray(hypotheses).some((hypothesisValue) =>
+      Boolean(firstText(asObject(hypothesisValue).id))
+    );
+  const huntExperimentFor = (hypotheses = [], missingEvidence = []) =>
+    strongestRemainingHuntExperiment({
+      objective,
+      evidenceCatalog,
+      evidenceHash,
+      commercialContext,
+      commercialEvidenceGraph,
+      hypotheses,
+      commercialDiscovery,
+      timestamp,
+      missingEvidence
+    }) || nextExperimentFor(missingEvidence);
 
   const objectiveIssue = objectiveValidationIssue(objective);
   if (objectiveIssue) {
@@ -10525,6 +10549,26 @@ async function runOpportunityTournamentCore({
     judgeWeights: expanded.weights
   });
   if (initialHypotheses.length < 2) {
+    if (useContingentFinalists && huntCanSpeak(initialHypotheses)) {
+      return {
+        status: 'skipped',
+        summary:
+          'Research found a source-backed cash path. Review this next move; a second critic-ready finalist was not retained.',
+        ...base,
+        hypotheses: initialHypotheses.map(publicHypothesis),
+        nextExperiment: huntExperimentFor(initialHypotheses, [
+          'a completed critic comparison of two source-bound cash paths',
+          ...Object.keys(expanded.revenueRejectionReasons)
+        ]),
+        searchSpace: searchSpaceFor(initialHypotheses),
+        llm: llmTrace,
+        usage,
+        gate: researchOnlyGate(
+          'needs_more_approved_evidence',
+          'A named live target was found. The next move is that review-first cash path. Two complete critic families were not retained, so this is unfinished hunt, not a software retry.'
+        )
+      };
+    }
     if (useContingentFinalists) {
       structuredRepair.failure =
         'upstream_contingent_finalists_rejected';
@@ -10583,6 +10627,26 @@ async function runOpportunityTournamentCore({
         deterministicFinalistFamilyCount
       };
       initialHypotheses = deterministicFinalists;
+      if (useContingentFinalists && huntCanSpeak(initialHypotheses)) {
+        return {
+          status: 'skipped',
+          summary:
+            'Research found a source-backed cash path. Review this next move; a second critic-ready finalist was not retained.',
+          ...base,
+          hypotheses: initialHypotheses.map(publicHypothesis),
+          nextExperiment: huntExperimentFor(initialHypotheses, [
+            'a completed critic comparison of two source-bound cash paths',
+            'active_causal_revenue_finalist'
+          ]),
+          searchSpace: searchSpaceFor(initialHypotheses),
+          llm: llmTrace,
+          usage,
+          gate: researchOnlyGate(
+            'needs_more_approved_evidence',
+            'A named live target was found. The next move is that review-first cash path. Two complete critic families were not retained, so this is unfinished hunt, not a software retry.'
+          )
+        };
+      }
       if (useContingentFinalists) {
         structuredRepair.failure =
           'upstream_contingent_finalists_rejected';
@@ -10973,6 +11037,27 @@ async function runOpportunityTournamentCore({
       firstText(winningHypothesis._strategyFamily)
   );
   if (alternateFamilyIndex < 0 && !requiresCommercialCritic) {
+    if (useContingentFinalists && huntCanSpeak(initialHypotheses)) {
+      return {
+        status: 'skipped',
+        summary:
+          'Research found a source-backed cash path. Review this next move; a second critic-ready finalist was not retained.',
+        ...base,
+        hypotheses: initialHypotheses.map(publicHypothesis),
+        candidates: provisionalCandidates,
+        nextExperiment: huntExperimentFor(initialHypotheses, [
+          'a completed critic comparison of two source-bound cash paths',
+          'family_diverse_revenue_path'
+        ]),
+        searchSpace: searchSpaceFor(initialHypotheses),
+        llm: llmTrace,
+        usage,
+        gate: researchOnlyGate(
+          'needs_more_approved_evidence',
+          'A named live target was found. The next move is that review-first cash path. Two family-diverse critic families were not retained, so this is unfinished hunt, not a software retry.'
+        )
+      };
+    }
     return {
       status: 'skipped',
       summary: 'The best candidate-grounded strategy had no family-diverse runner-up.',
@@ -11025,6 +11110,26 @@ async function runOpportunityTournamentCore({
     ...criticRejectedHypotheses
   ]);
   if (hypotheses.length < 2 && !requiresCommercialCritic) {
+    if (useContingentFinalists && huntCanSpeak(hypotheses)) {
+      return {
+        status: 'skipped',
+        summary:
+          'Research found a source-backed cash path. Review this next move; a second critic-ready finalist was not retained.',
+        ...base,
+        hypotheses: publicHypotheses,
+        nextExperiment: huntExperimentFor(hypotheses, [
+          'a completed critic comparison of two source-bound cash paths',
+          'distinct_runner_up'
+        ]),
+        searchSpace,
+        llm: llmTrace,
+        usage,
+        gate: researchOnlyGate(
+          'needs_more_approved_evidence',
+          'A named live target was found. The next move is that review-first cash path. Two distinct critic-ready finalists were not retained, so this is unfinished hunt, not a software retry.'
+        )
+      };
+    }
     return {
       status: 'skipped',
       summary: 'The best candidate-grounded strategy had no distinct runner-up.',
@@ -13907,6 +14012,169 @@ function modelAuthoredRevenueEvidenceExperiment({
       maxReruns: 1,
       trigger:
         'Rerun only after the user confirms or edits the proposed paid offer, price, conversion destination, or records the bounded test outcome.'
+    }
+  };
+}
+
+export function strongestRemainingHuntExperiment({
+  objective,
+  evidenceCatalog,
+  evidenceHash,
+  commercialContext,
+  commercialEvidenceGraph,
+  hypotheses,
+  commercialDiscovery,
+  timestamp,
+  missingEvidence
+} = {}) {
+  const huntMissing = compactStrings([
+    ...asArray(missingEvidence),
+    'an attributed paid conversion from this named target'
+  ]).filter((value, index, values) => values.indexOf(value) === index)
+    .slice(0, 8);
+  for (const hypothesisValue of asArray(hypotheses)) {
+    const projected = modelAuthoredRevenueEvidenceExperiment({
+      winner: hypothesisValue,
+      evidenceHash,
+      missingEvidence: compactStrings([
+        firstText(
+          asObject(asObject(hypothesisValue).revenuePath)
+            .supportingBottleneck
+        ),
+        ...huntMissing
+      ]).slice(0, 8)
+    });
+    if (projected) {
+      return projected;
+    }
+  }
+  const fromDiscovery = huntExperimentFromDiscoveryCandidate({
+    objective,
+    evidenceCatalog,
+    evidenceHash,
+    commercialDiscovery,
+    timestamp,
+    missingEvidence: huntMissing
+  });
+  if (fromDiscovery) {
+    return fromDiscovery;
+  }
+  return revenueEvidenceExperiment({
+    objective,
+    evidenceCatalog,
+    evidenceHash,
+    missingEvidence: huntMissing.filter((value) =>
+      value !== 'structured_strategy_family_repair'
+    ),
+    referenceTime: timestamp,
+    commercialContext,
+    commercialEvidenceGraph
+  });
+}
+
+function huntObservationRefs(evidenceCatalog) {
+  const items = asArray(evidenceCatalog).map(asObject);
+  const approved = items.filter((item) =>
+    /^observation:/i.test(firstText(item.id)) &&
+    item.approvedSourceObservation === true
+  );
+  const any = items.filter((item) =>
+    /^observation:/i.test(firstText(item.id))
+  );
+  return compactStrings(
+    (approved.length > 0 ? approved : any).map((item) => firstText(item.id))
+  ).slice(0, 8);
+}
+
+function huntExperimentFromDiscoveryCandidate({
+  objective,
+  evidenceCatalog,
+  evidenceHash,
+  commercialDiscovery,
+  timestamp,
+  missingEvidence
+}) {
+  const discovery = asObject(commercialDiscovery);
+  const candidate = asArray(discovery.candidates).map(asObject).find(
+    (item) =>
+      firstText(item.displayLabel, item.organization) &&
+      safePublicURL(firstText(item.publicUrl))
+  );
+  if (!candidate) {
+    return null;
+  }
+  const label = truncate(
+    firstText(candidate.displayLabel, candidate.organization),
+    180
+  );
+  const publicUrl = safePublicURL(firstText(candidate.publicUrl));
+  const evidenceRefs = huntObservationRefs(evidenceCatalog);
+  const motion = asArray(asObject(discovery.plan).plans).map(asObject)
+    .find((item) => firstText(item.id) === firstText(candidate.motionId)) ||
+    asObject(asArray(asObject(discovery.plan).plans)[0]);
+  const motionOffer = firstText(motion.paidOffer, asObject(objective).outcome);
+  const paidOffer = truncate(
+    paidOfferText(motionOffer)
+      ? motionOffer
+      : `the paid professional offer${motionOffer ? ` (${motionOffer})` : ''}`,
+    220
+  );
+  const paidConversion = truncate(
+    observableRevenueText(asObject(objective).successMetric)
+      ? firstText(asObject(objective).successMetric)
+      : 'one attributable paid booking, payment, order, signed contract, or compensated outcome',
+    240
+  );
+  const kind = firstText(candidate.kind) === 'employer_job_posting' ||
+    firstText(candidate.kind) === 'public_paid_demand_page' ||
+    firstText(candidate.commercialRole) === 'paid_demand'
+    ? 'revenue_path_grounding'
+    : 'inbound_revenue_evidence';
+  const acquisitionMechanism = kind === 'inbound_revenue_evidence'
+    ? 'organic search'
+    : 'permissioned public discovery of this exact posting';
+  const conversionDestination = kind === 'inbound_revenue_evidence'
+    ? 'the public booking page'
+    : 'the public application page';
+  const action = truncate(
+    `Review first: confirm ${label} at ${publicUrl} is the next 30-day paid path for ${paidOffer}. Record one attributed application or paid conversion at ${conversionDestination}. Do not contact, email, publish, or submit anything until approved.`,
+    700
+  );
+  return {
+    contractVersion: REVENUE_EVIDENCE_EXPERIMENT_CONTRACT,
+    id: `experiment-${stableHash({
+      kind: 'found_hunt_review',
+      evidenceHash,
+      candidateId: firstText(candidate.id),
+      publicUrl,
+      timestamp
+    }).slice(0, 24)}`,
+    kind,
+    title: truncate(`Review ${label} as the next 30-day paid path`, 240),
+    knownFact: truncate(
+      `${label} is a current public professional target at ${publicUrl}.`,
+      320
+    ),
+    buyer: label,
+    paidOffer,
+    acquisitionMechanism,
+    conversionDestination,
+    paidConversion,
+    attributionSignal:
+      'a source, referral, campaign, or UTM field stored with the paid conversion record',
+    action,
+    missingEvidence: compactStrings(missingEvidence).slice(0, 8),
+    paidOutcome: paidConversion,
+    successSignal: paidConversion,
+    stopCondition:
+      'Stop after 1 qualifying record or 14 calendar days, whichever comes first, followed by at most 1 rerun informed by the recorded result; do not expand volume automatically.',
+    asset: null,
+    evidenceRefs,
+    requiresReview: true,
+    rerunPolicy: {
+      maxReruns: 1,
+      trigger:
+        'Rerun only after the bounded test records its result or the named target or paid offer materially changes.'
     }
   };
 }
