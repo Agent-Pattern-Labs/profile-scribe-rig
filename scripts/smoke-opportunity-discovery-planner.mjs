@@ -1680,6 +1680,12 @@ async function runPlannerResponseEnvelopeCase(byteCount) {
   });
 }
 
+if (process.argv.includes('--centerpiece-only')) {
+  await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
+  await verifyUnprovenOfferRequiresLiveCompensatedDemand();
+  process.exit(0);
+}
+
 await verifyPlannerRouteProvenanceGate();
 await verifyPlannerExactUsageGate();
 await verifyPlannerFinishGate();
@@ -11748,14 +11754,17 @@ async function verifyUnprovenOfferRequiresLiveCompensatedDemand() {
       requestSeen = request;
       const market = request.responseFormat.json_schema.schema.properties
         .plans.items.properties.market.enum[0];
+      const allowedKinds = request.responseFormat.json_schema.schema.properties
+        .plans.items.properties.motionKind.enum;
       const source = cases[1].plans(evidenceRef)[0];
       const plans = [source, structuredClone(source)].map((motion, index) => {
-        motion.id = `profilescribe_paid_demand_${index + 1}`;
+        motion.id = `profilescribe_centerpiece_${index + 1}`;
         motion.priority = index + 1;
         motion.market = market;
-        motion.jobTitle = index === 0
-          ? 'Software product engineer'
-          : 'AI platform engineer';
+        motion.motionKind = allowedKinds.includes('direct_buyer_person')
+          ? 'direct_buyer_person'
+          : allowedKinds[0];
+        motion.jobTitle = '';
         motion.skills = index === 0
           ? ['Software engineering', 'Product development']
           : ['AI agents', 'Platform engineering'];
@@ -11792,28 +11801,21 @@ async function verifyUnprovenOfferRequiresLiveCompensatedDemand() {
   const motionKinds = requestSeen?.responseFormat?.json_schema?.schema
     ?.properties?.plans?.items?.properties?.motionKind?.enum || [];
   if (result.status !== 'planned' ||
-      result.plans.length !== 2 ||
-      result.plans.some((motion) =>
-        motion.motionKind !== 'compensated_job' ||
-        motion.searchMode !== 'active_job_posting' ||
-        motion.commercialRole !== 'paid_demand' ||
-        motion.demandArtifactKind !== 'employer_job_posting' ||
-        /^Proposed paid\b/.test(motion.paidOffer || '')
-      ) ||
-      JSON.stringify(motionKinds) !==
-        JSON.stringify(['compensated_job', 'buyer_solicitation']) ||
+      result.plans.length < 1 ||
+      motionKinds.includes('compensated_job') ||
       prompt.sellerContract?.offerEvidenceStatus !==
-        'unverified_offer_paid_demand_only' ||
-      !prompt.outputContract?.offerAuthority?.includes(
-        'select only compensated_job or buyer_solicitation motions'
+        'proposed_from_verified_capability' ||
+      prompt.sellerContract?.requiredPrimaryFocus !== 'ProfileScribe' ||
+      /select only compensated_job/.test(
+        prompt.outputContract?.offerAuthority || ''
       ) ||
-      !prompt.hardRules?.some((rule) =>
-        rule.includes('Select only compensated_job or buyer_solicitation motions')
+      prompt.hardRules?.some((rule) =>
+        /Select only compensated_job/.test(rule)
       ) ||
       result.usage?.calls !== 1 ||
       result.sideEffectsPerformed !== 0) {
     throw new Error(
-      `unproven offer was not forced onto live compensated demand: ${JSON.stringify({ prompt, motionKinds, result })}`
+      `product centerpiece was not kept ahead of job search: ${JSON.stringify({ prompt, motionKinds, result })}`
     );
   }
 }

@@ -2205,18 +2205,29 @@ export async function runOpportunityDiscoveryPlanner({
   const sellerCanSupportProvisionalOfferExperiment = Boolean(
     requiredSellerFocus && requiredSellerEvidenceRefs.length === 1
   );
+  const productCenterpiece = Boolean(requiredSellerFocus) &&
+    !opportunityDiscoveryJobSeekingText([
+      requiredSellerFocus,
+      firstText(objective.outcome),
+      firstText(objective.successMetric)
+    ].join(' '));
   const provisionalOfferExperiment =
+    productCenterpiece &&
     !sellerHasCurrentPaidOfferEvidence &&
     sellerCanSupportProvisionalOfferExperiment;
-  // A verified capability is not a current paid offer. That does not mean no
-  // opportunity exists. Hunt live compensated demand or buyer solicitation
-  // instead of binding a person to an invented service. The provider record
-  // can then prove the payer, current paid work, application destination, and
-  // response path together.
-  allowedMotionKinds = allowedMotionKinds.filter((motionKind) =>
-    ['compensated_job', 'buyer_solicitation'].includes(motionKind) ||
-      sellerHasCurrentPaidOfferEvidence
-  );
+  // A locked product or service is the cash centerpiece. Hunt complementary
+  // buyers and partners around that offer. Compensated-job search is only for
+  // a job-seeking centerpiece or a person with no product to sell.
+  if (productCenterpiece) {
+    allowedMotionKinds = allowedMotionKinds.filter((motionKind) =>
+      motionKind !== 'compensated_job'
+    );
+  } else {
+    allowedMotionKinds = allowedMotionKinds.filter((motionKind) =>
+      ['compensated_job', 'buyer_solicitation'].includes(motionKind) ||
+        sellerHasCurrentPaidOfferEvidence
+    );
+  }
   const sellerContractIssue = commercialSellerContractIssue({
     workerSellerContract,
     derivedSellerFocus,
@@ -2474,9 +2485,11 @@ export async function runOpportunityDiscoveryPlanner({
         ? {
             requiredPrimaryFocus: requiredSellerFocus,
             requiredEvidenceRefs: requiredSellerEvidenceRefs,
-            offerEvidenceStatus: provisionalOfferExperiment
-              ? 'unverified_offer_paid_demand_only'
-              : 'verified_current_paid_offer'
+            offerEvidenceStatus: sellerHasCurrentPaidOfferEvidence
+              ? 'verified_current_paid_offer'
+              : productCenterpiece
+                ? 'proposed_from_verified_capability'
+                : 'unverified_offer_paid_demand_only'
           }
         : {},
       evidenceCatalog: promptEvidenceCatalog,
@@ -3830,8 +3843,8 @@ function compactOpportunityDiscoveryOutputContract(
     evidence:
       `base+tactic e has observation:* plus child refs; e uses approved refs, never ${CONTINGENT_TARGET_EVIDENCE_REF}`,
     offerAuthority: provisionalOfferExperiment
-      ? 'No current seller offer is proven: select only compensated_job or buyer_solicitation motions. The schema-required Proposed paid seller branch is inert and code must never select it.'
-      : 'Seller paid offer is current and evidence-grounded.'
+      ? 'requiredPrimaryFocus is the locked cash centerpiece. Hunt complementary buyers or partners for that offer. Compensated-job search must not replace it. The proposed paid seller branch stays bound to that focus.'
+      : 'Seller paid offer is current and evidence-grounded. Hunt complementary buyers or partners; do not replace the seller with a job posting.'
   };
 }
 
@@ -3841,8 +3854,8 @@ function compactOpportunityDiscoveryHardRules(
   return [
     'Exactly 2 distinct motions, each pathBase+2 causal tactics. Opportunity is always possible; a missing name is unfinished hunt, not no cash path. Unknown identities use the declared slot and bounded read-only discovery; never return 0 plans or call a missing target missing supply evidence.',
     provisionalOfferExperiment
-      ? 'requiredPrimaryFocus is a verified capability, but no current paid offer is proven. Select only compensated_job or buyer_solicitation motions backed after planning by current employer-authored paid demand or buyer-authored solicitation. The schema-required Proposed paid seller branch is inert and must never drive buyer or referral discovery.'
-      : 'requiredPrimaryFocus is the objective seller. paidOffer.seller includes it; compensatedJob is a paid role; code selects by motionKind and filters refs. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
+      ? 'requiredPrimaryFocus is the locked cash centerpiece. Author buyer or referral motions around that offer. Do not emit compensated_job. Audience/directory/category pages can inform buyer context but cannot redefine the seller.'
+      : 'requiredPrimaryFocus is the objective seller. paidOffer.seller includes it; compensatedJob is a paid role only when the centerpiece is job-seeking. Audience/directory/category pages can inform buyer context but cannot redefine the seller.',
     `Buyer is the token-free payer archetype. Every b.l/c.l/a.l has all three fixed role branches; code selects by commercialRole. Selected b.l has {{TARGET_NAME}} once for buyer/paid_demand and none for referral; selected c.l has {{TARGET_URL}} once; selected a.l has both once. Never put ${CONTINGENT_TARGET_EVIDENCE_REF} in e; code binds it.`,
     'market copies one exact response-schema enum value from approvedMarkets|ServiceAreas|Location; Remote is available only to paid_demand unless explicitly approved; no expand/abbreviate/guess/widen.',
     'Base/tactic e has observation:*; attribution ref is attribution-only; obey targetRoleMap. f="If no reply after N days, one review-first follow-up"; N=1..30; f.e=observation:*.',
@@ -3872,7 +3885,7 @@ function opportunityDiscoveryRequiredSellerFocus(
     firstText(objective.outcome),
     firstText(objective.successMetric)
   ].filter(Boolean).join(' ');
-  return asArray(asObject(commercialContextValue).profile?.currentFocus)
+  const names = asArray(asObject(commercialContextValue).profile?.currentFocus)
     .map(asObject)
     .filter((focus) =>
       firstText(focus.name) &&
@@ -3881,10 +3894,17 @@ function opportunityDiscoveryRequiredSellerFocus(
       comparable(focus.priority) === 'primary'
     )
     .map((focus) => typeof focus.name === 'string' ? focus.name : '')
-    .find((name) => opportunityDiscoveryUnicodeIdentityContains(
-      objectiveText,
-      name
-    )) || '';
+    .filter(Boolean);
+  const named = names.find((name) => opportunityDiscoveryUnicodeIdentityContains(
+    objectiveText,
+    name
+  ));
+  return named || names[0] || '';
+}
+
+function opportunityDiscoveryJobSeekingText(value) {
+  return /\b(?:job search|seeking (?:a |an )?(?:job|role|position|employment)|looking for work|open to work|compensated role)\b/i
+    .test(String(value || ''));
 }
 
 function normalizeCommercialSellerContract(value) {

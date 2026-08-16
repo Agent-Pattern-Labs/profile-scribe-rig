@@ -74,7 +74,12 @@ search the outside professional world for the nearest credible short-term path
 to payment. The profile grounds the seller, offer, proof, geography, capacity,
 and constraints; it does not need to already name the buyer, employer, referral
 partner, hiring manager, marketplace, or live demand. Missing outside names are
-unfinished hunt, not proof that no cash path exists. Do not invent unproven
+unfinished hunt, not proof that no cash path exists.
+
+Lock the cash centerpiece first from verified facts. Rank motions around that
+offer. Choose the next lead only when it is complementary to that offer. A job
+posting must not replace a product or service the owner is selling. Later asks
+keep the same centerpiece and advance the lead. Do not invent unproven
 people or demand as facts, and do not conclude that no opportunity exists.
 
 A normal tournament has exactly two model stages. The first call generates at
