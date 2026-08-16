@@ -1680,12 +1680,6 @@ async function runPlannerResponseEnvelopeCase(byteCount) {
   });
 }
 
-if (process.argv.includes('--centerpiece-only')) {
-  await verifyObjectiveSellerFocusAndDirectoryEvidenceRoles();
-  await verifyUnprovenOfferRequiresLiveCompensatedDemand();
-  process.exit(0);
-}
-
 await verifyPlannerRouteProvenanceGate();
 await verifyPlannerExactUsageGate();
 await verifyPlannerFinishGate();
@@ -17849,19 +17843,34 @@ async function verifyProductionShapedPlannerHeadroom(job, evidenceRef) {
     completeJSON: async (request) => {
       maxCardinalityCalls += 1;
       maxCardinalityRequestSeen = request;
-      const productionMotion = cases[0].plans(
+      const allowedKinds = request.responseFormat?.json_schema?.schema
+        ?.properties?.plans?.items?.properties?.motionKind?.enum || [];
+      const centerpieceMotions = cases[0].plans(
         outerReservedObservation.id
-      )[0];
+      ).filter((motion) => allowedKinds.includes(motion.motionKind));
+      if (centerpieceMotions.length < 2) {
+        throw new Error(
+          `max-cardinality fixture had no two allowed centerpiece motions: ${JSON.stringify(allowedKinds)}`
+        );
+      }
+      const productionMotion = centerpieceMotions[0];
       productionMotion.market = 'New York, New York, United States';
       productionMotion.paidOffer =
         reservedSellerFocus + ' paid professional service';
       productionMotion.contingentFinalists = compactContingentFinalists(
         productionMotion.contingentFinalists
       );
-      const responsePlans = compactFreshPlannerPlans(twoPlannerMotions(
+      const companion = structuredClone(centerpieceMotions[1]);
+      companion.priority = 2;
+      companion.market = productionMotion.market;
+      companion.paidOffer = productionMotion.paidOffer;
+      companion.contingentFinalists = compactContingentFinalists(
+        companion.contingentFinalists
+      );
+      const responsePlans = compactFreshPlannerPlans([
         productionMotion,
-        outerReservedObservation.id
-      ));
+        companion
+      ]);
       const exactMarket = request.responseFormat?.json_schema?.schema
         ?.properties?.plans?.items?.properties?.market?.enum?.[0];
       for (const motion of responsePlans) {
